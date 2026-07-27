@@ -652,6 +652,7 @@
       <div class="topbar-actions">
         <button id="btn-open-treasury" class="btn btn-ghost">📦 الصندوق</button>
         <button id="btn-open-tasks" class="btn btn-ghost btn-with-badge">✅ TASKS<span id="tasks-badge" class="tasks-badge"></span></button>
+        <button id="btn-who-online" class="btn btn-ghost">👥 متصل الآن</button>
         <button id="btn-new-order" class="btn btn-primary">+ طلبية جديدة</button>
         <button id="btn-sign-out" class="btn btn-ghost btn-signout" title="تسجيل الخروج">🚪 خروج</button>
       </div>
@@ -2499,9 +2500,11 @@ function bindToolbar(){
   document.getElementById('btn-open-treasury').addEventListener('click', ()=> promptTreasuryPassword());
   document.getElementById('btn-open-tasks').addEventListener('click', openTasksView);
   document.getElementById('btn-sign-out').addEventListener('click', async ()=>{
+    stopPresenceHeartbeat();
     if(sb) await sb.auth.signOut();
     showAuthGate();
   });
+  document.getElementById('btn-who-online').addEventListener('click', showWhoIsOnline);
   const search = document.getElementById('search-input');
   let debounceTimer;
   search.addEventListener('input', (e)=>{
@@ -2548,9 +2551,72 @@ async function showAppIfAllowed(session){
   }
   document.getElementById('auth-gate').classList.add('hidden');
   document.getElementById('app-root').style.display = '';
+  startPresenceHeartbeat(email);
   if(!appInitDone){
     appInitDone = true;
     init();
+  }
+}
+
+/* ---------- presence ("من متصل الآن") — a lightweight heartbeat, not true realtime ---------- */
+const PRESENCE_HEARTBEAT_MS = 25000;
+const PRESENCE_ONLINE_WINDOW_MS = 70000; // > 2x heartbeat interval, tolerates network jitter
+let presenceTimer = null;
+let presenceEmail = null;
+
+async function sendPresenceHeartbeat(){
+  if(!sb || !presenceEmail) return;
+  try{
+    await sb.from('presence').upsert({ email: presenceEmail, last_seen: new Date().toISOString() });
+  }catch(e){ /* best-effort — presence is a nice-to-have, never block the app on it */ }
+}
+
+function startPresenceHeartbeat(email){
+  presenceEmail = email;
+  sendPresenceHeartbeat();
+  if(presenceTimer) clearInterval(presenceTimer);
+  presenceTimer = setInterval(sendPresenceHeartbeat, PRESENCE_HEARTBEAT_MS);
+}
+
+function stopPresenceHeartbeat(){
+  if(presenceTimer){ clearInterval(presenceTimer); presenceTimer = null; }
+  presenceEmail = null;
+}
+
+async function showWhoIsOnline(){
+  const root = document.getElementById('modal-root');
+  root.innerHTML =
+    '<div class="modal-backdrop" data-close-confirm>' +
+      '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
+        '<div class="modal-title">👥 متصل الآن</div>' +
+        '<div id="online-users-list" class="expense-empty-hint" style="margin-top:14px;">جاري التحميل…</div>' +
+        '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' +
+          '<button type="button" class="btn btn-ghost" id="close-online-btn">إغلاق</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  root.querySelector('[data-close-confirm]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-confirm')) close();
+  });
+  root.querySelector('#close-online-btn').addEventListener('click', close);
+
+  const listEl = document.getElementById('online-users-list');
+  try{
+    const cutoff = new Date(Date.now() - PRESENCE_ONLINE_WINDOW_MS).toISOString();
+    const { data, error } = await sb.from('presence').select('email,last_seen').gte('last_seen', cutoff).order('last_seen', { ascending:false });
+    if(error) throw error;
+    if(!listEl) return;
+    if(!data || data.length===0){
+      listEl.innerHTML = 'ما فيه أحد متصل حاليًا';
+    } else {
+      listEl.innerHTML = '<div class="task-items-list">' + data.map(u=>
+        '<div class="task-item-row"><span class="task-item-text">🟢 '+escapeHtml(u.email)+(u.email===presenceEmail?' (أنت)':'')+'</span></div>'
+      ).join('') + '</div>';
+    }
+  }catch(e){
+    if(listEl) listEl.innerHTML = 'تعذر تحميل القائمة';
   }
 }
 
