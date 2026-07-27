@@ -504,7 +504,6 @@
   .doc-table td{border:1px solid #E2E2E2;padding:8px 10px;color:#222;}
   .doc-table td:first-child{text-align:right;}
   .doc-table tbody tr:nth-child(even){background:#FAFAFA;}
-  .doc-note{font-size:11.5px;color:#444;margin:10px 0;line-height:1.8;}
 
   /* totals — grand total gets a solid brand-black bar with the amount in PARTECH green */
   .doc-totals{width:100%;max-width:300px;margin-top:12px;margin-inline-start:auto;}
@@ -516,9 +515,10 @@
 
   .doc-footer-note-input{
     display:block;width:100%;box-sizing:border-box;margin-top:22px;padding-top:14px;border:none;border-top:1px dashed #ccc;
-    font-size:11px;color:#555;line-height:1.9;text-align:center;font-family:'Tajawal',sans-serif;
-    background:transparent;white-space:pre-wrap;direction:rtl;
+    font-size:11px;color:#555;line-height:1.9;text-align:right;font-family:'Tajawal',sans-serif;
+    background:transparent;white-space:pre-wrap;direction:rtl;unicode-bidi:plaintext;
   }
+  .doc-footer-note-input div{unicode-bidi:plaintext;}
   .doc-footer-note-input:focus{outline:none;}
 
   @media print{
@@ -551,7 +551,6 @@
   .doc-sheet.pdf-export-mode .doc-table{font-size:15px;}
   .doc-sheet.pdf-export-mode .doc-table th,
   .doc-sheet.pdf-export-mode .doc-table td{padding:12px 12px;}
-  .doc-sheet.pdf-export-mode .doc-note{font-size:14px;}
   .doc-sheet.pdf-export-mode .doc-totals{max-width:380px;}
   .doc-sheet.pdf-export-mode .doc-totals-row{font-size:15.5px;padding:9px 4px;}
   .doc-sheet.pdf-export-mode .doc-totals-row.grand{font-size:19px;padding:13px 4px 6px;}
@@ -1370,6 +1369,8 @@ function attachModalHandlers(){
     checkbox.checked = !checked; // revert visually until confirmed
     confirmAction({
       title: checked ? 'تحديد الطلبية كـ"مسدد للتشليح"؟' : 'إلغاء تحديد الطلبية كـ"مسدد للتشليح"؟',
+      confirmLabel: 'نعم',
+      cancelLabel: 'لا',
       onConfirm: ()=>{ checkbox.checked = checked; draft.paidToAmer = checked; }
     });
   });
@@ -1379,6 +1380,8 @@ function attachModalHandlers(){
     checkbox.checked = !checked; // revert visually until confirmed
     confirmAction({
       title: checked ? 'تحديد الطلبية كـ"مسدد للمورد"؟' : 'إلغاء تحديد الطلبية كـ"مسدد للمورد"؟',
+      confirmLabel: 'نعم',
+      cancelLabel: 'لا',
       onConfirm: ()=>{ checkbox.checked = checked; draft.paidToSupplier = checked; }
     });
   });
@@ -1756,6 +1759,10 @@ function defaultFooterNoteFor(type){
     : 'عرض السعر هذا صالح لمدة يومين فقط من تاريخه';
 }
 
+function footerNoteLinesHtml(text){
+  return (text||'').split('\n').map(line=>'<div>'+escapeHtml(line)+'</div>').join('');
+}
+
 function docSheetHtml(order, type, data){
   const isInvoice = type==='invoice';
   const titleAr = isInvoice ? 'فاتورة نقدية' : 'عرض أسعار';
@@ -1767,10 +1774,6 @@ function docSheetHtml(order, type, data){
   const feeEnabled = t.feeEnabled;
   const fee = t.feeAmount;
   const grand = t.sellTotal;
-
-  const middleNote = !isInvoice
-    ? '<div class="doc-note">جميع القطع المذكورة أعلاه تخضع لضمان 30 يوم من تاريخ التوريد</div>'
-    : '';
 
   return (
     '<div class="doc-overlay">' +
@@ -1809,7 +1812,6 @@ function docSheetHtml(order, type, data){
         '</div>' +
         '<table class="doc-table"><thead><tr><th>البيـان</th><th>العدد</th><th>السعر الإفرادي</th><th>السعر الإجمالي</th></tr></thead>' +
         '<tbody>'+partsTableRowsHtml(order)+'</tbody></table>' +
-        middleNote +
         '<div class="doc-totals">' +
           '<div class="doc-totals-row"><span>مجموع سعر القطع</span><span class="num">'+fmtNum(subtotal)+' ريال</span></div>' +
           (feeEnabled ? '<div class="doc-totals-row"><span>'+feeLabel+' ('+feePercent+'%)</span><span class="num">'+fmtNum(fee)+' ريال</span></div>' : '') +
@@ -1817,7 +1819,7 @@ function docSheetHtml(order, type, data){
           (t.deliveryFeeEnabled && t.deliveryFeeAmount>0 ? '<div class="doc-totals-row"><span>أجور التوصيل</span><span class="num">'+fmtNum(t.deliveryFeeAmount)+' ريال</span></div>' : '') +
           '<div class="doc-totals-row grand"><span>الإجمالي المستحق</span><span class="num" id="doc-grand-total">'+fmtNum(grand)+' ريال</span></div>' +
         '</div>' +
-        '<div id="doc-footer-input" class="doc-footer-note-input" contenteditable="true">'+escapeHtml(data.footerNote)+'</div>' +
+        '<div id="doc-footer-input" class="doc-footer-note-input" contenteditable="true">'+footerNoteLinesHtml(data.footerNote)+'</div>' +
       '</div>' +
     '</div>'
   );
@@ -2098,6 +2100,7 @@ let expandedExpenseCategories = {};
 let editingExpenseEntries = {};
 let treasuryFilterOpen = false;
 let extraIndicatorsOpen = false;
+let extraIndicatorsFilterOpen = false;
 const TREASURY_PERIODS = [
   {key:'all', label:'الكل'},
   {key:'today', label:'اليوم'},
@@ -2321,10 +2324,16 @@ function renderTreasuryView(){
       '<span class="treasury-profit-value">'+fmtMoney(t.uncollectedProfit)+'</span>' +
     '</div>' +
     '<button type="button" id="btn-toggle-extra-indicators" class="chip" style="margin-bottom:14px;">📊 مؤشرات إضافية</button>' +
-    '<div class="extra-indicators-row" id="extra-indicators-row" style="'+(extraIndicatorsOpen?'':'display:none;')+'">' +
-      '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم الشراء</span><span class="treasury-profit-value">'+fmtMoney(t.purchaseVolume)+'</span></div>' +
-      '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم عمليات البيع</span><span class="treasury-profit-value">'+fmtMoney(t.salesVolume)+'</span></div>' +
-      '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم الأرباح</span><span class="treasury-profit-value">'+fmtMoney(t.profitVolume)+'</span></div>' +
+    '<div id="extra-indicators-wrap" style="'+(extraIndicatorsOpen?'':'display:none;')+'">' +
+      '<button type="button" id="btn-toggle-extra-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر'+(treasuryPeriodFilter!=='all' ? ' ('+(TREASURY_PERIODS.find(p=>p.key===treasuryPeriodFilter)||{}).label+')' : '')+'</button>' +
+      '<div class="treasury-period-filter" id="extra-indicators-period-filter" style="'+(extraIndicatorsFilterOpen?'':'display:none;')+'">' +
+        TREASURY_PERIODS.map(p=> '<button type="button" class="chip '+(treasuryPeriodFilter===p.key?'chip-active':'')+'" data-period="'+p.key+'">'+p.label+'</button>').join('') +
+      '</div>' +
+      '<div class="extra-indicators-row" id="extra-indicators-row">' +
+        '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم الشراء</span><span class="treasury-profit-value">'+fmtMoney(t.purchaseVolume)+'</span></div>' +
+        '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم عمليات البيع</span><span class="treasury-profit-value">'+fmtMoney(t.salesVolume)+'</span></div>' +
+        '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم الأرباح</span><span class="treasury-profit-value">'+fmtMoney(t.profitVolume)+'</span></div>' +
+      '</div>' +
     '</div>' +
     '<div class="treasury-block">' +
       '<div class="treasury-block-title">المصاريف — كل مبلغ بتاريخه على حدة</div>' +
@@ -2361,10 +2370,11 @@ function renderTreasuryView(){
   bindTreasuryAddButtons();
   bindTreasuryHistoryButtons();
   bindTreasuryPeriodFilter();
+  bindExtraIndicatorsFilter();
   document.getElementById('btn-toggle-extra-indicators').addEventListener('click', ()=>{
     extraIndicatorsOpen = !extraIndicatorsOpen;
-    const el2 = document.getElementById('extra-indicators-row');
-    if(el2) el2.style.display = extraIndicatorsOpen ? 'grid' : 'none';
+    const el2 = document.getElementById('extra-indicators-wrap');
+    if(el2) el2.style.display = extraIndicatorsOpen ? '' : 'none';
   });
   EXPENSE_CATEGORIES.forEach(c=> bindExpenseEntryEvents(c.key));
   bindExpenseEntryEvents('support');
@@ -2386,6 +2396,26 @@ function bindTreasuryPeriodFilter(){
     btn.addEventListener('click', ()=>{
       treasuryPeriodFilter = btn.getAttribute('data-period');
       treasuryFilterOpen = true;
+      renderTreasuryView();
+    });
+  });
+}
+
+function bindExtraIndicatorsFilter(){
+  const toggleBtn = document.getElementById('btn-toggle-extra-filter');
+  if(toggleBtn){
+    toggleBtn.addEventListener('click', ()=>{
+      extraIndicatorsFilterOpen = !extraIndicatorsFilterOpen;
+      const el = document.getElementById('extra-indicators-period-filter');
+      if(el) el.style.display = extraIndicatorsFilterOpen ? 'flex' : 'none';
+    });
+  }
+  const el = document.getElementById('extra-indicators-period-filter');
+  if(!el) return;
+  el.querySelectorAll('[data-period]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      treasuryPeriodFilter = btn.getAttribute('data-period');
+      extraIndicatorsFilterOpen = true;
       renderTreasuryView();
     });
   });
