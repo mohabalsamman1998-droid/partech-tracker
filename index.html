@@ -172,6 +172,8 @@
   .expense-entry-remove-btn:hover{border-color:var(--rust-line);color:var(--rust);}
   .expense-add-entry-btn{color:var(--green);border-color:var(--green-line);background:var(--green-dim);}
   .expense-add-entry-btn:hover{background:rgba(34,208,122,.22);}
+  .expense-category-actions{display:flex;gap:8px;flex-wrap:wrap;}
+  .treasury-period-filter{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
   .treasury-summary{display:flex;flex-direction:column;gap:8px;margin-top:6px;padding-top:14px;border-top:1px dashed var(--border);}
   .treasury-summary-row{display:flex;justify-content:space-between;align-items:center;font-size:13.5px;font-weight:700;}
   .treasury-summary-row.net{font-size:17px;padding-top:6px;border-top:1px solid var(--border-soft);}
@@ -641,7 +643,8 @@
     .expense-entry-amount-input{width:100px;}
     .expense-entry-date-input{flex:1 1 100%;}
     .expense-entry-remove-btn{width:34px;height:34px;}
-    .expense-add-entry-btn{width:100%;}
+    .expense-category-actions{width:100%;}
+    .expense-category-actions .btn{flex:1;}
     .data-mgmt-row{justify-content:center;text-align:center;}
     .data-mgmt-label{width:100%;margin-inline-end:0;margin-bottom:2px;}
 
@@ -2024,6 +2027,15 @@ const EXPENSE_CATEGORIES = [
   {key:'other', label:'أخرى'}
 ];
 let treasuryPersistTimer = null;
+let treasuryPeriodFilter = 'all';
+let expandedExpenseCategories = {};
+const TREASURY_PERIODS = [
+  {key:'all', label:'الكل'},
+  {key:'today', label:'اليوم'},
+  {key:'week', label:'هذا الأسبوع'},
+  {key:'month', label:'هذا الشهر'},
+  {key:'lastMonth', label:'الشهر الماضي'}
+];
 const TREASURY_PASSWORD = '3133';
 const TREASURY_ALLOWED_EMAILS = ['mohabalsamman1998@gmail.com','homam.techno@gmail.com','sammaneng@gmail.com'];
 
@@ -2075,18 +2087,49 @@ function closeTreasuryView(){
   document.getElementById('orders-view').style.display = '';
 }
 
+function parseDMY(str){
+  if(!str) return null;
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(str).trim());
+  if(!m) return null;
+  const d = new Date(parseInt(m[3],10), parseInt(m[2],10)-1, parseInt(m[1],10));
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function entryMatchesPeriod(entry){
+  if(treasuryPeriodFilter === 'all') return true;
+  const d = parseDMY(entry.date);
+  if(!d) return false;
+  const now = new Date();
+  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if(treasuryPeriodFilter === 'today'){
+    return d.getTime() === today0.getTime();
+  }
+  if(treasuryPeriodFilter === 'week'){
+    const weekStart = new Date(today0); weekStart.setDate(weekStart.getDate() - now.getDay());
+    return d.getTime() >= weekStart.getTime() && d.getTime() <= today0.getTime();
+  }
+  if(treasuryPeriodFilter === 'month'){
+    return d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth();
+  }
+  if(treasuryPeriodFilter === 'lastMonth'){
+    const lm = new Date(now.getFullYear(), now.getMonth()-1, 1);
+    return d.getFullYear()===lm.getFullYear() && d.getMonth()===lm.getMonth();
+  }
+  return true;
+}
+
 function treasuryTotals(){
   const f = computeAggregateFinancials();
   let totalExpenses = 0;
   EXPENSE_CATEGORIES.forEach(c=>{
-    (appData.treasury[c.key]||[]).forEach(entry=>{ totalExpenses += Number(entry.amount)||0; });
+    (appData.treasury[c.key]||[]).filter(entryMatchesPeriod).forEach(entry=>{ totalExpenses += Number(entry.amount)||0; });
   });
   totalExpenses = round2(totalExpenses);
   return { collectedProfit: f.collectedProfit, totalExpenses, net: round2(f.collectedProfit - totalExpenses) };
 }
 
 function categorySubtotal(key){
-  return round2((appData.treasury[key]||[]).reduce((sum,entry)=> sum + (Number(entry.amount)||0), 0));
+  return round2((appData.treasury[key]||[]).filter(entryMatchesPeriod).reduce((sum,entry)=> sum + (Number(entry.amount)||0), 0));
 }
 
 function expenseEntryRowHtml(entry, categoryKey){
@@ -2099,16 +2142,20 @@ function expenseEntryRowHtml(entry, categoryKey){
 }
 
 function expenseCategoryBlockHtml(c, i){
-  const entries = appData.treasury[c.key] || [];
+  const matching = (appData.treasury[c.key] || []).filter(entryMatchesPeriod);
+  const isExpanded = !!expandedExpenseCategories[c.key];
   return '<div class="expense-category">' +
     '<div class="expense-category-head">' +
       '<span class="expense-category-label">'+(i+1)+'. '+c.label+'</span>' +
       '<span class="num text-rust expense-category-subtotal" data-subtotal-key="'+c.key+'">'+fmtMoney(categorySubtotal(c.key))+'</span>' +
     '</div>' +
-    '<div class="expense-entries-list" data-entries-key="'+c.key+'">' +
-      (entries.length ? entries.map(entry=>expenseEntryRowHtml(entry,c.key)).join('') : '<div class="expense-empty-hint">ما فيه مبالغ مسجّلة بعد</div>') +
+    '<div class="expense-entries-list" data-entries-key="'+c.key+'" style="'+(isExpanded?'':'display:none;')+'">' +
+      (matching.length ? matching.map(entry=>expenseEntryRowHtml(entry,c.key)).join('') : '<div class="expense-empty-hint">ما فيه مبالغ ضمن هذه الفترة</div>') +
     '</div>' +
-    '<button type="button" class="btn btn-ghost btn-sm expense-add-entry-btn" data-add-entry-key="'+c.key+'">+ إضافة مبلغ</button>' +
+    '<div class="expense-category-actions">' +
+      '<button type="button" class="btn btn-ghost btn-sm expense-add-entry-btn" data-add-entry-key="'+c.key+'">+ إضافة مبلغ</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm expense-history-btn" data-history-key="'+c.key+'">'+(isExpanded ? '▲ إخفاء السجل' : '📋 عرض السجل ('+matching.length+')')+'</button>' +
+    '</div>' +
   '</div>';
 }
 
@@ -2126,6 +2173,9 @@ function renderTreasuryView(){
     '</div>' +
     '<div class="treasury-block">' +
       '<div class="treasury-block-title">المصاريف — كل مبلغ بتاريخه على حدة</div>' +
+      '<div class="treasury-period-filter" id="treasury-period-filter">' +
+        TREASURY_PERIODS.map(p=> '<button type="button" class="chip '+(treasuryPeriodFilter===p.key?'chip-active':'')+'" data-period="'+p.key+'">'+p.label+'</button>').join('') +
+      '</div>' +
       '<div class="expense-categories">' +
         EXPENSE_CATEGORIES.map(expenseCategoryBlockHtml).join('') +
       '</div>' +
@@ -2152,8 +2202,35 @@ function renderTreasuryView(){
     e.target.value = '';
   });
   bindTreasuryAddButtons();
+  bindTreasuryHistoryButtons();
+  bindTreasuryPeriodFilter();
   EXPENSE_CATEGORIES.forEach(c=> bindExpenseEntryEvents(c.key));
   updateTreasurySummary();
+}
+
+function bindTreasuryPeriodFilter(){
+  const el = document.getElementById('treasury-period-filter');
+  if(!el) return;
+  el.querySelectorAll('[data-period]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      treasuryPeriodFilter = btn.getAttribute('data-period');
+      renderTreasuryView();
+    });
+  });
+}
+
+function bindTreasuryHistoryButtons(){
+  const el = document.getElementById('treasury-view');
+  el.querySelectorAll('[data-history-key]').forEach(btn=>{
+    const key = btn.getAttribute('data-history-key');
+    btn.addEventListener('click', ()=>{
+      expandedExpenseCategories[key] = !expandedExpenseCategories[key];
+      const list = document.querySelector('[data-entries-key="'+key+'"]');
+      if(list) list.style.display = expandedExpenseCategories[key] ? 'flex' : 'none';
+      const matching = (appData.treasury[key] || []).filter(entryMatchesPeriod);
+      btn.textContent = expandedExpenseCategories[key] ? '▲ إخفاء السجل' : '📋 عرض السجل ('+matching.length+')';
+    });
+  });
 }
 
 function bindTreasuryAddButtons(){
@@ -2163,6 +2240,7 @@ function bindTreasuryAddButtons(){
     btn.addEventListener('click', async ()=>{
       if(!Array.isArray(appData.treasury[key])) appData.treasury[key] = [];
       appData.treasury[key].push({id: uid('exp'), amount:'', date: todayNumeric()});
+      expandedExpenseCategories[key] = true;
       refreshExpenseEntries(key);
       await persist();
     });
@@ -2199,13 +2277,18 @@ function bindExpenseEntryEvents(key){
 function refreshExpenseEntries(key){
   const list = document.querySelector('[data-entries-key="'+key+'"]');
   if(!list) return;
-  const entries = appData.treasury[key]||[];
-  list.innerHTML = entries.length
-    ? entries.map(entry=>expenseEntryRowHtml(entry,key)).join('')
-    : '<div class="expense-empty-hint">ما فيه مبالغ مسجّلة بعد</div>';
+  const matching = (appData.treasury[key]||[]).filter(entryMatchesPeriod);
+  list.style.display = expandedExpenseCategories[key] ? 'flex' : 'none';
+  list.innerHTML = matching.length
+    ? matching.map(entry=>expenseEntryRowHtml(entry,key)).join('')
+    : '<div class="expense-empty-hint">ما فيه مبالغ ضمن هذه الفترة</div>';
   bindExpenseEntryEvents(key);
   updateExpenseCategorySubtotal(key);
   updateTreasurySummary();
+  const historyBtn = document.querySelector('[data-history-key="'+key+'"]');
+  if(historyBtn){
+    historyBtn.textContent = expandedExpenseCategories[key] ? '▲ إخفاء السجل' : '📋 عرض السجل ('+matching.length+')';
+  }
 }
 
 function updateExpenseCategorySubtotal(key){
