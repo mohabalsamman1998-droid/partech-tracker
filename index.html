@@ -160,6 +160,7 @@
     width:90px;background:var(--bg);border:1px solid var(--border);color:var(--rust);
     padding:6px 8px;border-radius:6px;font-size:13px;font-weight:700;text-align:left;
   }
+  .expense-entry-amount-input.support-amount{color:var(--green);border-color:var(--green-line);}
   .expense-entry-date-input{
     flex:1;min-width:110px;background:var(--bg);border:1px solid var(--border);color:var(--text-dim);
     padding:6px 8px;border-radius:6px;font-size:12.5px;font-family:'Tajawal',sans-serif;
@@ -304,6 +305,9 @@
   /* modal */
   #modal-root{display:none;}
   #modal-root.modal-open{display:block;}
+  #confirm-root{display:none;}
+  #confirm-root.modal-open{display:block;}
+  #confirm-root .modal-backdrop{z-index:90;}
   .modal-backdrop{
     position:fixed;inset:0;background:rgba(4,6,5,.72);backdrop-filter:blur(2px);
     display:flex;align-items:flex-start;justify-content:center;padding:5vh 16px;z-index:50;overflow-y:auto;
@@ -716,6 +720,7 @@
   </div>
 
   <div id="modal-root"></div>
+  <div id="confirm-root"></div>
   <div id="doc-root"></div>
   <div id="toast-root" class="toast-root"></div>
 
@@ -842,7 +847,7 @@ function orderStatusFlags(order){
 }
 
 function defaultTreasury(){
-  return { delivery:[], transport:[], unexpectedLosses:[], salaries:[], hr:[], other:[] };
+  return { delivery:[], transport:[], unexpectedLosses:[], salaries:[], hr:[], other:[], support:[] };
 }
 
 function defaultTasks(){
@@ -883,6 +888,7 @@ function migrateLegacyTreasury(){
       appData.treasury[c.key] = num>0 ? [{id: uid('exp'), amount: num, date: ''}] : [];
     }
   });
+  if(!Array.isArray(appData.treasury.support)) appData.treasury.support = [];
 }
 
 function migrateLegacyTasks(){
@@ -941,27 +947,22 @@ function computeAggregateFinancials(){
   const confirmedOrders = appData.orders.filter(o=>o.confirmed);
   let dueToScrapyard = 0, dueToSuppliers = 0, dueFromCustomers = 0, collectedProfit = 0, uncollectedProfit = 0;
   let paidToScrapyardTotal = 0, paidToSuppliersTotal = 0, customerReceiptsTotal = 0;
-  let purchaseVolume = 0, salesVolume = 0, profitVolume = 0;
   confirmedOrders.forEach(o=>{
     const t = orderTotals(o);
     if(!o.paidToAmer) dueToScrapyard += t.costToScrapyard; else paidToScrapyardTotal += t.costToScrapyard;
     if(!o.paidToSupplier) dueToSuppliers += t.costToSupplier; else paidToSuppliersTotal += t.costToSupplier;
     if(t.hasSell && t.customerRemaining>0) dueFromCustomers += t.customerRemaining;
     customerReceiptsTotal += t.customerPaidAmount;
-    purchaseVolume += t.costTotal;
     if(t.hasSell){
       collectedProfit += t.collectedProfit;
       uncollectedProfit += t.uncollectedProfit;
-      salesVolume += t.sellTotal;
-      profitVolume += t.profit;
     }
   });
   return {
     confirmedCount: confirmedOrders.length,
     unconfirmedCount: appData.orders.length - confirmedOrders.length,
     dueToScrapyard, dueToSuppliers, dueFromCustomers, collectedProfit, uncollectedProfit,
-    paidToScrapyardTotal, paidToSuppliersTotal, customerReceiptsTotal,
-    purchaseVolume, salesVolume, profitVolume
+    paidToScrapyardTotal, paidToSuppliersTotal, customerReceiptsTotal
   };
 }
 
@@ -972,8 +973,7 @@ function renderKPIs(){
     '<div class="kpi-card"><div class="kpi-label">الطلبيات المؤكدة</div><div class="kpi-value num">'+f.confirmedCount+'</div>'+(f.unconfirmedCount>0?'<div class="kpi-sub">+ '+f.unconfirmedCount+' بانتظار التأكيد</div>':'')+'</div>' +
     '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للتشليح</div><div class="kpi-value num">'+fmtMoney(f.dueToScrapyard)+'</div></div>' +
     '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للموردين</div><div class="kpi-value num">'+fmtMoney(f.dueToSuppliers)+'</div></div>' +
-    '<div class="kpi-card kpi-amber"><div class="kpi-label">مستحق من الزبائن</div><div class="kpi-value num">'+fmtMoney(f.dueFromCustomers)+'</div></div>' +
-    '<div class="kpi-card kpi-amber"><div class="kpi-label">الربح غير المحصّل</div><div class="kpi-value num">'+fmtMoney(f.uncollectedProfit)+'</div></div>';
+    '<div class="kpi-card kpi-amber"><div class="kpi-label">مستحق من الزبائن</div><div class="kpi-value num">'+fmtMoney(f.dueFromCustomers)+'</div></div>';
 }
 
 /* ---------- filters ---------- */
@@ -1365,14 +1365,22 @@ function attachModalHandlers(){
   if(pasteBtn) pasteBtn.addEventListener('click', pastePartsFromClipboard);
 
   root.querySelector('#paid-to-amer-check').addEventListener('change', (e)=>{
-    const checked = e.target.checked;
-    const msg = checked ? 'تأكيد: تحديد الطلبية كـ"مسدد للتشليح"؟' : 'تأكيد: إلغاء تحديد الطلبية كـ"مسدد للتشليح"؟';
-    if(window.confirm(msg)){ draft.paidToAmer = checked; } else { e.target.checked = !checked; }
+    const checkbox = e.target;
+    const checked = checkbox.checked;
+    checkbox.checked = !checked; // revert visually until confirmed
+    confirmAction({
+      title: checked ? 'تحديد الطلبية كـ"مسدد للتشليح"؟' : 'إلغاء تحديد الطلبية كـ"مسدد للتشليح"؟',
+      onConfirm: ()=>{ checkbox.checked = checked; draft.paidToAmer = checked; }
+    });
   });
   root.querySelector('#paid-to-supplier-check').addEventListener('change', (e)=>{
-    const checked = e.target.checked;
-    const msg = checked ? 'تأكيد: تحديد الطلبية كـ"مسدد للمورد"؟' : 'تأكيد: إلغاء تحديد الطلبية كـ"مسدد للمورد"؟';
-    if(window.confirm(msg)){ draft.paidToSupplier = checked; } else { e.target.checked = !checked; }
+    const checkbox = e.target;
+    const checked = checkbox.checked;
+    checkbox.checked = !checked; // revert visually until confirmed
+    confirmAction({
+      title: checked ? 'تحديد الطلبية كـ"مسدد للمورد"؟' : 'إلغاء تحديد الطلبية كـ"مسدد للمورد"؟',
+      onConfirm: ()=>{ checkbox.checked = checked; draft.paidToSupplier = checked; }
+    });
   });
   root.querySelector('#add-payment-btn').addEventListener('click', ()=>{
     if(!Array.isArray(draft.customerPayments)) draft.customerPayments = [];
@@ -1463,8 +1471,16 @@ function bindPartRowEvents(){
       updateModalTotals();
     });
     row.querySelector('[data-remove-part]').addEventListener('click', ()=>{
-      draft.parts = draft.parts.filter(p=>p.id!==pid);
-      refreshPartsList();
+      confirmAction({
+        title: 'حذف هذه القطعة؟',
+        message: part.description ? 'القطعة: '+part.description : undefined,
+        confirmLabel: 'تأكيد الحذف',
+        dangerous: true,
+        onConfirm: ()=>{
+          draft.parts = draft.parts.filter(p=>p.id!==pid);
+          refreshPartsList();
+        }
+      });
     });
   });
 }
@@ -1490,8 +1506,16 @@ function bindPaymentRowEvents(){
     row.querySelector('.payment-method-select').addEventListener('change', e=>{ payment.method = e.target.value; });
     row.querySelector('.payment-date-input').addEventListener('input', e=>{ payment.date = e.target.value; });
     row.querySelector('[data-remove-payment]').addEventListener('click', ()=>{
-      draft.customerPayments = draft.customerPayments.filter(p=>p.id!==pid);
-      refreshPaymentsList();
+      confirmAction({
+        title: 'حذف هذه الدفعة؟',
+        message: payment.amount ? 'المبلغ: '+fmtMoney(payment.amount) : undefined,
+        confirmLabel: 'تأكيد الحذف',
+        dangerous: true,
+        onConfirm: ()=>{
+          draft.customerPayments = draft.customerPayments.filter(p=>p.id!==pid);
+          refreshPaymentsList();
+        }
+      });
     });
   });
 }
@@ -1596,33 +1620,48 @@ async function onSaveOrder(){
   return true;
 }
 
-/* ---------- delete ---------- */
-function confirmDelete(orderId){
-  const order = appData.orders.find(o=>o.id===orderId);
-  const root = document.getElementById('modal-root');
+/* ---------- unified confirmation dialog — used everywhere a destructive/consequential action needs a yes/no ----------
+   uses its own #confirm-root (separate from #modal-root) so it can appear on top of an already-open modal
+   (e.g. confirming a part/payment deletion or a paid-status toggle while the order-edit modal is open) without
+   destroying that modal's DOM/state. */
+function confirmAction(opts){
+  opts = opts || {};
+  const root = document.getElementById('confirm-root');
   root.innerHTML =
     '<div class="modal-backdrop" data-close-confirm>' +
       '<div class="modal-card modal-card-sm" role="alertdialog" aria-modal="true">' +
-        '<div class="modal-title">حذف الطلبية '+escapeHtml(order?order.orderNumber:'')+'؟</div>' +
-        '<p class="modal-sub">هذا الإجراء نهائي ولا يمكن التراجع عنه.</p>' +
+        '<div class="modal-title">'+escapeHtml(opts.title||'')+'</div>' +
+        (opts.message ? '<p class="modal-sub">'+escapeHtml(opts.message)+'</p>' : '') +
         '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' +
-          '<button type="button" class="btn btn-ghost" id="cancel-delete-btn">إلغاء</button>' +
-          '<button type="button" class="btn btn-danger" id="confirm-delete-btn">تأكيد الحذف</button>' +
+          '<button type="button" class="btn btn-ghost" id="confirm-action-cancel-btn">'+escapeHtml(opts.cancelLabel||'إلغاء')+'</button>' +
+          '<button type="button" class="btn '+(opts.dangerous?'btn-danger':'btn-primary')+'" id="confirm-action-ok-btn">'+escapeHtml(opts.confirmLabel||'تأكيد')+'</button>' +
         '</div>' +
       '</div>' +
     '</div>';
   root.classList.add('modal-open');
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
   root.querySelector('[data-close-confirm]').addEventListener('click', e=>{
-    if(e.target.hasAttribute('data-close-confirm')){ root.innerHTML=''; root.classList.remove('modal-open'); }
+    if(e.target.hasAttribute('data-close-confirm')){ close(); if(opts.onCancel) opts.onCancel(); }
   });
-  root.querySelector('#cancel-delete-btn').addEventListener('click', ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); });
-  root.querySelector('#confirm-delete-btn').addEventListener('click', async ()=>{
-    appData.orders = appData.orders.filter(o=>o.id!==orderId);
-    await persist();
-    root.innerHTML=''; root.classList.remove('modal-open');
-    renderKPIs();
-    renderTable();
-    showToast('تم حذف الطلبية', 'ok');
+  root.querySelector('#confirm-action-cancel-btn').addEventListener('click', ()=>{ close(); if(opts.onCancel) opts.onCancel(); });
+  root.querySelector('#confirm-action-ok-btn').addEventListener('click', ()=>{ close(); if(opts.onConfirm) opts.onConfirm(); });
+}
+
+/* ---------- delete ---------- */
+function confirmDelete(orderId){
+  const order = appData.orders.find(o=>o.id===orderId);
+  confirmAction({
+    title: 'حذف الطلبية '+(order?order.orderNumber:'')+'؟',
+    message: 'هذا الإجراء نهائي ولا يمكن التراجع عنه.',
+    confirmLabel: 'تأكيد الحذف',
+    dangerous: true,
+    onConfirm: async ()=>{
+      appData.orders = appData.orders.filter(o=>o.id!==orderId);
+      await persist();
+      renderKPIs();
+      renderTable();
+      showToast('تم حذف الطلبية', 'ok');
+    }
   });
 }
 
@@ -1631,33 +1670,21 @@ function confirmToggleConfirmation(orderId){
   const order = appData.orders.find(o=>o.id===orderId);
   if(!order) return;
   const willConfirm = !order.confirmed;
-  const root = document.getElementById('modal-root');
-  root.innerHTML =
-    '<div class="modal-backdrop" data-close-confirm>' +
-      '<div class="modal-card modal-card-sm" role="alertdialog" aria-modal="true">' +
-        '<div class="modal-title">'+(willConfirm ? 'تأكيد الطلبية '+escapeHtml(order.orderNumber)+'؟' : 'إلغاء تأكيد الطلبية '+escapeHtml(order.orderNumber)+'؟')+'</div>' +
-        '<p class="modal-sub">'+(willConfirm
-          ? 'بعد التأكيد، أرقام هذه الطلبية بتدخل ضمن مجموع الطلبيات المؤكدة بمؤشرات الأعلى.'
-          : 'بعد الإلغاء، أرقام هذه الطلبية بتُستثنى من مجموع الطلبيات المؤكدة بمؤشرات الأعلى.')+'</p>' +
-        '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' +
-          '<button type="button" class="btn btn-ghost" id="cancel-confirm-toggle-btn">تراجع</button>' +
-          '<button type="button" class="btn btn-primary" id="confirm-confirm-toggle-btn">'+(willConfirm?'تأكيد الطلبية':'إلغاء التأكيد')+'</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>';
-  root.classList.add('modal-open');
-  root.querySelector('[data-close-confirm]').addEventListener('click', e=>{
-    if(e.target.hasAttribute('data-close-confirm')){ root.innerHTML=''; root.classList.remove('modal-open'); }
-  });
-  root.querySelector('#cancel-confirm-toggle-btn').addEventListener('click', ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); });
-  root.querySelector('#confirm-confirm-toggle-btn').addEventListener('click', async ()=>{
-    order.confirmed = willConfirm;
-    order.updatedAt = new Date().toISOString();
-    await persist();
-    root.innerHTML=''; root.classList.remove('modal-open');
-    renderKPIs();
-    renderTable();
-    showToast(willConfirm ? 'تم تأكيد الطلبية' : 'تم إلغاء تأكيد الطلبية', 'ok');
+  confirmAction({
+    title: willConfirm ? 'تأكيد الطلبية '+order.orderNumber+'؟' : 'إلغاء تأكيد الطلبية '+order.orderNumber+'؟',
+    message: willConfirm
+      ? 'بعد التأكيد، أرقام هذه الطلبية بتدخل ضمن مجموع الطلبيات المؤكدة بمؤشرات الأعلى.'
+      : 'بعد الإلغاء، أرقام هذه الطلبية بتُستثنى من مجموع الطلبيات المؤكدة بمؤشرات الأعلى.',
+    cancelLabel: 'تراجع',
+    confirmLabel: willConfirm ? 'تأكيد الطلبية' : 'إلغاء التأكيد',
+    onConfirm: async ()=>{
+      order.confirmed = willConfirm;
+      order.updatedAt = new Date().toISOString();
+      await persist();
+      renderKPIs();
+      renderTable();
+      showToast(willConfirm ? 'تم تأكيد الطلبية' : 'تم إلغاء تأكيد الطلبية', 'ok');
+    }
   });
 }
 
@@ -2118,9 +2145,8 @@ function parseDMY(str){
   return isNaN(d.getTime()) ? null : d;
 }
 
-function entryMatchesPeriod(entry){
+function dateMatchesPeriod(d){
   if(treasuryPeriodFilter === 'all') return true;
-  const d = parseDMY(entry.date);
   if(!d) return false;
   const now = new Date();
   const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -2141,6 +2167,40 @@ function entryMatchesPeriod(entry){
   return true;
 }
 
+function entryMatchesPeriod(entry){
+  if(treasuryPeriodFilter === 'all') return true;
+  return dateMatchesPeriod(parseDMY(entry.date));
+}
+
+function orderDateMatchesPeriod(order){
+  if(treasuryPeriodFilter === 'all') return true;
+  if(!order.updatedAt) return false;
+  const dt = new Date(order.updatedAt);
+  if(isNaN(dt.getTime())) return false;
+  return dateMatchesPeriod(new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()));
+}
+
+function computeTreasuryVolumes(){
+  const orders = appData.orders.filter(o=>o.confirmed).filter(orderDateMatchesPeriod);
+  let paidToSuppliersTotal = 0, paidToScrapyardTotal = 0, customerReceiptsTotal = 0, collectedProfit = 0;
+  orders.forEach(o=>{
+    const t = orderTotals(o);
+    if(o.paidToSupplier) paidToSuppliersTotal += t.costToSupplier;
+    if(o.paidToAmer) paidToScrapyardTotal += t.costToScrapyard;
+    customerReceiptsTotal += t.customerPaidAmount;
+    if(t.hasSell) collectedProfit += t.collectedProfit;
+  });
+  return {
+    purchaseVolume: round2(paidToSuppliersTotal + paidToScrapyardTotal),
+    salesVolume: round2(customerReceiptsTotal),
+    profitVolume: round2(collectedProfit)
+  };
+}
+
+function treasurySupportTotal(){
+  return round2((appData.treasury.support||[]).filter(entryMatchesPeriod).reduce((sum,entry)=> sum + (Number(entry.amount)||0), 0));
+}
+
 function treasuryTotals(){
   const f = computeAggregateFinancials();
   let totalExpenses = 0;
@@ -2148,12 +2208,14 @@ function treasuryTotals(){
     (appData.treasury[c.key]||[]).filter(entryMatchesPeriod).forEach(entry=>{ totalExpenses += Number(entry.amount)||0; });
   });
   totalExpenses = round2(totalExpenses);
-  // صافي الصندوق = نقدي حقيقي: كل ما دفعه الزبائن، ناقص كل ما دُفع فعليًا للموردين والتشليح، ناقص مصاريف الصندوق
-  const net = round2(f.customerReceiptsTotal - f.paidToSuppliersTotal - f.paidToScrapyardTotal - totalExpenses);
+  const totalSupport = treasurySupportTotal();
+  // صافي الصندوق = نقدي حقيقي: كل ما دفعه الزبائن + دعم خارجي، ناقص كل ما دُفع فعليًا للموردين والتشليح، ناقص مصاريف الصندوق
+  const net = round2(f.customerReceiptsTotal + totalSupport - f.paidToSuppliersTotal - f.paidToScrapyardTotal - totalExpenses);
   const netIfFullyCollected = round2(net + f.dueFromCustomers);
+  const volumes = computeTreasuryVolumes();
   return {
-    totalExpenses, net, netIfFullyCollected,
-    purchaseVolume: f.purchaseVolume, salesVolume: f.salesVolume, profitVolume: f.profitVolume
+    totalExpenses, totalSupport, net, netIfFullyCollected, uncollectedProfit: f.uncollectedProfit,
+    purchaseVolume: volumes.purchaseVolume, salesVolume: volumes.salesVolume, profitVolume: volumes.profitVolume
   };
 }
 
@@ -2163,10 +2225,12 @@ function categorySubtotal(key){
 
 function expenseEntryRowHtml(entry, categoryKey){
   const isEditing = !!editingExpenseEntries[entry.id];
+  const isSupport = categoryKey === 'support';
+  const colorClass = isSupport ? 'text-green' : 'text-rust';
   if(!isEditing){
-    const amountText = (entry.amount===''||entry.amount==null) ? '—' : fmtMoney(entry.amount);
+    const amountText = (entry.amount===''||entry.amount==null) ? '—' : (isSupport?'+':'')+fmtMoney(entry.amount);
     return '<div class="expense-entry-row" data-expense-key="'+categoryKey+'" data-entry-id="'+entry.id+'">' +
-      '<span class="expense-entry-view-amount num text-rust">'+amountText+'</span>' +
+      '<span class="expense-entry-view-amount num '+colorClass+'">'+amountText+'</span>' +
       '<span class="expense-entry-view-date">'+escapeHtml(entry.date||'—')+'</span>' +
       '<button type="button" class="icon-btn expense-entry-edit-btn">✏️ تعديل</button>' +
       '<button type="button" class="expense-entry-remove-btn" aria-label="حذف">✕</button>' +
@@ -2174,10 +2238,28 @@ function expenseEntryRowHtml(entry, categoryKey){
   }
   const amountVal = (entry.amount===''||entry.amount==null) ? '' : entry.amount;
   return '<div class="expense-entry-row" data-expense-key="'+categoryKey+'" data-entry-id="'+entry.id+'">' +
-    '<input type="number" min="0" step="0.01" class="expense-entry-amount-input num" placeholder="المبلغ" value="'+amountVal+'">' +
+    '<input type="number" min="0" step="0.01" class="expense-entry-amount-input num'+(isSupport?' support-amount':'')+'" placeholder="المبلغ" value="'+amountVal+'">' +
     '<input type="text" class="expense-entry-date-input" placeholder="التاريخ" value="'+escapeHtml(entry.date||'')+'">' +
     '<button type="button" class="btn btn-sm expense-add-entry-btn expense-entry-save-btn">💾 حفظ</button>' +
     '<button type="button" class="expense-entry-remove-btn" aria-label="حذف">✕</button>' +
+  '</div>';
+}
+
+function treasurySupportBlockHtml(){
+  const matching = (appData.treasury.support || []).filter(entryMatchesPeriod).slice().reverse();
+  const isExpanded = !!expandedExpenseCategories.support;
+  return '<div class="expense-category">' +
+    '<div class="expense-category-head">' +
+      '<span class="expense-category-label">دعم الصندوق من الخارج</span>' +
+      '<span class="num text-green expense-category-subtotal" data-subtotal-key="support">+'+fmtMoney(categorySubtotal('support'))+'</span>' +
+    '</div>' +
+    '<div class="expense-entries-list" data-entries-key="support" style="'+(isExpanded?'':'display:none;')+'">' +
+      (matching.length ? matching.map(entry=>expenseEntryRowHtml(entry,'support')).join('') : '<div class="expense-empty-hint">ما فيه دعم مسجّل ضمن هذه الفترة</div>') +
+    '</div>' +
+    '<div class="expense-category-actions">' +
+      '<button type="button" class="btn btn-ghost btn-sm expense-add-entry-btn" data-add-entry-key="support">+ إضافة دعم</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm expense-history-btn" data-history-key="support">'+(isExpanded ? '▲ إخفاء السجل' : '📋 عرض السجل ('+matching.length+')')+'</button>' +
+    '</div>' +
   '</div>';
 }
 
@@ -2215,6 +2297,10 @@ function renderTreasuryView(){
       '<span class="treasury-profit-label">الصندوق في حال تحصيل كامل الديون</span>' +
       '<span class="treasury-profit-value '+(t.netIfFullyCollected<0?'text-rust':'')+'">'+fmtMoney(t.netIfFullyCollected)+'</span>' +
     '</div>' +
+    '<div class="treasury-profit-card">' +
+      '<span class="treasury-profit-label">الربح غير المحصّل</span>' +
+      '<span class="treasury-profit-value">'+fmtMoney(t.uncollectedProfit)+'</span>' +
+    '</div>' +
     '<button type="button" id="btn-toggle-extra-indicators" class="chip" style="margin-bottom:14px;">📊 مؤشرات إضافية</button>' +
     '<div class="extra-indicators-row" id="extra-indicators-row" style="'+(extraIndicatorsOpen?'':'display:none;')+'">' +
       '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم الشراء</span><span class="treasury-profit-value">'+fmtMoney(t.purchaseVolume)+'</span></div>' +
@@ -2229,9 +2315,11 @@ function renderTreasuryView(){
       '</div>' +
       '<div class="expense-categories">' +
         EXPENSE_CATEGORIES.map(expenseCategoryBlockHtml).join('') +
+        treasurySupportBlockHtml() +
       '</div>' +
       '<div class="treasury-summary">' +
         '<div class="treasury-summary-row"><span>إجمالي المصاريف</span><span class="num text-rust" id="treasury-total-expenses">'+fmtMoney(t.totalExpenses)+'</span></div>' +
+        '<div class="treasury-summary-row"><span>إجمالي الدعم الخارجي</span><span class="num text-green" id="treasury-total-support">+'+fmtMoney(t.totalSupport)+'</span></div>' +
       '</div>' +
     '</div>' +
     '<div class="data-mgmt-row">' +
@@ -2260,6 +2348,7 @@ function renderTreasuryView(){
     if(el2) el2.style.display = extraIndicatorsOpen ? 'grid' : 'none';
   });
   EXPENSE_CATEGORIES.forEach(c=> bindExpenseEntryEvents(c.key));
+  bindExpenseEntryEvents('support');
   updateTreasurySummary();
 }
 
@@ -2354,30 +2443,17 @@ function bindExpenseEntryEvents(key){
 }
 
 function confirmDeleteExpenseEntry(key, entryId){
-  const root = document.getElementById('modal-root');
-  root.innerHTML =
-    '<div class="modal-backdrop" data-close-confirm>' +
-      '<div class="modal-card modal-card-sm" role="alertdialog" aria-modal="true">' +
-        '<div class="modal-title">حذف هذا المبلغ؟</div>' +
-        '<p class="modal-sub">هذا الإجراء نهائي ولا يمكن التراجع عنه.</p>' +
-        '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' +
-          '<button type="button" class="btn btn-ghost" id="cancel-delete-expense-btn">إلغاء</button>' +
-          '<button type="button" class="btn btn-danger" id="confirm-delete-expense-btn">تأكيد الحذف</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>';
-  root.classList.add('modal-open');
-  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
-  root.querySelector('[data-close-confirm]').addEventListener('click', e=>{
-    if(e.target.hasAttribute('data-close-confirm')) close();
-  });
-  root.querySelector('#cancel-delete-expense-btn').addEventListener('click', close);
-  root.querySelector('#confirm-delete-expense-btn').addEventListener('click', async ()=>{
-    appData.treasury[key] = appData.treasury[key].filter(e=>e.id!==entryId);
-    delete editingExpenseEntries[entryId];
-    close();
-    refreshExpenseEntries(key);
-    await persist();
+  confirmAction({
+    title: 'حذف هذا المبلغ؟',
+    message: 'هذا الإجراء نهائي ولا يمكن التراجع عنه.',
+    confirmLabel: 'تأكيد الحذف',
+    dangerous: true,
+    onConfirm: async ()=>{
+      appData.treasury[key] = appData.treasury[key].filter(e=>e.id!==entryId);
+      delete editingExpenseEntries[entryId];
+      refreshExpenseEntries(key);
+      await persist();
+    }
   });
 }
 
@@ -2400,13 +2476,15 @@ function refreshExpenseEntries(key){
 
 function updateExpenseCategorySubtotal(key){
   const el = document.querySelector('[data-subtotal-key="'+key+'"]');
-  if(el) el.textContent = fmtMoney(categorySubtotal(key));
+  if(el) el.textContent = (key==='support'?'+':'')+fmtMoney(categorySubtotal(key));
 }
 
 function updateTreasurySummary(){
   const t = treasuryTotals();
   const totalEl = document.getElementById('treasury-total-expenses');
   if(totalEl) totalEl.textContent = fmtMoney(t.totalExpenses);
+  const supportEl = document.getElementById('treasury-total-support');
+  if(supportEl) supportEl.textContent = '+'+fmtMoney(t.totalSupport);
   const netEl = document.getElementById('treasury-net');
   if(netEl){
     netEl.textContent = fmtMoney(t.net);
@@ -2713,41 +2791,28 @@ function normalizeImportedOrder(o){
 
 function confirmImportOverwrite(parsedData){
   const orderCount = Array.isArray(parsedData.orders) ? parsedData.orders.length : 0;
-  const root = document.getElementById('modal-root');
-  root.innerHTML =
-    '<div class="modal-backdrop" data-close-confirm>' +
-      '<div class="modal-card modal-card-sm" role="alertdialog" aria-modal="true">' +
-        '<div class="modal-title">استيراد البيانات؟</div>' +
-        '<p class="modal-sub">الملف يحتوي '+orderCount+' طلبية. سيتم استبدال كل البيانات الحالية (الطلبيات، الصندوق، المهام) بمحتوى هذا الملف — إجراء نهائي ولا يمكن التراجع عنه.</p>' +
-        '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' +
-          '<button type="button" class="btn btn-ghost" id="cancel-import-btn">إلغاء</button>' +
-          '<button type="button" class="btn btn-danger" id="confirm-import-btn">استبدال البيانات</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>';
-  root.classList.add('modal-open');
-  const closePrompt = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
-  root.querySelector('[data-close-confirm]').addEventListener('click', e=>{
-    if(e.target.hasAttribute('data-close-confirm')) closePrompt();
-  });
-  root.querySelector('#cancel-import-btn').addEventListener('click', closePrompt);
-  root.querySelector('#confirm-import-btn').addEventListener('click', async ()=>{
-    appData = {
-      orders: (Array.isArray(parsedData.orders) ? parsedData.orders : []).map(normalizeImportedOrder),
-      treasury: Object.assign(defaultTreasury(), parsedData.treasury || {}),
-      tasks: Object.assign(defaultTasks(), parsedData.tasks || {})
-    };
-    migrateLegacyCustomerPayment();
-    migrateLegacyOrderLabel();
-    migrateLegacyTreasury();
-    migrateLegacyTasks();
-    await persist();
-    closePrompt();
-    if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
-    renderKPIs();
-    renderTable();
-    updateTasksBadge();
-    showToast('تم استيراد البيانات بنجاح', 'ok');
+  confirmAction({
+    title: 'استيراد البيانات؟',
+    message: 'الملف يحتوي '+orderCount+' طلبية. سيتم استبدال كل البيانات الحالية (الطلبيات، الصندوق، المهام) بمحتوى هذا الملف — إجراء نهائي ولا يمكن التراجع عنه.',
+    confirmLabel: 'استبدال البيانات',
+    dangerous: true,
+    onConfirm: async ()=>{
+      appData = {
+        orders: (Array.isArray(parsedData.orders) ? parsedData.orders : []).map(normalizeImportedOrder),
+        treasury: Object.assign(defaultTreasury(), parsedData.treasury || {}),
+        tasks: Object.assign(defaultTasks(), parsedData.tasks || {})
+      };
+      migrateLegacyCustomerPayment();
+      migrateLegacyOrderLabel();
+      migrateLegacyTreasury();
+      migrateLegacyTasks();
+      await persist();
+      if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
+      renderKPIs();
+      renderTable();
+      updateTasksBadge();
+      showToast('تم استيراد البيانات بنجاح', 'ok');
+    }
   });
 }
 
