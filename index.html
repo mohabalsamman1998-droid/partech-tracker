@@ -937,11 +937,13 @@ function showToast(msg, type){
 function computeAggregateFinancials(){
   const confirmedOrders = appData.orders.filter(o=>o.confirmed);
   let dueToScrapyard = 0, dueToSuppliers = 0, dueFromCustomers = 0, collectedProfit = 0, uncollectedProfit = 0;
+  let paidToScrapyardTotal = 0, paidToSuppliersTotal = 0, customerReceiptsTotal = 0;
   confirmedOrders.forEach(o=>{
     const t = orderTotals(o);
-    if(!o.paidToAmer) dueToScrapyard += t.costToScrapyard;
-    if(!o.paidToSupplier) dueToSuppliers += t.costToSupplier;
+    if(!o.paidToAmer) dueToScrapyard += t.costToScrapyard; else paidToScrapyardTotal += t.costToScrapyard;
+    if(!o.paidToSupplier) dueToSuppliers += t.costToSupplier; else paidToSuppliersTotal += t.costToSupplier;
     if(t.hasSell && t.customerRemaining>0) dueFromCustomers += t.customerRemaining;
+    customerReceiptsTotal += t.customerPaidAmount;
     if(t.hasSell){
       collectedProfit += t.collectedProfit;
       uncollectedProfit += t.uncollectedProfit;
@@ -950,7 +952,8 @@ function computeAggregateFinancials(){
   return {
     confirmedCount: confirmedOrders.length,
     unconfirmedCount: appData.orders.length - confirmedOrders.length,
-    dueToScrapyard, dueToSuppliers, dueFromCustomers, collectedProfit, uncollectedProfit
+    dueToScrapyard, dueToSuppliers, dueFromCustomers, collectedProfit, uncollectedProfit,
+    paidToScrapyardTotal, paidToSuppliersTotal, customerReceiptsTotal
   };
 }
 
@@ -2128,8 +2131,9 @@ function treasuryTotals(){
     (appData.treasury[c.key]||[]).filter(entryMatchesPeriod).forEach(entry=>{ totalExpenses += Number(entry.amount)||0; });
   });
   totalExpenses = round2(totalExpenses);
-  const net = round2(f.collectedProfit - f.dueToScrapyard - f.dueToSuppliers - totalExpenses);
-  return { collectedProfit: f.collectedProfit, totalExpenses, net };
+  // صافي الصندوق = نقدي حقيقي: كل ما دفعه الزبائن، ناقص كل ما دُفع فعليًا للموردين والتشليح، ناقص مصاريف الصندوق
+  const net = round2(f.customerReceiptsTotal - f.paidToSuppliersTotal - f.paidToScrapyardTotal - totalExpenses);
+  return { totalExpenses, net };
 }
 
 function categorySubtotal(key){
