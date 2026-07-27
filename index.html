@@ -1500,7 +1500,19 @@ function bindPaymentRowEvents(){
     const payment = (draft.customerPayments||[]).find(p=>p.id===pid);
     if(!payment) return;
     row.querySelector('.payment-amount-input').addEventListener('input', e=>{
-      payment.amount = e.target.value===''? '' : Number(e.target.value);
+      let val = e.target.value===''? '' : Number(e.target.value);
+      if(val !== '' && val < 0) val = 0;
+      const t = orderTotals(draft);
+      if(t.hasSell && val !== ''){
+        const othersTotal = (draft.customerPayments||[]).reduce((sum,p)=> p.id===pid ? sum : sum + (Number(p.amount)||0), 0);
+        const maxAllowed = round2(Math.max(0, t.sellTotal - othersTotal));
+        if(val > maxAllowed){
+          val = maxAllowed;
+          e.target.value = val;
+          showToast('لا يمكن أن يتجاوز مجموع الدفعات المبلغ المستحق من الزبون ('+fmtMoney(t.sellTotal)+')', 'error');
+        }
+      }
+      payment.amount = val;
       updateModalTotals();
     });
     row.querySelector('.payment-method-select').addEventListener('change', e=>{ payment.method = e.target.value; });
@@ -1601,6 +1613,13 @@ async function onSaveOrder(){
       method: p.method||'',
       date: (p.date||'').trim()
     }));
+
+  const totalsCheck = orderTotals(draft);
+  const totalPaidCheck = cleanedPayments.reduce((sum,p)=> sum + p.amount, 0);
+  if(totalsCheck.hasSell && totalPaidCheck > totalsCheck.sellTotal + 0.01){
+    showToast('مجموع الدفعات ('+fmtMoney(totalPaidCheck)+') يتجاوز المبلغ المستحق من الزبون ('+fmtMoney(totalsCheck.sellTotal)+')', 'error');
+    return false;
+  }
 
   draft.parts = cleanedParts;
   draft.customerPayments = cleanedPayments;
