@@ -29,6 +29,27 @@
     --radius:12px;
     --radius-sm:8px;
   }
+  /* day/light mode — for working outdoors under direct sunlight */
+  :root[data-theme="light"]{
+    --bg:#F6F8F6;
+    --surface:#FFFFFF;
+    --surface-2:#EEF2EE;
+    --border:#D5DCD5;
+    --border-soft:#E3E9E3;
+    --text:#12180F;
+    --text-dim:#465043;
+    --text-faint:#77837A;
+    --green:#0C8F51;
+    --green-ink:#FFFFFF;
+    --green-dim:rgba(12,143,81,.12);
+    --green-line:rgba(12,143,81,.5);
+    --rust:#B5481D;
+    --rust-dim:rgba(181,72,29,.12);
+    --rust-line:rgba(181,72,29,.5);
+    --amber:#9C6A00;
+    --amber-dim:rgba(156,106,0,.14);
+    --amber-line:rgba(156,106,0,.5);
+  }
   *{box-sizing:border-box;}
   input[type="number"]{-moz-appearance:textfield;}
   input[type="number"]::-webkit-outer-spin-button,
@@ -87,13 +108,13 @@
   .auth-message{margin-top:14px;font-size:12.5px;color:var(--text-dim);line-height:1.7;min-height:1em;}
   .auth-message.error{color:var(--rust);}
   .auth-message.ok{color:var(--green);}
-  .who-online-mini{
-    position:fixed;top:10px;left:10px;z-index:60;
+  .corner-mini-bar{position:fixed;top:10px;left:10px;z-index:60;display:flex;gap:6px;}
+  .corner-mini-btn{
     border:1px solid var(--border);background:var(--surface);color:var(--text-faint);
     font-size:11px;padding:4px 8px;border-radius:999px;cursor:pointer;
     font-family:'Tajawal',sans-serif;line-height:1.4;
   }
-  .who-online-mini:hover{border-color:var(--text-faint);color:var(--text-dim);}
+  .corner-mini-btn:hover{border-color:var(--text-faint);color:var(--text-dim);}
   .tasks-badge{
     display:none;align-items:center;justify-content:center;
     position:absolute;top:-7px;inset-inline-end:-7px;
@@ -194,6 +215,7 @@
 
   /* toolbar */
   .toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;}
+  .filter-toggle-wrap{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
   .filter-chips{display:flex;gap:8px;flex-wrap:wrap;}
   .chip{
     border:1px solid var(--border);background:var(--surface);color:var(--text-dim);
@@ -650,7 +672,10 @@
   </div>
 
   <div class="page" id="app-root" style="display:none;">
-    <button id="btn-who-online" class="who-online-mini">👥</button>
+    <div class="corner-mini-bar">
+      <button id="btn-theme-toggle" class="corner-mini-btn" title="تبديل الوضع الليلي/النهاري">🌞</button>
+      <button id="btn-who-online" class="corner-mini-btn">👥</button>
+    </div>
     <header class="topbar">
       <div>
         <div class="brand">بارتك <span class="brand-accent">·</span> تتبع القطع</div>
@@ -667,7 +692,10 @@
       <section id="kpi-row" class="kpi-row"></section>
 
       <section class="toolbar">
-        <div class="filter-chips" id="filter-buttons"></div>
+        <div class="filter-toggle-wrap">
+          <button type="button" id="btn-toggle-filters" class="chip" aria-expanded="false">🔍 فلتر</button>
+          <div class="filter-chips" id="filter-buttons" style="display:none;"></div>
+        </div>
         <input id="search-input" class="search-input" type="text" placeholder="ابحث برقم الطلب أو وصف القطعة…">
       </section>
 
@@ -2505,6 +2533,16 @@ function bindToolbar(){
   document.getElementById('btn-open-treasury').addEventListener('click', ()=> promptTreasuryPassword());
   document.getElementById('btn-open-tasks').addEventListener('click', openTasksView);
   document.getElementById('btn-who-online').addEventListener('click', showWhoIsOnline);
+  document.getElementById('btn-theme-toggle').addEventListener('click', ()=>{
+    const current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    applyTheme(current === 'light' ? 'dark' : 'light');
+  });
+  document.getElementById('btn-toggle-filters').addEventListener('click', ()=>{
+    const el = document.getElementById('filter-buttons');
+    const opening = el.style.display === 'none';
+    el.style.display = opening ? 'flex' : 'none';
+    document.getElementById('btn-toggle-filters').setAttribute('aria-expanded', opening ? 'true' : 'false');
+  });
   const search = document.getElementById('search-input');
   let debounceTimer;
   search.addEventListener('input', (e)=>{
@@ -2638,6 +2676,21 @@ function bindAuthGate(){
   sendBtn.addEventListener('click', trySend);
   emailInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); trySend(); } });
 }
+
+/* ---------- day/night theme toggle — persisted per browser, applies even on the login screen ---------- */
+function applyTheme(theme){
+  document.documentElement.setAttribute('data-theme', theme);
+  try{ localStorage.setItem('partech-theme', theme); }catch(e){}
+  const btn = document.getElementById('btn-theme-toggle');
+  if(btn) btn.textContent = theme === 'light' ? '🌙' : '🌞';
+}
+
+function initTheme(){
+  let saved = 'dark';
+  try{ saved = localStorage.getItem('partech-theme') || 'dark'; }catch(e){}
+  applyTheme(saved);
+}
+initTheme();
 
 async function bootstrapAuth(){
   bindAuthGate();
