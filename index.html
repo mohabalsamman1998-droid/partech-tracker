@@ -176,6 +176,9 @@
   .expense-entry-view-amount{min-width:70px;}
   .expense-entry-view-date{font-size:12.5px;color:var(--text-dim);flex:1;}
   .treasury-period-filter{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
+  .extra-indicators-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px;}
+  .extra-indicators-row .treasury-profit-card{margin-bottom:0;padding:14px 16px;}
+  .extra-indicators-row .treasury-profit-value{font-size:19px;}
   .treasury-summary{display:flex;flex-direction:column;gap:8px;margin-top:6px;padding-top:14px;border-top:1px dashed var(--border);}
   .treasury-summary-row{display:flex;justify-content:space-between;align-items:center;font-size:13.5px;font-weight:700;}
   .treasury-summary-row.net{font-size:17px;padding-top:6px;border-top:1px solid var(--border-soft);}
@@ -938,22 +941,27 @@ function computeAggregateFinancials(){
   const confirmedOrders = appData.orders.filter(o=>o.confirmed);
   let dueToScrapyard = 0, dueToSuppliers = 0, dueFromCustomers = 0, collectedProfit = 0, uncollectedProfit = 0;
   let paidToScrapyardTotal = 0, paidToSuppliersTotal = 0, customerReceiptsTotal = 0;
+  let purchaseVolume = 0, salesVolume = 0, profitVolume = 0;
   confirmedOrders.forEach(o=>{
     const t = orderTotals(o);
     if(!o.paidToAmer) dueToScrapyard += t.costToScrapyard; else paidToScrapyardTotal += t.costToScrapyard;
     if(!o.paidToSupplier) dueToSuppliers += t.costToSupplier; else paidToSuppliersTotal += t.costToSupplier;
     if(t.hasSell && t.customerRemaining>0) dueFromCustomers += t.customerRemaining;
     customerReceiptsTotal += t.customerPaidAmount;
+    purchaseVolume += t.costTotal;
     if(t.hasSell){
       collectedProfit += t.collectedProfit;
       uncollectedProfit += t.uncollectedProfit;
+      salesVolume += t.sellTotal;
+      profitVolume += t.profit;
     }
   });
   return {
     confirmedCount: confirmedOrders.length,
     unconfirmedCount: appData.orders.length - confirmedOrders.length,
     dueToScrapyard, dueToSuppliers, dueFromCustomers, collectedProfit, uncollectedProfit,
-    paidToScrapyardTotal, paidToSuppliersTotal, customerReceiptsTotal
+    paidToScrapyardTotal, paidToSuppliersTotal, customerReceiptsTotal,
+    purchaseVolume, salesVolume, profitVolume
   };
 }
 
@@ -1356,8 +1364,16 @@ function attachModalHandlers(){
   const pasteBtn = root.querySelector('#paste-parts-btn');
   if(pasteBtn) pasteBtn.addEventListener('click', pastePartsFromClipboard);
 
-  root.querySelector('#paid-to-amer-check').addEventListener('change', (e)=>{ draft.paidToAmer = e.target.checked; });
-  root.querySelector('#paid-to-supplier-check').addEventListener('change', (e)=>{ draft.paidToSupplier = e.target.checked; });
+  root.querySelector('#paid-to-amer-check').addEventListener('change', (e)=>{
+    const checked = e.target.checked;
+    const msg = checked ? 'تأكيد: تحديد الطلبية كـ"مسدد للتشليح"؟' : 'تأكيد: إلغاء تحديد الطلبية كـ"مسدد للتشليح"؟';
+    if(window.confirm(msg)){ draft.paidToAmer = checked; } else { e.target.checked = !checked; }
+  });
+  root.querySelector('#paid-to-supplier-check').addEventListener('change', (e)=>{
+    const checked = e.target.checked;
+    const msg = checked ? 'تأكيد: تحديد الطلبية كـ"مسدد للمورد"؟' : 'تأكيد: إلغاء تحديد الطلبية كـ"مسدد للمورد"؟';
+    if(window.confirm(msg)){ draft.paidToSupplier = checked; } else { e.target.checked = !checked; }
+  });
   root.querySelector('#add-payment-btn').addEventListener('click', ()=>{
     if(!Array.isArray(draft.customerPayments)) draft.customerPayments = [];
     draft.customerPayments.push({id:uid('pay'), amount:'', method:'', date:todayNumeric()});
@@ -2035,6 +2051,7 @@ let treasuryPeriodFilter = 'all';
 let expandedExpenseCategories = {};
 let editingExpenseEntries = {};
 let treasuryFilterOpen = false;
+let extraIndicatorsOpen = false;
 const TREASURY_PERIODS = [
   {key:'all', label:'الكل'},
   {key:'today', label:'اليوم'},
@@ -2133,7 +2150,11 @@ function treasuryTotals(){
   totalExpenses = round2(totalExpenses);
   // صافي الصندوق = نقدي حقيقي: كل ما دفعه الزبائن، ناقص كل ما دُفع فعليًا للموردين والتشليح، ناقص مصاريف الصندوق
   const net = round2(f.customerReceiptsTotal - f.paidToSuppliersTotal - f.paidToScrapyardTotal - totalExpenses);
-  return { totalExpenses, net };
+  const netIfFullyCollected = round2(net + f.dueFromCustomers);
+  return {
+    totalExpenses, net, netIfFullyCollected,
+    purchaseVolume: f.purchaseVolume, salesVolume: f.salesVolume, profitVolume: f.profitVolume
+  };
 }
 
 function categorySubtotal(key){
@@ -2190,6 +2211,16 @@ function renderTreasuryView(){
       '<span class="treasury-profit-label">صافي الصندوق</span>' +
       '<span class="treasury-profit-value '+(t.net<0?'text-rust':'')+'" id="treasury-net">'+fmtMoney(t.net)+'</span>' +
     '</div>' +
+    '<div class="treasury-profit-card">' +
+      '<span class="treasury-profit-label">الصندوق في حال تحصيل كامل الديون</span>' +
+      '<span class="treasury-profit-value '+(t.netIfFullyCollected<0?'text-rust':'')+'">'+fmtMoney(t.netIfFullyCollected)+'</span>' +
+    '</div>' +
+    '<button type="button" id="btn-toggle-extra-indicators" class="chip" style="margin-bottom:14px;">📊 مؤشرات إضافية</button>' +
+    '<div class="extra-indicators-row" id="extra-indicators-row" style="'+(extraIndicatorsOpen?'':'display:none;')+'">' +
+      '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم الشراء</span><span class="treasury-profit-value">'+fmtMoney(t.purchaseVolume)+'</span></div>' +
+      '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم عمليات البيع</span><span class="treasury-profit-value">'+fmtMoney(t.salesVolume)+'</span></div>' +
+      '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم الأرباح</span><span class="treasury-profit-value">'+fmtMoney(t.profitVolume)+'</span></div>' +
+    '</div>' +
     '<div class="treasury-block">' +
       '<div class="treasury-block-title">المصاريف — كل مبلغ بتاريخه على حدة</div>' +
       '<button type="button" id="btn-toggle-treasury-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر'+(treasuryPeriodFilter!=='all' ? ' ('+(TREASURY_PERIODS.find(p=>p.key===treasuryPeriodFilter)||{}).label+')' : '')+'</button>' +
@@ -2223,6 +2254,11 @@ function renderTreasuryView(){
   bindTreasuryAddButtons();
   bindTreasuryHistoryButtons();
   bindTreasuryPeriodFilter();
+  document.getElementById('btn-toggle-extra-indicators').addEventListener('click', ()=>{
+    extraIndicatorsOpen = !extraIndicatorsOpen;
+    const el2 = document.getElementById('extra-indicators-row');
+    if(el2) el2.style.display = extraIndicatorsOpen ? 'grid' : 'none';
+  });
   EXPENSE_CATEGORIES.forEach(c=> bindExpenseEntryEvents(c.key));
   updateTreasurySummary();
 }
@@ -2311,12 +2347,37 @@ function bindExpenseEntryEvents(key){
     if(dateInput){
       dateInput.addEventListener('input', e=>{ entry.date = e.target.value; });
     }
-    row.querySelector('.expense-entry-remove-btn').addEventListener('click', async ()=>{
-      appData.treasury[key] = appData.treasury[key].filter(e=>e.id!==entryId);
-      delete editingExpenseEntries[entryId];
-      refreshExpenseEntries(key);
-      await persist();
+    row.querySelector('.expense-entry-remove-btn').addEventListener('click', ()=>{
+      confirmDeleteExpenseEntry(key, entryId);
     });
+  });
+}
+
+function confirmDeleteExpenseEntry(key, entryId){
+  const root = document.getElementById('modal-root');
+  root.innerHTML =
+    '<div class="modal-backdrop" data-close-confirm>' +
+      '<div class="modal-card modal-card-sm" role="alertdialog" aria-modal="true">' +
+        '<div class="modal-title">حذف هذا المبلغ؟</div>' +
+        '<p class="modal-sub">هذا الإجراء نهائي ولا يمكن التراجع عنه.</p>' +
+        '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' +
+          '<button type="button" class="btn btn-ghost" id="cancel-delete-expense-btn">إلغاء</button>' +
+          '<button type="button" class="btn btn-danger" id="confirm-delete-expense-btn">تأكيد الحذف</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  root.querySelector('[data-close-confirm]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-confirm')) close();
+  });
+  root.querySelector('#cancel-delete-expense-btn').addEventListener('click', close);
+  root.querySelector('#confirm-delete-expense-btn').addEventListener('click', async ()=>{
+    appData.treasury[key] = appData.treasury[key].filter(e=>e.id!==entryId);
+    delete editingExpenseEntries[entryId];
+    close();
+    refreshExpenseEntries(key);
+    await persist();
   });
 }
 
