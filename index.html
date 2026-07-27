@@ -70,6 +70,14 @@
   .btn-primary:hover{background:#2be389;border-color:#2be389;}
   .btn-ghost{background:transparent;}
   .btn-sm{padding:7px 12px;font-size:13px;}
+  .btn-with-badge{position:relative;overflow:visible;}
+  .tasks-badge{
+    display:none;align-items:center;justify-content:center;
+    position:absolute;top:-7px;inset-inline-end:-7px;
+    min-width:19px;height:19px;padding:0 4px;border-radius:999px;
+    background:var(--rust);color:#fff;border:2px solid var(--bg);
+    font-family:'Cairo',sans-serif;font-weight:800;font-size:11px;line-height:1;
+  }
   .btn-danger{background:var(--rust);border-color:var(--rust);color:#1c0a03;}
   .btn-danger:hover{background:#ef8354;}
   .btn-danger-ghost{background:transparent;border-color:var(--rust-line);color:var(--rust);}
@@ -616,7 +624,7 @@
       </div>
       <div class="topbar-actions">
         <button id="btn-open-treasury" class="btn btn-ghost">📦 الصندوق</button>
-        <button id="btn-open-tasks" class="btn btn-ghost">✅ TASKS</button>
+        <button id="btn-open-tasks" class="btn btn-ghost btn-with-badge">✅ TASKS<span id="tasks-badge" class="tasks-badge"></span></button>
         <button id="btn-new-order" class="btn btn-primary">+ طلبية جديدة</button>
       </div>
     </header>
@@ -2140,6 +2148,14 @@ function taskCategoryPendingCount(key){
   return (appData.tasks[key]||[]).filter(t=>!t.done).length;
 }
 
+function updateTasksBadge(){
+  const badge = document.getElementById('tasks-badge');
+  if(!badge) return;
+  const total = TASK_CATEGORIES.reduce((sum,c)=> sum + taskCategoryPendingCount(c.key), 0);
+  badge.textContent = total > 0 ? total : '';
+  badge.style.display = total > 0 ? 'flex' : 'none';
+}
+
 function openTasksView(){
   document.getElementById('orders-view').style.display = 'none';
   document.getElementById('treasury-view').style.display = 'none';
@@ -2231,6 +2247,7 @@ function bindTaskCategoryEvents(key){
     if(!Array.isArray(appData.tasks[key])) appData.tasks[key] = [];
     appData.tasks[key].push({id: uid('task'), text, done:false, createdAt: new Date().toISOString()});
     input.value = '';
+    updateTasksBadge();
     await persist();
     refreshTaskItemsList(key);
   };
@@ -2249,10 +2266,12 @@ function bindTaskItemEvents(key){
     row.querySelector('.task-item-check').addEventListener('change', async e=>{
       item.done = e.target.checked;
       row.classList.toggle('task-item-done', item.done);
+      updateTasksBadge();
       await persist();
     });
     row.querySelector('.task-item-remove-btn').addEventListener('click', async ()=>{
       appData.tasks[key] = appData.tasks[key].filter(t=>t.id!==tid);
+      updateTasksBadge();
       await persist();
       refreshTaskItemsList(key);
     });
@@ -2446,6 +2465,7 @@ function confirmImportOverwrite(parsedData){
     if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
     renderKPIs();
     renderTable();
+    updateTasksBadge();
     showToast('تم استيراد البيانات بنجاح', 'ok');
   });
 }
@@ -2470,6 +2490,7 @@ async function init(){
   renderFilterButtons();
   bindToolbar();
   renderTable();
+  updateTasksBadge();
 }
 init();
 </script>
