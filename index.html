@@ -71,6 +71,23 @@
   .btn-ghost{background:transparent;}
   .btn-sm{padding:7px 12px;font-size:13px;}
   .btn-with-badge{position:relative;overflow:visible;}
+
+  /* auth gate — shown until the user completes email magic-link sign-in */
+  #auth-gate{position:fixed;inset:0;background:var(--bg);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;}
+  #auth-gate.hidden{display:none;}
+  .auth-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px 26px;max-width:380px;width:100%;text-align:center;}
+  .auth-sub{color:var(--text-dim);font-size:13px;line-height:1.7;margin:10px 0 20px;}
+  .auth-email-input{
+    width:100%;box-sizing:border-box;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+    padding:11px 14px;border-radius:var(--radius-sm);font-size:14px;font-family:'Tajawal',sans-serif;text-align:center;
+    margin-bottom:12px;
+  }
+  .auth-email-input:focus{outline:none;border-color:var(--green-line);}
+  .auth-send-btn{width:100%;}
+  .auth-message{margin-top:14px;font-size:12.5px;color:var(--text-dim);line-height:1.7;min-height:1em;}
+  .auth-message.error{color:var(--rust);}
+  .auth-message.ok{color:var(--green);}
+  .btn-signout{font-size:12px;padding:7px 12px;}
   .tasks-badge{
     display:none;align-items:center;justify-content:center;
     position:absolute;top:-7px;inset-inline-end:-7px;
@@ -616,7 +633,17 @@
 </style>
 </head>
 <body>
-  <div class="page">
+  <div id="auth-gate">
+    <div class="auth-card">
+      <div class="brand">بارتك <span class="brand-accent">·</span> تتبع القطع</div>
+      <p class="auth-sub">هذا التطبيق مخصص لعدد محدود من الموظفين. أدخل بريدك الإلكتروني وبنبعتلك رابط دخول.</p>
+      <input type="email" id="auth-email-input" class="auth-email-input" placeholder="بريدك الإلكتروني" autocomplete="email" inputmode="email">
+      <button type="button" id="auth-send-btn" class="btn btn-primary auth-send-btn">إرسال رابط الدخول</button>
+      <div id="auth-message" class="auth-message"></div>
+    </div>
+  </div>
+
+  <div class="page" id="app-root" style="display:none;">
     <header class="topbar">
       <div>
         <div class="brand">بارتك <span class="brand-accent">·</span> تتبع القطع</div>
@@ -626,6 +653,7 @@
         <button id="btn-open-treasury" class="btn btn-ghost">📦 الصندوق</button>
         <button id="btn-open-tasks" class="btn btn-ghost btn-with-badge">✅ TASKS<span id="tasks-badge" class="tasks-badge"></span></button>
         <button id="btn-new-order" class="btn btn-primary">+ طلبية جديدة</button>
+        <button id="btn-sign-out" class="btn btn-ghost btn-signout" title="تسجيل الخروج">🚪 خروج</button>
       </div>
     </header>
 
@@ -2470,6 +2498,10 @@ function bindToolbar(){
   document.getElementById('btn-new-order').addEventListener('click', ()=> openModal('create'));
   document.getElementById('btn-open-treasury').addEventListener('click', ()=> promptTreasuryPassword());
   document.getElementById('btn-open-tasks').addEventListener('click', openTasksView);
+  document.getElementById('btn-sign-out').addEventListener('click', async ()=>{
+    if(sb) await sb.auth.signOut();
+    showAuthGate();
+  });
   const search = document.getElementById('search-input');
   let debounceTimer;
   search.addEventListener('input', (e)=>{
@@ -2488,7 +2520,78 @@ async function init(){
   renderTable();
   updateTasksBadge();
 }
-init();
+
+/* ---------- access gate (Supabase Auth — email magic link, restricted to an allowlist) ---------- */
+let appInitDone = false;
+
+function showAuthGate(msg, msgType){
+  document.getElementById('app-root').style.display = 'none';
+  document.getElementById('auth-gate').classList.remove('hidden');
+  const msgEl = document.getElementById('auth-message');
+  msgEl.textContent = msg || '';
+  msgEl.className = 'auth-message' + (msgType ? ' '+msgType : '');
+}
+
+async function showAppIfAllowed(session){
+  const email = (session && session.user && session.user.email || '').toLowerCase();
+  try{
+    const { data, error } = await sb.from('allowed_emails').select('email').eq('email', email).maybeSingle();
+    if(error) throw error;
+    if(!data){
+      await sb.auth.signOut();
+      showAuthGate('هذا البريد (' + email + ') غير مصرّح له بالدخول لهذا التطبيق. تواصل مع الإدارة إذا كنت تعتقد إنه خطأ.', 'error');
+      return;
+    }
+  }catch(e){
+    showAuthGate('تعذر التحقق من صلاحية الدخول، حاول مرة أخرى.', 'error');
+    return;
+  }
+  document.getElementById('auth-gate').classList.add('hidden');
+  document.getElementById('app-root').style.display = '';
+  if(!appInitDone){
+    appInitDone = true;
+    init();
+  }
+}
+
+function bindAuthGate(){
+  const emailInput = document.getElementById('auth-email-input');
+  const sendBtn = document.getElementById('auth-send-btn');
+  const trySend = async ()=>{
+    const email = emailInput.value.trim();
+    if(!email){ showAuthGate('اكتب بريدك الإلكتروني أولاً', 'error'); return; }
+    if(!sb){ showAuthGate('تعذر الاتصال بخدمة تسجيل الدخول', 'error'); return; }
+    sendBtn.disabled = true;
+    sendBtn.textContent = 'جاري الإرسال…';
+    try{
+      const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.href } });
+      if(error) throw error;
+      showAuthGate('تم إرسال رابط الدخول إلى ' + email + ' — افتح بريدك واضغط الرابط.', 'ok');
+    }catch(e){
+      showAuthGate('تعذر إرسال رابط الدخول: ' + (e && e.message ? e.message : ''), 'error');
+    }finally{
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'إرسال رابط الدخول';
+    }
+  };
+  sendBtn.addEventListener('click', trySend);
+  emailInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); trySend(); } });
+}
+
+async function bootstrapAuth(){
+  bindAuthGate();
+  if(!sb){
+    showAuthGate('تعذر الاتصال بخدمة تسجيل الدخول — تحقق من إعداد Supabase', 'error');
+    return;
+  }
+  sb.auth.onAuthStateChange((event, session)=>{
+    if(session){ showAppIfAllowed(session); }
+    else { showAuthGate(); }
+  });
+  const { data: { session } } = await sb.auth.getSession();
+  if(session){ showAppIfAllowed(session); } else { showAuthGate(); }
+}
+bootstrapAuth();
 </script>
 </body>
 </html>
