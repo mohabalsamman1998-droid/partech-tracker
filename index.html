@@ -2561,6 +2561,39 @@ async function init(){
   bindToolbar();
   renderTable();
   updateTasksBadge();
+  subscribeAppDataRealtime();
+}
+
+/* ---------- live sync of shared app data across all open sessions, via Supabase Realtime ---------- */
+let appDataChannel = null;
+
+function applyRemoteAppData(json){
+  try{
+    const parsed = JSON.parse(json);
+    appData = {
+      orders: Array.isArray(parsed.orders) ? parsed.orders : [],
+      treasury: Object.assign(defaultTreasury(), parsed.treasury || {}),
+      tasks: Object.assign(defaultTasks(), parsed.tasks || {})
+    };
+    migrateLegacyCustomerPayment();
+    migrateLegacyOrderLabel();
+    migrateLegacyTreasury();
+    migrateLegacyTasks();
+  }catch(e){ return; }
+  renderKPIs();
+  renderTable();
+  updateTasksBadge();
+  if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
+  if(document.getElementById('tasks-view').style.display !== 'none'){ renderTasksView(); }
+}
+
+function subscribeAppDataRealtime(){
+  if(!sb || appDataChannel) return;
+  appDataChannel = sb.channel('app-data-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'app_data', filter: 'id=eq.' + STORAGE_ROW_ID }, (payload)=>{
+      if(payload.new && payload.new.json) applyRemoteAppData(payload.new.json);
+    })
+    .subscribe();
 }
 
 /* ---------- access gate (Supabase Auth — email magic link, restricted to an allowlist) ---------- */
