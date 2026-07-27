@@ -2692,18 +2692,30 @@ function initTheme(){
 }
 initTheme();
 
+function getAuthErrorFromUrl(){
+  try{
+    const raw = (window.location.hash || '').replace(/^#/, '') || (window.location.search || '').replace(/^\?/, '');
+    const params = new URLSearchParams(raw);
+    const desc = params.get('error_description');
+    if(desc) return desc.replace(/\+/g, ' ');
+    return params.get('error');
+  }catch(e){ return null; }
+}
+
 async function bootstrapAuth(){
   bindAuthGate();
   if(!sb){
     showAuthGate('تعذر الاتصال بخدمة تسجيل الدخول — تحقق من إعداد Supabase', 'error');
     return;
   }
+  const urlError = getAuthErrorFromUrl();
+  const noSessionMsg = urlError ? 'تعذر تسجيل الدخول: الرابط منتهي الصلاحية أو تم استخدامه من قبل. اطلب رابط دخول جديد من هذه الصفحة.' : undefined;
   sb.auth.onAuthStateChange((event, session)=>{
     if(session){ showAppIfAllowed(session); }
-    else { showAuthGate(); }
+    else { showAuthGate(noSessionMsg, noSessionMsg ? 'error' : undefined); }
   });
   const { data: { session } } = await sb.auth.getSession();
-  if(session){ showAppIfAllowed(session); } else { showAuthGate(); }
+  if(session){ showAppIfAllowed(session); } else { showAuthGate(noSessionMsg, noSessionMsg ? 'error' : undefined); }
 }
 bootstrapAuth();
 </script>
