@@ -388,6 +388,7 @@
   .fee-percent-row input{width:70px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:6px;font-size:13px;text-align:center;}
   .fee-percent-row input:focus{outline:none;border-color:var(--green-line);}
   .fee-amount-preview{color:var(--green);font-weight:700;font-size:12.5px;}
+  .service-fee-amount-preview{color:var(--green);font-weight:700;font-size:12.5px;}
 
   .totals-row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:4px;}
   .total-box{background:var(--surface);border:1px solid var(--border-soft);border-radius:6px;padding:9px 10px;display:flex;flex-direction:column;gap:5px;}
@@ -779,9 +780,12 @@ function orderTotals(order){
   const feeEnabled = !!order.feeEnabled;
   const feePercent = Number(order.feePercent)||0;
   const feeAmount = (hasSell && feeEnabled) ? round2(partsSellTotal * feePercent / 100) : 0;
+  const serviceFeeEnabled = !!order.serviceFeeEnabled;
+  const serviceFeePercent = Number(order.serviceFeePercent)||0;
+  const serviceFeeAmount = (hasSell && serviceFeeEnabled) ? round2(partsSellTotal * serviceFeePercent / 100) : 0;
   const deliveryFeeEnabled = !!order.deliveryFeeEnabled;
   const deliveryFeeAmount = (hasSell && deliveryFeeEnabled) ? round2(Number(order.deliveryFeeAmount)||0) : 0;
-  const sellTotal = partsSellTotal + feeAmount + deliveryFeeAmount; // المبلغ الكامل المستحق من الزبون (شامل نسبة الخدمة وأجور التوصيل)
+  const sellTotal = partsSellTotal + feeAmount + serviceFeeAmount + deliveryFeeAmount; // المبلغ الكامل المستحق من الزبون (شامل نسبة الخدمة، نسبة الخدمات، وأجور التوصيل)
   const customerPaidAmount = (order.customerPayments||[]).reduce((sum,p)=> sum + (Number(p.amount)||0), 0);
   const customerRemaining = hasSell ? round2(sellTotal - customerPaidAmount) : 0;
   const customerFullyPaid = hasSell && customerRemaining <= 0.01;
@@ -801,6 +805,9 @@ function orderTotals(order){
     feeAmount,
     feePercent,
     feeEnabled,
+    serviceFeeAmount,
+    serviceFeePercent,
+    serviceFeeEnabled,
     deliveryFeeAmount,
     deliveryFeeEnabled,
     sellTotal,
@@ -1237,6 +1244,8 @@ function modalHtml(d){
           '<div id="part-type-gate-wrap">'+partAddControlsHtml()+'</div>' +
           '<label class="toggle-row"><input type="checkbox" id="order-fee-toggle" '+(d.feeEnabled?'checked':'')+'><span>احتساب نسبة رسوم خدمة وتوصيل</span></label>' +
           '<div class="fee-percent-row" id="order-fee-percent-row" style="'+(d.feeEnabled?'':'display:none;')+'"><span>النسبة</span><input type="number" min="0" step="0.1" id="order-fee-percent-input" class="num" value="'+(d.feePercent?d.feePercent:'')+'" placeholder="0"><span>%</span><span class="fee-amount-preview" id="fee-amount-preview"></span></div>' +
+          '<label class="toggle-row"><input type="checkbox" id="order-service-fee-toggle" '+(d.serviceFeeEnabled?'checked':'')+'><span>احتساب نسبة رسوم خدمات</span></label>' +
+          '<div class="fee-percent-row" id="order-service-fee-percent-row" style="'+(d.serviceFeeEnabled?'':'display:none;')+'"><span>النسبة</span><input type="number" min="0" step="0.1" id="order-service-fee-percent-input" class="num" value="'+(d.serviceFeePercent?d.serviceFeePercent:'')+'" placeholder="0"><span>%</span><span class="service-fee-amount-preview" id="service-fee-amount-preview"></span></div>' +
           '<label class="toggle-row"><input type="checkbox" id="order-delivery-fee-toggle" '+(d.deliveryFeeEnabled?'checked':'')+'><span>احتساب أجور التوصيل</span></label>' +
           '<div class="fee-percent-row" id="order-delivery-fee-row" style="'+(d.deliveryFeeEnabled?'':'display:none;')+'"><span>المبلغ</span><input type="number" min="0" step="0.5" id="order-delivery-fee-input" class="num" value="'+(d.deliveryFeeAmount?d.deliveryFeeAmount:'')+'" placeholder="0"><span>ر.س</span></div>' +
           '<label class="toggle-row"><input type="checkbox" id="paid-to-amer-check" '+(d.paidToAmer?'checked':'')+'><span>مسدد للتشليح</span></label>' +
@@ -1288,6 +1297,8 @@ function openModal(mode, orderId){
       confirmed:false,
       feeEnabled:false,
       feePercent:0,
+      serviceFeeEnabled:false,
+      serviceFeePercent:0,
       deliveryFeeEnabled:false,
       deliveryFeeAmount:0,
       createdAt: new Date().toISOString(),
@@ -1354,6 +1365,16 @@ function attachModalHandlers(){
   });
   root.querySelector('#order-fee-percent-input').addEventListener('input', (e)=>{
     draft.feePercent = e.target.value===''? 0 : Number(e.target.value);
+    updateModalTotals();
+  });
+  root.querySelector('#order-service-fee-toggle').addEventListener('change', (e)=>{
+    draft.serviceFeeEnabled = e.target.checked;
+    const row = document.getElementById('order-service-fee-percent-row');
+    if(row) row.style.display = e.target.checked ? '' : 'none';
+    updateModalTotals();
+  });
+  root.querySelector('#order-service-fee-percent-input').addEventListener('input', (e)=>{
+    draft.serviceFeePercent = e.target.value===''? 0 : Number(e.target.value);
     updateModalTotals();
   });
   root.querySelector('#order-delivery-fee-toggle').addEventListener('change', (e)=>{
@@ -1465,6 +1486,10 @@ function updateModalTotals(){
   const feePreviewEl = document.getElementById('fee-amount-preview');
   if(feePreviewEl){
     feePreviewEl.textContent = (t.feeEnabled && t.feeAmount>0) ? ('= '+fmtMoney(t.feeAmount)) : '';
+  }
+  const serviceFeePreviewEl = document.getElementById('service-fee-amount-preview');
+  if(serviceFeePreviewEl){
+    serviceFeePreviewEl.textContent = (t.serviceFeeEnabled && t.serviceFeeAmount>0) ? ('= '+fmtMoney(t.serviceFeeAmount)) : '';
   }
   const profitEl = document.getElementById('total-profit-display');
   profitEl.textContent = t.hasSell? fmtMoney(t.profit) : '—';
@@ -1718,6 +1743,7 @@ function docSheetHtml(order, type, data){
         '<div class="doc-totals">' +
           '<div class="doc-totals-row"><span>مجموع سعر القطع</span><span class="num">'+fmtNum(subtotal)+' ريال</span></div>' +
           (feeEnabled ? '<div class="doc-totals-row"><span>'+feeLabel+' ('+feePercent+'%)</span><span class="num">'+fmtNum(fee)+' ريال</span></div>' : '') +
+          (t.serviceFeeEnabled && t.serviceFeeAmount>0 ? '<div class="doc-totals-row"><span>رسوم خدمات ('+t.serviceFeePercent+'%)</span><span class="num">'+fmtNum(t.serviceFeeAmount)+' ريال</span></div>' : '') +
           (t.deliveryFeeEnabled && t.deliveryFeeAmount>0 ? '<div class="doc-totals-row"><span>أجور التوصيل</span><span class="num">'+fmtNum(t.deliveryFeeAmount)+' ريال</span></div>' : '') +
           '<div class="doc-totals-row grand"><span>الإجمالي المستحق</span><span class="num" id="doc-grand-total">'+fmtNum(grand)+' ريال</span></div>' +
         '</div>' +
@@ -1835,6 +1861,9 @@ function buildDocWhatsAppText(order, type, data){
   lines.push('مجموع القطع: '+fmtNum(t.partsSellTotal)+' ريال');
   if(feeEnabled){
     lines.push((isInvoice?'رسوم خدمات وتوصيل':'رسوم خدمات شامل التوصيل')+' ('+feePercent+'%): '+fmtNum(fee)+' ريال');
+  }
+  if(t.serviceFeeEnabled && t.serviceFeeAmount>0){
+    lines.push('رسوم خدمات ('+t.serviceFeePercent+'%): '+fmtNum(t.serviceFeeAmount)+' ريال');
   }
   if(t.deliveryFeeEnabled && t.deliveryFeeAmount>0){
     lines.push('أجور التوصيل: '+fmtNum(t.deliveryFeeAmount)+' ريال');
@@ -2368,6 +2397,7 @@ function exportAllDataToExcel(){
       'مسعّرة بالكامل': t.fullyPriced ? 'نعم' : 'لا',
       'إجمالي البيع': t.hasSell ? t.sellTotal : '',
       'نسبة رسوم الخدمة %': t.feeEnabled ? t.feePercent : '',
+      'نسبة رسوم الخدمات %': t.serviceFeeEnabled ? t.serviceFeePercent : '',
       'أجور التوصيل': t.deliveryFeeEnabled ? t.deliveryFeeAmount : '',
       'الربح': t.hasSell ? t.profit : '',
       'المدفوع من الزبون': t.customerPaidAmount,
@@ -2480,6 +2510,8 @@ function normalizeImportedOrder(o){
     confirmed: false,
     feeEnabled: false,
     feePercent: 0,
+    serviceFeeEnabled: false,
+    serviceFeePercent: 0,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
