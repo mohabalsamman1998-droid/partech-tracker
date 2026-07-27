@@ -2599,27 +2599,88 @@ async function showAppIfAllowed(session){
   }
 }
 
-/* ---------- presence ("من متصل الآن") — a lightweight heartbeat, not true realtime ---------- */
-const PRESENCE_HEARTBEAT_MS = 25000;
-const PRESENCE_ONLINE_WINDOW_MS = 70000; // > 2x heartbeat interval, tolerates network jitter
+/* ---------- presence ("من متصل الآن") — tied to real interaction, updated live via Supabase Realtime ---------- */
+const PRESENCE_HEARTBEAT_MS = 15000;
+const PRESENCE_ACTIVE_IDLE_LIMIT_MS = 60000; // must have interacted within the last minute to count as "online"
+const PRESENCE_RECHECK_MS = 8000; // how often we re-derive the visible online list from the local cache (no network call)
 let presenceTimer = null;
+let presenceRecheckTimer = null;
 let presenceEmail = null;
+let lastActivityAt = Date.now();
+let presenceCache = {}; // email -> last_seen (ms epoch), kept in sync via realtime
+let presenceChannel = null;
 
-async function sendPresenceHeartbeat(){
+function markActivity(){ lastActivityAt = Date.now(); }
+
+function sendPresenceHeartbeat(){
   if(!sb || !presenceEmail) return;
+  if(Date.now() - lastActivityAt > PRESENCE_ACTIVE_IDLE_LIMIT_MS) return; // idle — don't report as online
+  sb.from('presence').upsert({ email: presenceEmail, last_seen: new Date(lastActivityAt).toISOString() }).then(()=>{}, ()=>{});
+}
+
+function computeOnlineList(){
+  const cutoff = Date.now() - PRESENCE_ACTIVE_IDLE_LIMIT_MS;
+  return Object.keys(presenceCache)
+    .filter(email => presenceCache[email] >= cutoff)
+    .sort((a,b)=> presenceCache[b] - presenceCache[a]);
+}
+
+function refreshOnlineBadge(){
+  const online = computeOnlineList();
+  const btn = document.getElementById('btn-who-online');
+  if(btn) btn.textContent = '👥 ' + online.length;
+  const listEl = document.getElementById('online-users-list');
+  if(listEl){
+    listEl.innerHTML = online.length === 0
+      ? 'ما فيه أحد متصل حاليًا'
+      : '<div class="task-items-list">' + online.map(email=>
+          '<div class="task-item-row"><span class="task-item-text">🟢 '+escapeHtml(email)+(email===presenceEmail?' (أنت)':'')+'</span></div>'
+        ).join('') + '</div>';
+  }
+}
+
+async function loadPresenceCache(){
   try{
-    await sb.from('presence').upsert({ email: presenceEmail, last_seen: new Date().toISOString() });
-  }catch(e){ /* best-effort — presence is a nice-to-have, never block the app on it */ }
+    const cutoff = new Date(Date.now() - PRESENCE_ACTIVE_IDLE_LIMIT_MS).toISOString();
+    const { data, error } = await sb.from('presence').select('email,last_seen').gte('last_seen', cutoff);
+    if(error) throw error;
+    presenceCache = {};
+    (data||[]).forEach(row=>{ presenceCache[row.email] = new Date(row.last_seen).getTime(); });
+  }catch(e){ /* best-effort */ }
+  refreshOnlineBadge();
+}
+
+function subscribePresenceRealtime(){
+  if(!sb || presenceChannel) return;
+  presenceChannel = sb.channel('presence-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'presence' }, (payload)=>{
+      if(payload.eventType === 'DELETE'){
+        const oldRow = payload.old;
+        if(oldRow && oldRow.email) delete presenceCache[oldRow.email];
+      } else if(payload.new && payload.new.email){
+        presenceCache[payload.new.email] = new Date(payload.new.last_seen).getTime();
+      }
+      refreshOnlineBadge();
+    })
+    .subscribe();
 }
 
 function startPresenceHeartbeat(email){
   presenceEmail = email;
+  lastActivityAt = Date.now();
+  ['mousemove','keydown','mousedown','touchstart','scroll'].forEach(evt=>{
+    document.addEventListener(evt, markActivity, { passive:true });
+  });
   sendPresenceHeartbeat();
+  loadPresenceCache();
+  subscribePresenceRealtime();
   if(presenceTimer) clearInterval(presenceTimer);
   presenceTimer = setInterval(sendPresenceHeartbeat, PRESENCE_HEARTBEAT_MS);
+  if(presenceRecheckTimer) clearInterval(presenceRecheckTimer);
+  presenceRecheckTimer = setInterval(refreshOnlineBadge, PRESENCE_RECHECK_MS);
 }
 
-async function showWhoIsOnline(){
+function showWhoIsOnline(){
   const root = document.getElementById('modal-root');
   root.innerHTML =
     '<div class="modal-backdrop" data-close-confirm>' +
@@ -2637,23 +2698,8 @@ async function showWhoIsOnline(){
     if(e.target.hasAttribute('data-close-confirm')) close();
   });
   root.querySelector('#close-online-btn').addEventListener('click', close);
-
-  const listEl = document.getElementById('online-users-list');
-  try{
-    const cutoff = new Date(Date.now() - PRESENCE_ONLINE_WINDOW_MS).toISOString();
-    const { data, error } = await sb.from('presence').select('email,last_seen').gte('last_seen', cutoff).order('last_seen', { ascending:false });
-    if(error) throw error;
-    if(!listEl) return;
-    if(!data || data.length===0){
-      listEl.innerHTML = 'ما فيه أحد متصل حاليًا';
-    } else {
-      listEl.innerHTML = '<div class="task-items-list">' + data.map(u=>
-        '<div class="task-item-row"><span class="task-item-text">🟢 '+escapeHtml(u.email)+(u.email===presenceEmail?' (أنت)':'')+'</span></div>'
-      ).join('') + '</div>';
-    }
-  }catch(e){
-    if(listEl) listEl.innerHTML = 'تعذر تحميل القائمة';
-  }
+  loadPresenceCache();
+  refreshOnlineBadge();
 }
 
 function bindAuthGate(){
