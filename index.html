@@ -149,12 +149,17 @@
   .treasury-block-title{font-size:13px;font-weight:800;color:var(--text-dim);}
   .treasury-block-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
   .expense-type-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
-  .expense-categories{display:flex;flex-direction:column;gap:16px;}
-  .expense-category{padding-bottom:14px;border-bottom:1px solid var(--border-soft);}
-  .expense-category:last-child{border-bottom:none;padding-bottom:0;}
-  .expense-category-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
-  .expense-category-label{font-size:13.5px;font-weight:700;color:var(--text);}
+  .expense-categories{display:flex;flex-direction:column;}
+  .expense-category-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 2px;border-bottom:1px solid var(--border-soft);}
+  .expense-category-row:last-child{border-bottom:none;}
+  .expense-category-label{font-size:13.5px;font-weight:700;color:var(--text);flex:1;}
   .expense-category-subtotal{font-size:13.5px;}
+  .expense-history-btn{
+    background:transparent;border:1px solid var(--border);color:var(--text-dim);
+    padding:6px 10px;border-radius:999px;font-size:12px;cursor:pointer;flex-shrink:0;
+    font-family:'Cairo',sans-serif;font-weight:700;
+  }
+  .expense-history-btn:hover{border-color:var(--text-faint);color:var(--text);}
   .expense-entries-list{display:flex;flex-direction:column;gap:6px;margin-bottom:8px;}
   .expense-empty-hint{font-size:12px;color:var(--text-faint);padding:4px 0;}
   .expense-entry-row{display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:6px;padding:6px 8px;flex-wrap:wrap;}
@@ -175,7 +180,6 @@
   .expense-entry-remove-btn:hover{border-color:var(--rust-line);color:var(--rust);}
   .expense-add-entry-btn{color:var(--green);border-color:var(--green-line);background:var(--green-dim);}
   .expense-add-entry-btn:hover{background:rgba(34,208,122,.22);}
-  .expense-category-actions{display:flex;gap:8px;flex-wrap:wrap;}
   .expense-entry-view-amount{min-width:70px;}
   .expense-entry-view-date{font-size:12.5px;color:var(--text-dim);flex:1;}
   .treasury-period-filter{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;}
@@ -651,12 +655,10 @@
     .treasury-profit-card{flex-direction:column;align-items:flex-start;gap:6px;padding:16px;}
     .treasury-profit-value{font-size:22px;}
     .treasury-block{padding:14px;}
-    .expense-category-head{flex-wrap:wrap;gap:6px;}
+    .expense-category-row{flex-wrap:wrap;gap:6px;}
     .expense-entry-amount-input{width:100px;}
     .expense-entry-date-input{flex:1 1 100%;}
     .expense-entry-remove-btn{width:34px;height:34px;}
-    .expense-category-actions{width:100%;}
-    .expense-category-actions .btn{flex:1;}
     .data-mgmt-row{justify-content:center;text-align:center;}
     .data-mgmt-label{width:100%;margin-inline-end:0;margin-bottom:2px;}
 
@@ -2096,7 +2098,6 @@ const EXPENSE_CATEGORIES = [
   {key:'other', label:'أخرى'}
 ];
 let treasuryPeriodFilter = 'all';
-let expandedExpenseCategories = {};
 let editingExpenseEntries = {};
 let treasuryFilterOpen = false;
 let extraIndicatorsOpen = false;
@@ -2270,38 +2271,22 @@ function expenseEntryRowHtml(entry, categoryKey){
   '</div>';
 }
 
-function treasurySupportBlockHtml(){
-  const matching = (appData.treasury.support || []).filter(entryMatchesPeriod).slice().reverse();
-  const isExpanded = !!expandedExpenseCategories.support;
-  return '<div class="expense-category">' +
-    '<div class="expense-category-head">' +
-      '<span class="expense-category-label">دعم الصندوق من الخارج</span>' +
-      '<span class="num text-green expense-category-subtotal" data-subtotal-key="support">+'+fmtMoney(categorySubtotal('support'))+'</span>' +
-    '</div>' +
-    '<div class="expense-entries-list" data-entries-key="support" style="'+(isExpanded?'':'display:none;')+'">' +
-      (matching.length ? matching.map(entry=>expenseEntryRowHtml(entry,'support')).join('') : '<div class="expense-empty-hint">ما فيه دعم مسجّل ضمن هذه الفترة</div>') +
-    '</div>' +
-    '<div class="expense-category-actions">' +
-      '<button type="button" class="btn btn-ghost btn-sm expense-add-entry-btn" data-add-entry-key="support">+ إضافة دعم</button>' +
-      '<button type="button" class="btn btn-ghost btn-sm expense-history-btn" data-history-key="support">'+(isExpanded ? '▲ إخفاء السجل' : '📋 عرض السجل ('+matching.length+')')+'</button>' +
-    '</div>' +
+function treasurySupportRowHtml(){
+  const count = (appData.treasury.support || []).filter(entryMatchesPeriod).length;
+  return '<div class="expense-category-row">' +
+    '<span class="expense-category-label">دعم الصندوق من الخارج</span>' +
+    '<span class="num text-green expense-category-subtotal" data-subtotal-key="support">+'+fmtMoney(categorySubtotal('support'))+'</span>' +
+    '<button type="button" class="btn btn-ghost btn-sm expense-add-entry-btn" data-add-entry-key="support">+ إضافة دعم</button>' +
+    '<button type="button" class="expense-history-btn" data-history-key="support" data-history-label="دعم الصندوق من الخارج">📋 '+count+'</button>' +
   '</div>';
 }
 
-function expenseCategoryBlockHtml(c, i){
-  const matching = (appData.treasury[c.key] || []).filter(entryMatchesPeriod).slice().reverse();
-  const isExpanded = !!expandedExpenseCategories[c.key];
-  return '<div class="expense-category">' +
-    '<div class="expense-category-head">' +
-      '<span class="expense-category-label">'+(i+1)+'. '+c.label+'</span>' +
-      '<span class="num text-rust expense-category-subtotal" data-subtotal-key="'+c.key+'">'+fmtMoney(categorySubtotal(c.key))+'</span>' +
-    '</div>' +
-    '<div class="expense-entries-list" data-entries-key="'+c.key+'" style="'+(isExpanded?'':'display:none;')+'">' +
-      (matching.length ? matching.map(entry=>expenseEntryRowHtml(entry,c.key)).join('') : '<div class="expense-empty-hint">ما فيه مبالغ ضمن هذه الفترة</div>') +
-    '</div>' +
-    '<div class="expense-category-actions">' +
-      '<button type="button" class="btn btn-ghost btn-sm expense-history-btn" data-history-key="'+c.key+'">'+(isExpanded ? '▲ إخفاء السجل' : '📋 عرض السجل ('+matching.length+')')+'</button>' +
-    '</div>' +
+function expenseCategoryRowHtml(c, i){
+  const count = (appData.treasury[c.key] || []).filter(entryMatchesPeriod).length;
+  return '<div class="expense-category-row">' +
+    '<span class="expense-category-label">'+(i+1)+'. '+c.label+'</span>' +
+    '<span class="num text-rust expense-category-subtotal" data-subtotal-key="'+c.key+'">'+fmtMoney(categorySubtotal(c.key))+'</span>' +
+    '<button type="button" class="expense-history-btn" data-history-key="'+c.key+'" data-history-label="'+escapeHtml(c.label)+'">📋 '+count+'</button>' +
   '</div>';
 }
 
@@ -2356,8 +2341,8 @@ function renderTreasuryView(){
         TREASURY_PERIODS.map(p=> '<button type="button" class="chip '+(treasuryPeriodFilter===p.key?'chip-active':'')+'" data-period="'+p.key+'">'+p.label+'</button>').join('') +
       '</div>' +
       '<div class="expense-categories">' +
-        EXPENSE_CATEGORIES.map(expenseCategoryBlockHtml).join('') +
-        treasurySupportBlockHtml() +
+        EXPENSE_CATEGORIES.map(expenseCategoryRowHtml).join('') +
+        treasurySupportRowHtml() +
       '</div>' +
       '<div class="treasury-summary">' +
         '<div class="treasury-summary-row"><span>إجمالي المصاريف</span><span class="num text-rust" id="treasury-total-expenses">'+fmtMoney(t.totalExpenses)+'</span></div>' +
@@ -2451,13 +2436,8 @@ function bindTreasuryHistoryButtons(){
   const el = document.getElementById('treasury-view');
   el.querySelectorAll('[data-history-key]').forEach(btn=>{
     const key = btn.getAttribute('data-history-key');
-    btn.addEventListener('click', ()=>{
-      expandedExpenseCategories[key] = !expandedExpenseCategories[key];
-      const list = document.querySelector('[data-entries-key="'+key+'"]');
-      if(list) list.style.display = expandedExpenseCategories[key] ? 'flex' : 'none';
-      const matching = (appData.treasury[key] || []).filter(entryMatchesPeriod);
-      btn.textContent = expandedExpenseCategories[key] ? '▲ إخفاء السجل' : '📋 عرض السجل ('+matching.length+')';
-    });
+    const label = btn.getAttribute('data-history-label') || '';
+    btn.addEventListener('click', ()=> openExpenseHistoryModal(key, label));
   });
 }
 
@@ -2470,10 +2450,31 @@ function bindTreasuryAddButtons(){
       const newEntry = {id: uid('exp'), amount:'', date: todayNumeric()};
       appData.treasury[key].push(newEntry);
       editingExpenseEntries[newEntry.id] = true;
-      expandedExpenseCategories[key] = true;
-      refreshExpenseEntries(key);
+      openExpenseHistoryModal(key, 'دعم الصندوق من الخارج');
     });
   });
+}
+
+function openExpenseHistoryModal(key, label){
+  const root = document.getElementById('modal-root');
+  const matching = (appData.treasury[key] || []).filter(entryMatchesPeriod).slice().reverse();
+  root.innerHTML =
+    '<div class="modal-backdrop" data-close-backdrop>' +
+      '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
+        '<div class="modal-header"><div class="modal-title">'+escapeHtml(label)+'</div>' +
+          '<button type="button" class="icon-btn" id="expense-history-close-btn" aria-label="إغلاق">✕</button></div>' +
+        '<div class="expense-entries-list" data-entries-key="'+key+'">' +
+          (matching.length ? matching.map(entry=>expenseEntryRowHtml(entry,key)).join('') : '<div class="expense-empty-hint">ما فيه مبالغ ضمن هذه الفترة</div>') +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); renderTreasuryView(); };
+  root.querySelector('[data-close-backdrop]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-backdrop')) close();
+  });
+  root.querySelector('#expense-history-close-btn').addEventListener('click', close);
+  bindExpenseEntryEvents(key);
 }
 
 let addExpenseSelectedType = null;
@@ -2586,7 +2587,6 @@ function refreshExpenseEntries(key){
   const list = document.querySelector('[data-entries-key="'+key+'"]');
   if(!list) return;
   const matching = (appData.treasury[key]||[]).filter(entryMatchesPeriod).slice().reverse();
-  list.style.display = expandedExpenseCategories[key] ? 'flex' : 'none';
   list.innerHTML = matching.length
     ? matching.map(entry=>expenseEntryRowHtml(entry,key)).join('')
     : '<div class="expense-empty-hint">ما فيه مبالغ ضمن هذه الفترة</div>';
@@ -2594,9 +2594,7 @@ function refreshExpenseEntries(key){
   updateExpenseCategorySubtotal(key);
   updateTreasurySummary();
   const historyBtn = document.querySelector('[data-history-key="'+key+'"]');
-  if(historyBtn){
-    historyBtn.textContent = expandedExpenseCategories[key] ? '▲ إخفاء السجل' : '📋 عرض السجل ('+matching.length+')';
-  }
+  if(historyBtn) historyBtn.textContent = '📋 '+matching.length;
 }
 
 function updateExpenseCategorySubtotal(key){
