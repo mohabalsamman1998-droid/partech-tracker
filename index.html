@@ -51,6 +51,7 @@
     --amber-line:rgba(156,106,0,.5);
   }
   *{box-sizing:border-box;}
+  ::placeholder{font-style:normal;opacity:1;}
   input[type="number"]{-moz-appearance:textfield;}
   input[type="number"]::-webkit-outer-spin-button,
   input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
@@ -305,7 +306,8 @@
   /* cards (mobile) */
   .cards-list{display:none;padding:10px;gap:10px;flex-direction:column;}
   .order-card{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;}
-  .order-card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
+  .order-card-head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;}
+  .order-card-head-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;}
   .order-card-row{display:flex;justify-content:flex-start;gap:6px;font-size:13px;color:var(--text-dim);padding:3px 0;}
   .order-card-row .num{color:var(--text);}
   .order-card-badges{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap;}
@@ -379,11 +381,13 @@
   .btn-add-used-part{color:var(--amber);border-color:var(--amber-line);background:var(--amber-dim);}
   .btn-add-used-part:hover{background:rgba(232,178,61,.22);border-color:var(--amber);}
   .part-row{display:flex;gap:8px;align-items:flex-end;background:var(--surface);border:1px solid var(--border-soft);border-radius:var(--radius-sm);padding:10px;}
+  .part-desc-row{display:flex;align-items:center;gap:8px;}
   .part-index-badge{
-    display:flex;align-items:center;justify-content:center;flex-shrink:0;align-self:center;
-    width:24px;height:24px;border-radius:999px;background:var(--green-dim);border:1px solid var(--green-line);
-    color:var(--green);font-family:'Cairo',sans-serif;font-weight:800;font-size:12px;
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;
+    width:26px;height:26px;border-radius:999px;background:var(--text);
+    color:var(--bg);font-family:'Cairo',sans-serif;font-weight:800;font-size:13px;
   }
+  .part-desc-row .part-desc-input{flex:1;min-width:0;}
   .part-desc-wrap{flex:1;display:flex;flex-direction:column;gap:4px;}
   .part-desc-input{
     flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);
@@ -1070,7 +1074,7 @@ function rowHtml(order){
       : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="'+order.id+'">تأكيد</button>'
     )+'</td>' +
     '<td class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? '<span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+'</td>' +
-    '<td><button type="button" class="icon-btn" data-contact-open="'+order.id+'" aria-label="تواصل">📞</button></td>' +
+    '<td>'+((order.customerPhone||'').trim() ? '<button type="button" class="icon-btn" data-contact-open="'+order.id+'" aria-label="تواصل">📞</button>' : '<span class="muted">—</span>')+'</td>' +
     '<td class="num">'+(t.hasSell? '<span class="text-green">'+fmtMoney(t.sellTotal)+'</span>' : '<span class="muted">لم يُسعّر بعد</span>')+'</td>' +
     '<td>'+(t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد '+fmtMoney(t.costToScrapyard),'غير مسدد '+fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>')+'</td>' +
     '<td>'+(t.costToSupplier>0 ? stampBadge(order.paidToSupplier,'مسدد '+fmtMoney(t.costToSupplier),'غير مسدد '+fmtMoney(t.costToSupplier)) : '<span class="muted">—</span>')+'</td>' +
@@ -1085,11 +1089,16 @@ function cardHtml(order){
   const t = orderTotals(order);
   const highlightClass = order.confirmed ? (order.supplied ? 'card-supplied' : 'card-not-supplied') : 'card-unconfirmed';
   return '<div class="order-card '+highlightClass+'">' +
-    '<div class="order-card-head">'+(order.confirmed
-      ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="'+order.id+'">✓ مؤكدة</button>'
-      : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="'+order.id+'">تأكيد</button>'
-    )+'<span class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? ' <span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+'</span>' +
-    '<button type="button" class="icon-btn" data-contact-open="'+order.id+'" aria-label="تواصل">📞</button></div>' +
+    '<div class="order-card-head">' +
+      '<span class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? ' <span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+'</span>' +
+      '<div class="order-card-head-actions">' +
+        (order.confirmed
+          ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="'+order.id+'">✓ مؤكدة</button>'
+          : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="'+order.id+'">تأكيد</button>'
+        ) +
+        ((order.customerPhone||'').trim() ? '<button type="button" class="icon-btn" data-contact-open="'+order.id+'" aria-label="تواصل">📞</button>' : '') +
+      '</div>' +
+    '</div>' +
     '<div class="order-card-row"><span>إجمالي البيع</span><span class="num '+(t.hasSell?'text-green':'')+'">'+(t.hasSell?fmtMoney(t.sellTotal):'لم يُسعّر بعد')+'</span></div>' +
     '<div class="order-card-badges">' +
       (t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد للتشليح '+fmtMoney(t.costToScrapyard),'غير مسدد للتشليح '+fmtMoney(t.costToScrapyard)) : '') +
@@ -1109,7 +1118,7 @@ function orderNumberSortKey(order){
 
 function renderTable(){
   const el = document.getElementById('table-container');
-  const orders = appData.orders.filter(orderMatches).sort((a,b)=> orderNumberSortKey(a) - orderNumberSortKey(b));
+  const orders = appData.orders.filter(orderMatches).sort((a,b)=> orderNumberSortKey(b) - orderNumberSortKey(a));
 
   if(orders.length===0){
     el.innerHTML = '<div class="empty-state">' +
@@ -1271,9 +1280,11 @@ function partRowHtml(p, i){
   const sellVal = (p.sellPrice===''||p.sellPrice==null) ? '' : p.sellPrice;
   const qtyVal = (p.qty===''||p.qty==null) ? 1 : p.qty;
   return '<div class="part-row" data-part-id="'+p.id+'">' +
-    '<span class="part-index-badge">'+((i!=null?i:0)+1)+'</span>' +
     '<div class="part-desc-wrap">' +
-      '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="'+escapeHtml(p.description)+'">' +
+      '<div class="part-desc-row">' +
+        '<span class="part-index-badge">'+((i!=null?i:0)+1)+'</span>' +
+        '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="'+escapeHtml(p.description)+'">' +
+      '</div>' +
       (p.used ? '<span class="used-badge">مستعمل</span>' : '') +
     '</div>' +
     '<div class="part-price-group">' +
@@ -1947,7 +1958,7 @@ function openDocumentView(orderId, type){
   const field = type==='invoice' ? 'invoiceDoc' : 'quoteDoc';
   const existing = order[field];
   const data = Object.assign(
-    { number: nextDocNumber(type==='invoice'?'WI':'WQ', field), date: todayNumeric(), customerName:'', carModel:'', vin:'', customerCR:'', footerNote: defaultFooterNoteFor(type), showVat: true },
+    { number: nextDocNumber(type==='invoice'?'WI':'WQ', field), date: todayNumeric(), customerName:'', carModel:'', vin:'', customerCR:'', footerNote: defaultFooterNoteFor(type), showVat: false },
     existing || {}
   );
   docState = { orderId, type, data };
