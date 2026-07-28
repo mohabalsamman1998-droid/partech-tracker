@@ -176,7 +176,12 @@
   .expense-category-actions{display:flex;gap:8px;flex-wrap:wrap;}
   .expense-entry-view-amount{min-width:70px;}
   .expense-entry-view-date{font-size:12.5px;color:var(--text-dim);flex:1;}
-  .treasury-period-filter{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
+  .treasury-period-filter{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;}
+  .extra-indicators-month-input{
+    border:1px solid var(--border);background:var(--surface);color:var(--text);
+    padding:6px 12px;border-radius:999px;font-size:12.5px;font-family:'Tajawal',sans-serif;
+  }
+  .extra-indicators-month-input:focus{outline:none;border-color:var(--green-line);}
   .extra-indicators-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px;}
   .extra-indicators-row .treasury-profit-card{margin-bottom:0;padding:14px 16px;}
   .extra-indicators-row .treasury-profit-value{font-size:19px;}
@@ -418,11 +423,11 @@
     background:var(--bg);border:1px solid var(--border);color:var(--text);
     padding:7px 9px;border-radius:6px;font-size:13px;font-family:'Tajawal',sans-serif;
   }
-  .payment-date-input{
-    flex:1;min-width:110px;background:var(--bg);border:1px solid var(--border);color:var(--text);
-    padding:7px 9px;border-radius:6px;font-size:13px;font-family:'Tajawal',sans-serif;
+  .payment-date-display{
+    flex:1;min-width:110px;color:var(--text-dim);
+    padding:7px 9px;font-size:13px;font-family:'Tajawal',sans-serif;
   }
-  .payment-amount-input:focus,.payment-method-select:focus,.payment-date-input:focus{outline:none;border-color:var(--green-line);}
+  .payment-amount-input:focus,.payment-method-select:focus{outline:none;border-color:var(--green-line);}
   .payment-remove-btn{
     background:transparent;border:1px solid var(--border);color:var(--text-faint);
     width:30px;height:30px;border-radius:6px;cursor:pointer;font-size:12px;flex-shrink:0;
@@ -619,7 +624,7 @@
     /* payment rows */
     .payment-amount-input{width:110px;}
     .payment-method-select{flex:1;min-width:100px;}
-    .payment-date-input{flex:1 1 100%;}
+    .payment-date-display{flex:1 1 100%;}
     .payment-remove-btn{width:34px;height:34px;}
 
     /* fee row */
@@ -1114,7 +1119,7 @@ function paymentRowHtml(p){
       '<option value="cash"'+(p.method==='cash'?' selected':'')+'>كاش</option>' +
       '<option value="card"'+(p.method==='card'?' selected':'')+'>شبكة</option>' +
     '</select>' +
-    '<input type="text" class="payment-date-input" placeholder="التاريخ" value="'+escapeHtml(p.date||'')+'">' +
+    '<span class="payment-date-display">'+escapeHtml(p.date||'')+'</span>' +
     '<button type="button" class="payment-remove-btn" data-remove-payment="'+p.id+'" aria-label="حذف الدفعة">✕</button>' +
   '</div>';
 }
@@ -1519,7 +1524,6 @@ function bindPaymentRowEvents(){
       updateModalTotals();
     });
     row.querySelector('.payment-method-select').addEventListener('change', e=>{ payment.method = e.target.value; });
-    row.querySelector('.payment-date-input').addEventListener('input', e=>{ payment.date = e.target.value; });
     row.querySelector('[data-remove-payment]').addEventListener('click', ()=>{
       confirmAction({
         title: 'حذف هذه الدفعة؟',
@@ -2101,6 +2105,8 @@ let editingExpenseEntries = {};
 let treasuryFilterOpen = false;
 let extraIndicatorsOpen = false;
 let extraIndicatorsFilterOpen = false;
+let extraIndicatorsPeriod = 'all';
+let extraIndicatorsCustomMonth = '';
 const TREASURY_PERIODS = [
   {key:'all', label:'الكل'},
   {key:'today', label:'اليوم'},
@@ -2108,6 +2114,13 @@ const TREASURY_PERIODS = [
   {key:'month', label:'هذا الشهر'},
   {key:'lastMonth', label:'الشهر الماضي'}
 ];
+const ARABIC_MONTHS = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+function arabicMonthLabel(yyyyMm){
+  const m = /^(\d{4})-(\d{2})$/.exec(yyyyMm||'');
+  if(!m) return '';
+  const monthIndex = parseInt(m[2],10)-1;
+  return (ARABIC_MONTHS[monthIndex]||'') + ' ' + m[1];
+}
 const TREASURY_PASSWORD = '3133';
 const TREASURY_ALLOWED_EMAILS = ['mohabalsamman1998@gmail.com','homam.techno@gmail.com','sammaneng@gmail.com'];
 
@@ -2167,22 +2180,28 @@ function parseDMY(str){
   return isNaN(d.getTime()) ? null : d;
 }
 
-function dateMatchesPeriod(d){
-  if(treasuryPeriodFilter === 'all') return true;
+function dateMatchesPeriod(d, periodKey, customMonth){
+  periodKey = periodKey || treasuryPeriodFilter;
+  if(periodKey === 'all') return true;
   if(!d) return false;
+  if(periodKey === 'customMonth'){
+    const m = /^(\d{4})-(\d{2})$/.exec(customMonth||'');
+    if(!m) return true;
+    return d.getFullYear()===parseInt(m[1],10) && d.getMonth()===(parseInt(m[2],10)-1);
+  }
   const now = new Date();
   const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if(treasuryPeriodFilter === 'today'){
+  if(periodKey === 'today'){
     return d.getTime() === today0.getTime();
   }
-  if(treasuryPeriodFilter === 'week'){
+  if(periodKey === 'week'){
     const weekStart = new Date(today0); weekStart.setDate(weekStart.getDate() - now.getDay());
     return d.getTime() >= weekStart.getTime() && d.getTime() <= today0.getTime();
   }
-  if(treasuryPeriodFilter === 'month'){
+  if(periodKey === 'month'){
     return d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth();
   }
-  if(treasuryPeriodFilter === 'lastMonth'){
+  if(periodKey === 'lastMonth'){
     const lm = new Date(now.getFullYear(), now.getMonth()-1, 1);
     return d.getFullYear()===lm.getFullYear() && d.getMonth()===lm.getMonth();
   }
@@ -2191,7 +2210,7 @@ function dateMatchesPeriod(d){
 
 function entryMatchesPeriod(entry){
   if(treasuryPeriodFilter === 'all') return true;
-  return dateMatchesPeriod(parseDMY(entry.date));
+  return dateMatchesPeriod(parseDMY(entry.date), treasuryPeriodFilter);
 }
 
 function orderDateMatchesPeriod(order){
@@ -2199,11 +2218,19 @@ function orderDateMatchesPeriod(order){
   if(!order.updatedAt) return false;
   const dt = new Date(order.updatedAt);
   if(isNaN(dt.getTime())) return false;
-  return dateMatchesPeriod(new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()));
+  return dateMatchesPeriod(new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()), treasuryPeriodFilter);
+}
+
+function orderMatchesExtraIndicatorsPeriod(order){
+  if(extraIndicatorsPeriod === 'all') return true;
+  if(!order.updatedAt) return false;
+  const dt = new Date(order.updatedAt);
+  if(isNaN(dt.getTime())) return false;
+  return dateMatchesPeriod(new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()), extraIndicatorsPeriod, extraIndicatorsCustomMonth);
 }
 
 function computeTreasuryVolumes(){
-  const orders = appData.orders.filter(o=>o.confirmed).filter(orderDateMatchesPeriod);
+  const orders = appData.orders.filter(o=>o.confirmed).filter(orderMatchesExtraIndicatorsPeriod);
   let paidToSuppliersTotal = 0, paidToScrapyardTotal = 0, customerReceiptsTotal = 0, collectedProfit = 0;
   orders.forEach(o=>{
     const t = orderTotals(o);
@@ -2325,9 +2352,10 @@ function renderTreasuryView(){
     '</div>' +
     '<button type="button" id="btn-toggle-extra-indicators" class="chip" style="margin-bottom:14px;">📊 مؤشرات إضافية</button>' +
     '<div id="extra-indicators-wrap" style="'+(extraIndicatorsOpen?'':'display:none;')+'">' +
-      '<button type="button" id="btn-toggle-extra-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر'+(treasuryPeriodFilter!=='all' ? ' ('+(TREASURY_PERIODS.find(p=>p.key===treasuryPeriodFilter)||{}).label+')' : '')+'</button>' +
+      '<button type="button" id="btn-toggle-extra-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر'+(extraIndicatorsPeriod==='customMonth' ? ' ('+arabicMonthLabel(extraIndicatorsCustomMonth)+')' : (extraIndicatorsPeriod!=='all' ? ' ('+(TREASURY_PERIODS.find(p=>p.key===extraIndicatorsPeriod)||{}).label+')' : ''))+'</button>' +
       '<div class="treasury-period-filter" id="extra-indicators-period-filter" style="'+(extraIndicatorsFilterOpen?'':'display:none;')+'">' +
-        TREASURY_PERIODS.map(p=> '<button type="button" class="chip '+(treasuryPeriodFilter===p.key?'chip-active':'')+'" data-period="'+p.key+'">'+p.label+'</button>').join('') +
+        TREASURY_PERIODS.map(p=> '<button type="button" class="chip '+(extraIndicatorsPeriod===p.key?'chip-active':'')+'" data-extra-period="'+p.key+'">'+p.label+'</button>').join('') +
+        '<input type="month" id="extra-indicators-month-input" class="extra-indicators-month-input" value="'+(extraIndicatorsPeriod==='customMonth'?extraIndicatorsCustomMonth:'')+'">' +
       '</div>' +
       '<div class="extra-indicators-row" id="extra-indicators-row">' +
         '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم الشراء</span><span class="treasury-profit-value">'+fmtMoney(t.purchaseVolume)+'</span></div>' +
@@ -2412,13 +2440,24 @@ function bindExtraIndicatorsFilter(){
   }
   const el = document.getElementById('extra-indicators-period-filter');
   if(!el) return;
-  el.querySelectorAll('[data-period]').forEach(btn=>{
+  el.querySelectorAll('[data-extra-period]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      treasuryPeriodFilter = btn.getAttribute('data-period');
+      extraIndicatorsPeriod = btn.getAttribute('data-extra-period');
+      extraIndicatorsCustomMonth = '';
       extraIndicatorsFilterOpen = true;
       renderTreasuryView();
     });
   });
+  const monthInput = document.getElementById('extra-indicators-month-input');
+  if(monthInput){
+    monthInput.addEventListener('change', e=>{
+      if(!e.target.value) return;
+      extraIndicatorsPeriod = 'customMonth';
+      extraIndicatorsCustomMonth = e.target.value;
+      extraIndicatorsFilterOpen = true;
+      renderTreasuryView();
+    });
+  }
 }
 
 function bindTreasuryHistoryButtons(){
