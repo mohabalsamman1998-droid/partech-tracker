@@ -848,6 +848,7 @@ function orderStatusFlags(order){
   return Object.assign({}, t, {
     waitingAmerPayment: t.costToScrapyard>0 && !order.paidToAmer,
     waitingSupplierPayment: t.costToSupplier>0 && !order.paidToSupplier,
+    waitingSupply: order.confirmed && !order.supplied,
     waitingPricing: !t.hasSell,
     waitingCustomerPayment: t.hasSell && !t.customerFullyPaid,
     complete: (t.costToScrapyard===0 || order.paidToAmer) && (t.costToSupplier===0 || order.paidToSupplier) && t.customerFullyPaid && t.fullyPriced
@@ -988,6 +989,7 @@ function renderKPIs(){
 const FILTERS = [
   {id:'all', label:'الكل'},
   {id:'unconfirmed', label:'بانتظار التأكيد'},
+  {id:'waitingSupply', label:'مؤكدة بانتظار التوريد'},
   {id:'waitingPricing', label:'بانتظار تسعير المبيعات'},
   {id:'waitingAmer', label:'بانتظار السداد للتشليح'},
   {id:'waitingSupplier', label:'بانتظار السداد للمورد'},
@@ -1012,6 +1014,7 @@ function renderFilterButtons(){
 function orderMatches(order){
   const f = orderStatusFlags(order);
   if(currentFilter==='unconfirmed' && order.confirmed) return false;
+  if(currentFilter==='waitingSupply' && !f.waitingSupply) return false;
   if(currentFilter==='waitingPricing' && !f.waitingPricing) return false;
   if(currentFilter==='waitingAmer' && !f.waitingAmerPayment) return false;
   if(currentFilter==='waitingSupplier' && !f.waitingSupplierPayment) return false;
