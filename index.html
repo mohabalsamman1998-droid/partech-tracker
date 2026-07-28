@@ -87,6 +87,8 @@
   }
   .btn:hover{border-color:var(--text-faint);}
   .btn:disabled{opacity:.5;cursor:not-allowed;}
+  .contact-options-col{display:flex;flex-direction:column;gap:8px;margin-top:16px;}
+  .contact-options-col a.btn{display:block;text-align:center;text-decoration:none;}
   .btn-primary{background:var(--green);border-color:var(--green);color:var(--green-ink);}
   .btn-primary:hover{background:#2be389;border-color:#2be389;}
   .btn-ghost{background:transparent;}
@@ -304,7 +306,7 @@
   .cards-list{display:none;padding:10px;gap:10px;flex-direction:column;}
   .order-card{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;}
   .order-card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
-  .order-card-row{display:flex;justify-content:space-between;font-size:13px;color:var(--text-dim);padding:3px 0;}
+  .order-card-row{display:flex;justify-content:flex-start;gap:6px;font-size:13px;color:var(--text-dim);padding:3px 0;}
   .order-card-row .num{color:var(--text);}
   .order-card-badges{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap;}
   .order-card-actions{display:flex;gap:8px;margin-top:8px;}
@@ -340,12 +342,14 @@
   .modal-sub{color:var(--text-dim);font-size:12.5px;margin-top:4px;}
   .field{display:block;margin-bottom:16px;}
   .field-label{display:block;font-size:12.5px;color:var(--text-dim);margin-bottom:6px;font-weight:700;}
-  .field input[type="text"]{
+  .field input[type="text"],.field input[type="tel"]{
     width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
     padding:10px 12px;border-radius:var(--radius-sm);font-size:14px;font-family:'Cairo',sans-serif;font-weight:700;
   }
   .field input[readonly]{background:var(--bg);color:var(--text-dim);cursor:default;}
   .field input:focus{outline:none;border-color:var(--green-line);}
+  .phone-field-row{display:flex;gap:8px;align-items:center;}
+  .phone-field-row input{flex:1;min-width:0;}
 
   .section-block{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;margin-bottom:14px;}
   .section-sales{
@@ -375,6 +379,11 @@
   .btn-add-used-part{color:var(--amber);border-color:var(--amber-line);background:var(--amber-dim);}
   .btn-add-used-part:hover{background:rgba(232,178,61,.22);border-color:var(--amber);}
   .part-row{display:flex;gap:8px;align-items:flex-end;background:var(--surface);border:1px solid var(--border-soft);border-radius:var(--radius-sm);padding:10px;}
+  .part-index-badge{
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;align-self:center;
+    width:24px;height:24px;border-radius:999px;background:var(--green-dim);border:1px solid var(--green-line);
+    color:var(--green);font-family:'Cairo',sans-serif;font-weight:800;font-size:12px;
+  }
   .part-desc-wrap{flex:1;display:flex;flex-direction:column;gap:4px;}
   .part-desc-input{
     flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);
@@ -515,6 +524,9 @@
   .doc-table td{border:1px solid #E2E2E2;padding:8px 10px;color:#222;}
   .doc-table td:first-child{text-align:right;}
   .doc-table tbody tr:nth-child(even){background:#FAFAFA;}
+
+  .doc-vat-toggle{display:flex;align-items:center;gap:6px;margin-top:10px;font-size:12px;color:#666;cursor:pointer;font-family:'Tajawal',sans-serif;}
+  .doc-vat-toggle input{cursor:pointer;}
 
   /* totals — grand total gets a solid brand-black bar with the amount in PARTECH green */
   .doc-totals{width:100%;max-width:300px;margin-top:12px;margin-inline-start:auto;}
@@ -1058,7 +1070,7 @@ function rowHtml(order){
       : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="'+order.id+'">تأكيد</button>'
     )+'</td>' +
     '<td class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? '<span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+'</td>' +
-    '<td>'+order.parts.length+' قطعة</td>' +
+    '<td><button type="button" class="icon-btn" data-contact-open="'+order.id+'" aria-label="تواصل">📞</button></td>' +
     '<td class="num">'+(t.hasSell? '<span class="text-green">'+fmtMoney(t.sellTotal)+'</span>' : '<span class="muted">لم يُسعّر بعد</span>')+'</td>' +
     '<td>'+(t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد '+fmtMoney(t.costToScrapyard),'غير مسدد '+fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>')+'</td>' +
     '<td>'+(t.costToSupplier>0 ? stampBadge(order.paidToSupplier,'مسدد '+fmtMoney(t.costToSupplier),'غير مسدد '+fmtMoney(t.costToSupplier)) : '<span class="muted">—</span>')+'</td>' +
@@ -1076,7 +1088,8 @@ function cardHtml(order){
     '<div class="order-card-head">'+(order.confirmed
       ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="'+order.id+'">✓ مؤكدة</button>'
       : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="'+order.id+'">تأكيد</button>'
-    )+'<span class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? ' <span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+'</span><span class="muted">'+order.parts.length+' قطعة</span></div>' +
+    )+'<span class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? ' <span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+'</span>' +
+    '<button type="button" class="icon-btn" data-contact-open="'+order.id+'" aria-label="تواصل">📞</button></div>' +
     '<div class="order-card-row"><span>إجمالي البيع</span><span class="num '+(t.hasSell?'text-green':'')+'">'+(t.hasSell?fmtMoney(t.sellTotal):'لم يُسعّر بعد')+'</span></div>' +
     '<div class="order-card-badges">' +
       (t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد للتشليح '+fmtMoney(t.costToScrapyard),'غير مسدد للتشليح '+fmtMoney(t.costToScrapyard)) : '') +
@@ -1089,9 +1102,14 @@ function cardHtml(order){
   '</div>';
 }
 
+function orderNumberSortKey(order){
+  const m = /(\d+)/.exec(order.orderNumber||'');
+  return m ? parseInt(m[1],10) : 0;
+}
+
 function renderTable(){
   const el = document.getElementById('table-container');
-  const orders = appData.orders.filter(orderMatches).sort((a,b)=>(b.updatedAt||'').localeCompare(a.updatedAt||''));
+  const orders = appData.orders.filter(orderMatches).sort((a,b)=> orderNumberSortKey(a) - orderNumberSortKey(b));
 
   if(orders.length===0){
     el.innerHTML = '<div class="empty-state">' +
@@ -1103,12 +1121,19 @@ function renderTable(){
 
   el.innerHTML =
     '<table class="orders-table"><thead><tr>' +
-      '<th>تأكيد</th><th>رقم الطلب</th><th>القطع</th><th>إجمالي البيع</th><th>التشليح</th><th>المورد</th><th>الزبون</th><th></th>' +
+      '<th>تأكيد</th><th>رقم الطلب</th><th>تواصل</th><th>إجمالي البيع</th><th>التشليح</th><th>المورد</th><th>الزبون</th><th></th>' +
     '</tr></thead><tbody>' + orders.map(rowHtml).join('') + '</tbody></table>' +
     '<div class="cards-list">' + orders.map(cardHtml).join('') + '</div>';
 
   el.querySelectorAll('[data-open]').forEach(b=>{
     b.addEventListener('click', ()=> openModal('edit', b.getAttribute('data-open')));
+  });
+  el.querySelectorAll('[data-contact-open]').forEach(btn=>{
+    btn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const order = appData.orders.find(o=>o.id===btn.getAttribute('data-contact-open'));
+      openContactModal(order ? order.customerPhone : '');
+    });
   });
   el.querySelectorAll('[data-confirm-toggle]').forEach(btn=>{
     btn.addEventListener('click', (e)=>{
@@ -1241,11 +1266,12 @@ function bindPartAddControls(){
   });
 }
 
-function partRowHtml(p){
+function partRowHtml(p, i){
   const costVal = (p.costPrice===''||p.costPrice==null) ? '' : p.costPrice;
   const sellVal = (p.sellPrice===''||p.sellPrice==null) ? '' : p.sellPrice;
   const qtyVal = (p.qty===''||p.qty==null) ? 1 : p.qty;
   return '<div class="part-row" data-part-id="'+p.id+'">' +
+    '<span class="part-index-badge">'+((i!=null?i:0)+1)+'</span>' +
     '<div class="part-desc-wrap">' +
       '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="'+escapeHtml(p.description)+'">' +
       (p.used ? '<span class="used-badge">مستعمل</span>' : '') +
@@ -1266,6 +1292,13 @@ function modalHtml(d){
         '<button class="icon-btn" id="modal-close-btn" aria-label="إغلاق">✕</button></div>' +
       '<div class="modal-body">' +
         '<label class="field"><span class="field-label">رقم الطلب (تلقائي)</span><input type="text" class="order-number-input" value="'+escapeHtml(d.orderNumber)+'" readonly></label>' +
+        '<div class="field">' +
+          '<span class="field-label">رقم جوال العميل</span>' +
+          '<div class="phone-field-row">' +
+            '<input type="tel" id="order-phone-input" placeholder="05XXXXXXXX" value="'+escapeHtml(d.customerPhone||'')+'">' +
+            '<button type="button" class="icon-btn" id="order-phone-contact-btn" aria-label="تواصل">📞</button>' +
+          '</div>' +
+        '</div>' +
         '<label class="field"><span class="field-label">الطلبية</span><input type="text" id="order-label-input" placeholder="مثال: اسم الزبون / نوع السيارة / أي وصف مختصر" value="'+escapeHtml(d.orderLabel||'')+'"></label>' +
         '<div class="section-block">' +
           '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span></div>' +
@@ -1327,6 +1360,7 @@ function openModal(mode, orderId){
       paidToAmer:false,
       paidToSupplier:false,
       supplied:false,
+      customerPhone:'',
       customerPayments:[],
       confirmed:false,
       feeEnabled:false,
@@ -1374,6 +1408,8 @@ function attachModalHandlers(){
   root.querySelector('#modal-cancel-btn').addEventListener('click', closeModal);
 
   root.querySelector('#order-label-input').addEventListener('input', e=>{ draft.orderLabel = e.target.value; });
+  root.querySelector('#order-phone-input').addEventListener('input', e=>{ draft.customerPhone = e.target.value; });
+  root.querySelector('#order-phone-contact-btn').addEventListener('click', ()=> openContactModal(draft.customerPhone));
 
   bindPartAddControls();
 
@@ -1677,6 +1713,41 @@ async function onSaveOrder(){
   return true;
 }
 
+/* ---------- contact customer: call or WhatsApp, from either the orders list or inside the order modal ---------- */
+function normalizePhoneForWhatsapp(phone){
+  let p = (phone||'').replace(/[^\d+]/g,'');
+  if(p.startsWith('+')) p = p.slice(1);
+  if(p.startsWith('0')) p = '966' + p.slice(1);
+  else if(!p.startsWith('966')) p = '966' + p;
+  return p;
+}
+
+function openContactModal(phone){
+  if(!phone || !phone.trim()){ showToast('لا يوجد رقم جوال مسجّل لهذه الطلبية', 'error'); return; }
+  const root = document.getElementById('confirm-root');
+  const waNumber = normalizePhoneForWhatsapp(phone);
+  root.innerHTML =
+    '<div class="modal-backdrop" data-close-confirm>' +
+      '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
+        '<div class="modal-title">التواصل مع الزبون</div>' +
+        '<p class="modal-sub">'+escapeHtml(phone)+'</p>' +
+        '<div class="contact-options-col">' +
+          '<a class="btn btn-primary" href="tel:'+escapeHtml(phone)+'" id="contact-call-link">📞 اتصال</a>' +
+          '<a class="btn btn-primary" href="https://wa.me/'+waNumber+'" target="_blank" rel="noopener" id="contact-wa-link">💬 واتساب</a>' +
+          '<button type="button" class="btn btn-ghost" id="contact-modal-close-btn">إلغاء</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  root.querySelector('[data-close-confirm]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-confirm')) close();
+  });
+  root.querySelector('#contact-modal-close-btn').addEventListener('click', close);
+  root.querySelector('#contact-call-link').addEventListener('click', close);
+  root.querySelector('#contact-wa-link').addEventListener('click', close);
+}
+
 /* ---------- unified confirmation dialog — used everywhere a destructive/consequential action needs a yes/no ----------
    uses its own #confirm-root (separate from #modal-root) so it can appear on top of an already-open modal
    (e.g. confirming a part/payment deletion or a paid-status toggle while the order-edit modal is open) without
@@ -1809,6 +1880,7 @@ function docSheetHtml(order, type, data){
   const feeEnabled = t.feeEnabled;
   const fee = t.feeAmount;
   const grand = t.sellTotal;
+  const showVat = data.showVat !== false;
   // الأسعار المدخلة شاملة ضريبة القيمة المضافة أصلاً — هذا استخراج (لا إضافة) لعرض قيمتها فقط، لا يغيّر أي مبلغ فعلي
   const vatAmount = round2(subtotal - (subtotal / 1.15));
 
@@ -1849,9 +1921,10 @@ function docSheetHtml(order, type, data){
         '</div>' +
         '<table class="doc-table"><thead><tr><th>البيـان</th><th>العدد</th><th>السعر الإفرادي</th><th>السعر الإجمالي</th></tr></thead>' +
         '<tbody>'+partsTableRowsHtml(order)+'</tbody></table>' +
+        '<label class="doc-vat-toggle no-print"><input type="checkbox" id="doc-vat-toggle-input" '+(showVat?'checked':'')+'><span>إظهار تفاصيل الضريبة المضافة</span></label>' +
         '<div class="doc-totals">' +
-          '<div class="doc-totals-row"><span>قيمة الضريبة المضافة (15%)</span><span class="num">'+fmtNum(vatAmount)+' ريال</span></div>' +
-          '<div class="doc-totals-row"><span>مجموع سعر القطع شامل الضريبة</span><span class="num">'+fmtNum(subtotal)+' ريال</span></div>' +
+          (showVat ? '<div class="doc-totals-row"><span>قيمة الضريبة المضافة (15%)</span><span class="num">'+fmtNum(vatAmount)+' ريال</span></div>' : '') +
+          (showVat ? '<div class="doc-totals-row"><span>مجموع سعر القطع شامل الضريبة</span><span class="num">'+fmtNum(subtotal)+' ريال</span></div>' : '') +
           (feeEnabled ? '<div class="doc-totals-row"><span>'+feeLabel+' ('+feePercent+'%)</span><span class="num">'+fmtNum(fee)+' ريال</span></div>' : '') +
           (t.serviceFeeEnabled && t.serviceFeeAmount>0 ? '<div class="doc-totals-row"><span>رسوم خدمات ('+t.serviceFeePercent+'%)</span><span class="num">'+fmtNum(t.serviceFeeAmount)+' ريال</span></div>' : '') +
           (t.deliveryFeeEnabled && t.deliveryFeeAmount>0 ? '<div class="doc-totals-row"><span>أجور التوصيل</span><span class="num">'+fmtNum(t.deliveryFeeAmount)+' ريال</span></div>' : '') +
@@ -1874,7 +1947,7 @@ function openDocumentView(orderId, type){
   const field = type==='invoice' ? 'invoiceDoc' : 'quoteDoc';
   const existing = order[field];
   const data = Object.assign(
-    { number: nextDocNumber(type==='invoice'?'WI':'WQ', field), date: todayNumeric(), customerName:'', carModel:'', vin:'', customerCR:'', footerNote: defaultFooterNoteFor(type) },
+    { number: nextDocNumber(type==='invoice'?'WI':'WQ', field), date: todayNumeric(), customerName:'', carModel:'', vin:'', customerCR:'', footerNote: defaultFooterNoteFor(type), showVat: true },
     existing || {}
   );
   docState = { orderId, type, data };
@@ -1883,6 +1956,15 @@ function openDocumentView(orderId, type){
   root.classList.add('doc-open');
   bindDocHandlers();
   document.addEventListener('keydown', docEscListener);
+}
+
+function refreshDocSheet(){
+  if(!docState) return;
+  const order = appData.orders.find(o=>o.id===docState.orderId);
+  if(!order) return;
+  const root = document.getElementById('doc-root');
+  root.innerHTML = docSheetHtml(order, docState.type, docState.data);
+  bindDocHandlers();
 }
 
 function closeDocView(){
@@ -1927,6 +2009,13 @@ function bindDocHandlers(){
   root.querySelector('#doc-car-input').addEventListener('input', e=>{ docState.data.carModel = e.target.value; });
   root.querySelector('#doc-vin-input').addEventListener('input', e=>{ docState.data.vin = e.target.value; });
   root.querySelector('#doc-cr-input').addEventListener('input', e=>{ docState.data.customerCR = e.target.value; });
+  const vatToggleInput = root.querySelector('#doc-vat-toggle-input');
+  if(vatToggleInput){
+    vatToggleInput.addEventListener('change', e=>{
+      docState.data.showVat = e.target.checked;
+      refreshDocSheet();
+    });
+  }
 
   const footerInput = root.querySelector('#doc-footer-input');
   if(footerInput){
@@ -1968,7 +2057,13 @@ function buildDocWhatsAppText(order, type, data){
     lines.push((i+1)+'. '+partDisplayName(p)+' × '+qty+' — '+fmtNum(qty*unit)+' ريال');
   });
   lines.push('');
-  lines.push('مجموع القطع: '+fmtNum(t.partsSellTotal)+' ريال');
+  if(data.showVat !== false){
+    const vatAmt = round2(t.partsSellTotal - (t.partsSellTotal/1.15));
+    lines.push('قيمة الضريبة المضافة (15%): '+fmtNum(vatAmt)+' ريال');
+    lines.push('مجموع سعر القطع شامل الضريبة: '+fmtNum(t.partsSellTotal)+' ريال');
+  } else {
+    lines.push('مجموع القطع: '+fmtNum(t.partsSellTotal)+' ريال');
+  }
   if(feeEnabled){
     lines.push((isInvoice?'رسوم خدمات وتوصيل':'رسوم خدمات شامل التوصيل')+' ('+feePercent+'%): '+fmtNum(fee)+' ريال');
   }
@@ -2814,6 +2909,7 @@ function exportAllDataToExcel(){
     return {
       'رقم الطلب': o.orderNumber,
       'الطلبية': o.orderLabel || '',
+      'رقم جوال العميل': o.customerPhone || '',
       'مؤكدة': o.confirmed ? 'نعم' : 'لا',
       'تم التوريد': o.supplied ? 'نعم' : 'لا',
       'عدد القطع': o.parts.length,
@@ -2955,6 +3051,7 @@ function normalizeImportedOrder(o){
     paidToAmer: false,
     paidToSupplier: false,
     supplied: false,
+    customerPhone: '',
     customerPayments: [],
     confirmed: false,
     feeEnabled: false,
