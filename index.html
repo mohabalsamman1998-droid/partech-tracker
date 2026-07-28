@@ -109,6 +109,7 @@
   .auth-message.error{color:var(--rust);}
   .auth-message.ok{color:var(--green);}
   .corner-mini-bar{position:fixed;top:10px;left:10px;z-index:60;display:flex;gap:6px;}
+  .corner-mini-bar-right{position:fixed;top:10px;right:10px;z-index:60;display:flex;gap:6px;}
   .corner-mini-btn{
     border:1px solid var(--border);background:var(--surface);color:var(--text-faint);
     font-size:11px;padding:4px 8px;border-radius:999px;cursor:pointer;
@@ -559,8 +560,10 @@
 
   /* ============ mobile (placed last so it wins the cascade) ============ */
   @media (max-width:760px){
-    /* prevent iOS auto-zoom on focus + comfortable touch targets */
-    input[type="text"],input[type="number"],input[type="password"],select{font-size:16px;}
+    /* prevent iOS auto-zoom on focus + comfortable touch targets — !important needed since many
+       component-specific rules elsewhere (e.g. .field input[type="text"]) have higher specificity
+       and would otherwise win over this plain type-selector rule despite being defined earlier */
+    input[type="text"],input[type="number"],input[type="password"],input[type="email"],input[type="month"],select,textarea,[contenteditable="true"]{font-size:16px !important;}
     .btn{padding:12px 16px;font-size:14.5px;}
     .btn-sm{padding:10px 14px;font-size:13px;}
     .icon-btn{padding:9px 12px;font-size:12.5px;}
@@ -684,6 +687,9 @@
     <div class="corner-mini-bar">
       <button id="btn-theme-toggle" class="corner-mini-btn" title="تبديل الوضع الليلي/النهاري">🌞</button>
       <button id="btn-who-online" class="corner-mini-btn">👥</button>
+    </div>
+    <div class="corner-mini-bar-right">
+      <button id="btn-refresh-app" class="corner-mini-btn" title="تحديث الموقع">🔄</button>
     </div>
     <header class="topbar">
       <div>
@@ -2217,11 +2223,11 @@ function treasuryTotals(){
   const net = round2(f.customerReceiptsTotal + totalSupport - f.paidToSuppliersTotal - f.paidToScrapyardTotal - totalExpenses);
   // الصندوق بعد التحصيل والسداد = لو تحصّلت كل ديون الزبائن ودُفعت كل مستحقات الموردين/التشاليح
   const netAfterSettlement = round2(net + f.dueFromCustomers - f.dueToScrapyard - f.dueToSuppliers);
-  // الديون = صافي (مستحق من الزبائن) ناقص (مستحق للتشليح + مستحق للموردين)؛ موجب = صافي لنا، سالب = صافي علينا
-  const netDebt = round2(f.dueFromCustomers - f.dueToScrapyard - f.dueToSuppliers);
+  // الديون للموردين = إجمالي المستحق غير المسدد للتشاليح والموردين معًا
+  const debtsToSuppliers = round2(f.dueToScrapyard + f.dueToSuppliers);
   const volumes = computeTreasuryVolumes();
   return {
-    totalExpenses, totalSupport, net, netAfterSettlement, netDebt, uncollectedProfit: f.uncollectedProfit,
+    totalExpenses, totalSupport, net, netAfterSettlement, debtsToSuppliers, dueFromCustomers: f.dueFromCustomers, uncollectedProfit: f.uncollectedProfit,
     purchaseVolume: volumes.purchaseVolume, salesVolume: volumes.salesVolume, profitVolume: volumes.profitVolume
   };
 }
@@ -2323,8 +2329,12 @@ function renderTreasuryView(){
       '<span class="treasury-profit-value">'+fmtMoney(t.uncollectedProfit)+'</span>' +
     '</div>' +
     '<div class="treasury-profit-card">' +
-      '<span class="treasury-profit-label">الديون</span>' +
-      '<span class="treasury-profit-value '+(t.netDebt<0?'text-rust':'')+'">'+fmtMoney(t.netDebt)+'</span>' +
+      '<span class="treasury-profit-label">الديون للموردين</span>' +
+      '<span class="treasury-profit-value text-rust">'+fmtMoney(t.debtsToSuppliers)+'</span>' +
+    '</div>' +
+    '<div class="treasury-profit-card">' +
+      '<span class="treasury-profit-label">مستحق من الزبائن</span>' +
+      '<span class="treasury-profit-value">'+fmtMoney(t.dueFromCustomers)+'</span>' +
     '</div>' +
     '<button type="button" id="btn-toggle-extra-indicators" class="chip" style="margin-bottom:14px;">📊 مؤشرات إضافية</button>' +
     '<div id="extra-indicators-wrap" style="'+(extraIndicatorsOpen?'':'display:none;')+'">' +
@@ -2787,7 +2797,8 @@ function exportAllDataToExcel(){
     { 'المؤشر': 'الصندوق حاليًا', 'القيمة': summary.net },
     { 'المؤشر': 'الصندوق بعد التحصيل والسداد', 'القيمة': summary.netAfterSettlement },
     { 'المؤشر': 'الربح غير المحصّل', 'القيمة': summary.uncollectedProfit },
-    { 'المؤشر': 'الديون', 'القيمة': summary.netDebt },
+    { 'المؤشر': 'الديون للموردين', 'القيمة': summary.debtsToSuppliers },
+    { 'المؤشر': 'مستحق من الزبائن', 'القيمة': summary.dueFromCustomers },
     { 'المؤشر': 'إجمالي المصاريف', 'القيمة': summary.totalExpenses },
     { 'المؤشر': 'إجمالي الدعم الخارجي', 'القيمة': summary.totalSupport },
     { 'المؤشر': 'حجم الشراء', 'القيمة': summary.purchaseVolume },
@@ -2906,6 +2917,9 @@ function bindToolbar(){
   document.getElementById('btn-open-treasury').addEventListener('click', openTreasuryView);
   document.getElementById('btn-open-tasks').addEventListener('click', openTasksView);
   document.getElementById('btn-who-online').addEventListener('click', showWhoIsOnline);
+  document.getElementById('btn-refresh-app').addEventListener('click', ()=>{
+    window.location.href = window.location.pathname + '?r=' + Date.now();
+  });
   document.getElementById('btn-theme-toggle').addEventListener('click', ()=>{
     const current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
     applyTheme(current === 'light' ? 'dark' : 'light');
