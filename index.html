@@ -273,6 +273,10 @@
   .row-unconfirmed .cell-order{color:var(--amber);}
   .card-unconfirmed{opacity:.68;border-style:dashed;}
   .card-unconfirmed .cell-order{color:var(--amber);}
+  tr.row-supplied{background:var(--green-dim);}
+  tr.row-not-supplied{background:var(--amber-dim);}
+  .order-card.card-supplied{background:var(--green-dim);}
+  .order-card.card-not-supplied{background:var(--amber-dim);}
   .muted{color:var(--text-faint);font-weight:400;}
   .text-green{color:var(--green);}
   .text-rust{color:var(--rust);}
@@ -1042,10 +1046,15 @@ function profitColorClass(t){
 
 function rowHtml(order){
   const t = orderTotals(order);
-  return '<tr class="'+(order.confirmed?'':'row-unconfirmed')+'">' +
+  const highlightClass = order.confirmed ? (order.supplied ? 'row-supplied' : 'row-not-supplied') : 'row-unconfirmed';
+  return '<tr class="'+highlightClass+'">' +
     '<td class="confirm-cell">'+(order.confirmed
       ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="'+order.id+'">✓ مؤكدة</button>'
       : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="'+order.id+'">تأكيد</button>'
+    )+'</td>' +
+    '<td class="confirm-cell">'+(order.supplied
+      ? '<button type="button" class="confirm-btn confirm-btn-on" data-supplied-toggle="'+order.id+'">🚚 تم التوريد</button>'
+      : '<button type="button" class="confirm-btn confirm-btn-off" data-supplied-toggle="'+order.id+'">توريد</button>'
     )+'</td>' +
     '<td class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? '<span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+'</td>' +
     '<td>'+order.parts.length+' قطعة</td>' +
@@ -1061,10 +1070,14 @@ function rowHtml(order){
 
 function cardHtml(order){
   const t = orderTotals(order);
-  return '<div class="order-card '+(order.confirmed?'':'card-unconfirmed')+'">' +
+  const highlightClass = order.confirmed ? (order.supplied ? 'card-supplied' : 'card-not-supplied') : 'card-unconfirmed';
+  return '<div class="order-card '+highlightClass+'">' +
     '<div class="order-card-head">'+(order.confirmed
       ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="'+order.id+'">✓ مؤكدة</button>'
       : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="'+order.id+'">تأكيد</button>'
+    )+(order.supplied
+      ? '<button type="button" class="confirm-btn confirm-btn-on" data-supplied-toggle="'+order.id+'">🚚 تم التوريد</button>'
+      : '<button type="button" class="confirm-btn confirm-btn-off" data-supplied-toggle="'+order.id+'">توريد</button>'
     )+'<span class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? ' <span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+'</span><span class="muted">'+order.parts.length+' قطعة</span></div>' +
     '<div class="order-card-row"><span>إجمالي البيع</span><span class="num '+(t.hasSell?'text-green':'')+'">'+(t.hasSell?fmtMoney(t.sellTotal):'لم يُسعّر بعد')+'</span></div>' +
     '<div class="order-card-badges">' +
@@ -1092,12 +1105,18 @@ function renderTable(){
 
   el.innerHTML =
     '<table class="orders-table"><thead><tr>' +
-      '<th>تأكيد</th><th>رقم الطلب</th><th>القطع</th><th>إجمالي البيع</th><th>التشليح</th><th>المورد</th><th>الزبون</th><th></th>' +
+      '<th>تأكيد</th><th>التوريد</th><th>رقم الطلب</th><th>القطع</th><th>إجمالي البيع</th><th>التشليح</th><th>المورد</th><th>الزبون</th><th></th>' +
     '</tr></thead><tbody>' + orders.map(rowHtml).join('') + '</tbody></table>' +
     '<div class="cards-list">' + orders.map(cardHtml).join('') + '</div>';
 
   el.querySelectorAll('[data-open]').forEach(b=>{
     b.addEventListener('click', ()=> openModal('edit', b.getAttribute('data-open')));
+  });
+  el.querySelectorAll('[data-supplied-toggle]').forEach(btn=>{
+    btn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      confirmToggleSupplied(btn.getAttribute('data-supplied-toggle'));
+    });
   });
   el.querySelectorAll('[data-confirm-toggle]').forEach(btn=>{
     btn.addEventListener('click', (e)=>{
@@ -1311,6 +1330,7 @@ function openModal(mode, orderId){
       parts: [],
       paidToAmer:false,
       paidToSupplier:false,
+      supplied:false,
       customerPayments:[],
       confirmed:false,
       feeEnabled:false,
@@ -1708,6 +1728,24 @@ function confirmToggleConfirmation(orderId){
       renderKPIs();
       renderTable();
       showToast(willConfirm ? 'تم تأكيد الطلبية' : 'تم إلغاء تأكيد الطلبية', 'ok');
+    }
+  });
+}
+
+/* ---------- mark order as supplied (visual-only tag, no effect on any calculation) ---------- */
+function confirmToggleSupplied(orderId){
+  const order = appData.orders.find(o=>o.id===orderId);
+  if(!order) return;
+  const willSupply = !order.supplied;
+  confirmAction({
+    title: willSupply ? 'تحديد الطلبية '+order.orderNumber+' كـ"تم التوريد"؟' : 'إلغاء تحديد "تم التوريد" عن الطلبية '+order.orderNumber+'؟',
+    confirmLabel: 'نعم',
+    cancelLabel: 'لا',
+    onConfirm: async ()=>{
+      order.supplied = willSupply;
+      await persist();
+      renderTable();
+      showToast(willSupply ? 'تم تمييز الطلبية كـ"تم التوريد"' : 'تم إلغاء تمييز التوريد', 'ok');
     }
   });
 }
@@ -2779,6 +2817,7 @@ function exportAllDataToExcel(){
       'رقم الطلب': o.orderNumber,
       'الطلبية': o.orderLabel || '',
       'مؤكدة': o.confirmed ? 'نعم' : 'لا',
+      'تم التوريد': o.supplied ? 'نعم' : 'لا',
       'عدد القطع': o.parts.length,
       'إجمالي الشراء': t.costTotal,
       'مستحق للتشليح': t.costToScrapyard,
@@ -2917,6 +2956,7 @@ function normalizeImportedOrder(o){
     parts: [],
     paidToAmer: false,
     paidToSupplier: false,
+    supplied: false,
     customerPayments: [],
     confirmed: false,
     feeEnabled: false,
