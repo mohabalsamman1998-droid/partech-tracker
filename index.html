@@ -146,7 +146,9 @@
   .treasury-profit-label{color:var(--text-dim);font-size:13px;font-weight:700;}
   .treasury-profit-value{font-family:'Cairo',sans-serif;font-size:28px;font-weight:800;color:var(--green);}
   .treasury-block{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin-bottom:14px;}
-  .treasury-block-title{font-size:13px;font-weight:800;color:var(--text-dim);margin-bottom:14px;}
+  .treasury-block-title{font-size:13px;font-weight:800;color:var(--text-dim);}
+  .treasury-block-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+  .expense-type-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
   .expense-categories{display:flex;flex-direction:column;gap:16px;}
   .expense-category{padding-bottom:14px;border-bottom:1px solid var(--border-soft);}
   .expense-category:last-child{border-bottom:none;padding-bottom:0;}
@@ -2298,7 +2300,6 @@ function expenseCategoryBlockHtml(c, i){
       (matching.length ? matching.map(entry=>expenseEntryRowHtml(entry,c.key)).join('') : '<div class="expense-empty-hint">ما فيه مبالغ ضمن هذه الفترة</div>') +
     '</div>' +
     '<div class="expense-category-actions">' +
-      '<button type="button" class="btn btn-ghost btn-sm expense-add-entry-btn" data-add-entry-key="'+c.key+'">+ إضافة مبلغ</button>' +
       '<button type="button" class="btn btn-ghost btn-sm expense-history-btn" data-history-key="'+c.key+'">'+(isExpanded ? '▲ إخفاء السجل' : '📋 عرض السجل ('+matching.length+')')+'</button>' +
     '</div>' +
   '</div>';
@@ -2346,7 +2347,10 @@ function renderTreasuryView(){
       '</div>' +
     '</div>' +
     '<div class="treasury-block">' +
-      '<div class="treasury-block-title">المصاريف — كل مبلغ بتاريخه على حدة</div>' +
+      '<div class="treasury-block-head">' +
+        '<div class="treasury-block-title">المصاريف — كل مبلغ بتاريخه على حدة</div>' +
+        '<button type="button" id="btn-open-add-expense" class="btn btn-primary btn-sm">➕ إضافة مصاريف</button>' +
+      '</div>' +
       '<button type="button" id="btn-toggle-treasury-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر'+(treasuryPeriodFilter!=='all' ? ' ('+(TREASURY_PERIODS.find(p=>p.key===treasuryPeriodFilter)||{}).label+')' : '')+'</button>' +
       '<div class="treasury-period-filter" id="treasury-period-filter" style="'+(treasuryFilterOpen?'':'display:none;')+'">' +
         TREASURY_PERIODS.map(p=> '<button type="button" class="chip '+(treasuryPeriodFilter===p.key?'chip-active':'')+'" data-period="'+p.key+'">'+p.label+'</button>').join('') +
@@ -2377,6 +2381,7 @@ function renderTreasuryView(){
     if(file) importDataFromExcelFile(file);
     e.target.value = '';
   });
+  document.getElementById('btn-open-add-expense').addEventListener('click', openAddExpenseModal);
   bindTreasuryAddButtons();
   bindTreasuryHistoryButtons();
   bindTreasuryPeriodFilter();
@@ -2468,6 +2473,56 @@ function bindTreasuryAddButtons(){
       expandedExpenseCategories[key] = true;
       refreshExpenseEntries(key);
     });
+  });
+}
+
+let addExpenseSelectedType = null;
+function openAddExpenseModal(){
+  addExpenseSelectedType = null;
+  const root = document.getElementById('modal-root');
+  root.innerHTML =
+    '<div class="modal-backdrop" data-close-backdrop>' +
+      '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
+        '<div class="modal-title">➕ إضافة مصروف</div>' +
+        '<div class="field">' +
+          '<span class="field-label">نوع المصروف</span>' +
+          '<div class="expense-type-chips" id="expense-type-chips">' +
+            EXPENSE_CATEGORIES.map(c=>'<button type="button" class="chip expense-type-chip" data-expense-type="'+c.key+'">'+c.label+'</button>').join('') +
+          '</div>' +
+        '</div>' +
+        '<label class="field"><span class="field-label">المبلغ</span><input type="number" min="0" step="0.01" id="expense-add-amount-input" placeholder="المبلغ"></label>' +
+        '<label class="field"><span class="field-label">التاريخ</span><input type="text" id="expense-add-date-input" value="'+escapeHtml(todayNumeric())+'"></label>' +
+        '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' +
+          '<button type="button" class="btn btn-ghost" id="expense-add-cancel-btn">إلغاء</button>' +
+          '<button type="button" class="btn btn-primary" id="expense-add-save-btn">💾 حفظ</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  root.querySelector('[data-close-backdrop]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-backdrop')) close();
+  });
+  root.querySelector('#expense-add-cancel-btn').addEventListener('click', close);
+  root.querySelectorAll('.expense-type-chip').forEach(chip=>{
+    chip.addEventListener('click', ()=>{
+      addExpenseSelectedType = chip.getAttribute('data-expense-type');
+      root.querySelectorAll('.expense-type-chip').forEach(c=>c.classList.remove('chip-active'));
+      chip.classList.add('chip-active');
+    });
+  });
+  root.querySelector('#expense-add-save-btn').addEventListener('click', async ()=>{
+    const amountInput = document.getElementById('expense-add-amount-input');
+    const dateInput = document.getElementById('expense-add-date-input');
+    if(!addExpenseSelectedType){ showToast('اختر نوع المصروف', 'error'); return; }
+    const amount = Number(amountInput.value);
+    if(!amountInput.value || isNaN(amount) || amount<=0){ showToast('أدخل مبلغًا صحيحًا', 'error'); return; }
+    if(!Array.isArray(appData.treasury[addExpenseSelectedType])) appData.treasury[addExpenseSelectedType] = [];
+    appData.treasury[addExpenseSelectedType].push({ id: uid('exp'), amount, date: (dateInput.value||'').trim() });
+    close();
+    renderTreasuryView();
+    await persist();
+    showToast('تم إضافة المصروف', 'ok');
   });
 }
 
