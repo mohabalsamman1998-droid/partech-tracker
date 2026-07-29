@@ -209,7 +209,8 @@
   .icon-btn-accept:hover{background:var(--green-dim);}
   .icon-btn-reject{color:var(--rust);border-color:var(--rust-line);}
   .icon-btn-reject:hover{background:var(--rust-dim);}
-  .btn-confirmed-green{background:var(--green);border-color:var(--green);color:var(--green-ink);opacity:.9;cursor:default;}
+  .btn-confirmed-green{background:var(--green);border-color:var(--green);color:var(--green-ink);opacity:.9;cursor:pointer;}
+  .btn-confirmed-green:hover{opacity:1;}
   .treasury-chip-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
   .expense-entry-row{display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:6px;padding:6px 8px;flex-wrap:wrap;}
   .expense-entry-amount-input{
@@ -3685,7 +3686,7 @@ function scrapyardOrderGroupHtml(group, canManage){
       '<div class="scrapyard-order-actions">' +
         (addDraft ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-add-part-order="'+group.order_id+'">+ اقتراح قطعة جديدة</button>') +
         (confirmation
-          ? '<button type="button" class="btn btn-sm btn-confirmed-green" disabled>✅ تم تأكيد المبلغ</button>'
+          ? '<button type="button" class="btn btn-sm btn-confirmed-green" data-unconfirm-order="'+group.order_id+'" title="اضغط للتراجع عن التأكيد">✅ تم تأكيد المبلغ</button>'
           : '<button type="button" class="btn btn-ghost btn-sm" data-confirm-order="'+group.order_id+'">تأكيد المبلغ</button>') +
       '</div>'
       : '') +
@@ -3837,6 +3838,22 @@ async function confirmScrapyardOrder(orderId){
   renderScrapyardView();
 }
 
+function unconfirmScrapyardOrder(orderId){
+  confirmAction({
+    title: 'إلغاء تأكيد المبلغ؟',
+    message: 'رح ترجع الطلبية لحالة غير مؤكدة.',
+    confirmLabel: 'إلغاء التأكيد',
+    dangerous: true,
+    onConfirm: async ()=>{
+      const { error } = await sb.from('scrapyard_order_confirmations').delete().eq('order_id', orderId);
+      if(error){ console.error('unconfirmScrapyardOrder:', error); showToast('تعذر إلغاء التأكيد', 'error'); return; }
+      showToast('تم إلغاء تأكيد المبلغ', 'ok');
+      await loadScrapyardData();
+      renderScrapyardView();
+    }
+  });
+}
+
 function bindScrapyardEvents(){
   const root = document.getElementById('scrapyard-root');
   const exitBtn = document.getElementById('btn-exit-scrapyard-shared');
@@ -3934,6 +3951,9 @@ function bindScrapyardEvents(){
   });
   root.querySelectorAll('[data-confirm-order]').forEach(btn=>{
     btn.addEventListener('click', ()=> confirmScrapyardOrder(btn.getAttribute('data-confirm-order')));
+  });
+  root.querySelectorAll('[data-unconfirm-order]').forEach(btn=>{
+    btn.addEventListener('click', ()=> unconfirmScrapyardOrder(btn.getAttribute('data-unconfirm-order')));
   });
   root.querySelectorAll('[data-withdraw-proposal]').forEach(btn=>{
     btn.addEventListener('click', ()=> withdrawScrapyardProposal(btn.getAttribute('data-withdraw-proposal')));
