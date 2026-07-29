@@ -180,11 +180,15 @@
   .scrapyard-part-row:last-of-type{border-bottom:none;}
   .scrapyard-part-desc{flex:1;min-width:120px;font-size:15px;font-weight:700;color:var(--text);}
   .scrapyard-confirmed-check{display:inline-block;margin-inline-start:8px;font-size:13px;}
-  .scrapyard-part-actions{display:flex;gap:6px;}
-  .scrapyard-order-subtotal{display:flex;justify-content:space-between;align-items:center;padding:8px 2px 4px;margin-top:2px;border-top:1px dashed var(--border-soft);font-size:13.5px;font-weight:700;color:var(--text-dim);}
+  .scrapyard-part-actions{display:flex;gap:6px;min-width:96px;justify-content:flex-end;flex:0 0 auto;}
+  .scrapyard-qty-slot{min-width:26px;text-align:center;}
+  /* صف المجموع يحجز نفس أعمدة صف القطعة (اسم | عدد | سعر | إجراءات) حتى يقع المجموع تحت الأسعار تمامًا */
+  .scrapyard-order-subtotal{display:flex;align-items:center;gap:10px;padding:8px 2px 4px;margin-top:2px;border-top:1px dashed var(--border-soft);font-size:13.5px;font-weight:700;color:var(--text-dim);flex-wrap:wrap;}
+  .scrapyard-subtotal-label{flex:1;min-width:120px;}
   .scrapyard-subtotal-values{display:flex;align-items:center;gap:6px;}
   .scrapyard-subtotal-arrow{color:var(--text-faint);font-weight:400;}
-  .scrapyard-subtotal-new{color:var(--green);}
+  .scrapyard-subtotal-current{color:var(--green);}
+  .scrapyard-subtotal-new{color:var(--amber);}
   .scrapyard-order-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
   /* السعرين جمب بعض على نفس صف القطعة وعلى نفس مستوى اسم القطعة — بنفس أسلوب إدخال أسعار القطعة في الطلبية */
   .scrapyard-price-group{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
@@ -199,7 +203,7 @@
   }
   .scrapyard-price-input:focus{outline:none;border-color:var(--amber);}
   .inline-count-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--rust);color:#fff;font-family:'Cairo',sans-serif;font-weight:800;font-size:11px;line-height:1;margin-inline-start:4px;vertical-align:middle;}
-  .scrapyard-mgmt-actions{display:flex;gap:4px;}
+  .scrapyard-mgmt-actions{display:flex;gap:4px;min-width:96px;justify-content:flex-end;flex:0 0 auto;}
   .icon-btn-accept{color:var(--green);border-color:var(--green-line);}
   .icon-btn-accept:hover{background:var(--green-dim);}
   .icon-btn-reject{color:var(--rust);border-color:var(--rust-line);}
@@ -3659,10 +3663,13 @@ function scrapyardOrderGroupHtml(group, canManage){
     group.parts.map(p=>scrapyardPartRowHtml(p, canManage)).join('') +
     addProposals.map(pr=>scrapyardAddProposalInlineHtml(pr, canManage)).join('') +
     (addDraft ? scrapyardAddDraftRowHtml(group.order_id, addDraft) : '') +
-    '<div class="scrapyard-order-subtotal"><span>مجموع الطلبية</span>' +
+    '<div class="scrapyard-order-subtotal">' +
+      '<span class="scrapyard-subtotal-label">مجموع الطلبية</span>' +
+      '<span class="scrapyard-qty-slot" aria-hidden="true"></span>' +
       '<div class="scrapyard-subtotal-values" id="scrapyard-subtotal-values-'+group.order_id+'">' +
         scrapyardSubtotalValuesHtml(subtotal, proposedSubtotal) +
       '</div>' +
+      '<span class="scrapyard-mgmt-actions" aria-hidden="true"></span>' +
     '</div>' +
     (!canManage ?
       '<div class="scrapyard-order-actions">' +
@@ -3676,7 +3683,7 @@ function scrapyardOrderGroupHtml(group, canManage){
 }
 
 function scrapyardSubtotalValuesHtml(subtotal, proposedSubtotal){
-  return '<span class="num text-amber">'+fmtMoney(subtotal)+'</span>' +
+  return '<span class="num scrapyard-subtotal-current">'+fmtMoney(subtotal)+'</span>' +
     (proposedSubtotal!=null ? '<span class="scrapyard-subtotal-arrow">←</span><span class="num scrapyard-subtotal-new" title="المجموع الجديد بعد اقتراح السعر">'+fmtMoney(proposedSubtotal)+'</span>' : '');
 }
 
@@ -3744,7 +3751,7 @@ function scrapyardPartRowHtml(p, canManage){
 
   return '<div class="scrapyard-part-row">' +
     '<span class="scrapyard-part-desc">'+escapeHtml(p.description||'')+'</span>' +
-    '<span class="num">×'+(p.qty||1)+'</span>' +
+    '<span class="num scrapyard-qty-slot">×'+(p.qty||1)+'</span>' +
     '<div class="scrapyard-price-group">'+priceCells+'</div>' +
     actions +
   '</div>';
@@ -3756,7 +3763,7 @@ function scrapyardAddProposalInlineHtml(pr, canManage){
   if(canManage){
     return '<div class="scrapyard-part-row">' +
       '<span class="scrapyard-part-desc">'+desc+'</span>' +
-      '<span class="num">×'+(pr.qty||1)+'</span>' +
+      '<span class="num scrapyard-qty-slot">×'+(pr.qty||1)+'</span>' +
       '<div class="scrapyard-price-group">'+priceCells+'</div>' +
       '<div class="scrapyard-mgmt-actions">' +
         '<button type="button" class="icon-btn icon-btn-accept" data-accept-proposal="'+pr.id+'" title="قبول" aria-label="قبول">✅</button>' +
@@ -3766,7 +3773,7 @@ function scrapyardAddProposalInlineHtml(pr, canManage){
   }
   return '<div class="scrapyard-part-row">' +
     '<span class="scrapyard-part-desc">'+desc+'</span>' +
-    '<span class="num">×'+(pr.qty||1)+'</span>' +
+    '<span class="num scrapyard-qty-slot">×'+(pr.qty||1)+'</span>' +
     '<div class="scrapyard-price-group">'+priceCells+'</div>' +
     '<div class="scrapyard-mgmt-actions">' +
       '<button type="button" class="icon-btn" data-withdraw-proposal="'+pr.id+'" title="تراجع عن الاقتراح" aria-label="تراجع">↩️</button>' +
@@ -3814,7 +3821,7 @@ async function confirmScrapyardOrder(orderId){
     { order_id: orderId, confirmed_by: scrapyardSharedState.email, confirmed_at: new Date().toISOString() },
     { onConflict: 'order_id' }
   );
-  if(error){ showToast('تعذر تأكيد المبلغ', 'error'); return; }
+  if(error){ console.error('confirmScrapyardOrder:', error); showToast('تعذر تأكيد المبلغ', 'error'); return; }
   showToast('تم تأكيد المبلغ', 'ok');
   await loadScrapyardData();
   renderScrapyardView();
