@@ -434,6 +434,20 @@
   .total-box span.num{font-size:13.5px;}
   .total-box-sub{font-size:10px;color:var(--text-faint);font-weight:600;}
 
+  .cost-split-row{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:14px;}
+  .cost-split-box{
+    background:var(--surface);border:1px solid var(--border-soft);border-radius:6px;padding:9px 10px;
+    display:flex;flex-direction:column;gap:4px;cursor:pointer;text-align:right;font-family:'Tajawal',sans-serif;
+    transition:.15s ease;
+  }
+  .cost-split-box:hover{border-color:var(--text-faint);}
+  .cost-split-box span:first-child{font-size:10.5px;color:var(--text-faint);font-weight:600;}
+  .cost-split-box .num{color:var(--rust);font-size:13.5px;font-family:'Cairo',sans-serif;font-weight:700;font-variant-numeric:tabular-nums;}
+  .cost-split-status{font-size:10.5px;color:var(--rust);font-weight:700;}
+  .cost-split-box.cost-split-paid{border-color:var(--green-line);background:var(--green-dim);}
+  .cost-split-box.cost-split-paid .num{color:var(--green);}
+  .cost-split-box.cost-split-paid .cost-split-status{color:var(--green);}
+
   .payments-block{margin-top:14px;}
   .payments-list{display:flex;flex-direction:column;gap:8px;margin-bottom:10px;}
   .payment-row{display:flex;gap:8px;align-items:center;background:var(--surface);border:1px solid var(--border-soft);border-radius:var(--radius-sm);padding:8px 10px;flex-wrap:wrap;}
@@ -1337,8 +1351,6 @@ function modalHtml(d){
           '<div class="fee-percent-row" id="order-service-fee-percent-row" style="'+(d.serviceFeeEnabled?'':'display:none;')+'"><span>النسبة</span><input type="number" min="0" step="0.1" id="order-service-fee-percent-input" class="num" value="'+(d.serviceFeePercent?d.serviceFeePercent:'')+'" placeholder="0"><span>%</span><span class="service-fee-amount-preview" id="service-fee-amount-preview"></span></div>' +
           '<label class="toggle-row"><input type="checkbox" id="order-delivery-fee-toggle" '+(d.deliveryFeeEnabled?'checked':'')+'><span>احتساب أجور التوصيل</span></label>' +
           '<div class="fee-percent-row" id="order-delivery-fee-row" style="'+(d.deliveryFeeEnabled?'':'display:none;')+'"><span>المبلغ</span><input type="number" min="0" step="0.5" id="order-delivery-fee-input" class="num" value="'+(d.deliveryFeeAmount?d.deliveryFeeAmount:'')+'" placeholder="0"><span>ر.س</span></div>' +
-          '<label class="toggle-row"><input type="checkbox" id="paid-to-amer-check" '+(d.paidToAmer?'checked':'')+'><span>مسدد للتشليح</span></label>' +
-          '<label class="toggle-row"><input type="checkbox" id="paid-to-supplier-check" '+(d.paidToSupplier?'checked':'')+'><span>مسدد للمورد</span></label>' +
         '</div>' +
         '<div class="section-block section-sales">' +
           '<div class="section-head"><span class="section-title">قسم المبيعات — التسعير والتحصيل</span></div>' +
@@ -1346,6 +1358,18 @@ function modalHtml(d){
             '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="total-cost-display">0 ر.س</span></div>' +
             '<div class="total-box"><span>مستحق من الزبون</span><span class="num text-green" id="total-sell-display">0 ر.س</span></div>' +
             '<div class="total-box"><span>الربح</span><span class="num" id="total-profit-display">0 ر.س</span><span class="total-box-sub" id="total-profit-sub"></span></div>' +
+          '</div>' +
+          '<div class="cost-split-row">' +
+            '<button type="button" class="cost-split-box'+(d.paidToSupplier?' cost-split-paid':'')+'" id="cost-split-supplier-btn">' +
+              '<span>المجموع للمورد</span>' +
+              '<span class="num" id="cost-supplier-display">0 ر.س</span>' +
+              '<span class="cost-split-status" id="cost-supplier-status">'+(d.paidToSupplier?'✓ مسدد':'غير مسدد')+'</span>' +
+            '</button>' +
+            '<button type="button" class="cost-split-box'+(d.paidToAmer?' cost-split-paid':'')+'" id="cost-split-amer-btn">' +
+              '<span>المجموع للتشليح</span>' +
+              '<span class="num" id="cost-amer-display">0 ر.س</span>' +
+              '<span class="cost-split-status" id="cost-amer-status">'+(d.paidToAmer?'✓ مسدد':'غير مسدد')+'</span>' +
+            '</button>' +
           '</div>' +
           '<div class="payments-block">' +
             '<div id="payments-list" class="payments-list">'+(d.customerPayments||[]).map(paymentRowHtml).join('')+'</div>' +
@@ -1455,26 +1479,36 @@ function attachModalHandlers(){
   const pasteBtn = root.querySelector('#paste-parts-btn');
   if(pasteBtn) pasteBtn.addEventListener('click', pastePartsFromClipboard);
 
-  root.querySelector('#paid-to-amer-check').addEventListener('change', (e)=>{
-    const checkbox = e.target;
-    const checked = checkbox.checked;
-    checkbox.checked = !checked; // revert visually until confirmed
+  root.querySelector('#cost-split-amer-btn').addEventListener('click', ()=>{
+    const willPay = !draft.paidToAmer;
     confirmAction({
-      title: checked ? 'تحديد الطلبية كـ"مسدد للتشليح"؟' : 'إلغاء تحديد الطلبية كـ"مسدد للتشليح"؟',
+      title: willPay ? 'تحديد الطلبية كـ"مسدد للتشليح"؟' : 'إلغاء تحديد الطلبية كـ"مسدد للتشليح"؟',
       confirmLabel: 'نعم',
       cancelLabel: 'لا',
-      onConfirm: ()=>{ checkbox.checked = checked; draft.paidToAmer = checked; }
+      onConfirm: ()=>{
+        draft.paidToAmer = willPay;
+        const btn = document.getElementById('cost-split-amer-btn');
+        if(btn){
+          btn.classList.toggle('cost-split-paid', willPay);
+          document.getElementById('cost-amer-status').textContent = willPay ? '✓ مسدد' : 'غير مسدد';
+        }
+      }
     });
   });
-  root.querySelector('#paid-to-supplier-check').addEventListener('change', (e)=>{
-    const checkbox = e.target;
-    const checked = checkbox.checked;
-    checkbox.checked = !checked; // revert visually until confirmed
+  root.querySelector('#cost-split-supplier-btn').addEventListener('click', ()=>{
+    const willPay = !draft.paidToSupplier;
     confirmAction({
-      title: checked ? 'تحديد الطلبية كـ"مسدد للمورد"؟' : 'إلغاء تحديد الطلبية كـ"مسدد للمورد"؟',
+      title: willPay ? 'تحديد الطلبية كـ"مسدد للمورد"؟' : 'إلغاء تحديد الطلبية كـ"مسدد للمورد"؟',
       confirmLabel: 'نعم',
       cancelLabel: 'لا',
-      onConfirm: ()=>{ checkbox.checked = checked; draft.paidToSupplier = checked; }
+      onConfirm: ()=>{
+        draft.paidToSupplier = willPay;
+        const btn = document.getElementById('cost-split-supplier-btn');
+        if(btn){
+          btn.classList.toggle('cost-split-paid', willPay);
+          document.getElementById('cost-supplier-status').textContent = willPay ? '✓ مسدد' : 'غير مسدد';
+        }
+      }
     });
   });
   const suppliedBtn = root.querySelector('#modal-supplied-btn');
@@ -1661,6 +1695,10 @@ function updateModalTotals(){
   const t = orderTotals(draft);
   document.getElementById('total-cost-display').textContent = fmtMoney(t.costTotal);
   document.getElementById('total-sell-display').textContent = t.hasSell? fmtMoney(t.sellTotal) : 'لم يُسعّر بعد';
+  const costSupplierEl = document.getElementById('cost-supplier-display');
+  if(costSupplierEl) costSupplierEl.textContent = fmtMoney(t.costToSupplier);
+  const costAmerEl = document.getElementById('cost-amer-display');
+  if(costAmerEl) costAmerEl.textContent = fmtMoney(t.costToScrapyard);
   const feePreviewEl = document.getElementById('fee-amount-preview');
   if(feePreviewEl){
     feePreviewEl.textContent = (t.feeEnabled && t.feeAmount>0) ? ('= '+fmtMoney(t.feeAmount)) : '';
