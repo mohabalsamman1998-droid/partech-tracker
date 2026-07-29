@@ -159,7 +159,8 @@
   .scrapyard-home-tile:hover{border-color:var(--green-line);}
   .scrapyard-home-tile-label{font-size:15px;font-weight:800;color:var(--text);}
   .scrapyard-home-tile-value{font-size:19px;font-weight:800;color:var(--amber);}
-  .purchases-task-row{display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--border-soft);font-size:14px;}
+  .purchases-task-row{display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--border-soft);font-size:14px;width:100%;background:transparent;border-left:none;border-right:none;border-top:none;cursor:pointer;font-family:'Tajawal',sans-serif;text-align:right;color:var(--text);}
+  .purchases-task-row:hover{background:var(--surface-2);}
   .purchases-task-row:last-child{border-bottom:none;}
   .purchases-task-row-done{color:var(--text-faint);text-decoration:line-through;}
   .purchases-task-check{font-size:16px;}
@@ -3726,10 +3727,10 @@ function renderPurchasesTasksView(){
     '<div class="section-block">' +
       (tasks.length
         ? tasks.map(t=>
-            '<div class="purchases-task-row'+(t.done?' purchases-task-row-done':'')+'">' +
+            '<button type="button" class="purchases-task-row'+(t.done?' purchases-task-row-done':'')+'" data-toggle-purchases-task="'+t.id+'" data-task-done="'+(t.done?'1':'0')+'">' +
               '<span class="purchases-task-check">'+(t.done?'✅':'⬜')+'</span>' +
               '<span class="purchases-task-text">'+escapeHtml(t.text||'')+'</span>' +
-            '</div>'
+            '</button>'
           ).join('')
         : '<div class="expense-empty-hint">ما فيه مهام حاليًا</div>') +
     '</div>';
@@ -3737,6 +3738,28 @@ function renderPurchasesTasksView(){
   document.getElementById('btn-scrapyard-tasks-back').addEventListener('click', renderScrapyardHomeView);
   const logo = document.getElementById('scrapyard-tasks-logo-img');
   if(logo) logo.addEventListener('click', renderScrapyardHomeView);
+  document.querySelectorAll('[data-toggle-purchases-task]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const taskId = btn.getAttribute('data-toggle-purchases-task');
+      const done = btn.getAttribute('data-task-done') === '1';
+      togglePurchasesTaskDone(taskId, !done);
+    });
+  });
+}
+
+/* عامر بيقدر يعلّم المهمة كمنجزة/غير منجزة — التعديل بيصير مباشرة بقاعدة البيانات
+   عن طريق دالة RPC مخصصة (عامر ما عنده appData كامل بجهازه أصلًا) */
+async function togglePurchasesTaskDone(taskId, newDone){
+  const task = (scrapyardSharedState.tasks||[]).find(t=>t.id===taskId);
+  if(task) task.done = newDone; // تحديث فوري بالواجهة قبل رد السيرفر
+  renderPurchasesTasksView();
+  const { error } = await sb.rpc('set_purchases_task_done', { p_task_id: taskId, p_done: newDone });
+  if(error){
+    console.error('set_purchases_task_done:', error);
+    if(task) task.done = !newDone; // رجّعها لحالتها لو فشل التحديث
+    renderPurchasesTasksView();
+    showToast('تعذر تحديث المهمة', 'error');
+  }
 }
 
 function renderScrapyardView(){
