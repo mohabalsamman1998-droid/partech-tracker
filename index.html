@@ -771,6 +771,7 @@
       <div class="topbar-actions">
         <button id="btn-open-treasury" class="btn btn-ghost">📦 الصندوق</button>
         <button id="btn-open-scrapyard-mgmt" class="btn btn-ghost" style="display:none;">🔧 حساب التشاليح</button>
+        <button id="btn-preview-scrapyard" class="btn btn-ghost" style="display:none;">👁️ معاينة شاشة الموظف</button>
         <button id="btn-open-tasks" class="btn btn-ghost btn-with-badge">✅ TASKS<span id="tasks-badge" class="tasks-badge"></span></button>
         <button id="btn-new-order" class="btn btn-primary">+ طلبية جديدة</button>
       </div>
@@ -3402,6 +3403,7 @@ function bindToolbar(){
   document.getElementById('btn-new-order').addEventListener('click', ()=> openModal('create'));
   document.getElementById('btn-open-treasury').addEventListener('click', openTreasuryView);
   document.getElementById('btn-open-scrapyard-mgmt').addEventListener('click', openScrapyardMgmtView);
+  document.getElementById('btn-preview-scrapyard').addEventListener('click', previewScrapyardView);
   document.getElementById('btn-open-tasks').addEventListener('click', openTasksView);
   document.getElementById('btn-who-online').addEventListener('click', showWhoIsOnline);
   document.getElementById('btn-theme-toggle').addEventListener('click', ()=>{
@@ -3507,6 +3509,8 @@ async function showAppIfAllowed(session){
   if(treasuryBtn) treasuryBtn.style.display = TREASURY_ALLOWED_EMAILS.includes(email) ? '' : 'none';
   const scrapyardMgmtBtn = document.getElementById('btn-open-scrapyard-mgmt');
   if(scrapyardMgmtBtn) scrapyardMgmtBtn.style.display = TREASURY_ALLOWED_EMAILS.includes(email) ? '' : 'none';
+  const scrapyardPreviewBtn = document.getElementById('btn-preview-scrapyard');
+  if(scrapyardPreviewBtn) scrapyardPreviewBtn.style.display = TREASURY_ALLOWED_EMAILS.includes(email) ? '' : 'none';
   if(!appInitDone){
     appInitDone = true;
     init();
@@ -3517,6 +3521,7 @@ async function showAppIfAllowed(session){
    All reads/writes go through get_scrapyard_used_parts() (RPC) and scrapyard_proposals/scrapyard_transfers tables,
    which are protected by their own RLS policies (see plan doc) — this client code has no path to app_data at all. */
 let scrapyardState = { email:'', parts:[], myProposals:[], transfers:[] };
+let scrapyardPreviewMode = false;
 
 async function initScrapyardView(email){
   scrapyardState.email = email;
@@ -3524,6 +3529,19 @@ async function initScrapyardView(email){
   root.innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
   await loadScrapyardData();
   renderScrapyardView();
+}
+
+async function previewScrapyardView(){
+  scrapyardPreviewMode = true;
+  document.getElementById('app-root').style.display = 'none';
+  document.getElementById('scrapyard-root').style.display = '';
+  await initScrapyardView(presenceEmail);
+}
+
+function exitScrapyardPreview(){
+  scrapyardPreviewMode = false;
+  document.getElementById('scrapyard-root').style.display = 'none';
+  document.getElementById('app-root').style.display = '';
 }
 
 async function loadScrapyardData(){
@@ -3563,7 +3581,10 @@ function renderScrapyardView(){
   const netOwed = round2(totalParts - totalTransfers);
 
   root.innerHTML =
-    '<header class="topbar"><div class="brand">حساب التشاليح</div></header>' +
+    '<header class="topbar">' +
+      (scrapyardPreviewMode ? '<button type="button" class="btn btn-ghost btn-sm" id="btn-exit-scrapyard-preview">→ رجوع لتطبيقي</button>' : '') +
+      '<div class="brand">حساب التشاليح</div>' +
+    '</header>' +
     '<div class="scrapyard-summary-row">' +
       '<div class="total-box"><span>إجمالي قيمة القطع</span><span class="num">'+fmtMoney(totalParts)+'</span></div>' +
       '<div class="total-box"><span>إجمالي المحوَّل لك</span><span class="num text-green">'+fmtMoney(totalTransfers)+'</span></div>' +
@@ -3618,6 +3639,8 @@ function scrapyardTransferRowHtml(t){
 
 function bindScrapyardEvents(){
   const root = document.getElementById('scrapyard-root');
+  const exitBtn = document.getElementById('btn-exit-scrapyard-preview');
+  if(exitBtn) exitBtn.addEventListener('click', exitScrapyardPreview);
   root.querySelectorAll('[data-propose-edit]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const partId = btn.getAttribute('data-propose-edit');
