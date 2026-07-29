@@ -104,6 +104,7 @@
     margin-bottom:12px;
   }
   .auth-email-input:focus{outline:none;border-color:var(--green-line);}
+  .auth-code-input{letter-spacing:6px;font-size:20px;font-weight:800;direction:ltr;}
   .auth-send-btn{width:100%;}
   .auth-message{margin-top:14px;font-size:12.5px;color:var(--text-dim);line-height:1.7;min-height:1em;}
   .auth-message.error{color:var(--rust);}
@@ -743,9 +744,17 @@
   <div id="auth-gate">
     <div class="auth-card">
       <div class="brand">بارتك <span class="brand-accent">·</span> تتبع القطع</div>
-      <p class="auth-sub">هذا التطبيق مخصص لعدد محدود من الموظفين. أدخل بريدك الإلكتروني وبنبعتلك رابط دخول.</p>
-      <input type="email" id="auth-email-input" class="auth-email-input" placeholder="بريدك الإلكتروني" autocomplete="email" inputmode="email">
-      <button type="button" id="auth-send-btn" class="btn btn-primary auth-send-btn">إرسال رابط الدخول</button>
+      <div id="auth-step-email">
+        <p class="auth-sub">هذا التطبيق مخصص لعدد محدود من الموظفين. أدخل بريدك الإلكتروني وبنبعتلك رمز دخول (ورابط دخول احتياطي).</p>
+        <input type="email" id="auth-email-input" class="auth-email-input" placeholder="بريدك الإلكتروني" autocomplete="email" inputmode="email">
+        <button type="button" id="auth-send-btn" class="btn btn-primary auth-send-btn">إرسال رمز الدخول</button>
+      </div>
+      <div id="auth-step-code" style="display:none;">
+        <p class="auth-sub">أدخل الرمز المكوّن من 6 أرقام يلي وصلك بالإيميل. إذا الرابط بنفس الإيميل اشتغل معك تقدر تضغطه مباشرة بدل الرمز.</p>
+        <input type="text" id="auth-code-input" class="auth-email-input auth-code-input" placeholder="000000" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
+        <button type="button" id="auth-verify-btn" class="btn btn-primary auth-send-btn">تأكيد الرمز</button>
+        <button type="button" id="auth-back-btn" class="btn btn-ghost auth-send-btn" style="margin-top:8px;">رجوع لتغيير الإيميل</button>
+      </div>
       <div id="auth-message" class="auth-message"></div>
     </div>
   </div>
@@ -3813,9 +3822,17 @@ function showWhoIsOnline(){
   refreshOnlineBadge();
 }
 
+let pendingAuthEmail = '';
+
 function bindAuthGate(){
   const emailInput = document.getElementById('auth-email-input');
   const sendBtn = document.getElementById('auth-send-btn');
+  const codeInput = document.getElementById('auth-code-input');
+  const verifyBtn = document.getElementById('auth-verify-btn');
+  const backBtn = document.getElementById('auth-back-btn');
+  const stepEmail = document.getElementById('auth-step-email');
+  const stepCode = document.getElementById('auth-step-code');
+
   const trySend = async ()=>{
     const email = emailInput.value.trim();
     if(!email){ showAuthGate('اكتب بريدك الإلكتروني أولاً', 'error'); return; }
@@ -3825,16 +3842,47 @@ function bindAuthGate(){
     try{
       const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.href } });
       if(error) throw error;
-      showAuthGate('تم إرسال رابط الدخول إلى ' + email + ' — افتح بريدك واضغط الرابط.', 'ok');
+      pendingAuthEmail = email;
+      stepEmail.style.display = 'none';
+      stepCode.style.display = '';
+      codeInput.value = '';
+      showAuthGate('تم إرسال رمز الدخول إلى ' + email + ' — افتح بريدك وأدخل الرمز تحت.', 'ok');
+      codeInput.focus();
     }catch(e){
-      showAuthGate('تعذر إرسال رابط الدخول: ' + (e && e.message ? e.message : ''), 'error');
+      showAuthGate('تعذر إرسال رمز الدخول: ' + (e && e.message ? e.message : ''), 'error');
     }finally{
       sendBtn.disabled = false;
-      sendBtn.textContent = 'إرسال رابط الدخول';
+      sendBtn.textContent = 'إرسال رمز الدخول';
     }
   };
+
+  const tryVerify = async ()=>{
+    const code = codeInput.value.trim();
+    if(!code){ showAuthGate('اكتب الرمز أولاً', 'error'); return; }
+    if(!sb || !pendingAuthEmail){ showAuthGate('تعذر التحقق — ارجع وأدخل بريدك من جديد', 'error'); return; }
+    verifyBtn.disabled = true;
+    verifyBtn.textContent = 'جاري التحقق…';
+    try{
+      const { error } = await sb.auth.verifyOtp({ email: pendingAuthEmail, token: code, type: 'email' });
+      if(error) throw error;
+    }catch(e){
+      showAuthGate('رمز غير صحيح أو منتهي الصلاحية: ' + (e && e.message ? e.message : ''), 'error');
+    }finally{
+      verifyBtn.disabled = false;
+      verifyBtn.textContent = 'تأكيد الرمز';
+    }
+  };
+
   sendBtn.addEventListener('click', trySend);
   emailInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); trySend(); } });
+  verifyBtn.addEventListener('click', tryVerify);
+  codeInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); tryVerify(); } });
+  backBtn.addEventListener('click', ()=>{
+    pendingAuthEmail = '';
+    stepCode.style.display = 'none';
+    stepEmail.style.display = '';
+    showAuthGate();
+  });
 }
 
 /* ---------- day/night theme toggle — persisted per browser, applies even on the login screen ---------- */
