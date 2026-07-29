@@ -182,6 +182,9 @@
   .scrapyard-confirmed-check{display:inline-block;margin-inline-start:8px;font-size:13px;}
   .scrapyard-part-actions{display:flex;gap:6px;}
   .scrapyard-order-subtotal{display:flex;justify-content:space-between;align-items:center;padding:8px 2px 4px;margin-top:2px;border-top:1px dashed var(--border-soft);font-size:13.5px;font-weight:700;color:var(--text-dim);}
+  .scrapyard-subtotal-values{display:flex;align-items:center;gap:6px;}
+  .scrapyard-subtotal-arrow{color:var(--text-faint);font-weight:400;}
+  .scrapyard-subtotal-new{color:var(--green);}
   .scrapyard-order-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
   /* السعرين جمب بعض على نفس صف القطعة وعلى نفس مستوى اسم القطعة — بنفس أسلوب إدخال أسعار القطعة في الطلبية */
   .scrapyard-price-group{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
@@ -3583,6 +3586,41 @@ function scrapyardConfirmationForOrder(orderId){
 /* مسوّدات محلية للإدخال المباشر داخل الصف — بدون أي نافذة خارجية */
 let scrapyardPriceDrafts = {};   // part_id -> السعر المقترح يلي عم يُكتب حاليًا
 let scrapyardAddDrafts = {};     // order_id -> {description, qty, price} لصف القطعة الجديدة المفتوح
+let scrapyardEditOpenFor = {};   // part_id -> true — خانة تعديل السعر مفتوحة (تظهر فقط بعد الضغط على "تعديل")
+
+/* مجموع جديد للطلبية بعد اقتراح سعر جديد (سواء وهو عم يُكتب أو بعد إرساله) — null لو ما فيه أي تغيير مقترح */
+function scrapyardGroupProposedSubtotal(group){
+  let changed = false;
+  let total = group.parts.reduce((s,p)=>{
+    const qty = Number(p.qty)||1;
+    const pr = scrapyardProposalForPart(p.part_id);
+    if(pr){
+      changed = true;
+      if(pr.action === 'delete') return s;
+      if(pr.action === 'edit') return s + (Number(pr.cost_price)||0)*qty;
+      return s + (Number(p.cost_price)||0)*qty;
+    }
+    if(scrapyardEditOpenFor[p.part_id]){
+      const draft = scrapyardPriceDrafts[p.part_id];
+      if(draft!==undefined && draft!=='' && !isNaN(Number(draft))){
+        changed = true;
+        return s + Number(draft)*qty;
+      }
+    }
+    return s + (Number(p.cost_price)||0)*qty;
+  }, 0);
+  const addProposals = scrapyardAddProposalsForOrder(group.order_id);
+  if(addProposals.length){
+    changed = true;
+    total += addProposals.reduce((s,pr)=> s + (Number(pr.cost_price)||0)*(Number(pr.qty)||1), 0);
+  }
+  const addDraft = scrapyardAddDrafts[group.order_id];
+  if(addDraft && addDraft.price){
+    changed = true;
+    total += (Number(addDraft.price)||0) * (Number(addDraft.qty)||1);
+  }
+  return changed ? total : null;
+}
 
 function renderScrapyardView(){
   const root = document.getElementById('scrapyard-root');
@@ -3610,6 +3648,7 @@ function renderScrapyardView(){
 
 function scrapyardOrderGroupHtml(group, canManage){
   const subtotal = group.parts.reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0);
+  const proposedSubtotal = scrapyardGroupProposedSubtotal(group);
   const confirmation = scrapyardConfirmationForOrder(group.order_id);
   const addProposals = scrapyardAddProposalsForOrder(group.order_id);
   const addDraft = scrapyardAddDrafts[group.order_id];
@@ -3620,7 +3659,11 @@ function scrapyardOrderGroupHtml(group, canManage){
     group.parts.map(p=>scrapyardPartRowHtml(p, canManage)).join('') +
     addProposals.map(pr=>scrapyardAddProposalInlineHtml(pr, canManage)).join('') +
     (addDraft ? scrapyardAddDraftRowHtml(group.order_id, addDraft) : '') +
-    '<div class="scrapyard-order-subtotal"><span>مجموع الطلبية</span><span class="num text-amber">'+fmtMoney(subtotal)+'</span></div>' +
+    '<div class="scrapyard-order-subtotal"><span>مجموع الطلبية</span>' +
+      '<div class="scrapyard-subtotal-values" id="scrapyard-subtotal-values-'+group.order_id+'">' +
+        scrapyardSubtotalValuesHtml(subtotal, proposedSubtotal) +
+      '</div>' +
+    '</div>' +
     (!canManage ?
       '<div class="scrapyard-order-actions">' +
         (addDraft ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-add-part-order="'+group.order_id+'">+ اقتراح قطعة جديدة</button>') +
@@ -3630,6 +3673,21 @@ function scrapyardOrderGroupHtml(group, canManage){
       '</div>'
       : '') +
   '</div>';
+}
+
+function scrapyardSubtotalValuesHtml(subtotal, proposedSubtotal){
+  return '<span class="num text-amber">'+fmtMoney(subtotal)+'</span>' +
+    (proposedSubtotal!=null ? '<span class="scrapyard-subtotal-arrow">←</span><span class="num scrapyard-subtotal-new" title="المجموع الجديد بعد اقتراح السعر">'+fmtMoney(proposedSubtotal)+'</span>' : '');
+}
+
+/* تحديث المجموع الجديد فور الكتابة بخانة السعر — بدون إعادة رسم كامل الشاشة حتى لا يفقد التركيز */
+function updateScrapyardSubtotalDisplay(orderId){
+  const el = document.getElementById('scrapyard-subtotal-values-'+orderId);
+  if(!el) return;
+  const parts = scrapyardSharedState.parts.filter(p=>p.order_id===orderId);
+  const subtotal = parts.reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0);
+  const proposedSubtotal = scrapyardGroupProposedSubtotal({ order_id: orderId, parts });
+  el.innerHTML = scrapyardSubtotalValuesHtml(subtotal, proposedSubtotal);
 }
 
 /* خلية سعر ثابتة (عرض فقط) بنفس أسلوب "سعر الشراء / سعر البيع" داخل الطلبية */
@@ -3663,17 +3721,23 @@ function scrapyardPartRowHtml(p, canManage){
   } else if(canManage){
     priceCells = scrapyardPriceCellHtml('السعر', p.cost_price, 'current');
     actions = '';
-  } else {
-    // الموظف يكتب السعر المقترح مباشرة بالصف — نفس شكل إدخال أسعار القطعة بالطلبية
+  } else if(scrapyardEditOpenFor[p.part_id]){
+    // خانة السعر المقترح تظهر فقط بعد الضغط على "تعديل" — نفس شكل إدخال أسعار القطعة بالطلبية
     const draftVal = scrapyardPriceDrafts[p.part_id];
     const inputVal = (draftVal===undefined || draftVal===null) ? '' : draftVal;
     priceCells = scrapyardPriceCellHtml('السعر الحالي', p.cost_price, 'current') +
       '<div class="scrapyard-price-cell scrapyard-price-cell-proposed">' +
         '<span>السعر المقترح</span>' +
-        '<input type="number" min="0" step="0.01" class="scrapyard-price-input num" placeholder="—" value="'+inputVal+'" data-price-draft="'+p.part_id+'" data-order-id="'+p.order_id+'">' +
+        '<input type="number" min="0" step="0.01" class="scrapyard-price-input num" placeholder="—" value="'+inputVal+'" data-price-draft="'+p.part_id+'" data-order-id="'+p.order_id+'" autofocus>' +
       '</div>';
     actions = '<div class="scrapyard-part-actions">' +
       '<button type="button" class="icon-btn icon-btn-accept" data-send-price="'+p.part_id+'" data-order-id="'+p.order_id+'" title="إرسال السعر المقترح" aria-label="إرسال السعر المقترح">📨</button>' +
+      '<button type="button" class="icon-btn" data-cancel-price-edit="'+p.part_id+'" title="إلغاء" aria-label="إلغاء">✕</button>' +
+    '</div>';
+  } else {
+    priceCells = scrapyardPriceCellHtml('السعر', p.cost_price, 'current');
+    actions = '<div class="scrapyard-part-actions">' +
+      '<button type="button" class="icon-btn" data-open-price-edit="'+p.part_id+'" title="تعديل السعر" aria-label="تعديل السعر">✏️ تعديل</button>' +
       '<button type="button" class="icon-btn icon-btn-danger" data-propose-delete="'+p.part_id+'" data-order-id="'+p.order_id+'" title="اقتراح حذف" aria-label="اقتراح حذف">🗑️</button>' +
     '</div>';
   }
@@ -3763,10 +3827,27 @@ function bindScrapyardEvents(){
   const scrapLogo = document.getElementById('scrapyard-logo-img');
   if(scrapLogo) scrapLogo.addEventListener('click', goHomeFromLogo);
 
-  // إدخال السعر المقترح مباشرة بالصف
+  // خانة تعديل السعر تظهر فقط بعد الضغط على "تعديل"
+  root.querySelectorAll('[data-open-price-edit]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      scrapyardEditOpenFor[btn.getAttribute('data-open-price-edit')] = true;
+      renderScrapyardView();
+    });
+  });
+  root.querySelectorAll('[data-cancel-price-edit]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const partId = btn.getAttribute('data-cancel-price-edit');
+      delete scrapyardEditOpenFor[partId];
+      delete scrapyardPriceDrafts[partId];
+      renderScrapyardView();
+    });
+  });
+
+  // إدخال السعر المقترح مباشرة بالصف — والمجموع الجديد يتحدّث فورًا مع الكتابة
   root.querySelectorAll('[data-price-draft]').forEach(inp=>{
     inp.addEventListener('input', e=>{
       scrapyardPriceDrafts[inp.getAttribute('data-price-draft')] = e.target.value;
+      updateScrapyardSubtotalDisplay(inp.getAttribute('data-order-id'));
     });
     inp.addEventListener('keydown', e=>{
       if(e.key === 'Enter'){
@@ -3784,10 +3865,18 @@ function bindScrapyardEvents(){
     inp.addEventListener('input', e=>{ scrapyardAddDrafts[inp.getAttribute('data-add-desc')].description = e.target.value; });
   });
   root.querySelectorAll('[data-add-qty]').forEach(inp=>{
-    inp.addEventListener('input', e=>{ scrapyardAddDrafts[inp.getAttribute('data-add-qty')].qty = e.target.value===''?1:Number(e.target.value); });
+    inp.addEventListener('input', e=>{
+      const orderId = inp.getAttribute('data-add-qty');
+      scrapyardAddDrafts[orderId].qty = e.target.value===''?1:Number(e.target.value);
+      updateScrapyardSubtotalDisplay(orderId);
+    });
   });
   root.querySelectorAll('[data-add-price]').forEach(inp=>{
-    inp.addEventListener('input', e=>{ scrapyardAddDrafts[inp.getAttribute('data-add-price')].price = e.target.value===''?null:Number(e.target.value); });
+    inp.addEventListener('input', e=>{
+      const orderId = inp.getAttribute('data-add-price');
+      scrapyardAddDrafts[orderId].price = e.target.value===''?null:Number(e.target.value);
+      updateScrapyardSubtotalDisplay(orderId);
+    });
   });
   root.querySelectorAll('[data-send-add]').forEach(btn=>{
     btn.addEventListener('click', ()=> sendScrapyardAddProposal(btn.getAttribute('data-send-add')));
@@ -3852,6 +3941,7 @@ async function sendScrapyardPriceProposal(orderId, partId){
   });
   if(error){ showToast('تعذر إرسال الاقتراح', 'error'); return; }
   delete scrapyardPriceDrafts[partId];
+  delete scrapyardEditOpenFor[partId];
   showToast('تم إرسال السعر المقترح', 'ok');
   await loadScrapyardData();
   renderScrapyardView();
