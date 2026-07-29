@@ -3569,7 +3569,8 @@ function scrapyardPartRowHtml(p, canManage){
         '</div>' +
       '</div>';
     } else {
-      extra = '<span class="stamp stamp-amber">⏳ '+(proposal.action==='delete'?'اقتراح حذف معلّق':'اقتراح تعديل معلّق')+'</span>';
+      extra = '<span class="stamp stamp-amber">⏳ '+(proposal.action==='delete'?'اقتراح حذف معلّق':'اقتراح تعديل معلّق')+'</span>' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-withdraw-proposal="'+proposal.id+'">↩️ تراجع</button>';
     }
   } else {
     extra = canManage ? '' :
@@ -3600,7 +3601,24 @@ function scrapyardAddProposalInlineHtml(pr, canManage){
   return '<div class="scrapyard-part-row">' +
     '<span class="scrapyard-part-desc">'+label+'</span>' +
     '<span class="stamp stamp-amber">⏳ بانتظار المراجعة</span>' +
+    '<button type="button" class="btn btn-ghost btn-sm" data-withdraw-proposal="'+pr.id+'">↩️ تراجع</button>' +
   '</div>';
+}
+
+function withdrawScrapyardProposal(proposalId){
+  confirmAction({
+    title: 'تراجع عن هذا الاقتراح؟',
+    message: 'رح يُحذف الاقتراح ولن يوصل لصاحب الحساب.',
+    confirmLabel: 'تراجع',
+    dangerous: true,
+    onConfirm: async ()=>{
+      const { error } = await sb.from('scrapyard_proposals').delete().eq('id', proposalId);
+      if(error){ showToast('تعذر التراجع عن الاقتراح', 'error'); return; }
+      showToast('تم التراجع عن الاقتراح', 'ok');
+      await loadScrapyardData();
+      renderScrapyardView();
+    }
+  });
 }
 
 async function confirmScrapyardOrder(orderId){
@@ -3652,6 +3670,9 @@ function bindScrapyardEvents(){
   });
   root.querySelectorAll('[data-confirm-order]').forEach(btn=>{
     btn.addEventListener('click', ()=> confirmScrapyardOrder(btn.getAttribute('data-confirm-order')));
+  });
+  root.querySelectorAll('[data-withdraw-proposal]').forEach(btn=>{
+    btn.addEventListener('click', ()=> withdrawScrapyardProposal(btn.getAttribute('data-withdraw-proposal')));
   });
   root.querySelectorAll('[data-accept-proposal]').forEach(btn=>{
     btn.addEventListener('click', ()=> handleScrapyardProposalDecision(btn.getAttribute('data-accept-proposal'), true));
