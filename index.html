@@ -344,6 +344,8 @@
   .modal-sub{color:var(--text-dim);font-size:12.5px;margin-top:4px;}
   .field{display:block;margin-bottom:16px;}
   .field-label{display:block;font-size:12.5px;color:var(--text-dim);margin-bottom:6px;font-weight:700;}
+  .field-label-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;}
+  .field-label-row .field-label{margin-bottom:0;}
   .field input[type="text"],.field input[type="tel"]{
     width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
     padding:10px 12px;border-radius:var(--radius-sm);font-size:14px;font-family:'Cairo',sans-serif;font-weight:700;
@@ -381,6 +383,9 @@
   .btn-add-used-part{color:var(--amber);border-color:var(--amber-line);background:var(--amber-dim);}
   .btn-add-used-part:hover{background:rgba(232,178,61,.22);border-color:var(--amber);}
   .part-row{display:flex;gap:8px;align-items:flex-end;background:var(--surface);border:1px solid var(--border-soft);border-radius:var(--radius-sm);padding:10px;}
+  .part-include-check{flex-shrink:0;align-self:center;width:18px;height:18px;accent-color:var(--green);cursor:pointer;}
+  .part-row-excluded{opacity:.5;}
+  .part-row-excluded .part-desc-input{text-decoration:line-through;}
   .part-desc-row{display:flex;align-items:center;gap:8px;}
   .part-index-badge{
     flex-shrink:0;color:var(--text-dim);font-family:'Cairo',sans-serif;font-weight:800;font-size:12.5px;
@@ -796,9 +801,15 @@ function nextOrderNumber(){
   return 'PT-' + String(max+1).padStart(4,'0');
 }
 
+function orderActiveParts(order){
+  const parts = order.parts||[];
+  return order.partsSelectionEnabled ? parts.filter(p=>p.included!==false) : parts;
+}
+
 function orderTotals(order){
   let costTotal = 0, costToScrapyard = 0, costToSupplier = 0, partsSellTotal = 0, pricedCount = 0;
-  (order.parts||[]).forEach(p=>{
+  const activeParts = orderActiveParts(order);
+  activeParts.forEach(p=>{
     const qty = Number(p.qty)||1;
     const lineCost = qty * (Number(p.costPrice)||0);
     costTotal += lineCost;
@@ -809,7 +820,7 @@ function orderTotals(order){
     }
   });
   const hasSell = pricedCount>0;
-  const fullyPriced = order.parts.length>0 && pricedCount===order.parts.length;
+  const fullyPriced = activeParts.length>0 && pricedCount===activeParts.length;
   const feeEnabled = !!order.feeEnabled;
   const feePercent = Number(order.feePercent)||0;
   const feeAmount = (hasSell && feeEnabled) ? round2(partsSellTotal * feePercent / 100) : 0;
@@ -1275,7 +1286,10 @@ function partRowHtml(p, i){
   const costVal = (p.costPrice===''||p.costPrice==null) ? '' : p.costPrice;
   const sellVal = (p.sellPrice===''||p.sellPrice==null) ? '' : p.sellPrice;
   const qtyVal = (p.qty===''||p.qty==null) ? 1 : p.qty;
-  return '<div class="part-row" data-part-id="'+p.id+'">' +
+  const selectionOn = !!(typeof draft !== 'undefined' && draft && draft.partsSelectionEnabled);
+  const included = p.included !== false;
+  return '<div class="part-row'+(selectionOn && !included ? ' part-row-excluded' : '')+'" data-part-id="'+p.id+'">' +
+    (selectionOn ? '<input type="checkbox" class="part-include-check" '+(included?'checked':'')+' title="مشمولة بالطلبية">' : '') +
     '<div class="part-desc-wrap">' +
       '<div class="part-desc-row">' +
         '<span class="part-index-badge">'+((i!=null?i:0)+1)+'</span>' +
@@ -1306,7 +1320,13 @@ function modalHtml(d){
             '<button type="button" class="icon-btn" id="order-phone-contact-btn" aria-label="تواصل">📞</button>' +
           '</div>' +
         '</div>' +
-        '<label class="field"><span class="field-label">الطلبية</span><input type="text" id="order-label-input" placeholder="مثال: اسم الزبون / نوع السيارة / أي وصف مختصر" value="'+escapeHtml(d.orderLabel||'')+'"></label>' +
+        '<div class="field">' +
+          '<div class="field-label-row">' +
+            '<span class="field-label">الطلبية</span>' +
+            '<button type="button" id="btn-toggle-part-selection" class="chip'+(d.partsSelectionEnabled?' chip-active':'')+'">🎯 تحديد القطع'+(d.partsSelectionEnabled?' (مفعّل)':'')+'</button>' +
+          '</div>' +
+          '<input type="text" id="order-label-input" placeholder="مثال: اسم الزبون / نوع السيارة / أي وصف مختصر" value="'+escapeHtml(d.orderLabel||'')+'">' +
+        '</div>' +
         '<div class="section-block">' +
           '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span></div>' +
           '<div id="parts-list" class="parts-list">'+d.parts.map(partRowHtml).join('')+'</div>' +
@@ -1364,6 +1384,7 @@ function openModal(mode, orderId){
       orderNumber: nextOrderNumber(),
       orderLabel: '',
       parts: [],
+      partsSelectionEnabled:false,
       paidToAmer:false,
       paidToSupplier:false,
       supplied:false,
@@ -1417,6 +1438,15 @@ function attachModalHandlers(){
   root.querySelector('#order-label-input').addEventListener('input', e=>{ draft.orderLabel = e.target.value; });
   root.querySelector('#order-phone-input').addEventListener('input', e=>{ draft.customerPhone = e.target.value; });
   root.querySelector('#order-phone-contact-btn').addEventListener('click', ()=> openContactModal(draft.customerPhone));
+  root.querySelector('#btn-toggle-part-selection').addEventListener('click', ()=>{
+    draft.partsSelectionEnabled = !draft.partsSelectionEnabled;
+    refreshPartsList();
+    const btn = root.querySelector('#btn-toggle-part-selection');
+    if(btn){
+      btn.classList.toggle('chip-active', draft.partsSelectionEnabled);
+      btn.textContent = '🎯 تحديد القطع' + (draft.partsSelectionEnabled ? ' (مفعّل)' : '');
+    }
+  });
 
   bindPartAddControls();
 
@@ -1539,6 +1569,13 @@ function bindPartRowEvents(){
     const pid = row.getAttribute('data-part-id');
     const part = draft.parts.find(p=>p.id===pid);
     if(!part) return;
+    const includeCheck = row.querySelector('.part-include-check');
+    if(includeCheck){
+      includeCheck.addEventListener('change', e=>{
+        part.included = e.target.checked;
+        refreshPartsList();
+      });
+    }
     row.querySelector('.part-desc-input').addEventListener('input', e=>{ part.description = e.target.value; });
     row.querySelector('.part-qty-input').addEventListener('input', e=>{
       part.qty = e.target.value===''? 1 : Number(e.target.value);
@@ -1674,7 +1711,8 @@ async function onSaveOrder(){
       qty: (p.qty===''||p.qty==null||Number(p.qty)<=0) ? 1 : Number(p.qty),
       costPrice: p.costPrice===''? 0 : Number(p.costPrice)||0,
       sellPrice: (p.sellPrice===''||p.sellPrice===null||p.sellPrice===undefined)? null : Number(p.sellPrice),
-      used: !!p.used
+      used: !!p.used,
+      included: p.included!==false
     }));
   if(cleanedParts.length===0){ showToast('لازم تضيف وصف لقطعة وحدة على الأقل', 'error'); return false; }
 
@@ -1854,7 +1892,7 @@ function nextDocNumber(prefix, field){
 let docState = null; // {orderId, type, data}
 
 function partsTableRowsHtml(order){
-  return order.parts.map(p=>{
+  return orderActiveParts(order).map(p=>{
     const qty = Number(p.qty)||1;
     const unit = Number(p.sellPrice)||0;
     return '<tr>' +
@@ -2058,7 +2096,7 @@ function buildDocWhatsAppText(order, type, data){
   if(data.vin) lines.push('VIN: '+data.vin);
   lines.push('');
   lines.push('القطع:');
-  order.parts.forEach((p,i)=>{
+  orderActiveParts(order).forEach((p,i)=>{
     const qty = Number(p.qty)||1;
     const unit = Number(p.sellPrice)||0;
     lines.push((i+1)+'. '+partDisplayName(p)+' × '+qty+' — '+fmtNum(qty*unit)+' ريال');
@@ -2947,6 +2985,7 @@ function exportAllDataToExcel(){
         'الطلبية': o.orderLabel || '',
         'وصف القطعة': p.description,
         'مستعملة': p.used ? 'نعم' : 'لا',
+        'ضمن الطلبية': (!o.partsSelectionEnabled || p.included!==false) ? 'نعم' : 'لا',
         'العدد': p.qty,
         'سعر الشراء': p.costPrice,
         'سعر البيع': (p.sellPrice===null || p.sellPrice===undefined) ? '' : p.sellPrice
@@ -3055,6 +3094,7 @@ function normalizeImportedOrder(o){
     orderNumber: '',
     orderLabel: '',
     parts: [],
+    partsSelectionEnabled: false,
     paidToAmer: false,
     paidToSupplier: false,
     supplied: false,
