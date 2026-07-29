@@ -2558,17 +2558,19 @@ function updateScrapyardBadges(){
   bindScrapyardEntryEvents();
 }
 
+/* بتشتغل لصاحب الحساب ولعامر سوا — قبل كانت مقفولة على صاحب الحساب بس (presenceEmail ما بينحط أصلًا لعامر)،
+   فكان تغيير أي طرف ما بيوصل للطرف التاني لحظيًا، لازم تحديث يدوي */
 function subscribeScrapyardRealtime(){
-  if(!sb || scrapyardProposalsChannel || !TREASURY_ALLOWED_EMAILS.includes(presenceEmail)) return;
+  if(!sb || scrapyardProposalsChannel) return;
   scrapyardProposalsChannel = sb.channel('scrapyard-proposals-changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'scrapyard_proposals' }, ()=>{
-      refreshScrapyardPendingCount();
-      if(document.getElementById('scrapyard-root').style.display !== 'none' && scrapyardSharedState.canManage){
+      if(TREASURY_ALLOWED_EMAILS.includes(presenceEmail)) refreshScrapyardPendingCount();
+      if(document.getElementById('scrapyard-root').style.display !== 'none' && scrapyardCurrentScreen === 'settlement'){
         loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
       }
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'scrapyard_order_confirmations' }, ()=>{
-      if(document.getElementById('scrapyard-root').style.display !== 'none' && scrapyardSharedState.canManage){
+      if(document.getElementById('scrapyard-root').style.display !== 'none' && scrapyardCurrentScreen === 'settlement'){
         loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
       }
     })
@@ -3547,12 +3549,15 @@ const SETTLEMENT_KINDS = {
 };
 
 let scrapyardSharedState = { email:'', canManage:false, activeKind:'used', parts:[], proposals:[], confirmations:[], partsByKind:{used:[],new:[]}, tasks:[] };
+let scrapyardCurrentScreen = null; // 'home' | 'settlement' | 'tasks' — يحدّد هل نحدّث الشاشة تلقائيًا عند وصول تغيير لحظي
 
 async function initScrapyardView(email){
   scrapyardSharedState.email = email;
   scrapyardSharedState.canManage = TREASURY_ALLOWED_EMAILS.includes(email);
   const root = document.getElementById('scrapyard-root');
   root.innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
+  // دخول عامر المباشر ما بيمر بـ init()، فلازم نشترك بالتحديث اللحظي هون (الدالة نفسها محمية من التكرار)
+  subscribeScrapyardRealtime();
   // دخول عامر المباشر (دوره "scrapyard") يوديه للصفحة الرئيسية لقسم المشتريات؛
   // دخول صاحب الحساب من داخل التطبيق (زر الصندوق) يوديه لشاشة السداد مباشرة كالمعتاد
   if(scrapyardSharedState.canManage){
@@ -3727,6 +3732,7 @@ function scrapyardGroupProposedSubtotal(group){
 
 /* ---------- الصفحة الرئيسية لعامر (قسم المشتريات) — مؤشر السداد + قائمة المهام ---------- */
 function renderScrapyardHomeView(){
+  scrapyardCurrentScreen = 'home';
   const root = document.getElementById('scrapyard-root');
   const usedTotal = (scrapyardSharedState.partsByKind.used||[]).reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0);
   const newTotal = (scrapyardSharedState.partsByKind.new||[]).reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0);
@@ -3763,6 +3769,7 @@ function renderScrapyardHomeView(){
 }
 
 function renderPurchasesTasksView(){
+  scrapyardCurrentScreen = 'tasks';
   const root = document.getElementById('scrapyard-root');
   const tasks = scrapyardSharedState.tasks || [];
 
@@ -3813,6 +3820,7 @@ async function togglePurchasesTaskDone(taskId, newDone){
 }
 
 function renderScrapyardView(){
+  scrapyardCurrentScreen = 'settlement';
   const root = document.getElementById('scrapyard-root');
   const kind = scrapyardSharedState.activeKind;
   const groups = groupScrapyardPartsByOrder(scrapyardSharedState.parts);
