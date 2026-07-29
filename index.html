@@ -148,6 +148,21 @@
   /* treasury (الصندوق) */
   .treasury-header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px;}
   .treasury-title{font-size:19px;font-weight:800;font-family:'Cairo',sans-serif;}
+  .brand{font-size:19px;font-weight:800;font-family:'Cairo',sans-serif;color:var(--text);}
+  .brand-accent{color:var(--green);}
+  .scrapyard-home-tile{
+    display:flex;align-items:center;justify-content:space-between;width:100%;
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    padding:18px 20px;margin-bottom:14px;cursor:pointer;font-family:'Tajawal',sans-serif;
+    transition:.15s ease;text-align:right;
+  }
+  .scrapyard-home-tile:hover{border-color:var(--green-line);}
+  .scrapyard-home-tile-label{font-size:15px;font-weight:800;color:var(--text);}
+  .scrapyard-home-tile-value{font-size:19px;font-weight:800;color:var(--amber);}
+  .purchases-task-row{display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--border-soft);font-size:14px;}
+  .purchases-task-row:last-child{border-bottom:none;}
+  .purchases-task-row-done{color:var(--text-faint);text-decoration:line-through;}
+  .purchases-task-check{font-size:16px;}
   .treasury-profit-card{
     background:var(--surface);border:1px solid var(--green-line);border-radius:var(--radius);
     padding:20px 22px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;
@@ -3515,7 +3530,7 @@ async function showAppIfAllowed(session){
 /* ---------- shared scrapyard settlement screen, used by both the purchasing employee and the owner.
    Employee (canManage=false) reads via get_scrapyard_used_parts() RPC and proposes changes without touching
    app_data directly; owner (canManage=true) reads appData.orders locally and can accept/reject inline. */
-let scrapyardSharedState = { email:'', canManage:false, parts:[], proposals:[], confirmations:[] };
+let scrapyardSharedState = { email:'', canManage:false, parts:[], proposals:[], confirmations:[], tasks:[] };
 
 async function initScrapyardView(email){
   scrapyardSharedState.email = email;
@@ -3523,7 +3538,10 @@ async function initScrapyardView(email){
   const root = document.getElementById('scrapyard-root');
   root.innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
   await loadScrapyardData();
-  renderScrapyardView();
+  // دخول عامر المباشر (دوره "scrapyard") يوديه للصفحة الرئيسية لقسم المشتريات؛
+  // دخول صاحب الحساب من داخل التطبيق (زر الصندوق) يوديه لشاشة سداد التشاليح مباشرة كالمعتاد
+  if(scrapyardSharedState.canManage) renderScrapyardView();
+  else renderScrapyardHomeView();
 }
 
 async function openScrapyardSharedView(){
@@ -3562,15 +3580,18 @@ async function loadScrapyardData(){
       scrapyardSharedState.proposals = proposalsRes.data || [];
       scrapyardSharedState.confirmations = confirmationsRes.data || [];
     } else {
-      const [partsRes, proposalsRes, confirmationsRes] = await Promise.all([
+      const [partsRes, proposalsRes, confirmationsRes, tasksRes] = await Promise.all([
         sb.rpc('get_scrapyard_used_parts'),
         sb.from('scrapyard_proposals').select('*').eq('submitted_by', scrapyardSharedState.email).order('created_at', {ascending:false}),
-        sb.from('scrapyard_order_confirmations').select('*')
+        sb.from('scrapyard_order_confirmations').select('*'),
+        sb.rpc('get_purchases_tasks')
       ]);
       if(partsRes.error) throw partsRes.error;
       scrapyardSharedState.parts = partsRes.data || [];
       scrapyardSharedState.proposals = proposalsRes.data || [];
       scrapyardSharedState.confirmations = confirmationsRes.data || [];
+      // ما نوقف تحميل الشاشة كلها لو الدالة لسا ما انعملت — تطلع فاضية بس
+      scrapyardSharedState.tasks = (tasksRes && !tasksRes.error) ? (tasksRes.data || []) : [];
     }
   }catch(e){
     showToast('تعذر تحميل بيانات سداد التشاليح', 'error');
@@ -3637,6 +3658,61 @@ function scrapyardGroupProposedSubtotal(group){
   return changed ? total : null;
 }
 
+/* ---------- الصفحة الرئيسية لعامر (قسم المشتريات) — مؤشر السداد + قائمة المهام ---------- */
+function renderScrapyardHomeView(){
+  const root = document.getElementById('scrapyard-root');
+  const total = scrapyardSharedState.parts.reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0);
+  const pendingTasks = (scrapyardSharedState.tasks||[]).filter(t=>!t.done).length;
+
+  root.innerHTML =
+    '<div class="app-top-utility-row">' +
+      '<div class="corner-mini-bar"></div>' +
+      '<img class="app-corner-logo" src="'+PARTECH_LOGO_DATA_URI+'" id="scrapyard-home-logo-img" alt="PARTECH" title="الصفحة الرئيسية">' +
+    '</div>' +
+    '<header class="topbar"><div class="brand">قسم المشتريات</div></header>' +
+    '<button type="button" class="scrapyard-home-tile" id="btn-open-scrapyard-settlement">' +
+      '<span class="scrapyard-home-tile-label">🧾 سداد التشاليح</span>' +
+      '<span class="scrapyard-home-tile-value num">'+fmtMoney(total)+'</span>' +
+    '</button>' +
+    '<button type="button" class="scrapyard-home-tile" id="btn-open-purchases-tasks">' +
+      '<span class="scrapyard-home-tile-label">✅ قائمة المهام</span>' +
+      (pendingTasks>0 ? '<span class="inline-count-badge">'+pendingTasks+'</span>' : '<span class="scrapyard-home-tile-value num text-green">لا مهام</span>') +
+    '</button>';
+
+  const logo = document.getElementById('scrapyard-home-logo-img');
+  if(logo) logo.addEventListener('click', renderScrapyardHomeView);
+  document.getElementById('btn-open-scrapyard-settlement').addEventListener('click', renderScrapyardView);
+  document.getElementById('btn-open-purchases-tasks').addEventListener('click', renderPurchasesTasksView);
+}
+
+function renderPurchasesTasksView(){
+  const root = document.getElementById('scrapyard-root');
+  const tasks = scrapyardSharedState.tasks || [];
+
+  root.innerHTML =
+    '<div class="app-top-utility-row">' +
+      '<div class="corner-mini-bar">' +
+        '<button type="button" class="btn btn-ghost btn-sm" id="btn-scrapyard-tasks-back">→ الرئيسية</button>' +
+      '</div>' +
+      '<img class="app-corner-logo" src="'+PARTECH_LOGO_DATA_URI+'" id="scrapyard-tasks-logo-img" alt="PARTECH" title="الصفحة الرئيسية">' +
+    '</div>' +
+    '<header class="topbar"><div class="brand">قائمة المهام</div></header>' +
+    '<div class="section-block">' +
+      (tasks.length
+        ? tasks.map(t=>
+            '<div class="purchases-task-row'+(t.done?' purchases-task-row-done':'')+'">' +
+              '<span class="purchases-task-check">'+(t.done?'✅':'⬜')+'</span>' +
+              '<span class="purchases-task-text">'+escapeHtml(t.text||'')+'</span>' +
+            '</div>'
+          ).join('')
+        : '<div class="expense-empty-hint">ما فيه مهام حاليًا</div>') +
+    '</div>';
+
+  document.getElementById('btn-scrapyard-tasks-back').addEventListener('click', renderScrapyardHomeView);
+  const logo = document.getElementById('scrapyard-tasks-logo-img');
+  if(logo) logo.addEventListener('click', renderScrapyardHomeView);
+}
+
 function renderScrapyardView(){
   const root = document.getElementById('scrapyard-root');
   const groups = groupScrapyardPartsByOrder(scrapyardSharedState.parts);
@@ -3646,7 +3722,9 @@ function renderScrapyardView(){
   root.innerHTML =
     '<div class="app-top-utility-row">' +
       '<div class="corner-mini-bar">' +
-        (canManage ? '<button type="button" class="btn btn-ghost btn-sm" id="btn-exit-scrapyard-shared">→ الرجوع للصندوق</button>' : '') +
+        (canManage
+          ? '<button type="button" class="btn btn-ghost btn-sm" id="btn-exit-scrapyard-shared">→ الرجوع للصندوق</button>'
+          : '<button type="button" class="btn btn-ghost btn-sm" id="btn-scrapyard-back-home">→ الرئيسية</button>') +
       '</div>' +
       '<img class="app-corner-logo" src="'+PARTECH_LOGO_DATA_URI+'" id="scrapyard-logo-img" alt="PARTECH" title="الصفحة الرئيسية">' +
     '</div>' +
@@ -3858,6 +3936,8 @@ function bindScrapyardEvents(){
   const root = document.getElementById('scrapyard-root');
   const exitBtn = document.getElementById('btn-exit-scrapyard-shared');
   if(exitBtn) exitBtn.addEventListener('click', closeScrapyardSharedView);
+  const backHomeBtn = document.getElementById('btn-scrapyard-back-home');
+  if(backHomeBtn) backHomeBtn.addEventListener('click', renderScrapyardHomeView);
   const scrapLogo = document.getElementById('scrapyard-logo-img');
   if(scrapLogo) scrapLogo.addEventListener('click', goHomeFromLogo);
 
@@ -4197,8 +4277,8 @@ function goHomeFromLogo(){
   const scrapRoot = document.getElementById('scrapyard-root');
   if(scrapRoot && scrapRoot.style.display !== 'none'){
     if(!scrapyardSharedState.canManage){
-      // موظف التشاليح — صفحته الرئيسية هي نفس الشاشة، فنكتفي بتحديثها
-      loadScrapyardData().then(renderScrapyardView);
+      // موظف التشاليح (عامر) — يرجّعه لصفحته الرئيسية (قسم المشتريات)
+      loadScrapyardData().then(renderScrapyardHomeView);
       return;
     }
     closeScrapyardSharedView();
