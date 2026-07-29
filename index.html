@@ -169,8 +169,7 @@
   .expense-entries-list{display:flex;flex-direction:column;gap:6px;margin-bottom:8px;}
   .expense-empty-hint{font-size:12px;color:var(--text-faint);padding:4px 0;}
 
-  /* restricted scrapyard-employee view */
-  .scrapyard-summary-row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:18px;}
+  /* shared scrapyard settlement screen (employee + owner) */
   .scrapyard-order-group{margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--border-soft);}
   .scrapyard-order-group:last-child{border-bottom:none;}
   .scrapyard-order-header{font-family:'Cairo',sans-serif;font-weight:800;font-size:13.5px;color:var(--green);margin-bottom:10px;}
@@ -179,24 +178,10 @@
   .scrapyard-part-desc{flex:1;min-width:120px;font-size:13px;}
   .scrapyard-part-actions{display:flex;gap:6px;}
   .scrapyard-order-subtotal{display:flex;justify-content:space-between;align-items:center;padding:8px 2px 4px;margin-top:2px;border-top:1px dashed var(--border-soft);font-size:13.5px;font-weight:700;color:var(--text-dim);}
-  .scrapyard-proposal-row,.scrapyard-transfer-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border-soft);font-size:13px;}
-  .scrapyard-proposal-row:last-child,.scrapyard-transfer-row:last-child{border-bottom:none;}
-
-  /* owner-facing scrapyard comparison view */
-  .scrapyard-mgmt-row{background:var(--surface-2);border:1px solid var(--border-soft);border-radius:8px;padding:12px;margin-bottom:12px;}
-  .scrapyard-mgmt-row-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;font-family:'Cairo',sans-serif;font-weight:800;font-size:13px;color:var(--text-dim);}
-  .scrapyard-mgmt-part-name{font-size:13.5px;font-weight:700;color:var(--text);margin-bottom:10px;}
-  .scrapyard-mgmt-compare{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;}
-  .scrapyard-mgmt-compare-col{background:var(--surface-2);border:1px solid var(--border-soft);border-radius:6px;padding:8px 10px;font-size:13px;}
+  .scrapyard-order-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+  .scrapyard-mgmt-compare{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;width:100%;margin-top:6px;padding-top:6px;border-top:1px dashed var(--border-soft);}
   .inline-count-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--rust);color:#fff;font-family:'Cairo',sans-serif;font-weight:800;font-size:11px;line-height:1;margin-inline-start:4px;vertical-align:middle;}
-  .scrapyard-mgmt-compare-col-label{font-size:11px;color:var(--text-faint);font-weight:700;margin-bottom:4px;}
-  .scrapyard-mgmt-compare-col.diff{border-color:var(--rust);color:var(--rust);}
-  .scrapyard-mgmt-actions{display:flex;gap:8px;justify-content:flex-end;}
-  .scrapyard-transfer-form-row{display:grid;grid-template-columns:1fr 1fr 1.4fr auto;gap:8px;align-items:center;margin-bottom:14px;}
-  @media (max-width:640px){
-    .scrapyard-mgmt-compare{grid-template-columns:1fr;}
-    .scrapyard-transfer-form-row{grid-template-columns:1fr 1fr;}
-  }
+  .scrapyard-mgmt-actions{display:flex;gap:8px;}
   .expense-entry-row{display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:6px;padding:6px 8px;flex-wrap:wrap;}
   .expense-entry-amount-input{
     width:90px;background:var(--bg);border:1px solid var(--border);color:var(--rust);
@@ -2390,101 +2375,24 @@ function closeTreasuryView(){
   document.getElementById('orders-view').style.display = '';
 }
 
-/* ---------- owner's scrapyard-account view: compare his proposals against my actual data, accept/reject, log transfers ---------- */
-let scrapyardMgmtState = { proposals: [], transfers: [] };
+/* ---------- shared scrapyard-settlement entry point inside treasury: badge + link into the shared reconciliation screen ---------- */
+let scrapyardMgmtState = { proposals: [] };
 
-async function loadScrapyardMgmtData(){
-  try{
-    const [proposalsRes, transfersRes] = await Promise.all([
-      sb.from('scrapyard_proposals').select('*').order('created_at', {ascending:false}),
-      sb.from('scrapyard_transfers').select('*').order('created_at', {ascending:false})
-    ]);
-    if(proposalsRes.error) throw proposalsRes.error;
-    scrapyardMgmtState.proposals = proposalsRes.data || [];
-    scrapyardMgmtState.transfers = transfersRes.data || [];
-  }catch(e){
-    showToast('تعذر تحميل بيانات سداد التشاليح', 'error');
-  }
-}
-
-function findOrderAndPart(orderId, partId){
-  const order = appData.orders.find(o=>o.id===orderId);
-  if(!order) return { order:null, part:null };
-  const part = partId ? (order.parts||[]).find(p=>p.id===partId) : null;
-  return { order, part };
-}
-
-function scrapyardMgmtProposalRowHtml(pr){
-  const { order, part } = findOrderAndPart(pr.order_id, pr.part_id);
-  const orderLabel = order ? (order.orderNumber + (order.orderLabel ? ' — '+order.orderLabel : '')) : '(طلبية غير موجودة)';
-  let myValueText, hisValueText, actionLabel, partNameLine = '';
-  if(pr.action === 'edit'){
-    actionLabel = 'تعديل سعر';
-    partNameLine = part ? escapeHtml(part.description) : '(قطعة غير موجودة)';
-    myValueText = part ? fmtMoney(part.costPrice) : '—';
-    hisValueText = fmtMoney(pr.cost_price);
-  } else if(pr.action === 'delete'){
-    actionLabel = 'حذف قطعة';
-    myValueText = part ? (escapeHtml(part.description)+' — '+fmtMoney(part.costPrice)) : '(محذوفة أصلًا)';
-    hisValueText = '—';
-  } else {
-    actionLabel = 'إضافة قطعة جديدة';
-    myValueText = '—';
-    hisValueText = escapeHtml(pr.description||'')+' ×'+(pr.qty||1)+' — '+fmtMoney(pr.cost_price);
-  }
-  return '<div class="scrapyard-mgmt-row" data-proposal-id="'+pr.id+'">' +
-    '<div class="scrapyard-mgmt-row-head"><span class="scrapyard-order-header">'+escapeHtml(orderLabel)+'</span><span class="stamp stamp-amber">'+actionLabel+'</span></div>' +
-    (partNameLine ? '<div class="scrapyard-mgmt-part-name">'+partNameLine+'</div>' : '') +
-    '<div class="scrapyard-mgmt-compare">' +
-      '<div class="scrapyard-mgmt-compare-col"><span class="field-label">حسابي</span><span>'+myValueText+'</span></div>' +
-      '<div class="scrapyard-mgmt-compare-col"><span class="field-label">حسابه</span><span class="text-amber">'+hisValueText+'</span></div>' +
-    '</div>' +
-    '<div class="scrapyard-mgmt-actions">' +
-      '<button type="button" class="btn btn-primary btn-sm" data-accept-proposal="'+pr.id+'">✅ قبول</button>' +
-      '<button type="button" class="btn btn-danger-ghost btn-sm" data-reject-proposal="'+pr.id+'">❌ رفض</button>' +
-    '</div>' +
-  '</div>';
-}
-
-function scrapyardSettlementBlockHtml(){
+function scrapyardEntryBlockHtml(){
   const f = computeAggregateFinancials();
-  const totalTransfers = scrapyardMgmtState.transfers.reduce((s,t)=> s + (Number(t.amount)||0), 0);
-  const netOwed = round2(f.dueToScrapyard - totalTransfers);
   const pendingCount = scrapyardMgmtState.proposals.length;
-
-  return '<div class="treasury-block" id="scrapyard-settlement-block">' +
+  return '<div class="treasury-block" id="scrapyard-entry-block">' +
     '<div class="treasury-block-head">' +
       '<div class="treasury-block-title">سداد التشاليح'+(pendingCount ? '<span class="inline-count-badge">'+pendingCount+'</span>' : '')+'</div>' +
-      '<button type="button" class="btn btn-ghost btn-sm" id="btn-preview-scrapyard">👁️ معاينة شاشة الموظف</button>' +
+      '<span class="num text-rust">'+fmtMoney(f.dueToScrapyard)+' مستحق</span>' +
     '</div>' +
-    '<div class="scrapyard-summary-row">' +
-      '<div class="total-box"><span>مستحق للتشليح (غير مسدد)</span><span class="num text-rust">'+fmtMoney(f.dueToScrapyard)+'</span></div>' +
-      '<div class="total-box"><span>إجمالي المحوَّل له</span><span class="num text-green">'+fmtMoney(totalTransfers)+'</span></div>' +
-      '<div class="total-box"><span>الصافي المستحق عليّ منه</span><span class="num text-amber">'+fmtMoney(netOwed)+'</span></div>' +
-    '</div>' +
-    (scrapyardMgmtState.proposals.length ?
-      '<div class="expense-category-label" style="margin-bottom:8px;display:block;">اقتراحات معلّقة من موظف المشتريات</div>' +
-      scrapyardMgmtState.proposals.map(scrapyardMgmtProposalRowHtml).join('')
-      : '<div class="expense-empty-hint">ما فيه اقتراحات معلّقة من موظف المشتريات</div>') +
-    '<div class="expense-category-label" style="margin:14px 0 8px;display:block;">تحويل مبلغ له</div>' +
-    '<div class="scrapyard-transfer-form-row">' +
-      '<input type="number" min="0" step="0.01" class="expense-entry-amount-input" id="scrapyard-transfer-amount-input" placeholder="المبلغ">' +
-      '<input type="text" class="expense-entry-date-input" id="scrapyard-transfer-date-input" placeholder="التاريخ" value="'+escapeHtml(todayNumeric())+'">' +
-      '<input type="text" id="scrapyard-transfer-note-input" placeholder="ملاحظة (اختياري)">' +
-      '<button type="button" class="btn btn-primary btn-sm" id="btn-add-scrapyard-transfer">+ إضافة</button>' +
-    '</div>' +
-    (scrapyardMgmtState.transfers.length ? scrapyardMgmtState.transfers.map(t=>
-      '<div class="scrapyard-transfer-row"><span class="num text-green">+'+fmtMoney(t.amount)+'</span><span>'+escapeHtml(t.transfer_date||'')+'</span><span class="muted">'+escapeHtml(t.note||'')+'</span></div>'
-    ).join('') : '<div class="expense-empty-hint">ما فيه تحويلات مسجّلة بعد</div>') +
+    '<button type="button" class="btn btn-primary btn-sm" id="btn-open-scrapyard-shared" style="width:100%;">سداد التشاليح</button>' +
   '</div>';
 }
 
-function renderScrapyardSettlementBlock(){
-  const el = document.getElementById('scrapyard-settlement-block');
-  if(!el) return;
-  el.outerHTML = scrapyardSettlementBlockHtml();
-  bindScrapyardSettlementEvents();
-  updateScrapyardBadges();
+function bindScrapyardEntryEvents(){
+  const btn = document.getElementById('btn-open-scrapyard-shared');
+  if(btn) btn.addEventListener('click', openScrapyardSharedView);
 }
 
 function applyScrapyardProposal(pr){
@@ -2528,33 +2436,10 @@ function handleScrapyardProposalDecision(proposalId, accept){
       const { error } = await sb.from('scrapyard_proposals').delete().eq('id', pr.id);
       if(error){ showToast('تعذر تحديث حالة الاقتراح', 'error'); return; }
       showToast(accept ? 'تم القبول والتطبيق' : 'تم رفض الاقتراح', 'ok');
-      await loadScrapyardMgmtData();
-      if(accept) renderTreasuryView(); else renderScrapyardSettlementBlock();
+      await loadScrapyardData();
+      renderScrapyardView();
+      refreshScrapyardPendingCount();
     }
-  });
-}
-
-function bindScrapyardSettlementEvents(){
-  const root = document.getElementById('scrapyard-settlement-block');
-  if(!root) return;
-  const previewBtn = document.getElementById('btn-preview-scrapyard');
-  if(previewBtn) previewBtn.addEventListener('click', previewScrapyardView);
-  root.querySelectorAll('[data-accept-proposal]').forEach(btn=>{
-    btn.addEventListener('click', ()=> handleScrapyardProposalDecision(btn.getAttribute('data-accept-proposal'), true));
-  });
-  root.querySelectorAll('[data-reject-proposal]').forEach(btn=>{
-    btn.addEventListener('click', ()=> handleScrapyardProposalDecision(btn.getAttribute('data-reject-proposal'), false));
-  });
-  document.getElementById('btn-add-scrapyard-transfer').addEventListener('click', async ()=>{
-    const amount = Number(document.getElementById('scrapyard-transfer-amount-input').value);
-    const date = document.getElementById('scrapyard-transfer-date-input').value.trim();
-    const note = document.getElementById('scrapyard-transfer-note-input').value.trim();
-    if(!amount || amount<=0){ showToast('أدخل مبلغًا صحيحًا', 'error'); return; }
-    const { error } = await sb.from('scrapyard_transfers').insert({ amount, transfer_date: date, note, created_by: presenceEmail || '' });
-    if(error){ showToast('تعذر إضافة التحويل', 'error'); return; }
-    showToast('تم إضافة التحويل', 'ok');
-    await loadScrapyardMgmtData();
-    renderScrapyardSettlementBlock();
   });
 }
 
@@ -2573,6 +2458,8 @@ function updateScrapyardBadges(){
   const count = scrapyardMgmtState.proposals.length;
   const badge = document.getElementById('treasury-scrapyard-badge');
   if(badge){ badge.textContent = count>0 ? count : ''; badge.style.display = count>0 ? 'flex' : 'none'; }
+  const entryEl = document.getElementById('scrapyard-entry-block');
+  if(entryEl){ entryEl.outerHTML = scrapyardEntryBlockHtml(); bindScrapyardEntryEvents(); }
 }
 
 function subscribeScrapyardRealtime(){
@@ -2580,8 +2467,13 @@ function subscribeScrapyardRealtime(){
   scrapyardProposalsChannel = sb.channel('scrapyard-proposals-changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'scrapyard_proposals' }, ()=>{
       refreshScrapyardPendingCount();
-      if(document.getElementById('treasury-view').style.display !== 'none' && document.getElementById('scrapyard-settlement-block')){
-        loadScrapyardMgmtData().then(renderScrapyardSettlementBlock);
+      if(document.getElementById('scrapyard-root').style.display !== 'none' && scrapyardSharedState.canManage){
+        loadScrapyardData().then(renderScrapyardView);
+      }
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'scrapyard_order_confirmations' }, ()=>{
+      if(document.getElementById('scrapyard-root').style.display !== 'none' && scrapyardSharedState.canManage){
+        loadScrapyardData().then(renderScrapyardView);
       }
     })
     .subscribe();
@@ -2786,7 +2678,7 @@ function renderTreasuryView(){
         '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم الأرباح</span><span class="treasury-profit-value">'+fmtMoney(t.profitVolume)+'</span></div>' +
       '</div>' +
     '</div>' +
-    scrapyardSettlementBlockHtml() +
+    scrapyardEntryBlockHtml() +
     '<div class="treasury-block">' +
       '<div class="treasury-block-head">' +
         '<div class="treasury-block-title">المصاريف — كل مبلغ بتاريخه على حدة</div>' +
@@ -2834,7 +2726,7 @@ function renderTreasuryView(){
   });
   EXPENSE_CATEGORIES.forEach(c=> bindExpenseEntryEvents(c.key));
   bindExpenseEntryEvents('support');
-  bindScrapyardSettlementEvents();
+  bindScrapyardEntryEvents();
   updateScrapyardBadges();
   updateTreasurySummary();
 }
@@ -3539,46 +3431,67 @@ async function showAppIfAllowed(session){
   }
 }
 
-/* ---------- restricted scrapyard-employee view — proposes changes to used parts, never touches app_data directly.
-   All reads/writes go through get_scrapyard_used_parts() (RPC) and scrapyard_proposals/scrapyard_transfers tables,
-   which are protected by their own RLS policies (see plan doc) — this client code has no path to app_data at all. */
-let scrapyardState = { email:'', parts:[], myProposals:[], transfers:[] };
-let scrapyardPreviewMode = false;
+/* ---------- shared scrapyard settlement screen, used by both the purchasing employee and the owner.
+   Employee (canManage=false) reads via get_scrapyard_used_parts() RPC and proposes changes without touching
+   app_data directly; owner (canManage=true) reads appData.orders locally and can accept/reject inline. */
+let scrapyardSharedState = { email:'', canManage:false, parts:[], proposals:[], confirmations:[] };
 
 async function initScrapyardView(email){
-  scrapyardState.email = email;
+  scrapyardSharedState.email = email;
+  scrapyardSharedState.canManage = TREASURY_ALLOWED_EMAILS.includes(email);
   const root = document.getElementById('scrapyard-root');
   root.innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
   await loadScrapyardData();
   renderScrapyardView();
 }
 
-async function previewScrapyardView(){
-  scrapyardPreviewMode = true;
+async function openScrapyardSharedView(){
   document.getElementById('app-root').style.display = 'none';
   document.getElementById('scrapyard-root').style.display = '';
   await initScrapyardView(presenceEmail);
 }
 
-function exitScrapyardPreview(){
-  scrapyardPreviewMode = false;
+function closeScrapyardSharedView(){
   document.getElementById('scrapyard-root').style.display = 'none';
   document.getElementById('app-root').style.display = '';
 }
 
+function ownerScrapyardPartsFromAppData(){
+  const list = [];
+  appData.orders.filter(o=>!o.paidToAmer).forEach(o=>{
+    (o.parts||[]).forEach(p=>{
+      if(p.used){
+        list.push({ order_id:o.id, order_number:o.orderNumber, order_label:o.orderLabel, part_id:p.id, description:p.description, qty:p.qty, cost_price:p.costPrice });
+      }
+    });
+  });
+  return list;
+}
+
 async function loadScrapyardData(){
   try{
-    const [partsRes, proposalsRes, transfersRes] = await Promise.all([
-      sb.rpc('get_scrapyard_used_parts'),
-      sb.from('scrapyard_proposals').select('*').eq('submitted_by', scrapyardState.email).order('created_at', {ascending:false}),
-      sb.from('scrapyard_transfers').select('*').order('created_at', {ascending:false})
-    ]);
-    if(partsRes.error) throw partsRes.error;
-    scrapyardState.parts = partsRes.data || [];
-    scrapyardState.myProposals = (proposalsRes.data || []);
-    scrapyardState.transfers = transfersRes.data || [];
+    if(scrapyardSharedState.canManage){
+      scrapyardSharedState.parts = ownerScrapyardPartsFromAppData();
+      const [proposalsRes, confirmationsRes] = await Promise.all([
+        sb.from('scrapyard_proposals').select('*').order('created_at', {ascending:false}),
+        sb.from('scrapyard_order_confirmations').select('*')
+      ]);
+      if(proposalsRes.error) throw proposalsRes.error;
+      scrapyardSharedState.proposals = proposalsRes.data || [];
+      scrapyardSharedState.confirmations = confirmationsRes.data || [];
+    } else {
+      const [partsRes, proposalsRes, confirmationsRes] = await Promise.all([
+        sb.rpc('get_scrapyard_used_parts'),
+        sb.from('scrapyard_proposals').select('*').eq('submitted_by', scrapyardSharedState.email).order('created_at', {ascending:false}),
+        sb.from('scrapyard_order_confirmations').select('*')
+      ]);
+      if(partsRes.error) throw partsRes.error;
+      scrapyardSharedState.parts = partsRes.data || [];
+      scrapyardSharedState.proposals = proposalsRes.data || [];
+      scrapyardSharedState.confirmations = confirmationsRes.data || [];
+    }
   }catch(e){
-    showToast('تعذر تحميل البيانات', 'error');
+    showToast('تعذر تحميل بيانات سداد التشاليح', 'error');
   }
 }
 
@@ -3592,84 +3505,124 @@ function groupScrapyardPartsByOrder(parts){
 }
 
 function scrapyardProposalForPart(partId){
-  return scrapyardState.myProposals.find(pr=>pr.part_id===partId && pr.action!=='add');
+  return scrapyardSharedState.proposals.find(pr=>pr.part_id===partId && pr.action!=='add');
+}
+
+function scrapyardAddProposalsForOrder(orderId){
+  return scrapyardSharedState.proposals.filter(pr=>pr.order_id===orderId && pr.action==='add');
+}
+
+function scrapyardConfirmationForOrder(orderId){
+  return scrapyardSharedState.confirmations.find(c=>c.order_id===orderId);
 }
 
 function renderScrapyardView(){
   const root = document.getElementById('scrapyard-root');
-  const groups = groupScrapyardPartsByOrder(scrapyardState.parts);
-  const totalParts = scrapyardState.parts.reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0);
-  const totalTransfers = scrapyardState.transfers.reduce((s,t)=> s + (Number(t.amount)||0), 0);
-  const netOwed = round2(totalParts - totalTransfers);
+  const groups = groupScrapyardPartsByOrder(scrapyardSharedState.parts);
+  const total = scrapyardSharedState.parts.reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0);
+  const canManage = scrapyardSharedState.canManage;
 
   root.innerHTML =
     '<header class="topbar">' +
-      (scrapyardPreviewMode ? '<button type="button" class="btn btn-ghost btn-sm" id="btn-exit-scrapyard-preview">→ رجوع لتطبيقي</button>' : '') +
+      (canManage ? '<button type="button" class="btn btn-ghost btn-sm" id="btn-exit-scrapyard-shared">→ رجوع لتطبيقي</button>' : '') +
       '<div class="brand">سداد التشاليح</div>' +
     '</header>' +
-    '<div class="scrapyard-summary-row">' +
-      '<div class="total-box"><span>إجمالي قيمة القطع</span><span class="num">'+fmtMoney(totalParts)+'</span></div>' +
-      '<div class="total-box"><span>إجمالي المحوَّل لك</span><span class="num text-green">'+fmtMoney(totalTransfers)+'</span></div>' +
-      '<div class="total-box"><span>الصافي المستحق لك</span><span class="num text-amber">'+fmtMoney(netOwed)+'</span></div>' +
-    '</div>' +
-    '<div class="section-block"><div class="section-head"><span class="section-title">القطع المسجّلة</span></div>' +
-      (groups.length ? groups.map(scrapyardOrderGroupHtml).join('') : '<div class="expense-empty-hint">ما فيه قطع مسجّلة بعد</div>') +
-    '</div>' +
-    '<div class="section-block"><div class="section-head"><span class="section-title">اقتراحاتي المعلّقة</span></div>' +
-      (scrapyardState.myProposals.length ? scrapyardState.myProposals.map(scrapyardProposalRowHtml).join('') : '<div class="expense-empty-hint">ما فيه اقتراحات معلّقة</div>') +
-    '</div>' +
-    '<div class="section-block"><div class="section-head"><span class="section-title">المبالغ المحوّلة لك</span></div>' +
-      (scrapyardState.transfers.length ? scrapyardState.transfers.map(scrapyardTransferRowHtml).join('') : '<div class="expense-empty-hint">ما فيه تحويلات مسجّلة بعد</div>') +
+    '<div class="total-box" style="margin-bottom:18px;"><span>'+(canManage?'إجمالي المستحق للتشليح':'إجمالي المستحق لك')+'</span><span class="num text-amber">'+fmtMoney(total)+'</span></div>' +
+    '<div class="section-block"><div class="section-head"><span class="section-title">القطع (غير المسدّدة)</span></div>' +
+      (groups.length ? groups.map(g=>scrapyardOrderGroupHtml(g, canManage)).join('') : '<div class="expense-empty-hint">ما فيه قطع غير مسدّدة حاليًا</div>') +
     '</div>';
 
   bindScrapyardEvents();
 }
 
-function scrapyardOrderGroupHtml(group){
+function scrapyardOrderGroupHtml(group, canManage){
   const subtotal = group.parts.reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0);
+  const confirmation = scrapyardConfirmationForOrder(group.order_id);
+  const addProposals = scrapyardAddProposalsForOrder(group.order_id);
   return '<div class="scrapyard-order-group">' +
-    '<div class="scrapyard-order-header">'+escapeHtml(group.order_number||'')+(group.order_label?' — '+escapeHtml(group.order_label):'')+'</div>' +
-    group.parts.map(scrapyardPartRowHtml).join('') +
+    '<div class="scrapyard-order-header">'+escapeHtml(group.order_number||'')+(group.order_label?' — '+escapeHtml(group.order_label):'')+
+      (confirmation ? '<span class="stamp stamp-green" style="margin-inline-start:8px;">✅ '+(canManage?'أكّدها عامر':'تم تأكيدها')+'</span>' : '') +
+    '</div>' +
+    group.parts.map(p=>scrapyardPartRowHtml(p, canManage)).join('') +
+    addProposals.map(pr=>scrapyardAddProposalInlineHtml(pr, canManage)).join('') +
     '<div class="scrapyard-order-subtotal"><span>مجموع الطلبية</span><span class="num text-amber">'+fmtMoney(subtotal)+'</span></div>' +
-    '<button type="button" class="btn btn-ghost btn-sm" data-add-part-order="'+group.order_id+'">+ اقتراح قطعة جديدة</button>' +
+    (!canManage ?
+      '<div class="scrapyard-order-actions">' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-add-part-order="'+group.order_id+'">+ اقتراح قطعة جديدة</button>' +
+        (confirmation ? '' : '<button type="button" class="btn btn-primary btn-sm" data-confirm-order="'+group.order_id+'">✅ تأكيد الطلبية</button>') +
+      '</div>'
+      : '') +
   '</div>';
 }
 
-function scrapyardPartRowHtml(p){
-  const existingProposal = scrapyardProposalForPart(p.part_id);
+function scrapyardPartRowHtml(p, canManage){
+  const proposal = scrapyardProposalForPart(p.part_id);
+  let extra;
+  if(proposal){
+    if(canManage){
+      const actionLabel = proposal.action==='delete' ? 'اقتراح حذف' : 'اقتراح تعديل السعر إلى '+fmtMoney(proposal.cost_price);
+      extra = '<div class="scrapyard-mgmt-compare">' +
+        '<span class="stamp stamp-amber">'+actionLabel+'</span>' +
+        '<div class="scrapyard-mgmt-actions">' +
+          '<button type="button" class="btn btn-primary btn-sm" data-accept-proposal="'+proposal.id+'">✅ قبول</button>' +
+          '<button type="button" class="btn btn-danger-ghost btn-sm" data-reject-proposal="'+proposal.id+'">❌ رفض</button>' +
+        '</div>' +
+      '</div>';
+    } else {
+      extra = '<span class="stamp stamp-amber">⏳ '+(proposal.action==='delete'?'اقتراح حذف معلّق':'اقتراح تعديل معلّق')+'</span>';
+    }
+  } else {
+    extra = canManage ? '' :
+      '<div class="scrapyard-part-actions">' +
+        '<button type="button" class="icon-btn" data-propose-edit="'+p.part_id+'" data-order-id="'+p.order_id+'" aria-label="اقتراح تعديل">✏️</button>' +
+        '<button type="button" class="icon-btn" data-propose-delete="'+p.part_id+'" data-order-id="'+p.order_id+'" aria-label="اقتراح حذف">🗑️</button>' +
+      '</div>';
+  }
   return '<div class="scrapyard-part-row">' +
     '<span class="scrapyard-part-desc">'+escapeHtml(p.description||'')+'</span>' +
     '<span class="num">×'+(p.qty||1)+'</span>' +
     '<span class="num">'+fmtMoney(p.cost_price)+'</span>' +
-    (existingProposal
-      ? '<span class="stamp stamp-amber">⏳ '+(existingProposal.action==='delete'?'اقتراح حذف معلّق':'اقتراح تعديل معلّق')+'</span>'
-      : '<div class="scrapyard-part-actions">' +
-          '<button type="button" class="icon-btn" data-propose-edit="'+p.part_id+'" data-order-id="'+p.order_id+'" aria-label="اقتراح تعديل">✏️</button>' +
-          '<button type="button" class="icon-btn" data-propose-delete="'+p.part_id+'" data-order-id="'+p.order_id+'" aria-label="اقتراح حذف">🗑️</button>' +
-        '</div>'
-    ) +
+    extra +
   '</div>';
 }
 
-function scrapyardProposalRowHtml(pr){
-  const label = pr.action==='add' ? 'إضافة: '+escapeHtml(pr.description||'')+' — '+fmtMoney(pr.cost_price)
-    : pr.action==='delete' ? 'حذف قطعة' : 'تعديل السعر إلى '+fmtMoney(pr.cost_price);
-  return '<div class="scrapyard-proposal-row"><span>'+label+'</span><span class="stamp stamp-amber">⏳ بانتظار المراجعة</span></div>';
+function scrapyardAddProposalInlineHtml(pr, canManage){
+  const label = 'إضافة: '+escapeHtml(pr.description||'')+' ×'+(pr.qty||1)+' — '+fmtMoney(pr.cost_price);
+  if(canManage){
+    return '<div class="scrapyard-part-row">' +
+      '<span class="scrapyard-part-desc">'+label+'</span>' +
+      '<div class="scrapyard-mgmt-actions">' +
+        '<button type="button" class="btn btn-primary btn-sm" data-accept-proposal="'+pr.id+'">✅ قبول</button>' +
+        '<button type="button" class="btn btn-danger-ghost btn-sm" data-reject-proposal="'+pr.id+'">❌ رفض</button>' +
+      '</div>' +
+    '</div>';
+  }
+  return '<div class="scrapyard-part-row">' +
+    '<span class="scrapyard-part-desc">'+label+'</span>' +
+    '<span class="stamp stamp-amber">⏳ بانتظار المراجعة</span>' +
+  '</div>';
 }
 
-function scrapyardTransferRowHtml(t){
-  return '<div class="scrapyard-transfer-row"><span class="num text-green">+'+fmtMoney(t.amount)+'</span><span>'+escapeHtml(t.transfer_date||'')+'</span><span class="muted">'+escapeHtml(t.note||'')+'</span></div>';
+async function confirmScrapyardOrder(orderId){
+  const { error } = await sb.from('scrapyard_order_confirmations').upsert(
+    { order_id: orderId, confirmed_by: scrapyardSharedState.email, confirmed_at: new Date().toISOString() },
+    { onConflict: 'order_id' }
+  );
+  if(error){ showToast('تعذر تأكيد الطلبية', 'error'); return; }
+  showToast('تم تأكيد الطلبية', 'ok');
+  await loadScrapyardData();
+  renderScrapyardView();
 }
 
 function bindScrapyardEvents(){
   const root = document.getElementById('scrapyard-root');
-  const exitBtn = document.getElementById('btn-exit-scrapyard-preview');
-  if(exitBtn) exitBtn.addEventListener('click', exitScrapyardPreview);
+  const exitBtn = document.getElementById('btn-exit-scrapyard-shared');
+  if(exitBtn) exitBtn.addEventListener('click', closeScrapyardSharedView);
   root.querySelectorAll('[data-propose-edit]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const partId = btn.getAttribute('data-propose-edit');
       const orderId = btn.getAttribute('data-order-id');
-      const part = scrapyardState.parts.find(p=>p.part_id===partId);
+      const part = scrapyardSharedState.parts.find(p=>p.part_id===partId);
       openScrapyardEditModal(orderId, partId, part ? part.cost_price : 0);
     });
   });
@@ -3684,7 +3637,7 @@ function bindScrapyardEvents(){
         dangerous: true,
         onConfirm: async ()=>{
           const { error } = await sb.from('scrapyard_proposals').insert({
-            order_id: orderId, part_id: partId, action: 'delete', submitted_by: scrapyardState.email
+            order_id: orderId, part_id: partId, action: 'delete', submitted_by: scrapyardSharedState.email
           });
           if(error){ showToast('تعذر إرسال الاقتراح', 'error'); return; }
           showToast('تم إرسال اقتراح الحذف', 'ok');
@@ -3696,6 +3649,15 @@ function bindScrapyardEvents(){
   });
   root.querySelectorAll('[data-add-part-order]').forEach(btn=>{
     btn.addEventListener('click', ()=> openScrapyardAddModal(btn.getAttribute('data-add-part-order')));
+  });
+  root.querySelectorAll('[data-confirm-order]').forEach(btn=>{
+    btn.addEventListener('click', ()=> confirmScrapyardOrder(btn.getAttribute('data-confirm-order')));
+  });
+  root.querySelectorAll('[data-accept-proposal]').forEach(btn=>{
+    btn.addEventListener('click', ()=> handleScrapyardProposalDecision(btn.getAttribute('data-accept-proposal'), true));
+  });
+  root.querySelectorAll('[data-reject-proposal]').forEach(btn=>{
+    btn.addEventListener('click', ()=> handleScrapyardProposalDecision(btn.getAttribute('data-reject-proposal'), false));
   });
 }
 
@@ -3720,7 +3682,7 @@ function openScrapyardEditModal(orderId, partId, currentPrice){
     const val = Number(document.getElementById('scrap-edit-price-input').value);
     if(!val || val<0){ showToast('أدخل سعر صحيح', 'error'); return; }
     const { error } = await sb.from('scrapyard_proposals').insert({
-      order_id: orderId, part_id: partId, action: 'edit', cost_price: val, submitted_by: scrapyardState.email
+      order_id: orderId, part_id: partId, action: 'edit', cost_price: val, submitted_by: scrapyardSharedState.email
     });
     close();
     if(error){ showToast('تعذر إرسال الاقتراح', 'error'); return; }
@@ -3756,7 +3718,7 @@ function openScrapyardAddModal(orderId){
     if(!desc){ showToast('أدخل وصف القطعة', 'error'); return; }
     if(!price || price<0){ showToast('أدخل سعر صحيح', 'error'); return; }
     const { error } = await sb.from('scrapyard_proposals').insert({
-      order_id: orderId, action: 'add', description: desc, qty, cost_price: price, submitted_by: scrapyardState.email
+      order_id: orderId, action: 'add', description: desc, qty, cost_price: price, submitted_by: scrapyardSharedState.email
     });
     close();
     if(error){ showToast('تعذر إرسال الاقتراح', 'error'); return; }
