@@ -1750,9 +1750,10 @@ function bindPartRowEvents(){
           title: willBeUsed ? 'تغيير القطعة إلى مستعملة؟' : 'تغيير القطعة إلى غير مستعملة؟',
           message: part.description ? 'القطعة: '+part.description : undefined,
           confirmLabel: 'تأكيد التغيير',
-          onConfirm: ()=>{
+          onConfirm: async ()=>{
             part.used = willBeUsed;
             refreshPartsList();
+            await cancelPendingScrapyardProposalsForPart(part.id);
           }
         });
       });
@@ -4180,6 +4181,18 @@ async function sendScrapyardAddProposal(orderId){
   showToast('تم إرسال الاقتراح', 'ok');
   await loadScrapyardData(scrapyardSharedState.activeKind);
   renderScrapyardView();
+}
+
+/* لما صاحب الحساب يغيّر تصنيف القطعة (مستعمل/جديد) من داخل الطلبية، أي اقتراح معلّق
+   عليها بشاشة سداد التشاليح/الجديد بيصير غير منطقي (مبني على التصنيف القديم) — فنلغيه تلقائيًا */
+async function cancelPendingScrapyardProposalsForPart(partId){
+  if(!sb) return;
+  const { data, error } = await sb.from('scrapyard_proposals').select('id').eq('part_id', partId);
+  if(error || !data || !data.length) return;
+  const { error: delError } = await sb.from('scrapyard_proposals').delete().eq('part_id', partId);
+  if(delError){ console.error('cancelPendingScrapyardProposalsForPart:', delError); return; }
+  showToast('تم إلغاء الاقتراح المعلّق على هذه القطعة تلقائيًا بعد تغيير تصنيفها', 'ok');
+  refreshScrapyardPendingCount();
 }
 
 /* ---------- presence ("من متصل الآن") — tied to real interaction, updated live via Supabase Realtime ---------- */
