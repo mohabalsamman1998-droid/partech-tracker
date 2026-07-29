@@ -196,6 +196,7 @@
   .scrapyard-part-row:last-of-type{border-bottom:none;}
   .scrapyard-part-desc{flex:1;min-width:120px;font-size:15px;font-weight:700;color:var(--text);}
   .scrapyard-confirmed-check{display:inline-block;margin-inline-start:8px;font-size:13px;}
+  .scrapyard-days-since{display:inline-block;margin-inline-start:8px;font-size:11.5px;font-weight:700;}
   .scrapyard-part-actions{display:flex;gap:6px;min-width:96px;justify-content:flex-end;flex:0 0 auto;}
   .scrapyard-qty-slot{min-width:26px;text-align:center;}
   /* صف المجموع يحجز نفس أعمدة صف القطعة (اسم | عدد | سعر | إجراءات) حتى يقع المجموع تحت الأسعار تمامًا */
@@ -1625,6 +1626,7 @@ function attachModalHandlers(){
         cancelLabel: 'لا',
         onConfirm: ()=>{
           draft.supplied = willSupply;
+          draft.suppliedAt = willSupply ? new Date().toISOString() : null;
           suppliedBtn.textContent = willSupply ? '✅ تم التوريد' : '🚚 تم التوريد';
           suppliedBtn.classList.toggle('btn-supplied-on', willSupply);
           suppliedBtn.classList.toggle('btn-ghost', !willSupply);
@@ -3561,7 +3563,7 @@ function ownerScrapyardPartsFromAppData(){
   appData.orders.filter(o=>o.confirmed && !o.paidToAmer).forEach(o=>{
     (o.parts||[]).forEach(p=>{
       if(p.used){
-        list.push({ order_id:o.id, order_number:o.orderNumber, order_label:o.orderLabel, part_id:p.id, description:p.description, qty:p.qty, cost_price:p.costPrice });
+        list.push({ order_id:o.id, order_number:o.orderNumber, order_label:o.orderLabel, supplied_at:o.suppliedAt||null, part_id:p.id, description:p.description, qty:p.qty, cost_price:p.costPrice });
       }
     });
   });
@@ -3601,10 +3603,33 @@ async function loadScrapyardData(){
 function groupScrapyardPartsByOrder(parts){
   const map = {}; const order = [];
   parts.forEach(p=>{
-    if(!map[p.order_id]){ map[p.order_id] = { order_id:p.order_id, order_number:p.order_number, order_label:p.order_label, parts:[] }; order.push(map[p.order_id]); }
+    if(!map[p.order_id]){ map[p.order_id] = { order_id:p.order_id, order_number:p.order_number, order_label:p.order_label, supplied_at:p.supplied_at||null, parts:[] }; order.push(map[p.order_id]); }
     map[p.order_id].parts.push(p);
   });
   return order;
+}
+
+/* عدد الأيام من تاريخ "تم التوريد" — لمعرفة كم مرّ على كل طلبية غير مسدّدة بعد */
+function scrapyardDaysSinceSupply(suppliedAt){
+  if(!suppliedAt) return null;
+  const supplied = new Date(suppliedAt);
+  if(isNaN(supplied.getTime())) return null;
+  return Math.max(0, Math.floor((Date.now() - supplied.getTime()) / 86400000));
+}
+
+function arabicDaysLabel(n){
+  if(n === 0) return 'اليوم';
+  if(n === 1) return 'يوم واحد';
+  if(n === 2) return 'يومين';
+  if(n <= 10) return n+' أيام';
+  return n+' يوم';
+}
+
+function scrapyardDaysSinceSupplyBadgeHtml(suppliedAt){
+  const days = scrapyardDaysSinceSupply(suppliedAt);
+  if(days == null) return '';
+  const level = days > 7 ? 'text-rust' : (days >= 4 ? 'text-amber' : 'muted');
+  return '<span class="scrapyard-days-since '+level+'" title="مرّ على التوريد">⏱️ '+arabicDaysLabel(days)+' من التوريد</span>';
 }
 
 function scrapyardProposalForPart(partId){
@@ -3748,6 +3773,7 @@ function scrapyardOrderGroupHtml(group, canManage){
   return '<div class="scrapyard-order-group">' +
     '<div class="scrapyard-order-header">'+escapeHtml(group.order_number||'')+(group.order_label?' — '+escapeHtml(group.order_label):'')+
       (confirmation && canManage ? '<span class="scrapyard-confirmed-check" title="أكّدها عامر">✅</span>' : '') +
+      scrapyardDaysSinceSupplyBadgeHtml(group.supplied_at) +
     '</div>' +
     group.parts.map(p=>scrapyardPartRowHtml(p, canManage)).join('') +
     addProposals.map(pr=>scrapyardAddProposalInlineHtml(pr, canManage)).join('') +
