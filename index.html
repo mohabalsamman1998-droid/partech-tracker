@@ -2577,6 +2577,27 @@ function subscribeScrapyardRealtime(){
     .subscribe();
 }
 
+let scrapyardAppDataChannel = null;
+/* عامر ما عنده اشتراك على app_data أصلًا (بيقرأ القطع/المهام عن طريق RPC بس) — من دون هاد
+   الاشتراك، أي تعديل يسويه صاحب الحساب على طلبية (تأكيد/توريد/سعر...) ما بينعكس عند عامر
+   إلا بتحديث يدوي. صاحب الحساب نفسه عنده تحديثه الخاص جوا subscribeAppDataRealtime فما بيحتاج هاد. */
+function subscribeScrapyardAppDataRealtime(){
+  if(!sb || scrapyardAppDataChannel || scrapyardSharedState.canManage) return;
+  scrapyardAppDataChannel = sb.channel('scrapyard-app-data-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'app_data', filter: 'id=eq.' + STORAGE_ROW_ID }, ()=>{
+      const scrapRoot = document.getElementById('scrapyard-root');
+      if(!scrapRoot || scrapRoot.style.display === 'none') return;
+      if(scrapyardCurrentScreen === 'settlement'){
+        loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
+      } else if(scrapyardCurrentScreen === 'tasks'){
+        loadScrapyardHomeTotals().then(renderPurchasesTasksView);
+      } else if(scrapyardCurrentScreen === 'home'){
+        loadScrapyardHomeTotals().then(renderScrapyardHomeView);
+      }
+    })
+    .subscribe();
+}
+
 function parseDMY(str){
   if(!str) return null;
   const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(str).trim());
@@ -3484,6 +3505,11 @@ function applyRemoteAppData(json){
   updateTasksBadge();
   if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
   if(document.getElementById('tasks-view').style.display !== 'none'){ renderTasksView(); }
+  // صاحب الحساب لو فاتح شاشة سداد التشاليح/الجديد وقت وصول تعديل من مكان تاني — نحدّثها كمان
+  const scrapRoot = document.getElementById('scrapyard-root');
+  if(scrapRoot && scrapRoot.style.display !== 'none' && scrapyardSharedState.canManage && scrapyardCurrentScreen === 'settlement'){
+    loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
+  }
 }
 
 function subscribeAppDataRealtime(){
@@ -3556,8 +3582,9 @@ async function initScrapyardView(email){
   scrapyardSharedState.canManage = TREASURY_ALLOWED_EMAILS.includes(email);
   const root = document.getElementById('scrapyard-root');
   root.innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
-  // دخول عامر المباشر ما بيمر بـ init()، فلازم نشترك بالتحديث اللحظي هون (الدالة نفسها محمية من التكرار)
+  // دخول عامر المباشر ما بيمر بـ init()، فلازم نشترك بالتحديث اللحظي هون (الدالتين محميتين من التكرار)
   subscribeScrapyardRealtime();
+  subscribeScrapyardAppDataRealtime();
   // دخول عامر المباشر (دوره "scrapyard") يوديه للصفحة الرئيسية لقسم المشتريات؛
   // دخول صاحب الحساب من داخل التطبيق (زر الصندوق) يوديه لشاشة السداد مباشرة كالمعتاد
   if(scrapyardSharedState.canManage){
