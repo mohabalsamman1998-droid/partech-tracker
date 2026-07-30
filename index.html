@@ -3635,7 +3635,9 @@ async function initScrapyardView(email){
   scrapyardSharedState.canManage = TREASURY_ALLOWED_EMAILS.includes(email);
   const root = document.getElementById('scrapyard-root');
   root.innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
-  // دخول عامر المباشر ما بيمر بـ init()، فلازم نشترك بالتحديث اللحظي هون (الدالتين محميتين من التكرار)
+  // دخول عامر المباشر ما بيمر بـ init()، فلازم نسجّل حضوره يدويًا حتى يظهر بقائمة "آخر ظهور" عند صاحب الحساب
+  startPresenceHeartbeat(email);
+  // ونشترك بالتحديث اللحظي هون كمان (الدالتين محميتين من التكرار)
   subscribeScrapyardRealtime();
   subscribeScrapyardAppDataRealtime();
   // دخول عامر المباشر (دوره "scrapyard") يوديه للصفحة الرئيسية لقسم المشتريات؛
@@ -4318,13 +4320,12 @@ function refreshOnlineBadge(){
   const online = computeOnlineList();
   const btn = document.getElementById('btn-who-online');
   if(btn) btn.textContent = '👥 ' + online.length;
-  const listEl = document.getElementById('online-users-list');
-  if(listEl){
-    listEl.innerHTML = online.length === 0
-      ? 'ما فيه أحد متصل حاليًا'
-      : '<div class="task-items-list">' + online.map(email=>
-          '<div class="task-item-row"><span class="task-item-text">🟢 '+escapeHtml(email)+(email===presenceEmail?' (أنت)':'')+'</span></div>'
-        ).join('') + '</div>';
+  // إذا نافذة "آخر ظهور" مفتوحة، حدّثها بنفس قائمة كل الموظفين (متصل + غير متصل) — بدون ما نرجّعها للشكل القديم
+  if(document.getElementById('online-users-list')){
+    loadAllPresenceRows().then(rows=>{
+      const listEl = document.getElementById('online-users-list');
+      if(listEl) listEl.innerHTML = presenceListHtml(rows);
+    });
   }
 }
 
@@ -4370,28 +4371,41 @@ function startPresenceHeartbeat(email){
 }
 
 /* وقت نسبي بالعربي لآخر ظهور (قبل دقيقة/ساعة/يوم...) */
+function arabicMinutesLabel(n){
+  if(n === 1) return 'دقيقة';
+  if(n === 2) return 'دقيقتين';
+  if(n >= 3 && n <= 10) return n+' دقائق';
+  return n+' دقيقة';
+}
+function arabicHoursLabel(n){
+  if(n === 1) return 'ساعة';
+  if(n === 2) return 'ساعتين';
+  if(n >= 3 && n <= 10) return n+' ساعات';
+  return n+' ساعة';
+}
+function arabicDaysCountLabel(n){
+  if(n === 1) return 'يوم';
+  if(n === 2) return 'يومين';
+  if(n >= 3 && n <= 10) return n+' أيام';
+  return n+' يوم';
+}
+
+/* وقت نسبي دقيق بالدقائق: قبل 30 دقيقة / قبل ساعة و30 دقيقة / قبل يوم و3 ساعات... */
 function arabicRelativeTime(ms){
   const diffSec = Math.floor((Date.now() - ms) / 1000);
-  if(diffSec < 60) return 'الآن';
   const diffMin = Math.floor(diffSec / 60);
-  if(diffMin < 60){
-    if(diffMin === 1) return 'قبل دقيقة';
-    if(diffMin === 2) return 'قبل دقيقتين';
-    if(diffMin <= 10) return 'قبل '+diffMin+' دقائق';
-    return 'قبل '+diffMin+' دقيقة';
-  }
+  if(diffMin < 1) return 'الآن';
+  if(diffMin < 60) return 'قبل '+arabicMinutesLabel(diffMin);
   const diffHour = Math.floor(diffMin / 60);
+  const remMin = diffMin % 60;
   if(diffHour < 24){
-    if(diffHour === 1) return 'قبل ساعة';
-    if(diffHour === 2) return 'قبل ساعتين';
-    if(diffHour <= 10) return 'قبل '+diffHour+' ساعات';
-    return 'قبل '+diffHour+' ساعة';
+    return 'قبل '+arabicHoursLabel(diffHour)+(remMin>0 ? ' و '+arabicMinutesLabel(remMin) : '');
   }
   const diffDay = Math.floor(diffHour / 24);
-  if(diffDay === 1) return 'قبل يوم';
-  if(diffDay === 2) return 'قبل يومان';
-  if(diffDay <= 10) return 'قبل '+diffDay+' أيام';
-  if(diffDay <= 30) return 'قبل '+diffDay+' يوم';
+  const remHour = diffHour % 24;
+  if(diffDay <= 30){
+    return 'قبل '+arabicDaysCountLabel(diffDay)+(remHour>0 ? ' و '+arabicHoursLabel(remHour) : '');
+  }
   const diffMonth = Math.floor(diffDay / 30);
   if(diffMonth === 1) return 'قبل شهر';
   return 'قبل '+diffMonth+' أشهر';
