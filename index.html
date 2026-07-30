@@ -2655,6 +2655,11 @@ function orderMatchesExtraIndicatorsPeriod(order){
   return dateMatchesPeriod(new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()), extraIndicatorsPeriod, extraIndicatorsCustomMonth);
 }
 
+function entryMatchesExtraIndicatorsPeriod(entry){
+  if(extraIndicatorsPeriod === 'all') return true;
+  return dateMatchesPeriod(parseDMY(entry.date), extraIndicatorsPeriod, extraIndicatorsCustomMonth);
+}
+
 function computeTreasuryVolumes(){
   const orders = appData.orders.filter(o=>o.confirmed).filter(orderMatchesExtraIndicatorsPeriod);
   let paidToSuppliersTotal = 0, paidToScrapyardTotal = 0, customerReceiptsTotal = 0, collectedProfit = 0;
@@ -2691,9 +2696,15 @@ function treasuryTotals(){
   // الديون للموردين = إجمالي المستحق غير المسدد للتشاليح والموردين معًا
   const debtsToSuppliers = round2(f.dueToScrapyard + f.dueToSuppliers);
   const volumes = computeTreasuryVolumes();
+  // صافي الأرباح الشهرية = أرباح الطلبيات المحصّلة بالشهر المحدد ناقص مصاريف نفس الشهر (بنفس فلتر مؤشرات إضافية)
+  let extraIndicatorsExpenses = 0;
+  EXPENSE_CATEGORIES.forEach(c=>{
+    (appData.treasury[c.key]||[]).filter(entryMatchesExtraIndicatorsPeriod).forEach(entry=>{ extraIndicatorsExpenses += Number(entry.amount)||0; });
+  });
+  const netProfitVolume = round2(volumes.profitVolume - extraIndicatorsExpenses);
   return {
     totalExpenses, totalSupport, net, netAfterSettlement, debtsToSuppliers, dueFromCustomers: f.dueFromCustomers, uncollectedProfit: f.uncollectedProfit,
-    purchaseVolume: volumes.purchaseVolume, salesVolume: volumes.salesVolume, profitVolume: volumes.profitVolume
+    purchaseVolume: volumes.purchaseVolume, salesVolume: volumes.salesVolume, profitVolume: volumes.profitVolume, netProfitVolume: netProfitVolume
   };
 }
 
@@ -2800,6 +2811,7 @@ function renderTreasuryView(){
         '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم الشراء</span><span class="treasury-profit-value">'+fmtMoney(t.purchaseVolume)+'</span></div>' +
         '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم عمليات البيع</span><span class="treasury-profit-value">'+fmtMoney(t.salesVolume)+'</span></div>' +
         '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم الأرباح</span><span class="treasury-profit-value">'+fmtMoney(t.profitVolume)+'</span></div>' +
+        '<div class="treasury-profit-card"><span class="treasury-profit-label">صافي الأرباح الشهرية</span><span class="treasury-profit-value '+(t.netProfitVolume<0?'text-rust':'text-green')+'">'+fmtMoney(t.netProfitVolume)+'</span></div>' +
       '</div>' +
     '</div>' +
     '<div id="expenses-block-wrap" style="'+(expensesBlockOpen?'':'display:none;')+'">' +
