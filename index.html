@@ -994,7 +994,7 @@ function orderStatusFlags(order){
     waitingSupply: order.confirmed && !order.supplied,
     waitingPricing: !t.hasSell,
     waitingCustomerPayment: t.hasSell && !t.customerFullyPaid,
-    complete: (t.costToScrapyard===0 || order.paidToAmer) && (t.costToSupplier===0 || order.paidToSupplier) && t.customerFullyPaid && t.fullyPriced
+    complete: order.confirmed && (t.costToScrapyard===0 || order.paidToAmer) && (t.costToSupplier===0 || order.paidToSupplier) && t.customerFullyPaid && t.fullyPriced
   });
 }
 
@@ -2629,6 +2629,18 @@ function subscribeScrapyardAppDataRealtime(){
     .subscribe();
 }
 
+function dmyToIso(str){
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(str||'').trim());
+  if(!m) return '';
+  return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
+}
+
+function isoToDmy(str){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(str||'').trim());
+  if(!m) return '';
+  return m[3]+'/'+m[2]+'/'+m[1];
+}
+
 function parseDMY(str){
   if(!str) return null;
   const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(str).trim());
@@ -2786,7 +2798,7 @@ function expenseEntryRowHtml(entry, categoryKey){
   const amountVal = (entry.amount===''||entry.amount==null) ? '' : entry.amount;
   return '<div class="expense-entry-row" data-expense-key="'+categoryKey+'" data-entry-id="'+entry.id+'">' +
     '<input type="number" min="0" step="0.01" class="expense-entry-amount-input num'+(isSupport?' support-amount':'')+'" placeholder="المبلغ" value="'+amountVal+'">' +
-    '<input type="text" class="expense-entry-date-input" placeholder="التاريخ" value="'+escapeHtml(entry.date||'')+'">' +
+    '<input type="date" class="expense-entry-date-input" value="'+dmyToIso(entry.date)+'">' +
     '<input type="text" class="expense-entry-note-input" placeholder="تفاصيل (مثلا: من أين / لمن)" value="'+escapeHtml(entry.note||'')+'">' +
     '<button type="button" class="btn btn-sm expense-add-entry-btn expense-entry-save-btn">💾 حفظ</button>' +
     '<button type="button" class="expense-entry-remove-btn" aria-label="حذف">✕</button>' +
@@ -3054,7 +3066,7 @@ function openAddExpenseModal(){
           '</div>' +
         '</div>' +
         '<label class="field"><span class="field-label">المبلغ</span><input type="number" min="0" step="0.01" id="expense-add-amount-input" placeholder="المبلغ"></label>' +
-        '<label class="field"><span class="field-label">التاريخ</span><input type="text" id="expense-add-date-input" value="'+escapeHtml(todayNumeric())+'"></label>' +
+        '<label class="field"><span class="field-label">التاريخ</span><input type="date" id="expense-add-date-input" value="'+dmyToIso(todayNumeric())+'"></label>' +
         '<label class="field"><span class="field-label">تفاصيل (اختياري)</span><input type="text" id="expense-add-note-input" placeholder="مثلا: من أين / لمن"></label>' +
         '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' +
           '<button type="button" class="btn btn-ghost" id="expense-add-cancel-btn">إلغاء</button>' +
@@ -3083,7 +3095,7 @@ function openAddExpenseModal(){
     const amount = Number(amountInput.value);
     if(!amountInput.value || isNaN(amount) || amount<=0){ showToast('أدخل مبلغًا صحيحًا', 'error'); return; }
     if(!Array.isArray(appData.treasury[addExpenseSelectedType])) appData.treasury[addExpenseSelectedType] = [];
-    appData.treasury[addExpenseSelectedType].push({ id: uid('exp'), amount, date: (dateInput.value||'').trim(), note: (noteInput.value||'').trim() });
+    appData.treasury[addExpenseSelectedType].push({ id: uid('exp'), amount, date: isoToDmy(dateInput.value), note: (noteInput.value||'').trim() });
     close();
     renderTreasuryView();
     await persist();
@@ -3110,7 +3122,18 @@ function bindExpenseEntryEvents(key){
       saveBtn.addEventListener('click', async ()=>{
         const amt = Number(entry.amount);
         if(entry.amount==='' || isNaN(amt) || amt<=0){ showToast('أدخل مبلغًا صحيحًا', 'error'); return; }
-        entry.amount = amt;
+        // نعيد جلب العنصر الحي من appData الحالي وقت الحفظ (لا نعتمد على المرجع القديم)
+        // لأن appData ممكن يكون انستبدل بالكامل بتحديث لحظي من مستخدم ثاني أثناء ما كنا نعدّل.
+        const liveEntry = (appData.treasury[key]||[]).find(e=>e.id===entryId);
+        if(!liveEntry){
+          showToast('تعذر الحفظ — يبدو إن هذا العنصر تغيّر أو انحذف من مكان آخر', 'error');
+          delete editingExpenseEntries[entryId];
+          refreshExpenseEntries(key);
+          return;
+        }
+        liveEntry.amount = amt;
+        liveEntry.date = entry.date;
+        liveEntry.note = entry.note;
         delete editingExpenseEntries[entryId];
         refreshExpenseEntries(key);
         await persist();
@@ -3127,7 +3150,7 @@ function bindExpenseEntryEvents(key){
     }
     const dateInput = row.querySelector('.expense-entry-date-input');
     if(dateInput){
-      dateInput.addEventListener('input', e=>{ entry.date = e.target.value; });
+      dateInput.addEventListener('input', e=>{ entry.date = isoToDmy(e.target.value); });
     }
     const noteInput = row.querySelector('.expense-entry-note-input');
     if(noteInput){
