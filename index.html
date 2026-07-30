@@ -1085,8 +1085,8 @@ function showToast(msg, type){
 }
 
 /* ---------- KPIs ---------- */
-function computeAggregateFinancials(){
-  const confirmedOrders = appData.orders.filter(o=>o.confirmed);
+function computeAggregateFinancials(matchPeriodFn){
+  const confirmedOrders = appData.orders.filter(o=>o.confirmed).filter(o=> matchPeriodFn ? matchPeriodFn(o) : true);
   let dueToScrapyard = 0, dueToSuppliers = 0, dueFromCustomers = 0, collectedProfit = 0, uncollectedProfit = 0;
   let paidToScrapyardTotal = 0, paidToSuppliersTotal = 0, customerReceiptsTotal = 0;
   confirmedOrders.forEach(o=>{
@@ -2677,30 +2677,35 @@ function computeTreasuryVolumes(){
   };
 }
 
-function treasurySupportTotal(){
-  return round2((appData.treasury.support||[]).filter(entryMatchesPeriod).reduce((sum,entry)=> sum + (Number(entry.amount)||0), 0));
+function treasurySupportTotal(matchFn){
+  const filterFn = matchFn || entryMatchesPeriod;
+  return round2((appData.treasury.support||[]).filter(filterFn).reduce((sum,entry)=> sum + (Number(entry.amount)||0), 0));
 }
 
 function treasuryTotals(){
-  const f = computeAggregateFinancials();
+  // إجمالي المصاريف/الدعم المعروضة داخل قسم "المصاريف" نفسه — تتبع فلتر ذاك القسم (treasuryPeriodFilter)
   let totalExpenses = 0;
   EXPENSE_CATEGORIES.forEach(c=>{
     (appData.treasury[c.key]||[]).filter(entryMatchesPeriod).forEach(entry=>{ totalExpenses += Number(entry.amount)||0; });
   });
   totalExpenses = round2(totalExpenses);
   const totalSupport = treasurySupportTotal();
+
+  // المؤشرات بالأعلى + مؤشرات إضافية كلها تتبع نفس فلتر "مؤشرات إضافية" (extraIndicatorsPeriod)
+  const f = computeAggregateFinancials(orderMatchesExtraIndicatorsPeriod);
+  let extraIndicatorsExpenses = 0;
+  EXPENSE_CATEGORIES.forEach(c=>{
+    (appData.treasury[c.key]||[]).filter(entryMatchesExtraIndicatorsPeriod).forEach(entry=>{ extraIndicatorsExpenses += Number(entry.amount)||0; });
+  });
+  const extraIndicatorsSupport = treasurySupportTotal(entryMatchesExtraIndicatorsPeriod);
   // صافي الصندوق = نقدي حقيقي: كل ما دفعه الزبائن + دعم خارجي، ناقص كل ما دُفع فعليًا للموردين والتشليح، ناقص مصاريف الصندوق
-  const net = round2(f.customerReceiptsTotal + totalSupport - f.paidToSuppliersTotal - f.paidToScrapyardTotal - totalExpenses);
+  const net = round2(f.customerReceiptsTotal + extraIndicatorsSupport - f.paidToSuppliersTotal - f.paidToScrapyardTotal - extraIndicatorsExpenses);
   // الصندوق بعد التحصيل والسداد = لو تحصّلت كل ديون الزبائن ودُفعت كل مستحقات الموردين/التشاليح
   const netAfterSettlement = round2(net + f.dueFromCustomers - f.dueToScrapyard - f.dueToSuppliers);
   // الديون للموردين = إجمالي المستحق غير المسدد للتشاليح والموردين معًا
   const debtsToSuppliers = round2(f.dueToScrapyard + f.dueToSuppliers);
   const volumes = computeTreasuryVolumes();
   // صافي الأرباح الشهرية = أرباح الطلبيات المحصّلة بالشهر المحدد ناقص مصاريف نفس الشهر (بنفس فلتر مؤشرات إضافية)
-  let extraIndicatorsExpenses = 0;
-  EXPENSE_CATEGORIES.forEach(c=>{
-    (appData.treasury[c.key]||[]).filter(entryMatchesExtraIndicatorsPeriod).forEach(entry=>{ extraIndicatorsExpenses += Number(entry.amount)||0; });
-  });
   const netProfitVolume = round2(volumes.profitVolume - extraIndicatorsExpenses);
   return {
     totalExpenses, totalSupport, net, netAfterSettlement, debtsToSuppliers, dueFromCustomers: f.dueFromCustomers, uncollectedProfit: f.uncollectedProfit,
