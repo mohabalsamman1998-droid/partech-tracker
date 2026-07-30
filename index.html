@@ -1015,20 +1015,31 @@ function groupTreasuryRows(rows){
   return t;
 }
 
+function groupTaskRows(rows){
+  const t = defaultTasks();
+  (rows||[]).forEach(r=>{
+    if(!Array.isArray(t[r.category])) t[r.category] = [];
+    t[r.category].push({ id: r.id, text: r.text||'', done: !!r.done, createdAt: r.created_at||'' });
+  });
+  return t;
+}
+
 async function loadData(){
   try{
     if(!sb) throw new Error('NO_DB');
-    const [appDataRes, treasuryRes] = await Promise.all([
+    const [appDataRes, treasuryRes, tasksRes] = await Promise.all([
       sb.from('app_data').select('json').eq('id', STORAGE_ROW_ID).maybeSingle(),
-      sb.from('treasury_entries').select('*')
+      sb.from('treasury_entries').select('*'),
+      sb.from('tasks').select('*')
     ]);
     if(appDataRes.error) throw appDataRes.error;
     if(treasuryRes.error) throw treasuryRes.error;
+    if(tasksRes.error) throw tasksRes.error;
     const parsed = (appDataRes.data && appDataRes.data.json) ? JSON.parse(appDataRes.data.json) : {};
     appData = {
       orders: Array.isArray(parsed.orders) ? parsed.orders : [],
       treasury: groupTreasuryRows(treasuryRes.data),
-      tasks: Object.assign(defaultTasks(), parsed.tasks || {})
+      tasks: groupTaskRows(tasksRes.data)
     };
   }catch(e){
     appData = { orders: [], treasury: defaultTreasury(), tasks: defaultTasks() };
@@ -2629,7 +2640,13 @@ function subscribeScrapyardAppDataRealtime(){
       if(!scrapRoot || scrapRoot.style.display === 'none') return;
       if(scrapyardCurrentScreen === 'settlement'){
         loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
-      } else if(scrapyardCurrentScreen === 'tasks'){
+      }
+    })
+    // المهام (purchases tasks) انتقلت لجدول tasks منفصل — صارت تتبع تحديثاته هو، مو app_data
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, ()=>{
+      const scrapRoot = document.getElementById('scrapyard-root');
+      if(!scrapRoot || scrapRoot.style.display === 'none') return;
+      if(scrapyardCurrentScreen === 'tasks'){
         loadScrapyardHomeTotals().then(renderPurchasesTasksView);
       } else if(scrapyardCurrentScreen === 'home'){
         loadScrapyardHomeTotals().then(renderScrapyardHomeView);
@@ -3328,10 +3345,11 @@ function bindTaskCategoryEvents(key){
     const text = input.value.trim();
     if(!text) return;
     if(!Array.isArray(appData.tasks[key])) appData.tasks[key] = [];
-    appData.tasks[key].push({id: uid('task'), text, done:false, createdAt: new Date().toISOString()});
+    const newItem = {id: uid('task'), text, done:false, createdAt: new Date().toISOString()};
+    appData.tasks[key].push(newItem);
     input.value = '';
     updateTasksBadge();
-    await persist();
+    await persistTaskItem(newItem, key);
     refreshTaskItemsList(key);
   };
   addBtn.addEventListener('click', addTask);
@@ -3347,15 +3365,19 @@ function bindTaskItemEvents(key){
     const item = (appData.tasks[key]||[]).find(t=>t.id===tid);
     if(!item) return;
     row.querySelector('.task-item-check').addEventListener('change', async e=>{
-      item.done = e.target.checked;
-      row.classList.toggle('task-item-done', item.done);
+      // نجلب العنصر الحي وقت الحفظ (مو نعتمد على المرجع القديم يلي التقطناه وقت الرسم)
+      // لنفس سبب حماية تعديل المصاريف — appData.tasks ممكن يكون تحدّث لحظيًا من مستخدم ثاني.
+      const liveItem = (appData.tasks[key]||[]).find(t=>t.id===tid);
+      if(!liveItem) return;
+      liveItem.done = e.target.checked;
+      row.classList.toggle('task-item-done', liveItem.done);
       updateTasksBadge();
-      await persist();
+      await persistTaskItem(liveItem, key);
     });
     row.querySelector('.task-item-remove-btn').addEventListener('click', async ()=>{
       appData.tasks[key] = appData.tasks[key].filter(t=>t.id!==tid);
       updateTasksBadge();
-      await persist();
+      await deleteTaskItem(tid);
       refreshTaskItemsList(key);
     });
   });
@@ -3563,8 +3585,9 @@ function confirmImportOverwrite(parsedData){
       migrateLegacyTasks();
       try{
         await replaceAllTreasuryEntries(appData.treasury);
+        await replaceAllTaskItems(appData.tasks);
       }catch(e){
-        showToast('تعذر استبدال بيانات الصندوق: ' + (e && e.message ? e.message : ''), 'error');
+        showToast('تعذر استبدال بيانات الصندوق/المهام: ' + (e && e.message ? e.message : ''), 'error');
         return;
       }
       await persist();
@@ -3609,6 +3632,7 @@ async function init(){
   updateTasksBadge();
   subscribeAppDataRealtime();
   subscribeTreasuryRealtime();
+  subscribeTasksRealtime();
   refreshScrapyardPendingCount();
   subscribeScrapyardRealtime();
 }
@@ -3616,21 +3640,18 @@ async function init(){
 /* ---------- live sync of shared app data across all open sessions, via Supabase Realtime ---------- */
 let appDataChannel = null;
 let treasuryChannel = null;
+let tasksChannel = null;
 
 function applyRemoteAppData(json){
   try{
     const parsed = JSON.parse(json);
     appData.orders = Array.isArray(parsed.orders) ? parsed.orders : [];
-    appData.tasks = Object.assign(defaultTasks(), parsed.tasks || {});
     migrateLegacyCustomerPayment();
     migrateLegacyOrderLabel();
-    migrateLegacyTasks();
   }catch(e){ return; }
   renderKPIs();
   renderTable();
-  updateTasksBadge();
   if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
-  if(document.getElementById('tasks-view').style.display !== 'none'){ renderTasksView(); }
   // صاحب الحساب لو فاتح شاشة سداد التشاليح/الجديد وقت وصول تعديل من مكان تاني — نحدّثها كمان
   const scrapRoot = document.getElementById('scrapyard-root');
   if(scrapRoot && scrapRoot.style.display !== 'none' && scrapyardSharedState.canManage && scrapyardCurrentScreen === 'settlement'){
@@ -3709,6 +3730,74 @@ async function replaceAllTreasuryEntries(treasuryObj){
   if(delError) throw delError;
   if(rows.length){
     const { error: insError } = await sb.from('treasury_entries').insert(rows);
+    if(insError) throw insError;
+  }
+}
+
+/* ---------- tasks: own table + own realtime channel (migrated off the app_data blob) ---------- */
+function applyRemoteTaskChange(payload){
+  if(!appData.tasks) appData.tasks = defaultTasks();
+  if(payload.eventType === 'DELETE'){
+    const oldId = payload.old && payload.old.id;
+    if(!oldId) return;
+    Object.keys(appData.tasks).forEach(cat=>{
+      if(Array.isArray(appData.tasks[cat])) appData.tasks[cat] = appData.tasks[cat].filter(i=>i.id!==oldId);
+    });
+  } else {
+    const row = payload.new;
+    if(!row || !row.category) return;
+    if(!Array.isArray(appData.tasks[row.category])) appData.tasks[row.category] = [];
+    const item = { id: row.id, text: row.text||'', done: !!row.done, createdAt: row.created_at||'' };
+    const idx = appData.tasks[row.category].findIndex(i=>i.id===item.id);
+    if(idx>=0) appData.tasks[row.category][idx] = item; else appData.tasks[row.category].push(item);
+  }
+  updateTasksBadge();
+  const view = document.getElementById('tasks-view');
+  if(view && view.style.display !== 'none'){ renderTasksView(); }
+}
+
+function subscribeTasksRealtime(){
+  if(!sb || tasksChannel) return;
+  tasksChannel = sb.channel('tasks-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, applyRemoteTaskChange)
+    .subscribe();
+}
+
+async function persistTaskItem(item, category){
+  try{
+    if(!sb) throw new Error('NO_DB');
+    const { error } = await sb.from('tasks').upsert({
+      id: item.id, category, text: item.text||'', done: !!item.done,
+      created_at: item.createdAt || new Date().toISOString()
+    });
+    if(error) throw error;
+  }catch(e){
+    showToast('تعذر حفظ المهمة: ' + (e && e.message ? e.message : ''), 'error');
+  }
+}
+
+async function deleteTaskItem(id){
+  try{
+    if(!sb) throw new Error('NO_DB');
+    const { error } = await sb.from('tasks').delete().eq('id', id);
+    if(error) throw error;
+  }catch(e){
+    showToast('تعذر حذف المهمة: ' + (e && e.message ? e.message : ''), 'error');
+  }
+}
+
+async function replaceAllTaskItems(tasksObj){
+  if(!sb) return;
+  const rows = [];
+  Object.keys(tasksObj||{}).forEach(category=>{
+    (tasksObj[category]||[]).forEach(item=>{
+      rows.push({ id: item.id, category, text: item.text||'', done: !!item.done, created_at: item.createdAt || new Date().toISOString() });
+    });
+  });
+  const { error: delError } = await sb.from('tasks').delete().not('id', 'is', null);
+  if(delError) throw delError;
+  if(rows.length){
+    const { error: insError } = await sb.from('tasks').insert(rows);
     if(insError) throw insError;
   }
 }
