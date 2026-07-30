@@ -1154,10 +1154,18 @@ function orderMatches(order){
   if(currentFilter==='waitingCustomer' && !f.waitingCustomerPayment) return false;
   if(currentFilter==='complete' && !f.complete) return false;
   if(currentSearch){
-    const q = currentSearch.trim().toLowerCase();
-    const inOrderNum = (order.orderNumber||'').toLowerCase().includes(q);
-    const inParts = (order.parts||[]).some(p=>(p.description||'').toLowerCase().includes(q));
-    if(!inOrderNum && !inParts) return false;
+    // بحث ذكي: يشمل رقم الطلبية ووصفها (اسم الزبون/نوع السيارة) ورقم الجوال ووصف كل القطع.
+    // بيقسّم البحث لكلمات، وأي طلبية تحوي كل الكلمات (بأي ترتيب وبأي حقل) تعتبر مطابقة.
+    const words = currentSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if(words.length){
+      const haystack = [
+        order.orderNumber||'',
+        order.orderLabel||'',
+        order.customerPhone||'',
+        ...(order.parts||[]).map(p=>p.description||'')
+      ].join(' ').toLowerCase();
+      if(!words.every(w=> haystack.includes(w))) return false;
+    }
   }
   return true;
 }
