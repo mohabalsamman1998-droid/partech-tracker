@@ -2443,6 +2443,8 @@ let expensesBlockOpen = false;
 let extraIndicatorsFilterOpen = false;
 let extraIndicatorsPeriod = 'all';
 let extraIndicatorsCustomMonth = '';
+let extraIndicatorsRangeFrom = '';
+let extraIndicatorsRangeTo = '';
 const TREASURY_PERIODS = [
   {key:'all', label:'الكل'},
   {key:'today', label:'اليوم'},
@@ -2456,6 +2458,11 @@ function arabicMonthLabel(yyyyMm){
   if(!m) return '';
   const monthIndex = parseInt(m[2],10)-1;
   return (ARABIC_MONTHS[monthIndex]||'') + ' ' + m[1];
+}
+function formatDateDMY(yyyyMmDd){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(yyyyMmDd||'');
+  if(!m) return '';
+  return m[3]+'/'+m[2]+'/'+m[1];
 }
 const TREASURY_ALLOWED_EMAILS = ['mohabalsamman1998@gmail.com','homam.techno@gmail.com','sammaneng@gmail.com'];
 
@@ -2606,7 +2613,7 @@ function parseDMY(str){
   return isNaN(d.getTime()) ? null : d;
 }
 
-function dateMatchesPeriod(d, periodKey, customMonth){
+function dateMatchesPeriod(d, periodKey, customMonth, rangeFrom, rangeTo){
   periodKey = periodKey || treasuryPeriodFilter;
   if(periodKey === 'all') return true;
   if(!d) return false;
@@ -2614,6 +2621,13 @@ function dateMatchesPeriod(d, periodKey, customMonth){
     const m = /^(\d{4})-(\d{2})$/.exec(customMonth||'');
     if(!m) return true;
     return d.getFullYear()===parseInt(m[1],10) && d.getMonth()===(parseInt(m[2],10)-1);
+  }
+  if(periodKey === 'customRange'){
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(rangeFrom||'') ? new Date(rangeFrom+'T00:00:00') : null;
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(rangeTo||'') ? new Date(rangeTo+'T00:00:00') : null;
+    if(from && d.getTime() < from.getTime()) return false;
+    if(to && d.getTime() > to.getTime()) return false;
+    return true;
   }
   const now = new Date();
   const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -2652,12 +2666,12 @@ function orderMatchesExtraIndicatorsPeriod(order){
   if(!order.updatedAt) return false;
   const dt = new Date(order.updatedAt);
   if(isNaN(dt.getTime())) return false;
-  return dateMatchesPeriod(new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()), extraIndicatorsPeriod, extraIndicatorsCustomMonth);
+  return dateMatchesPeriod(new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()), extraIndicatorsPeriod, extraIndicatorsCustomMonth, extraIndicatorsRangeFrom, extraIndicatorsRangeTo);
 }
 
 function entryMatchesExtraIndicatorsPeriod(entry){
   if(extraIndicatorsPeriod === 'all') return true;
-  return dateMatchesPeriod(parseDMY(entry.date), extraIndicatorsPeriod, extraIndicatorsCustomMonth);
+  return dateMatchesPeriod(parseDMY(entry.date), extraIndicatorsPeriod, extraIndicatorsCustomMonth, extraIndicatorsRangeFrom, extraIndicatorsRangeTo);
 }
 
 function computeTreasuryVolumes(){
@@ -2780,10 +2794,16 @@ function renderTreasuryView(){
       '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders">→ رجوع للطلبيات</button>' +
       '<div class="treasury-title">📦 الصندوق</div>' +
     '</div>' +
-    '<button type="button" id="btn-toggle-extra-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر'+(extraIndicatorsPeriod==='customMonth' ? ' ('+arabicMonthLabel(extraIndicatorsCustomMonth)+')' : (extraIndicatorsPeriod!=='all' ? ' ('+(TREASURY_PERIODS.find(p=>p.key===extraIndicatorsPeriod)||{}).label+')' : ''))+'</button>' +
+    '<button type="button" id="btn-toggle-extra-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر'+(
+      extraIndicatorsPeriod==='customMonth' ? ' ('+arabicMonthLabel(extraIndicatorsCustomMonth)+')' :
+      extraIndicatorsPeriod==='customRange' ? ' ('+formatDateDMY(extraIndicatorsRangeFrom)+' → '+formatDateDMY(extraIndicatorsRangeTo)+')' :
+      (extraIndicatorsPeriod!=='all' ? ' ('+(TREASURY_PERIODS.find(p=>p.key===extraIndicatorsPeriod)||{}).label+')' : '')
+    )+'</button>' +
     '<div class="treasury-period-filter" id="extra-indicators-period-filter" style="'+(extraIndicatorsFilterOpen?'':'display:none;')+' margin-bottom:14px;">' +
       TREASURY_PERIODS.map(p=> '<button type="button" class="chip '+(extraIndicatorsPeriod===p.key?'chip-active':'')+'" data-extra-period="'+p.key+'">'+p.label+'</button>').join('') +
       '<input type="month" id="extra-indicators-month-input" class="extra-indicators-month-input" value="'+(extraIndicatorsPeriod==='customMonth'?extraIndicatorsCustomMonth:'')+'">' +
+      '<label class="mini-label" style="margin:0;">من<input type="date" id="extra-indicators-range-from" class="extra-indicators-month-input" value="'+escapeHtml(extraIndicatorsRangeFrom||'')+'"></label>' +
+      '<label class="mini-label" style="margin:0;">إلى<input type="date" id="extra-indicators-range-to" class="extra-indicators-month-input" value="'+escapeHtml(extraIndicatorsRangeTo||'')+'"></label>' +
     '</div>' +
     '<div class="treasury-profit-card">' +
       '<span class="treasury-profit-label">الصندوق حاليًا</span>' +
@@ -2913,6 +2933,8 @@ function bindExtraIndicatorsFilter(){
     btn.addEventListener('click', ()=>{
       extraIndicatorsPeriod = btn.getAttribute('data-extra-period');
       extraIndicatorsCustomMonth = '';
+      extraIndicatorsRangeFrom = '';
+      extraIndicatorsRangeTo = '';
       extraIndicatorsFilterOpen = true;
       renderTreasuryView();
     });
@@ -2923,10 +2945,27 @@ function bindExtraIndicatorsFilter(){
       if(!e.target.value) return;
       extraIndicatorsPeriod = 'customMonth';
       extraIndicatorsCustomMonth = e.target.value;
+      extraIndicatorsRangeFrom = '';
+      extraIndicatorsRangeTo = '';
       extraIndicatorsFilterOpen = true;
       renderTreasuryView();
     });
   }
+  const rangeFromInput = document.getElementById('extra-indicators-range-from');
+  const rangeToInput = document.getElementById('extra-indicators-range-to');
+  const applyRangeFilter = ()=>{
+    const from = rangeFromInput ? rangeFromInput.value : '';
+    const to = rangeToInput ? rangeToInput.value : '';
+    if(!from && !to) return;
+    extraIndicatorsPeriod = 'customRange';
+    extraIndicatorsCustomMonth = '';
+    extraIndicatorsRangeFrom = from;
+    extraIndicatorsRangeTo = to;
+    extraIndicatorsFilterOpen = true;
+    renderTreasuryView();
+  };
+  if(rangeFromInput) rangeFromInput.addEventListener('change', applyRangeFilter);
+  if(rangeToInput) rangeToInput.addEventListener('change', applyRangeFilter);
 }
 
 function bindTreasuryHistoryButtons(){
