@@ -2574,9 +2574,7 @@ function subscribeScrapyardRealtime(){
         loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
       }
     })
-    .subscribe((status, err)=>{
-      console.log('[scrapyard rt] proposals channel status:', status, err||'');
-    });
+    .subscribe();
 }
 
 let scrapyardAppDataChannel = null;
@@ -2584,11 +2582,9 @@ let scrapyardAppDataChannel = null;
    الاشتراك، أي تعديل يسويه صاحب الحساب على طلبية (تأكيد/توريد/سعر...) ما بينعكس عند عامر
    إلا بتحديث يدوي. صاحب الحساب نفسه عنده تحديثه الخاص جوا subscribeAppDataRealtime فما بيحتاج هاد. */
 function subscribeScrapyardAppDataRealtime(){
-  console.log('[scrapyard rt] subscribeScrapyardAppDataRealtime called, canManage=', scrapyardSharedState.canManage, 'already-subscribed=', !!scrapyardAppDataChannel);
   if(!sb || scrapyardAppDataChannel || scrapyardSharedState.canManage) return;
   scrapyardAppDataChannel = sb.channel('scrapyard-app-data-changes')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'app_data', filter: 'id=eq.' + STORAGE_ROW_ID }, (payload)=>{
-      console.log('[scrapyard rt] app_data change received:', payload);
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'app_data', filter: 'id=eq.' + STORAGE_ROW_ID }, ()=>{
       const scrapRoot = document.getElementById('scrapyard-root');
       if(!scrapRoot || scrapRoot.style.display === 'none') return;
       if(scrapyardCurrentScreen === 'settlement'){
@@ -2599,9 +2595,7 @@ function subscribeScrapyardAppDataRealtime(){
         loadScrapyardHomeTotals().then(renderScrapyardHomeView);
       }
     })
-    .subscribe((status, err)=>{
-      console.log('[scrapyard rt] app_data channel status:', status, err||'');
-    });
+    .subscribe();
 }
 
 function parseDMY(str){
@@ -3458,10 +3452,7 @@ function bindToolbar(){
   document.getElementById('btn-open-treasury').addEventListener('click', openTreasuryView);
   document.getElementById('btn-open-tasks').addEventListener('click', openTasksView);
   document.getElementById('btn-who-online').addEventListener('click', showWhoIsOnline);
-  document.getElementById('btn-theme-toggle').addEventListener('click', ()=>{
-    const current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
-    applyTheme(current === 'light' ? 'dark' : 'light');
-  });
+  document.getElementById('btn-theme-toggle').addEventListener('click', toggleTheme);
   document.getElementById('btn-toggle-filters').addEventListener('click', ()=>{
     const el = document.getElementById('filter-buttons');
     const opening = el.style.display === 'none';
@@ -3773,7 +3764,7 @@ function renderScrapyardHomeView(){
 
   root.innerHTML =
     '<div class="app-top-utility-row">' +
-      '<div class="corner-mini-bar"></div>' +
+      '<div class="corner-mini-bar">'+scrapyardThemeToggleHtml()+'</div>' +
       '<img class="app-corner-logo" src="'+PARTECH_LOGO_DATA_URI+'" id="scrapyard-home-logo-img" alt="PARTECH" title="الصفحة الرئيسية">' +
     '</div>' +
     '<header class="topbar"><div class="brand">قسم المشتريات</div></header>' +
@@ -3792,6 +3783,7 @@ function renderScrapyardHomeView(){
 
   const logo = document.getElementById('scrapyard-home-logo-img');
   if(logo) logo.addEventListener('click', goToScrapyardHome);
+  bindScrapyardThemeToggle();
   document.getElementById('btn-open-scrapyard-settlement').addEventListener('click', ()=>{
     loadScrapyardData('used').then(renderScrapyardView);
   });
@@ -3810,6 +3802,7 @@ function renderPurchasesTasksView(){
     '<div class="app-top-utility-row">' +
       '<div class="corner-mini-bar">' +
         '<button type="button" class="btn btn-ghost btn-sm" id="btn-scrapyard-tasks-back">→ الرئيسية</button>' +
+        scrapyardThemeToggleHtml() +
       '</div>' +
       '<img class="app-corner-logo" src="'+PARTECH_LOGO_DATA_URI+'" id="scrapyard-tasks-logo-img" alt="PARTECH" title="الصفحة الرئيسية">' +
     '</div>' +
@@ -3828,6 +3821,7 @@ function renderPurchasesTasksView(){
   document.getElementById('btn-scrapyard-tasks-back').addEventListener('click', goToScrapyardHome);
   const logo = document.getElementById('scrapyard-tasks-logo-img');
   if(logo) logo.addEventListener('click', goToScrapyardHome);
+  bindScrapyardThemeToggle();
   document.querySelectorAll('[data-toggle-purchases-task]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const taskId = btn.getAttribute('data-toggle-purchases-task');
@@ -3865,7 +3859,7 @@ function renderScrapyardView(){
       '<div class="corner-mini-bar">' +
         (canManage
           ? '<button type="button" class="btn btn-ghost btn-sm" id="btn-exit-scrapyard-shared">→ الرجوع للصندوق</button>'
-          : '<button type="button" class="btn btn-ghost btn-sm" id="btn-scrapyard-back-home">→ الرئيسية</button>') +
+          : '<button type="button" class="btn btn-ghost btn-sm" id="btn-scrapyard-back-home">→ الرئيسية</button>'+scrapyardThemeToggleHtml()) +
       '</div>' +
       '<img class="app-corner-logo" src="'+PARTECH_LOGO_DATA_URI+'" id="scrapyard-logo-img" alt="PARTECH" title="الصفحة الرئيسية">' +
     '</div>' +
@@ -4082,6 +4076,7 @@ function bindScrapyardEvents(){
   if(backHomeBtn) backHomeBtn.addEventListener('click', goToScrapyardHome);
   const scrapLogo = document.getElementById('scrapyard-logo-img');
   if(scrapLogo) scrapLogo.addEventListener('click', goHomeFromLogo);
+  bindScrapyardThemeToggle();
 
   // خانة تعديل السعر تظهر فقط بعد الضغط على "تعديل"
   root.querySelectorAll('[data-open-price-edit]').forEach(btn=>{
@@ -4318,12 +4313,60 @@ function startPresenceHeartbeat(email){
   presenceRecheckTimer = setInterval(refreshOnlineBadge, PRESENCE_RECHECK_MS);
 }
 
+/* وقت نسبي بالعربي لآخر ظهور (قبل دقيقة/ساعة/يوم...) */
+function arabicRelativeTime(ms){
+  const diffSec = Math.floor((Date.now() - ms) / 1000);
+  if(diffSec < 60) return 'الآن';
+  const diffMin = Math.floor(diffSec / 60);
+  if(diffMin < 60){
+    if(diffMin === 1) return 'قبل دقيقة';
+    if(diffMin === 2) return 'قبل دقيقتين';
+    if(diffMin <= 10) return 'قبل '+diffMin+' دقائق';
+    return 'قبل '+diffMin+' دقيقة';
+  }
+  const diffHour = Math.floor(diffMin / 60);
+  if(diffHour < 24){
+    if(diffHour === 1) return 'قبل ساعة';
+    if(diffHour === 2) return 'قبل ساعتين';
+    if(diffHour <= 10) return 'قبل '+diffHour+' ساعات';
+    return 'قبل '+diffHour+' ساعة';
+  }
+  const diffDay = Math.floor(diffHour / 24);
+  if(diffDay === 1) return 'قبل يوم';
+  if(diffDay === 2) return 'قبل يومان';
+  if(diffDay <= 10) return 'قبل '+diffDay+' أيام';
+  if(diffDay <= 30) return 'قبل '+diffDay+' يوم';
+  const diffMonth = Math.floor(diffDay / 30);
+  if(diffMonth === 1) return 'قبل شهر';
+  return 'قبل '+diffMonth+' أشهر';
+}
+
+/* كل الموظفين (متصلين وغير متصلين) مع وقت آخر ظهور لكل وحد */
+async function loadAllPresenceRows(){
+  try{
+    const { data, error } = await sb.from('presence').select('email,last_seen').order('last_seen', {ascending:false});
+    if(error) throw error;
+    return data || [];
+  }catch(e){ return null; }
+}
+
+function presenceListHtml(rows){
+  if(rows == null) return 'تعذر تحميل بيانات الظهور';
+  if(!rows.length) return 'ما فيه بيانات ظهور حتى الآن';
+  return '<div class="task-items-list">' + rows.map(row=>{
+    const ms = new Date(row.last_seen).getTime();
+    const online = (Date.now() - ms) <= PRESENCE_ACTIVE_IDLE_LIMIT_MS;
+    const label = online ? 'متصل الآن' : arabicRelativeTime(ms);
+    return '<div class="task-item-row"><span class="task-item-text">'+(online?'🟢':'⚪')+' '+escapeHtml(row.email)+(row.email===presenceEmail?' (أنت)':'')+' — '+label+'</span></div>';
+  }).join('') + '</div>';
+}
+
 function showWhoIsOnline(){
   const root = document.getElementById('modal-root');
   root.innerHTML =
     '<div class="modal-backdrop" data-close-confirm>' +
       '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
-        '<div class="modal-title">👥 متصل الآن</div>' +
+        '<div class="modal-title">👥 آخر ظهور للموظفين</div>' +
         '<div id="online-users-list" class="expense-empty-hint" style="margin-top:14px;">جاري التحميل…</div>' +
         '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' +
           '<button type="button" class="btn btn-ghost" id="close-online-btn">إغلاق</button>' +
@@ -4336,8 +4379,10 @@ function showWhoIsOnline(){
     if(e.target.hasAttribute('data-close-confirm')) close();
   });
   root.querySelector('#close-online-btn').addEventListener('click', close);
-  loadPresenceCache();
-  refreshOnlineBadge();
+  loadAllPresenceRows().then(rows=>{
+    const listEl = document.getElementById('online-users-list');
+    if(listEl) listEl.innerHTML = presenceListHtml(rows);
+  });
 }
 
 let pendingAuthEmail = '';
@@ -4407,8 +4452,26 @@ function bindAuthGate(){
 function applyTheme(theme){
   document.documentElement.setAttribute('data-theme', theme);
   try{ localStorage.setItem('partech-theme', theme); }catch(e){}
+  const emoji = theme === 'light' ? '🌙' : '🌞';
   const btn = document.getElementById('btn-theme-toggle');
-  if(btn) btn.textContent = theme === 'light' ? '🌙' : '🌞';
+  if(btn) btn.textContent = emoji;
+  const scrapBtn = document.getElementById('btn-theme-toggle-scrapyard');
+  if(scrapBtn) scrapBtn.textContent = emoji;
+}
+
+function toggleTheme(){
+  const current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  applyTheme(current === 'light' ? 'dark' : 'light');
+}
+
+function scrapyardThemeToggleHtml(){
+  const emoji = document.documentElement.getAttribute('data-theme') === 'light' ? '🌙' : '🌞';
+  return '<button type="button" id="btn-theme-toggle-scrapyard" class="corner-mini-btn" title="تبديل الوضع الليلي/النهاري">'+emoji+'</button>';
+}
+
+function bindScrapyardThemeToggle(){
+  const btn = document.getElementById('btn-theme-toggle-scrapyard');
+  if(btn) btn.addEventListener('click', toggleTheme);
 }
 
 function initTheme(){
