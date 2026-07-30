@@ -1006,21 +1006,30 @@ function defaultTasks(){
   return { purchases:[], sales:[] };
 }
 
+function groupTreasuryRows(rows){
+  const t = defaultTreasury();
+  (rows||[]).forEach(r=>{
+    if(!Array.isArray(t[r.category])) t[r.category] = [];
+    t[r.category].push({ id: r.id, amount: r.amount, date: r.date||'', note: r.note||'' });
+  });
+  return t;
+}
+
 async function loadData(){
   try{
     if(!sb) throw new Error('NO_DB');
-    const { data, error } = await sb.from('app_data').select('json').eq('id', STORAGE_ROW_ID).maybeSingle();
-    if(error) throw error;
-    if(data && data.json){
-      const parsed = JSON.parse(data.json);
-      appData = {
-        orders: Array.isArray(parsed.orders) ? parsed.orders : [],
-        treasury: Object.assign(defaultTreasury(), parsed.treasury || {}),
-        tasks: Object.assign(defaultTasks(), parsed.tasks || {})
-      };
-    } else {
-      appData = { orders: [], treasury: defaultTreasury(), tasks: defaultTasks() };
-    }
+    const [appDataRes, treasuryRes] = await Promise.all([
+      sb.from('app_data').select('json').eq('id', STORAGE_ROW_ID).maybeSingle(),
+      sb.from('treasury_entries').select('*')
+    ]);
+    if(appDataRes.error) throw appDataRes.error;
+    if(treasuryRes.error) throw treasuryRes.error;
+    const parsed = (appDataRes.data && appDataRes.data.json) ? JSON.parse(appDataRes.data.json) : {};
+    appData = {
+      orders: Array.isArray(parsed.orders) ? parsed.orders : [],
+      treasury: groupTreasuryRows(treasuryRes.data),
+      tasks: Object.assign(defaultTasks(), parsed.tasks || {})
+    };
   }catch(e){
     appData = { orders: [], treasury: defaultTreasury(), tasks: defaultTasks() };
     showToast('تعذر الاتصال بقاعدة البيانات — تحقق من إعداد Supabase (SUPABASE_URL / SUPABASE_ANON_KEY)', 'error');
@@ -3095,10 +3104,11 @@ function openAddExpenseModal(){
     const amount = Number(amountInput.value);
     if(!amountInput.value || isNaN(amount) || amount<=0){ showToast('أدخل مبلغًا صحيحًا', 'error'); return; }
     if(!Array.isArray(appData.treasury[addExpenseSelectedType])) appData.treasury[addExpenseSelectedType] = [];
-    appData.treasury[addExpenseSelectedType].push({ id: uid('exp'), amount, date: isoToDmy(dateInput.value), note: (noteInput.value||'').trim() });
+    const newEntry = { id: uid('exp'), amount, date: isoToDmy(dateInput.value), note: (noteInput.value||'').trim() };
+    appData.treasury[addExpenseSelectedType].push(newEntry);
     close();
     renderTreasuryView();
-    await persist();
+    await persistTreasuryEntry(newEntry, addExpenseSelectedType);
     showToast('تم إضافة المصروف', 'ok');
   });
 }
@@ -3136,7 +3146,7 @@ function bindExpenseEntryEvents(key){
         liveEntry.note = entry.note;
         delete editingExpenseEntries[entryId];
         refreshExpenseEntries(key);
-        await persist();
+        await persistTreasuryEntry(liveEntry, key);
         showToast('تم حفظ المبلغ', 'ok');
       });
     }
@@ -3172,7 +3182,7 @@ function confirmDeleteExpenseEntry(key, entryId){
       appData.treasury[key] = appData.treasury[key].filter(e=>e.id!==entryId);
       delete editingExpenseEntries[entryId];
       refreshExpenseEntries(key);
-      await persist();
+      await deleteTreasuryEntry(entryId);
     }
   });
 }
@@ -3551,6 +3561,12 @@ function confirmImportOverwrite(parsedData){
       migrateLegacyOrderLabel();
       migrateLegacyTreasury();
       migrateLegacyTasks();
+      try{
+        await replaceAllTreasuryEntries(appData.treasury);
+      }catch(e){
+        showToast('تعذر استبدال بيانات الصندوق: ' + (e && e.message ? e.message : ''), 'error');
+        return;
+      }
       await persist();
       if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
       renderKPIs();
@@ -3592,24 +3608,22 @@ async function init(){
   renderTable();
   updateTasksBadge();
   subscribeAppDataRealtime();
+  subscribeTreasuryRealtime();
   refreshScrapyardPendingCount();
   subscribeScrapyardRealtime();
 }
 
 /* ---------- live sync of shared app data across all open sessions, via Supabase Realtime ---------- */
 let appDataChannel = null;
+let treasuryChannel = null;
 
 function applyRemoteAppData(json){
   try{
     const parsed = JSON.parse(json);
-    appData = {
-      orders: Array.isArray(parsed.orders) ? parsed.orders : [],
-      treasury: Object.assign(defaultTreasury(), parsed.treasury || {}),
-      tasks: Object.assign(defaultTasks(), parsed.tasks || {})
-    };
+    appData.orders = Array.isArray(parsed.orders) ? parsed.orders : [];
+    appData.tasks = Object.assign(defaultTasks(), parsed.tasks || {});
     migrateLegacyCustomerPayment();
     migrateLegacyOrderLabel();
-    migrateLegacyTreasury();
     migrateLegacyTasks();
   }catch(e){ return; }
   renderKPIs();
@@ -3631,6 +3645,72 @@ function subscribeAppDataRealtime(){
       if(payload.new && payload.new.json) applyRemoteAppData(payload.new.json);
     })
     .subscribe();
+}
+
+/* ---------- treasury_entries: own table + own realtime channel (migrated off the app_data blob) ---------- */
+function applyRemoteTreasuryChange(payload){
+  if(!appData.treasury) appData.treasury = defaultTreasury();
+  if(payload.eventType === 'DELETE'){
+    const oldId = payload.old && payload.old.id;
+    if(!oldId) return;
+    Object.keys(appData.treasury).forEach(cat=>{
+      if(Array.isArray(appData.treasury[cat])) appData.treasury[cat] = appData.treasury[cat].filter(e=>e.id!==oldId);
+    });
+  } else {
+    const row = payload.new;
+    if(!row || !row.category) return;
+    if(!Array.isArray(appData.treasury[row.category])) appData.treasury[row.category] = [];
+    const entry = { id: row.id, amount: row.amount, date: row.date||'', note: row.note||'' };
+    const idx = appData.treasury[row.category].findIndex(e=>e.id===entry.id);
+    if(idx>=0) appData.treasury[row.category][idx] = entry; else appData.treasury[row.category].push(entry);
+  }
+  const view = document.getElementById('treasury-view');
+  if(view && view.style.display !== 'none'){ renderTreasuryView(); }
+}
+
+function subscribeTreasuryRealtime(){
+  if(!sb || treasuryChannel) return;
+  treasuryChannel = sb.channel('treasury-entries-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'treasury_entries' }, applyRemoteTreasuryChange)
+    .subscribe();
+}
+
+async function persistTreasuryEntry(entry, category){
+  try{
+    if(!sb) throw new Error('NO_DB');
+    const { error } = await sb.from('treasury_entries').upsert({
+      id: entry.id, category, amount: entry.amount, date: entry.date||'', note: entry.note||''
+    });
+    if(error) throw error;
+  }catch(e){
+    showToast('تعذر حفظ المصروف: ' + (e && e.message ? e.message : ''), 'error');
+  }
+}
+
+async function deleteTreasuryEntry(id){
+  try{
+    if(!sb) throw new Error('NO_DB');
+    const { error } = await sb.from('treasury_entries').delete().eq('id', id);
+    if(error) throw error;
+  }catch(e){
+    showToast('تعذر حذف المصروف: ' + (e && e.message ? e.message : ''), 'error');
+  }
+}
+
+async function replaceAllTreasuryEntries(treasuryObj){
+  if(!sb) return;
+  const rows = [];
+  Object.keys(treasuryObj||{}).forEach(category=>{
+    (treasuryObj[category]||[]).forEach(entry=>{
+      rows.push({ id: entry.id, category, amount: Number(entry.amount)||0, date: entry.date||'', note: entry.note||'' });
+    });
+  });
+  const { error: delError } = await sb.from('treasury_entries').delete().not('id', 'is', null);
+  if(delError) throw delError;
+  if(rows.length){
+    const { error: insError } = await sb.from('treasury_entries').insert(rows);
+    if(insError) throw insError;
+  }
 }
 
 /* ---------- access gate (Supabase Auth — email magic link, restricted to an allowlist) ---------- */
