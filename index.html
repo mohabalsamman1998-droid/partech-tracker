@@ -2005,15 +2005,21 @@ function confirmToggleConfirmation(orderId){
   const order = appData.orders.find(o=>o.id===orderId);
   if(!order) return;
   const willConfirm = !order.confirmed;
+  const willResetSupply = !willConfirm && order.supplied;
   confirmAction({
     title: willConfirm ? 'تأكيد الطلبية '+order.orderNumber+'؟' : 'إلغاء تأكيد الطلبية '+order.orderNumber+'؟',
     message: willConfirm
       ? 'بعد التأكيد، أرقام هذه الطلبية بتدخل ضمن مجموع الطلبيات المؤكدة بمؤشرات الأعلى.'
-      : 'بعد الإلغاء، أرقام هذه الطلبية بتُستثنى من مجموع الطلبيات المؤكدة بمؤشرات الأعلى.',
+      : 'بعد الإلغاء، أرقام هذه الطلبية بتُستثنى من مجموع الطلبيات المؤكدة بمؤشرات الأعلى.'
+        + (willResetSupply ? ' وبيتلغى معها تحديد "تم التوريد"، فبتختفي من شاشة السداد.' : ''),
     cancelLabel: 'تراجع',
     confirmLabel: willConfirm ? 'تأكيد الطلبية' : 'إلغاء التأكيد',
     onConfirm: async ()=>{
       order.confirmed = willConfirm;
+      if(willResetSupply){
+        order.supplied = false;
+        order.suppliedAt = null;
+      }
       order.updatedAt = new Date().toISOString();
       await persist();
       renderKPIs();
