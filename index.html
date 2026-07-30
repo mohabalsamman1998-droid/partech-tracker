@@ -2574,7 +2574,9 @@ function subscribeScrapyardRealtime(){
         loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
       }
     })
-    .subscribe();
+    .subscribe((status, err)=>{
+      console.log('[scrapyard rt] proposals channel status:', status, err||'');
+    });
 }
 
 let scrapyardAppDataChannel = null;
@@ -2582,9 +2584,11 @@ let scrapyardAppDataChannel = null;
    الاشتراك، أي تعديل يسويه صاحب الحساب على طلبية (تأكيد/توريد/سعر...) ما بينعكس عند عامر
    إلا بتحديث يدوي. صاحب الحساب نفسه عنده تحديثه الخاص جوا subscribeAppDataRealtime فما بيحتاج هاد. */
 function subscribeScrapyardAppDataRealtime(){
+  console.log('[scrapyard rt] subscribeScrapyardAppDataRealtime called, canManage=', scrapyardSharedState.canManage, 'already-subscribed=', !!scrapyardAppDataChannel);
   if(!sb || scrapyardAppDataChannel || scrapyardSharedState.canManage) return;
   scrapyardAppDataChannel = sb.channel('scrapyard-app-data-changes')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'app_data', filter: 'id=eq.' + STORAGE_ROW_ID }, ()=>{
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'app_data', filter: 'id=eq.' + STORAGE_ROW_ID }, (payload)=>{
+      console.log('[scrapyard rt] app_data change received:', payload);
       const scrapRoot = document.getElementById('scrapyard-root');
       if(!scrapRoot || scrapRoot.style.display === 'none') return;
       if(scrapyardCurrentScreen === 'settlement'){
@@ -2595,7 +2599,9 @@ function subscribeScrapyardAppDataRealtime(){
         loadScrapyardHomeTotals().then(renderScrapyardHomeView);
       }
     })
-    .subscribe();
+    .subscribe((status, err)=>{
+      console.log('[scrapyard rt] app_data channel status:', status, err||'');
+    });
 }
 
 function parseDMY(str){
