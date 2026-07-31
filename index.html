@@ -137,6 +137,7 @@
 
   /* KPI */
   .kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px;}
+  .new-order-btn-row{display:flex;justify-content:flex-end;margin-bottom:14px;}
   .kpi-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;}
   .kpi-label{color:var(--text-dim);font-size:12.5px;margin-bottom:8px;}
   .kpi-value{font-size:19px;}
@@ -866,12 +867,15 @@
         <button id="btn-open-tasks" class="btn btn-ghost btn-with-badge">✅ TASKS<span id="tasks-badge" class="tasks-badge"></span></button>
         <button id="btn-open-suppliers" class="btn btn-ghost">🏭 الموردين</button>
         <button id="btn-open-customers" class="btn btn-ghost btn-with-badge">👤 العملاء<span id="customers-overdue-badge" class="tasks-badge"></span></button>
-        <button id="btn-new-order" class="btn btn-primary">+ طلبية جديدة</button>
       </div>
     </header>
 
     <div id="orders-view">
       <section id="kpi-row" class="kpi-row"></section>
+
+      <div class="new-order-btn-row">
+        <button id="btn-new-order" class="btn btn-primary">+ طلبية جديدة</button>
+      </div>
 
       <section class="toolbar">
         <div class="filter-toggle-wrap">
@@ -4530,14 +4534,30 @@ function customerOrderStats(customerId){
   return { count, remaining: round2(remaining) };
 }
 
+let editingCustomers = {};
+
 function customerRowHtml(c){
+  const isEditing = !!editingCustomers[c.id];
   const stats = customerOrderStats(c.id);
+
+  if(!isEditing){
+    return '<div class="task-item-row" data-customer-id="'+c.id+'">' +
+      '<span class="purchase-history-desc">'+escapeHtml(c.name||'بدون اسم')+'</span>' +
+      '<span class="expense-entry-view-date">'+escapeHtml(c.phone||'—')+'</span>' +
+      '<span class="expense-entry-view-date">'+stats.count+' طلبية</span>' +
+      '<span class="num '+(stats.remaining>0?'text-rust':'text-green')+'">'+fmtMoney(stats.remaining)+'</span>' +
+      '<button type="button" class="icon-btn customer-history-btn" title="سجل الطلبيات" aria-label="سجل الطلبيات">📋</button>' +
+      '<button type="button" class="icon-btn customer-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' +
+      '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' +
+    '</div>';
+  }
+
   return '<div class="task-item-row" data-customer-id="'+c.id+'">' +
     '<input type="text" class="customer-name-input" placeholder="اسم العميل" value="'+escapeHtml(c.name||'')+'">' +
     '<input type="tel" class="customer-phone-input" placeholder="رقم الجوال" value="'+escapeHtml(c.phone||'')+'">' +
     '<span class="expense-entry-view-date">'+stats.count+' طلبية</span>' +
     '<span class="num '+(stats.remaining>0?'text-rust':'text-green')+'">'+fmtMoney(stats.remaining)+'</span>' +
-    '<button type="button" class="icon-btn customer-history-btn" data-customer-id="'+c.id+'" title="سجل الطلبيات" aria-label="سجل الطلبيات">📋</button>' +
+    '<button type="button" class="btn btn-sm expense-add-entry-btn customer-save-btn">💾 حفظ</button>' +
     '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' +
   '</div>';
 }
@@ -4680,13 +4700,37 @@ function bindCustomerRowEvents(){
     const cid = row.getAttribute('data-customer-id');
     const customer = (appData.customers||[]).find(c=>c.id===cid);
     if(!customer) return;
-    row.querySelector('.customer-name-input').addEventListener('change', async e=>{
-      customer.name = e.target.value; await persistCustomer(customer);
-    });
-    row.querySelector('.customer-phone-input').addEventListener('change', async e=>{
-      customer.phone = e.target.value; await persistCustomer(customer);
-    });
-    row.querySelector('.customer-history-btn').addEventListener('click', ()=> openCustomerHistoryModal(cid));
+
+    const nameInput = row.querySelector('.customer-name-input');
+    if(nameInput){
+      nameInput.addEventListener('change', async e=>{
+        customer.name = e.target.value; await persistCustomer(customer);
+      });
+    }
+    const phoneInput = row.querySelector('.customer-phone-input');
+    if(phoneInput){
+      phoneInput.addEventListener('change', async e=>{
+        customer.phone = e.target.value; await persistCustomer(customer);
+      });
+    }
+    const historyBtn = row.querySelector('.customer-history-btn');
+    if(historyBtn) historyBtn.addEventListener('click', ()=> openCustomerHistoryModal(cid));
+
+    const editBtn = row.querySelector('.customer-edit-btn');
+    if(editBtn){
+      editBtn.addEventListener('click', ()=>{
+        editingCustomers[cid] = true;
+        refreshCustomersList();
+      });
+    }
+    const saveBtn = row.querySelector('.customer-save-btn');
+    if(saveBtn){
+      saveBtn.addEventListener('click', ()=>{
+        delete editingCustomers[cid];
+        refreshCustomersList();
+      });
+    }
+
     row.querySelector('.task-item-remove-btn').addEventListener('click', ()=>{
       confirmAction({
         title: 'حذف هذا العميل؟',
@@ -4695,6 +4739,7 @@ function bindCustomerRowEvents(){
         dangerous: true,
         onConfirm: async ()=>{
           appData.customers = appData.customers.filter(c=>c.id!==cid);
+          delete editingCustomers[cid];
           refreshCustomersList();
           await deleteCustomer(cid);
         }
