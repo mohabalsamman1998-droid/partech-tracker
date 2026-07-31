@@ -220,6 +220,10 @@
     padding:6px 8px;border-radius:6px;font-size:13.5px;font-weight:700;font-family:'Cairo',sans-serif;
   }
   .scrapyard-price-input:focus{outline:none;border-color:var(--amber);}
+  .scrapyard-supplier-select{
+    width:120px;background:var(--bg);border:1px solid var(--border);color:var(--text-dim);
+    padding:6px 6px;border-radius:6px;font-size:12px;font-family:'Tajawal',sans-serif;flex:0 0 auto;
+  }
   .inline-count-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--rust);color:#fff;font-family:'Cairo',sans-serif;font-weight:800;font-size:11px;line-height:1;margin-inline-start:4px;vertical-align:middle;}
   .scrapyard-mgmt-actions{display:flex;gap:4px;min-width:96px;justify-content:flex-end;flex:0 0 auto;}
   .icon-btn-accept{color:var(--green);border-color:var(--green-line);}
@@ -303,6 +307,15 @@
     width:30px;height:30px;border-radius:6px;cursor:pointer;font-size:12px;flex-shrink:0;
   }
   .task-item-remove-btn:hover{border-color:var(--rust-line);color:var(--rust);}
+  .supplier-name-input,.supplier-phone-input,.customer-name-input,.customer-phone-input{
+    background:var(--bg);border:1px solid var(--border);color:var(--text);
+    padding:8px 10px;border-radius:6px;font-size:13px;font-family:'Tajawal',sans-serif;
+  }
+  .supplier-name-input,.customer-name-input{flex:2;min-width:100px;}
+  .supplier-phone-input,.customer-phone-input{flex:1;min-width:90px;}
+  .supplier-name-input:focus,.supplier-phone-input:focus,.customer-name-input:focus,.customer-phone-input:focus{
+    outline:none;border-color:var(--green-line);
+  }
 
   /* toolbar */
   .toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;}
@@ -414,7 +427,7 @@
   .field-label{display:block;font-size:12.5px;color:var(--text-dim);margin-bottom:6px;font-weight:700;}
   .field-label-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;}
   .field-label-row .field-label{margin-bottom:0;}
-  .field input[type="text"],.field input[type="tel"]{
+  .field input[type="text"],.field input[type="tel"],.field select{
     width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
     padding:10px 12px;border-radius:var(--radius-sm);font-size:14px;font-family:'Cairo',sans-serif;font-weight:700;
   }
@@ -480,6 +493,10 @@
   .part-qty-input{
     width:56px;background:var(--bg);border:1px solid var(--border);color:var(--text);
     padding:8px 6px;border-radius:6px;font-size:13px;text-align:center;
+  }
+  .part-supplier-select{
+    width:110px;background:var(--bg);border:1px solid var(--border);color:var(--text-dim);
+    padding:8px 6px;border-radius:6px;font-size:12px;font-family:'Tajawal',sans-serif;
   }
   .part-desc-input:focus,.part-qty-input:focus{outline:none;border-color:var(--green-line);}
   .part-cost-input:focus{outline:none;border-color:var(--rust);}
@@ -816,6 +833,8 @@
       <div class="topbar-actions">
         <button id="btn-open-treasury" class="btn btn-ghost btn-with-badge">📦 الصندوق<span id="treasury-scrapyard-badge" class="tasks-badge"></span></button>
         <button id="btn-open-tasks" class="btn btn-ghost btn-with-badge">✅ TASKS<span id="tasks-badge" class="tasks-badge"></span></button>
+        <button id="btn-open-suppliers" class="btn btn-ghost">🏭 الموردين</button>
+        <button id="btn-open-customers" class="btn btn-ghost btn-with-badge">👤 العملاء<span id="customers-overdue-badge" class="tasks-badge"></span></button>
         <button id="btn-new-order" class="btn btn-primary">+ طلبية جديدة</button>
       </div>
     </header>
@@ -840,6 +859,8 @@
 
     <div id="treasury-view" style="display:none;"></div>
     <div id="tasks-view" style="display:none;"></div>
+    <div id="suppliers-view" style="display:none;"></div>
+    <div id="customers-view" style="display:none;"></div>
   </div>
 
   <div class="page" id="scrapyard-root" style="display:none;"></div>
@@ -1024,7 +1045,7 @@ function groupTaskRows(rows){
 }
 
 /* حقول الطلبية يلي انصعدت لأعمدة حقيقية بجدول orders — أي حقل ثاني يترسم تلقائيًا بعمود extra */
-const ORDER_PROMOTED_KEYS = ['id','orderNumber','orderLabel','customerPhone','confirmed','supplied',
+const ORDER_PROMOTED_KEYS = ['id','orderNumber','orderLabel','customerPhone','customerId','confirmed','supplied',
   'suppliedAt','paidToAmer','paidToSupplier','parts','customerPayments','createdAt','updatedAt'];
 
 function orderRowToObject(row){
@@ -1033,6 +1054,7 @@ function orderRowToObject(row){
   obj.orderNumber = row.order_number || '';
   obj.orderLabel = row.order_label || '';
   obj.customerPhone = row.customer_phone || '';
+  obj.customerId = row.customer_id || null;
   obj.confirmed = !!row.confirmed;
   obj.supplied = !!row.supplied;
   obj.suppliedAt = row.supplied_at ? new Date(row.supplied_at).toISOString() : null;
@@ -1053,6 +1075,7 @@ function orderObjectToRow(order){
     order_number: order.orderNumber || '',
     order_label: order.orderLabel || '',
     customer_phone: order.customerPhone || '',
+    customer_id: order.customerId || null,
     confirmed: !!order.confirmed,
     supplied: !!order.supplied,
     supplied_at: order.suppliedAt || null,
@@ -1066,24 +1089,34 @@ function orderObjectToRow(order){
   };
 }
 
+function groupSupplierOrCustomerRows(rows){
+  return (rows||[]).map(r=>({ id: r.id, name: r.name||'', phone: r.phone||'', notes: r.notes||'' }));
+}
+
 async function loadData(){
   try{
     if(!sb) throw new Error('NO_DB');
-    const [ordersRes, treasuryRes, tasksRes] = await Promise.all([
+    const [ordersRes, treasuryRes, tasksRes, suppliersRes, customersRes] = await Promise.all([
       sb.from('orders').select('*'),
       sb.from('treasury_entries').select('*'),
-      sb.from('tasks').select('*')
+      sb.from('tasks').select('*'),
+      sb.from('suppliers').select('*'),
+      sb.from('customers').select('*')
     ]);
     if(ordersRes.error) throw ordersRes.error;
     if(treasuryRes.error) throw treasuryRes.error;
     if(tasksRes.error) throw tasksRes.error;
+    if(suppliersRes.error) throw suppliersRes.error;
+    if(customersRes.error) throw customersRes.error;
     appData = {
       orders: (ordersRes.data||[]).map(orderRowToObject),
       treasury: groupTreasuryRows(treasuryRes.data),
-      tasks: groupTaskRows(tasksRes.data)
+      tasks: groupTaskRows(tasksRes.data),
+      suppliers: groupSupplierOrCustomerRows(suppliersRes.data),
+      customers: groupSupplierOrCustomerRows(customersRes.data)
     };
   }catch(e){
-    appData = { orders: [], treasury: defaultTreasury(), tasks: defaultTasks() };
+    appData = { orders: [], treasury: defaultTreasury(), tasks: defaultTasks(), suppliers: [], customers: [] };
     showToast('تعذر الاتصال بقاعدة البيانات — تحقق من إعداد Supabase (SUPABASE_URL / SUPABASE_ANON_KEY)', 'error');
   }
   migrateLegacyCustomerPayment();
@@ -1394,7 +1427,8 @@ function pastePartsFromClipboard(){
       qty: p.qty,
       costPrice: p.costPrice,
       sellPrice: p.sellPrice,
-      used: !!p.used
+      used: !!p.used,
+      supplierId: null
     });
   });
   refreshPartsList();
@@ -1428,7 +1462,7 @@ function bindPartTypeGate(){
   const addBtn = document.getElementById('add-part-btn');
   if(addBtn){
     addBtn.addEventListener('click', ()=>{
-      draft.parts.push({id:uid('p'), description:'', qty:1, costPrice:'', sellPrice:null, used: selectedPartType==='used'});
+      draft.parts.push({id:uid('p'), description:'', qty:1, costPrice:'', sellPrice:null, used: selectedPartType==='used', supplierId: null});
       refreshPartsList();
     });
   }
@@ -1463,11 +1497,11 @@ function bindPartAddControls(){
   const newBtn = wrap.querySelector('#add-part-btn-new');
   const usedBtn = wrap.querySelector('#add-part-btn-used');
   if(newBtn) newBtn.addEventListener('click', ()=>{
-    draft.parts.push({id:uid('p'), description:'', qty:1, costPrice:'', sellPrice:null, used:false});
+    draft.parts.push({id:uid('p'), description:'', qty:1, costPrice:'', sellPrice:null, used:false, supplierId: null});
     refreshPartsList();
   });
   if(usedBtn) usedBtn.addEventListener('click', ()=>{
-    draft.parts.push({id:uid('p'), description:'', qty:1, costPrice:'', sellPrice:null, used:true});
+    draft.parts.push({id:uid('p'), description:'', qty:1, costPrice:'', sellPrice:null, used:true, supplierId: null});
     refreshPartsList();
   });
 }
@@ -1491,6 +1525,14 @@ function partRowHtml(p, i){
       '<label class="mini-label">العدد<input type="number" min="1" step="1" class="part-qty-input num" value="'+qtyVal+'"></label>' +
       '<label class="mini-label mini-label-cost">سعر الشراء<input type="number" min="0" step="0.01" class="part-cost-input num" value="'+costVal+'"></label>' +
       '<label class="mini-label mini-label-sell">سعر البيع<input type="number" min="0" step="0.01" class="part-sell-input num" placeholder="—" value="'+sellVal+'"></label>' +
+      (p.used ? '' : (
+        '<label class="mini-label mini-label-supplier">المورد' +
+          '<select class="part-supplier-select">' +
+            '<option value="">— بدون مورد —</option>' +
+            (appData.suppliers||[]).map(s=>'<option value="'+s.id+'"'+(p.supplierId===s.id?' selected':'')+'>'+escapeHtml(s.name||s.phone||'مورد')+'</option>').join('') +
+          '</select>' +
+        '</label>'
+      )) +
     '</div>' +
     '<button type="button" class="part-remove-btn" data-remove-part="'+p.id+'" aria-label="حذف القطعة">✕</button>' +
   '</div>';
@@ -1508,6 +1550,16 @@ function modalHtml(d){
           '<div class="phone-field-row">' +
             '<input type="tel" id="order-phone-input" placeholder="05XXXXXXXX" value="'+escapeHtml(d.customerPhone||'')+'">' +
             '<button type="button" class="icon-btn" id="order-phone-contact-btn" aria-label="تواصل">📞</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="field">' +
+          '<span class="field-label">العميل (اختياري)</span>' +
+          '<div class="phone-field-row">' +
+            '<select id="order-customer-select">' +
+              '<option value="">— بدون عميل محدد —</option>' +
+              (appData.customers||[]).map(c=>'<option value="'+c.id+'"'+(d.customerId===c.id?' selected':'')+'>'+escapeHtml(c.name||c.phone||'عميل')+'</option>').join('') +
+            '</select>' +
+            '<button type="button" class="icon-btn" id="order-add-customer-btn" aria-label="عميل جديد">➕</button>' +
           '</div>' +
         '</div>' +
         '<div class="field">' +
@@ -1589,6 +1641,7 @@ function openModal(mode, orderId){
       paidToSupplier:false,
       supplied:false,
       customerPhone:'',
+      customerId: null,
       customerPayments:[],
       confirmed:false,
       feeEnabled:false,
@@ -1638,6 +1691,20 @@ function attachModalHandlers(){
   root.querySelector('#order-label-input').addEventListener('input', e=>{ draft.orderLabel = e.target.value; });
   root.querySelector('#order-phone-input').addEventListener('input', e=>{ draft.customerPhone = e.target.value; });
   root.querySelector('#order-phone-contact-btn').addEventListener('click', ()=> openContactModal(draft.customerPhone));
+  root.querySelector('#order-customer-select').addEventListener('change', e=>{ draft.customerId = e.target.value || null; });
+  root.querySelector('#order-add-customer-btn').addEventListener('click', ()=>{
+    openQuickAddCustomerModal((newCustomer)=>{
+      draft.customerId = newCustomer.id;
+      const sel = document.getElementById('order-customer-select');
+      if(sel){
+        const opt = document.createElement('option');
+        opt.value = newCustomer.id;
+        opt.textContent = newCustomer.name || newCustomer.phone || 'عميل';
+        sel.appendChild(opt);
+        sel.value = newCustomer.id;
+      }
+    });
+  });
   root.querySelector('#btn-toggle-part-selection').addEventListener('click', ()=>{
     draft.partsSelectionEnabled = !draft.partsSelectionEnabled;
     refreshPartsList();
@@ -1800,6 +1867,10 @@ function bindPartRowEvents(){
       part.sellPrice = e.target.value===''? null : Number(e.target.value);
       updateModalTotals();
     });
+    const supplierSelect = row.querySelector('.part-supplier-select');
+    if(supplierSelect){
+      supplierSelect.addEventListener('change', e=>{ part.supplierId = e.target.value || null; });
+    }
     row.querySelector('[data-remove-part]').addEventListener('click', ()=>{
       confirmAction({
         title: 'حذف هذه القطعة؟',
@@ -1943,7 +2014,8 @@ async function onSaveOrder(){
       costPrice: p.costPrice===''? 0 : Number(p.costPrice)||0,
       sellPrice: (p.sellPrice===''||p.sellPrice===null||p.sellPrice===undefined)? null : Number(p.sellPrice),
       used: !!p.used,
-      included: p.included!==false
+      included: p.included!==false,
+      supplierId: p.supplierId || null
     }));
   if(cleanedParts.length===0){ showToast('لازم تضيف وصف لقطعة وحدة على الأقل', 'error'); return false; }
 
@@ -2022,6 +2094,40 @@ function openContactModal(phone){
   root.querySelector('#contact-modal-close-btn').addEventListener('click', close);
   root.querySelector('#contact-call-link').addEventListener('click', close);
   root.querySelector('#contact-wa-link').addEventListener('click', close);
+}
+
+function openQuickAddCustomerModal(onSaved){
+  const root = document.getElementById('confirm-root');
+  root.innerHTML =
+    '<div class="modal-backdrop" data-close-confirm>' +
+      '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
+        '<div class="modal-title">إضافة عميل جديد</div>' +
+        '<label class="field"><span class="field-label">الاسم</span><input type="text" id="quick-customer-name-input" placeholder="اسم العميل"></label>' +
+        '<label class="field"><span class="field-label">رقم الجوال</span><input type="tel" id="quick-customer-phone-input" placeholder="05XXXXXXXX"></label>' +
+        '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' +
+          '<button type="button" class="btn btn-ghost" id="quick-customer-cancel-btn">إلغاء</button>' +
+          '<button type="button" class="btn btn-primary" id="quick-customer-save-btn">💾 حفظ</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  root.querySelector('[data-close-confirm]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-confirm')) close();
+  });
+  root.querySelector('#quick-customer-cancel-btn').addEventListener('click', close);
+  root.querySelector('#quick-customer-save-btn').addEventListener('click', async ()=>{
+    const name = document.getElementById('quick-customer-name-input').value.trim();
+    const phone = document.getElementById('quick-customer-phone-input').value.trim();
+    if(!name && !phone){ showToast('اكتب اسم أو رقم جوال على الأقل', 'error'); return; }
+    const newCustomer = { id: uid('cust'), name, phone, notes: '' };
+    if(!Array.isArray(appData.customers)) appData.customers = [];
+    appData.customers.push(newCustomer);
+    await persistCustomer(newCustomer);
+    close();
+    showToast('تم إضافة العميل', 'ok');
+    if(onSaved) onSaved(newCustomer);
+  });
 }
 
 /* ---------- unified confirmation dialog — used everywhere a destructive/consequential action needs a yes/no ----------
@@ -2581,7 +2687,7 @@ function applyScrapyardProposal(pr){
     order.parts = (order.parts||[]).filter(p=>p.id!==pr.part_id);
   } else if(pr.action === 'add'){
     order.parts = order.parts || [];
-    order.parts.push({ id: uid('p'), description: pr.description||'', qty: Number(pr.qty)||1, costPrice: Number(pr.cost_price)||0, sellPrice: null, used: pr.kind === 'used' });
+    order.parts.push({ id: uid('p'), description: pr.description||'', qty: Number(pr.qty)||1, costPrice: Number(pr.cost_price)||0, sellPrice: null, used: pr.kind === 'used', supplierId: null });
   } else {
     return false;
   }
@@ -2661,9 +2767,9 @@ function subscribeScrapyardRealtime(){
 }
 
 let scrapyardAppDataChannel = null;
-/* عامر ما عنده اشتراك على app_data أصلًا (بيقرأ القطع/المهام عن طريق RPC بس) — من دون هاد
+/* عامر ما عنده اشتراك على جدول orders/tasks مباشرة أصلًا (بيقرأ القطع/المهام عن طريق RPC بس) — من دون هاد
    الاشتراك، أي تعديل يسويه صاحب الحساب على طلبية (تأكيد/توريد/سعر...) ما بينعكس عند عامر
-   إلا بتحديث يدوي. صاحب الحساب نفسه عنده تحديثه الخاص جوا subscribeAppDataRealtime فما بيحتاج هاد. */
+   إلا بتحديث يدوي. صاحب الحساب نفسه عنده تحديثه الخاص جوا subscribeOrdersRealtime فما بيحتاج هاد. */
 function subscribeScrapyardAppDataRealtime(){
   if(!sb || scrapyardAppDataChannel || scrapyardSharedState.canManage) return;
   scrapyardAppDataChannel = sb.channel('scrapyard-app-data-changes')
@@ -2685,6 +2791,14 @@ function subscribeScrapyardAppDataRealtime(){
         loadScrapyardHomeTotals().then(renderPurchasesTasksView);
       } else if(scrapyardCurrentScreen === 'home'){
         loadScrapyardHomeTotals().then(renderScrapyardHomeView);
+      }
+    })
+    // قائمة الموردين/التشاليح — لو صاحب الحساب أضاف مورد جديد وعامر فاتح شاشة التسوية وقتها
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'suppliers' }, ()=>{
+      const scrapRoot = document.getElementById('scrapyard-root');
+      if(!scrapRoot || scrapRoot.style.display === 'none') return;
+      if(scrapyardCurrentScreen === 'settlement'){
+        loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
       }
     })
     .subscribe();
@@ -3291,6 +3405,37 @@ function updateTasksBadge(){
   badge.style.display = total > 0 ? 'flex' : 'none';
 }
 
+/* عميل "متأخر" = عنده طلبية مسلَّمة وباقي عليه مبلغ، ومرّ 30 يوم فأكثر من تاريخ التسليم
+   (أو آخر تعديل للطلبيات القديمة يلي ما فيها تاريخ تسليم مسجّل) */
+function overdueCustomersCount(){
+  const THRESHOLD_MS = 30 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  let count = 0;
+  (appData.customers||[]).forEach(c=>{
+    const isOverdue = (appData.orders||[]).some(o=>{
+      if(o.customerId !== c.id) return false;
+      if(!o.supplied) return false;
+      const t = orderTotals(o);
+      if(!t.hasSell || t.customerRemaining<=0) return false;
+      const refDate = o.suppliedAt || o.updatedAt;
+      if(!refDate) return false;
+      const ref = new Date(refDate).getTime();
+      if(isNaN(ref)) return false;
+      return (now - ref) >= THRESHOLD_MS;
+    });
+    if(isOverdue) count++;
+  });
+  return count;
+}
+
+function updateCustomersBadge(){
+  const badge = document.getElementById('customers-overdue-badge');
+  if(!badge) return;
+  const total = overdueCustomersCount();
+  badge.textContent = total > 0 ? total : '';
+  badge.style.display = total > 0 ? 'flex' : 'none';
+}
+
 function openTasksView(){
   document.getElementById('orders-view').style.display = 'none';
   document.getElementById('treasury-view').style.display = 'none';
@@ -3639,6 +3784,8 @@ function bindToolbar(){
   document.getElementById('btn-new-order').addEventListener('click', ()=> openModal('create'));
   document.getElementById('btn-open-treasury').addEventListener('click', openTreasuryView);
   document.getElementById('btn-open-tasks').addEventListener('click', openTasksView);
+  document.getElementById('btn-open-suppliers').addEventListener('click', openSuppliersView);
+  document.getElementById('btn-open-customers').addEventListener('click', openCustomersView);
   document.getElementById('btn-who-online').addEventListener('click', showWhoIsOnline);
   document.getElementById('btn-theme-toggle').addEventListener('click', toggleTheme);
   document.getElementById('btn-logout').addEventListener('click', handleLogout);
@@ -3665,9 +3812,12 @@ async function init(){
   bindToolbar();
   renderTable();
   updateTasksBadge();
+  updateCustomersBadge();
   subscribeOrdersRealtime();
   subscribeTreasuryRealtime();
   subscribeTasksRealtime();
+  subscribeSuppliersRealtime();
+  subscribeCustomersRealtime();
   refreshScrapyardPendingCount();
   subscribeScrapyardRealtime();
 }
@@ -3676,6 +3826,8 @@ async function init(){
 let treasuryChannel = null;
 let tasksChannel = null;
 let ordersChannel = null;
+let suppliersChannel = null;
+let customersChannel = null;
 
 function applyRemoteOrderChange(payload){
   if(!Array.isArray(appData.orders)) appData.orders = [];
@@ -3692,7 +3844,10 @@ function applyRemoteOrderChange(payload){
   }
   renderKPIs();
   renderTable();
+  updateCustomersBadge();
   if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
+  if(document.getElementById('suppliers-view').style.display !== 'none'){ renderSuppliersView(); }
+  if(document.getElementById('customers-view').style.display !== 'none'){ renderCustomersView(); }
   // صاحب الحساب لو فاتح شاشة سداد التشاليح/الجديد وقت وصول تعديل من مكان تاني — نحدّثها كمان
   const scrapRoot = document.getElementById('scrapyard-root');
   if(scrapRoot && scrapRoot.style.display !== 'none' && scrapyardSharedState.canManage && scrapyardCurrentScreen === 'settlement'){
@@ -3879,6 +4034,293 @@ async function replaceAllTaskItems(tasksObj){
   }
 }
 
+/* ---------- suppliers: own table + own realtime channel ---------- */
+function applyRemoteSupplierChange(payload){
+  if(!Array.isArray(appData.suppliers)) appData.suppliers = [];
+  if(payload.eventType === 'DELETE'){
+    const oldId = payload.old && payload.old.id;
+    if(!oldId) return;
+    appData.suppliers = appData.suppliers.filter(s=>s.id!==oldId);
+  } else {
+    const row = payload.new;
+    if(!row || !row.id) return;
+    const supplier = { id: row.id, name: row.name||'', phone: row.phone||'', notes: row.notes||'' };
+    const idx = appData.suppliers.findIndex(s=>s.id===supplier.id);
+    if(idx>=0) appData.suppliers[idx] = supplier; else appData.suppliers.push(supplier);
+  }
+  const view = document.getElementById('suppliers-view');
+  if(view && view.style.display !== 'none'){ renderSuppliersView(); }
+}
+
+function subscribeSuppliersRealtime(){
+  if(!sb || suppliersChannel) return;
+  suppliersChannel = sb.channel('suppliers-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'suppliers' }, applyRemoteSupplierChange)
+    .subscribe();
+}
+
+async function persistSupplier(supplier){
+  try{
+    if(!sb) throw new Error('NO_DB');
+    const { error } = await sb.from('suppliers').upsert({ id: supplier.id, name: supplier.name||'', phone: supplier.phone||'', notes: supplier.notes||'' });
+    if(error) throw error;
+  }catch(e){
+    showToast('تعذر حفظ المورد: ' + (e && e.message ? e.message : ''), 'error');
+  }
+}
+
+async function deleteSupplier(id){
+  try{
+    if(!sb) throw new Error('NO_DB');
+    const { error } = await sb.from('suppliers').delete().eq('id', id);
+    if(error) throw error;
+  }catch(e){
+    showToast('تعذر حذف المورد: ' + (e && e.message ? e.message : ''), 'error');
+  }
+}
+
+/* ---------- customers: own table + own realtime channel ---------- */
+function applyRemoteCustomerChange(payload){
+  if(!Array.isArray(appData.customers)) appData.customers = [];
+  if(payload.eventType === 'DELETE'){
+    const oldId = payload.old && payload.old.id;
+    if(!oldId) return;
+    appData.customers = appData.customers.filter(c=>c.id!==oldId);
+  } else {
+    const row = payload.new;
+    if(!row || !row.id) return;
+    const customer = { id: row.id, name: row.name||'', phone: row.phone||'', notes: row.notes||'' };
+    const idx = appData.customers.findIndex(c=>c.id===customer.id);
+    if(idx>=0) appData.customers[idx] = customer; else appData.customers.push(customer);
+  }
+  updateCustomersBadge();
+  const view = document.getElementById('customers-view');
+  if(view && view.style.display !== 'none'){ renderCustomersView(); }
+}
+
+function subscribeCustomersRealtime(){
+  if(!sb || customersChannel) return;
+  customersChannel = sb.channel('customers-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, applyRemoteCustomerChange)
+    .subscribe();
+}
+
+async function persistCustomer(customer){
+  try{
+    if(!sb) throw new Error('NO_DB');
+    const { error } = await sb.from('customers').upsert({ id: customer.id, name: customer.name||'', phone: customer.phone||'', notes: customer.notes||'' });
+    if(error) throw error;
+  }catch(e){
+    showToast('تعذر حفظ العميل: ' + (e && e.message ? e.message : ''), 'error');
+  }
+}
+
+async function deleteCustomer(id){
+  try{
+    if(!sb) throw new Error('NO_DB');
+    const { error } = await sb.from('customers').delete().eq('id', id);
+    if(error) throw error;
+  }catch(e){
+    showToast('تعذر حذف العميل: ' + (e && e.message ? e.message : ''), 'error');
+  }
+}
+
+/* ---------- شاشة الموردين ---------- */
+function openSuppliersView(){
+  document.getElementById('orders-view').style.display = 'none';
+  document.getElementById('suppliers-view').style.display = 'block';
+  renderSuppliersView();
+}
+
+function closeSuppliersView(){
+  document.getElementById('suppliers-view').style.display = 'none';
+  document.getElementById('orders-view').style.display = '';
+}
+
+function supplierOwedAmount(supplierId){
+  let total = 0;
+  (appData.orders||[]).forEach(o=>{
+    (o.parts||[]).forEach(p=>{
+      if(p.supplierId !== supplierId) return;
+      const paid = p.used ? o.paidToAmer : o.paidToSupplier;
+      if(paid) return;
+      total += (Number(p.qty)||1) * (Number(p.costPrice)||0);
+    });
+  });
+  return round2(total);
+}
+
+function supplierRowHtml(s){
+  return '<div class="task-item-row" data-supplier-id="'+s.id+'">' +
+    '<input type="text" class="supplier-name-input" placeholder="اسم المورد" value="'+escapeHtml(s.name||'')+'">' +
+    '<input type="tel" class="supplier-phone-input" placeholder="رقم الجوال" value="'+escapeHtml(s.phone||'')+'">' +
+    '<span class="num text-rust">'+fmtMoney(supplierOwedAmount(s.id))+'</span>' +
+    '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' +
+  '</div>';
+}
+
+function suppliersViewHtml(){
+  const rows = appData.suppliers||[];
+  return '<div class="tasks-header">' +
+      '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-suppliers">→ رجوع للطلبيات</button>' +
+      '<div class="tasks-title">🏭 الموردين</div>' +
+    '</div>' +
+    '<div class="treasury-block">' +
+      '<div class="task-add-row">' +
+        '<input type="text" id="new-supplier-name-input" class="task-add-input" placeholder="اسم المورد الجديد">' +
+        '<input type="tel" id="new-supplier-phone-input" class="task-add-input" placeholder="رقم الجوال (اختياري)">' +
+        '<button type="button" class="btn btn-sm btn-add-part" id="add-supplier-btn">+ إضافة</button>' +
+      '</div>' +
+      '<div class="task-items-list" id="suppliers-items-list">' +
+        (rows.length ? rows.map(supplierRowHtml).join('') : '<div class="expense-empty-hint">ما فيه موردين مضافين بعد</div>') +
+      '</div>' +
+    '</div>';
+}
+
+function renderSuppliersView(){
+  const el = document.getElementById('suppliers-view');
+  el.innerHTML = suppliersViewHtml();
+  bindSuppliersViewEvents();
+}
+
+function bindSuppliersViewEvents(){
+  document.getElementById('btn-back-to-orders-from-suppliers').addEventListener('click', closeSuppliersView);
+  document.getElementById('add-supplier-btn').addEventListener('click', async ()=>{
+    const nameInput = document.getElementById('new-supplier-name-input');
+    const phoneInput = document.getElementById('new-supplier-phone-input');
+    const name = nameInput.value.trim();
+    const phone = phoneInput.value.trim();
+    if(!name && !phone){ showToast('اكتب اسم أو رقم جوال على الأقل', 'error'); return; }
+    const newSupplier = { id: uid('sup'), name, phone, notes:'' };
+    if(!Array.isArray(appData.suppliers)) appData.suppliers = [];
+    appData.suppliers.push(newSupplier);
+    renderSuppliersView();
+    await persistSupplier(newSupplier);
+  });
+  document.querySelectorAll('#suppliers-items-list .task-item-row').forEach(row=>{
+    const sid = row.getAttribute('data-supplier-id');
+    const supplier = (appData.suppliers||[]).find(s=>s.id===sid);
+    if(!supplier) return;
+    row.querySelector('.supplier-name-input').addEventListener('change', async e=>{
+      supplier.name = e.target.value; await persistSupplier(supplier);
+    });
+    row.querySelector('.supplier-phone-input').addEventListener('change', async e=>{
+      supplier.phone = e.target.value; await persistSupplier(supplier);
+    });
+    row.querySelector('.task-item-remove-btn').addEventListener('click', ()=>{
+      confirmAction({
+        title: 'حذف هذا المورد؟',
+        message: 'الطلبيات القديمة المرتبطة به بتبقى، بس بدون اسم مورد محدد.',
+        confirmLabel: 'تأكيد الحذف',
+        dangerous: true,
+        onConfirm: async ()=>{
+          appData.suppliers = appData.suppliers.filter(s=>s.id!==sid);
+          renderSuppliersView();
+          await deleteSupplier(sid);
+        }
+      });
+    });
+  });
+}
+
+/* ---------- شاشة العملاء ---------- */
+function openCustomersView(){
+  document.getElementById('orders-view').style.display = 'none';
+  document.getElementById('customers-view').style.display = 'block';
+  renderCustomersView();
+}
+
+function closeCustomersView(){
+  document.getElementById('customers-view').style.display = 'none';
+  document.getElementById('orders-view').style.display = '';
+}
+
+function customerOrderStats(customerId){
+  let count = 0, remaining = 0;
+  (appData.orders||[]).forEach(o=>{
+    if(o.customerId !== customerId) return;
+    count++;
+    const t = orderTotals(o);
+    if(t.hasSell) remaining += t.customerRemaining;
+  });
+  return { count, remaining: round2(remaining) };
+}
+
+function customerRowHtml(c){
+  const stats = customerOrderStats(c.id);
+  return '<div class="task-item-row" data-customer-id="'+c.id+'">' +
+    '<input type="text" class="customer-name-input" placeholder="اسم العميل" value="'+escapeHtml(c.name||'')+'">' +
+    '<input type="tel" class="customer-phone-input" placeholder="رقم الجوال" value="'+escapeHtml(c.phone||'')+'">' +
+    '<span class="expense-entry-view-date">'+stats.count+' طلبية</span>' +
+    '<span class="num '+(stats.remaining>0?'text-rust':'text-green')+'">'+fmtMoney(stats.remaining)+'</span>' +
+    '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' +
+  '</div>';
+}
+
+function customersViewHtml(){
+  const rows = appData.customers||[];
+  return '<div class="tasks-header">' +
+      '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-customers">→ رجوع للطلبيات</button>' +
+      '<div class="tasks-title">👤 العملاء</div>' +
+    '</div>' +
+    '<div class="treasury-block">' +
+      '<div class="task-add-row">' +
+        '<input type="text" id="new-customer-name-input" class="task-add-input" placeholder="اسم العميل الجديد">' +
+        '<input type="tel" id="new-customer-phone-input" class="task-add-input" placeholder="رقم الجوال (اختياري)">' +
+        '<button type="button" class="btn btn-sm btn-add-part" id="add-customer-btn">+ إضافة</button>' +
+      '</div>' +
+      '<div class="task-items-list" id="customers-items-list">' +
+        (rows.length ? rows.map(customerRowHtml).join('') : '<div class="expense-empty-hint">ما فيه عملاء مضافين بعد</div>') +
+      '</div>' +
+    '</div>';
+}
+
+function renderCustomersView(){
+  const el = document.getElementById('customers-view');
+  el.innerHTML = customersViewHtml();
+  bindCustomersViewEvents();
+}
+
+function bindCustomersViewEvents(){
+  document.getElementById('btn-back-to-orders-from-customers').addEventListener('click', closeCustomersView);
+  document.getElementById('add-customer-btn').addEventListener('click', async ()=>{
+    const nameInput = document.getElementById('new-customer-name-input');
+    const phoneInput = document.getElementById('new-customer-phone-input');
+    const name = nameInput.value.trim();
+    const phone = phoneInput.value.trim();
+    if(!name && !phone){ showToast('اكتب اسم أو رقم جوال على الأقل', 'error'); return; }
+    const newCustomer = { id: uid('cust'), name, phone, notes:'' };
+    if(!Array.isArray(appData.customers)) appData.customers = [];
+    appData.customers.push(newCustomer);
+    renderCustomersView();
+    await persistCustomer(newCustomer);
+  });
+  document.querySelectorAll('#customers-items-list .task-item-row').forEach(row=>{
+    const cid = row.getAttribute('data-customer-id');
+    const customer = (appData.customers||[]).find(c=>c.id===cid);
+    if(!customer) return;
+    row.querySelector('.customer-name-input').addEventListener('change', async e=>{
+      customer.name = e.target.value; await persistCustomer(customer);
+    });
+    row.querySelector('.customer-phone-input').addEventListener('change', async e=>{
+      customer.phone = e.target.value; await persistCustomer(customer);
+    });
+    row.querySelector('.task-item-remove-btn').addEventListener('click', ()=>{
+      confirmAction({
+        title: 'حذف هذا العميل؟',
+        message: 'الطلبيات القديمة المرتبطة فيه بتبقى، بس بدون عميل محدد.',
+        confirmLabel: 'تأكيد الحذف',
+        dangerous: true,
+        onConfirm: async ()=>{
+          appData.customers = appData.customers.filter(c=>c.id!==cid);
+          renderCustomersView();
+          await deleteCustomer(cid);
+        }
+      });
+    });
+  });
+}
+
 /* ---------- access gate (Supabase Auth — email magic link, restricted to an allowlist) ---------- */
 let appInitDone = false;
 
@@ -3932,7 +4374,7 @@ const SETTLEMENT_KINDS = {
   new:  { title:'سداد الجديد',   homeLabel:'🧾 سداد الجديد',   rpc:'get_new_parts_supplier',   paidField:'paidToSupplier' }
 };
 
-let scrapyardSharedState = { email:'', canManage:false, activeKind:'used', parts:[], proposals:[], confirmations:[], partsByKind:{used:[],new:[]}, tasks:[] };
+let scrapyardSharedState = { email:'', canManage:false, activeKind:'used', parts:[], proposals:[], confirmations:[], partsByKind:{used:[],new:[]}, tasks:[], suppliers:[] };
 let scrapyardCurrentScreen = null; // 'home' | 'settlement' | 'tasks' — يحدّد هل نحدّث الشاشة تلقائيًا عند وصول تغيير لحظي
 
 async function initScrapyardView(email){
@@ -3993,17 +4435,20 @@ function goToScrapyardHome(){
 
 /* يُستخدم فقط لصفحة عامر الرئيسية — يجيب مجموع كل نوع (تشاليح + جديد) لعرضهم كمؤشرين، والمهام */
 async function loadScrapyardHomeTotals(){
-  const [usedRes, newRes, tasksRes] = await Promise.all([
+  const [usedRes, newRes, tasksRes, suppliersRes] = await Promise.all([
     sb.rpc('get_scrapyard_used_parts'),
     sb.rpc('get_new_parts_supplier'),
-    sb.rpc('get_purchases_tasks')
+    sb.rpc('get_purchases_tasks'),
+    sb.from('suppliers').select('*')
   ]);
   if(usedRes.error) console.error('get_scrapyard_used_parts:', usedRes.error);
   if(newRes.error) console.error('get_new_parts_supplier:', newRes.error);
   if(tasksRes.error) console.error('get_purchases_tasks:', tasksRes.error);
+  if(suppliersRes.error) console.error('suppliers:', suppliersRes.error);
   scrapyardSharedState.partsByKind.used = usedRes.error ? [] : (usedRes.data || []);
   scrapyardSharedState.partsByKind.new = newRes.error ? [] : (newRes.data || []);
   scrapyardSharedState.tasks = tasksRes.error ? [] : (tasksRes.data || []);
+  scrapyardSharedState.suppliers = suppliersRes.error ? [] : (suppliersRes.data || []);
 }
 
 async function loadScrapyardData(kind){
@@ -4011,23 +4456,27 @@ async function loadScrapyardData(kind){
   try{
     if(scrapyardSharedState.canManage){
       scrapyardSharedState.parts = ownerScrapyardPartsFromAppData(kind);
-      const [proposalsRes, confirmationsRes] = await Promise.all([
+      const [proposalsRes, confirmationsRes, suppliersRes] = await Promise.all([
         sb.from('scrapyard_proposals').select('*').eq('kind', kind).order('created_at', {ascending:false}),
-        sb.from('scrapyard_order_confirmations').select('*').eq('kind', kind)
+        sb.from('scrapyard_order_confirmations').select('*').eq('kind', kind),
+        sb.from('suppliers').select('*')
       ]);
       if(proposalsRes.error) throw proposalsRes.error;
       scrapyardSharedState.proposals = proposalsRes.data || [];
       scrapyardSharedState.confirmations = confirmationsRes.data || [];
+      scrapyardSharedState.suppliers = suppliersRes.error ? [] : (suppliersRes.data || []);
     } else {
-      const [partsRes, proposalsRes, confirmationsRes] = await Promise.all([
+      const [partsRes, proposalsRes, confirmationsRes, suppliersRes] = await Promise.all([
         sb.rpc(SETTLEMENT_KINDS[kind].rpc),
         sb.from('scrapyard_proposals').select('*').eq('kind', kind).eq('submitted_by', scrapyardSharedState.email).order('created_at', {ascending:false}),
-        sb.from('scrapyard_order_confirmations').select('*').eq('kind', kind)
+        sb.from('scrapyard_order_confirmations').select('*').eq('kind', kind),
+        sb.from('suppliers').select('*')
       ]);
       if(partsRes.error) throw partsRes.error;
       scrapyardSharedState.parts = partsRes.data || [];
       scrapyardSharedState.proposals = proposalsRes.data || [];
       scrapyardSharedState.confirmations = confirmationsRes.data || [];
+      scrapyardSharedState.suppliers = suppliersRes.error ? [] : (suppliersRes.data || []);
     }
   }catch(e){
     showToast('تعذر تحميل بيانات '+SETTLEMENT_KINDS[kind].title, 'error');
@@ -4337,10 +4786,18 @@ function scrapyardPartRowHtml(p, canManage){
     '</div>';
   }
 
+  const supplierSelectHtml = canManage ? '' : (
+    '<select class="scrapyard-supplier-select" data-part-id="'+p.part_id+'" data-order-id="'+p.order_id+'">' +
+      '<option value="">— بدون تشليحة —</option>' +
+      (scrapyardSharedState.suppliers||[]).map(s=>'<option value="'+s.id+'"'+(p.supplier_id===s.id?' selected':'')+'>'+escapeHtml(s.name||s.phone||'مورد')+'</option>').join('') +
+    '</select>'
+  );
+
   return '<div class="scrapyard-part-row">' +
     '<span class="scrapyard-part-desc">'+escapeHtml(p.description||'')+'</span>' +
     '<span class="num scrapyard-qty-slot">×'+(p.qty||1)+'</span>' +
     '<div class="scrapyard-price-group">'+priceCells+'</div>' +
+    supplierSelectHtml +
     actions +
   '</div>';
 }
@@ -4534,6 +4991,18 @@ function bindScrapyardEvents(){
   });
   root.querySelectorAll('[data-unconfirm-order]').forEach(btn=>{
     btn.addEventListener('click', ()=> unconfirmScrapyardOrder(btn.getAttribute('data-unconfirm-order')));
+  });
+  root.querySelectorAll('.scrapyard-supplier-select').forEach(sel=>{
+    sel.addEventListener('change', async e=>{
+      const partId = sel.getAttribute('data-part-id');
+      const orderId = sel.getAttribute('data-order-id');
+      const supplierId = e.target.value || null;
+      const { error } = await sb.rpc('set_part_supplier', { p_order_id: orderId, p_part_id: partId, p_supplier_id: supplierId });
+      if(error){ showToast('تعذر حفظ التشليحة: ' + error.message, 'error'); return; }
+      showToast('تم حفظ التشليحة', 'ok');
+      await loadScrapyardData(scrapyardSharedState.activeKind);
+      renderScrapyardView();
+    });
   });
   root.querySelectorAll('[data-withdraw-proposal]').forEach(btn=>{
     btn.addEventListener('click', ()=> withdrawScrapyardProposal(btn.getAttribute('data-withdraw-proposal')));
