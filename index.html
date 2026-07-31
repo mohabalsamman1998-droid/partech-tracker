@@ -187,6 +187,16 @@
   .expense-history-btn:hover{border-color:var(--text-faint);color:var(--text);}
   .expense-entries-list{display:flex;flex-direction:column;gap:6px;margin-bottom:8px;}
   .expense-empty-hint{font-size:12px;color:var(--text-faint);padding:4px 0;}
+  .purchase-history-section{margin-top:14px;}
+  .purchase-history-section-title{font-size:12.5px;font-weight:700;color:var(--text-dim);margin-bottom:8px;}
+  .purchase-history-row{
+    display:block;width:100%;text-align:right;background:var(--surface-2);border:1px solid var(--border-soft);
+    border-radius:8px;padding:10px 12px;margin-bottom:6px;cursor:pointer;font-family:'Tajawal',sans-serif;
+  }
+  .purchase-history-row:hover{border-color:var(--green-line);}
+  .purchase-history-row-main{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13.5px;}
+  .purchase-history-desc{color:var(--text);flex:1;}
+  .purchase-history-row-sub{display:flex;justify-content:space-between;gap:10px;font-size:11.5px;color:var(--text-faint);margin-top:4px;}
 
   /* shared scrapyard settlement screen (employee + owner) */
   /* بطاقة مستقلة لكل طلبية — تباين واضح عن خلفية القسم وعن الطلبية يلي جنبها */
@@ -4183,6 +4193,80 @@ function supplierOwedAmount(supplierId){
   return round2(total);
 }
 
+function isoToDisplayDate(iso){
+  if(!iso) return '—';
+  const d = new Date(iso);
+  if(isNaN(d.getTime())) return '—';
+  return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear();
+}
+
+/* سجل مشتريات المورد — مقسّم لجارية (غير مسددة) وسابقة (مسددة)، كل صف يفتح طلبيته */
+function supplierPurchaseHistory(supplierId){
+  const ongoing = [], past = [];
+  (appData.orders||[]).forEach(o=>{
+    (o.parts||[]).forEach(p=>{
+      if(p.supplierId !== supplierId) return;
+      const paid = p.used ? o.paidToAmer : o.paidToSupplier;
+      const row = {
+        orderId: o.id, orderNumber: o.orderNumber, orderLabel: o.orderLabel,
+        amount: round2((Number(p.qty)||1) * (Number(p.costPrice)||0)),
+        desc: p.description||'', date: o.suppliedAt || o.updatedAt || o.createdAt || ''
+      };
+      (paid ? past : ongoing).push(row);
+    });
+  });
+  const byDateDesc = (a,b)=> new Date(b.date||0) - new Date(a.date||0);
+  ongoing.sort(byDateDesc); past.sort(byDateDesc);
+  return { ongoing, past };
+}
+
+function purchaseHistoryRowHtml(row){
+  return '<button type="button" class="purchase-history-row" data-open-order="'+row.orderId+'">' +
+    '<div class="purchase-history-row-main">' +
+      '<span class="purchase-history-desc">'+escapeHtml(row.desc)+'</span>' +
+      '<span class="num text-rust">'+fmtMoney(row.amount)+'</span>' +
+    '</div>' +
+    '<div class="purchase-history-row-sub">' +
+      '<span>'+escapeHtml(row.orderNumber||'')+(row.orderLabel?' — '+escapeHtml(row.orderLabel):'')+'</span>' +
+      '<span>'+isoToDisplayDate(row.date)+'</span>' +
+    '</div>' +
+  '</button>';
+}
+
+function openSupplierHistoryModal(supplierId){
+  const supplier = (appData.suppliers||[]).find(s=>s.id===supplierId);
+  const label = supplier ? (supplier.name||supplier.phone||'مورد') : 'مورد';
+  const { ongoing, past } = supplierPurchaseHistory(supplierId);
+  const root = document.getElementById('modal-root');
+  root.innerHTML =
+    '<div class="modal-backdrop" data-close-backdrop>' +
+      '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
+        '<div class="modal-header"><div class="modal-title">سجل مشتريات — '+escapeHtml(label)+'</div>' +
+          '<button type="button" class="icon-btn" id="supplier-history-close-btn" aria-label="إغلاق">✕</button></div>' +
+        '<div class="purchase-history-section">' +
+          '<div class="purchase-history-section-title">جارية (غير مسددة)</div>' +
+          (ongoing.length ? ongoing.map(purchaseHistoryRowHtml).join('') : '<div class="expense-empty-hint">ما فيه مشتريات جارية</div>') +
+        '</div>' +
+        '<div class="purchase-history-section">' +
+          '<div class="purchase-history-section-title">سابقة (مسددة)</div>' +
+          (past.length ? past.map(purchaseHistoryRowHtml).join('') : '<div class="expense-empty-hint">ما فيه مشتريات سابقة</div>') +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  root.querySelector('[data-close-backdrop]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-backdrop')) close();
+  });
+  root.querySelector('#supplier-history-close-btn').addEventListener('click', close);
+  root.querySelectorAll('[data-open-order]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      close();
+      openModal('edit', btn.getAttribute('data-open-order'));
+    });
+  });
+}
+
 function supplierRowHtml(s){
   const extraPhones = Array.isArray(s.extraPhones) ? s.extraPhones : [];
   return '<div class="task-item-row supplier-item-row" data-supplier-id="'+s.id+'">' +
@@ -4190,6 +4274,7 @@ function supplierRowHtml(s){
       '<input type="text" class="supplier-name-input" placeholder="اسم المورد" value="'+escapeHtml(s.name||'')+'">' +
       '<input type="tel" class="supplier-phone-input" placeholder="رقم الجوال" value="'+escapeHtml(s.phone||'')+'">' +
       '<span class="num text-rust">'+fmtMoney(supplierOwedAmount(s.id))+'</span>' +
+      '<button type="button" class="icon-btn supplier-history-btn" data-supplier-id="'+s.id+'" title="سجل المشتريات" aria-label="سجل المشتريات">📋</button>' +
       '<button type="button" class="icon-btn supplier-add-phone-btn" title="إضافة رقم آخر" aria-label="إضافة رقم">➕</button>' +
       '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' +
     '</div>' +
@@ -4256,6 +4341,7 @@ function bindSuppliersViewEvents(){
     row.querySelector('.supplier-phone-input').addEventListener('change', async e=>{
       supplier.phone = e.target.value; await persistSupplier(supplier);
     });
+    row.querySelector('.supplier-history-btn').addEventListener('click', ()=> openSupplierHistoryModal(sid));
     row.querySelector('.supplier-add-phone-btn').addEventListener('click', async ()=>{
       if(!Array.isArray(supplier.extraPhones)) supplier.extraPhones = [];
       supplier.extraPhones.push('');
@@ -4329,8 +4415,71 @@ function customerRowHtml(c){
     '<input type="tel" class="customer-phone-input" placeholder="رقم الجوال" value="'+escapeHtml(c.phone||'')+'">' +
     '<span class="expense-entry-view-date">'+stats.count+' طلبية</span>' +
     '<span class="num '+(stats.remaining>0?'text-rust':'text-green')+'">'+fmtMoney(stats.remaining)+'</span>' +
+    '<button type="button" class="icon-btn customer-history-btn" data-customer-id="'+c.id+'" title="سجل الطلبيات" aria-label="سجل الطلبيات">📋</button>' +
     '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' +
   '</div>';
+}
+
+/* سجل طلبيات العميل — مقسّم لجارية (لسه ما تسدد بالكامل) وسابقة (مسددة)، كل صف يفتح طلبيته */
+function customerOrderHistory(customerId){
+  const ongoing = [], past = [];
+  (appData.orders||[]).forEach(o=>{
+    if(o.customerId !== customerId) return;
+    const t = orderTotals(o);
+    const row = {
+      orderId: o.id, orderNumber: o.orderNumber, orderLabel: o.orderLabel,
+      total: t.hasSell ? t.sellTotal : 0, remaining: t.hasSell ? t.customerRemaining : 0,
+      date: o.updatedAt || o.createdAt || ''
+    };
+    (t.hasSell && t.customerRemaining>0 ? ongoing : past).push(row);
+  });
+  const byDateDesc = (a,b)=> new Date(b.date||0) - new Date(a.date||0);
+  ongoing.sort(byDateDesc); past.sort(byDateDesc);
+  return { ongoing, past };
+}
+
+function orderHistoryRowHtml(row){
+  return '<button type="button" class="purchase-history-row" data-open-order="'+row.orderId+'">' +
+    '<div class="purchase-history-row-main">' +
+      '<span class="purchase-history-desc">'+escapeHtml(row.orderNumber||'')+(row.orderLabel?' — '+escapeHtml(row.orderLabel):'')+'</span>' +
+      '<span class="num '+(row.remaining>0?'text-rust':'text-green')+'">'+fmtMoney(row.remaining>0?row.remaining:row.total)+'</span>' +
+    '</div>' +
+    '<div class="purchase-history-row-sub"><span>'+isoToDisplayDate(row.date)+'</span></div>' +
+  '</button>';
+}
+
+function openCustomerHistoryModal(customerId){
+  const customer = (appData.customers||[]).find(c=>c.id===customerId);
+  const label = customer ? (customer.name||customer.phone||'عميل') : 'عميل';
+  const { ongoing, past } = customerOrderHistory(customerId);
+  const root = document.getElementById('modal-root');
+  root.innerHTML =
+    '<div class="modal-backdrop" data-close-backdrop>' +
+      '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
+        '<div class="modal-header"><div class="modal-title">سجل طلبيات — '+escapeHtml(label)+'</div>' +
+          '<button type="button" class="icon-btn" id="customer-history-close-btn" aria-label="إغلاق">✕</button></div>' +
+        '<div class="purchase-history-section">' +
+          '<div class="purchase-history-section-title">جارية (لم تُسدد بالكامل)</div>' +
+          (ongoing.length ? ongoing.map(orderHistoryRowHtml).join('') : '<div class="expense-empty-hint">ما فيه طلبيات جارية</div>') +
+        '</div>' +
+        '<div class="purchase-history-section">' +
+          '<div class="purchase-history-section-title">سابقة (مسددة)</div>' +
+          (past.length ? past.map(orderHistoryRowHtml).join('') : '<div class="expense-empty-hint">ما فيه طلبيات سابقة</div>') +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  root.querySelector('[data-close-backdrop]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-backdrop')) close();
+  });
+  root.querySelector('#customer-history-close-btn').addEventListener('click', close);
+  root.querySelectorAll('[data-open-order]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      close();
+      openModal('edit', btn.getAttribute('data-open-order'));
+    });
+  });
 }
 
 function customersViewHtml(){
@@ -4381,6 +4530,7 @@ function bindCustomersViewEvents(){
     row.querySelector('.customer-phone-input').addEventListener('change', async e=>{
       customer.phone = e.target.value; await persistCustomer(customer);
     });
+    row.querySelector('.customer-history-btn').addEventListener('click', ()=> openCustomerHistoryModal(cid));
     row.querySelector('.task-item-remove-btn').addEventListener('click', ()=>{
       confirmAction({
         title: 'حذف هذا العميل؟',
@@ -4734,7 +4884,7 @@ async function togglePurchasesTaskDone(taskId, newDone){
   }
 }
 
-/* المستحق لكل تشليحة على حدة — مبني على القطع المستعملة غير المسدّدة الظاهرة حاليًا بس */
+/* المستحق لكل تشليح على حدة — مبني على القطع المستعملة غير المسدّدة الظاهرة حاليًا بس */
 function scrapyardSupplierTotalsHtml(){
   const totals = {};
   (scrapyardSharedState.parts||[]).forEach(p=>{
@@ -4748,7 +4898,7 @@ function scrapyardSupplierTotalsHtml(){
     const name = supplier ? (supplier.name||supplier.phone||'مورد') : 'غير معروف';
     return '<div class="scrapyard-supplier-total-row"><span>'+escapeHtml(name)+'</span><span class="num text-amber">'+fmtMoney(totals[sid])+'</span></div>';
   }).join('');
-  return '<div class="section-block"><div class="section-head"><span class="section-title">المستحق لكل تشليحة</span></div>' + rows + '</div>';
+  return '<div class="section-block"><div class="section-head"><span class="section-title">المستحق لكل تشليح</span></div>' + rows + '</div>';
 }
 
 function renderScrapyardView(){
@@ -4774,7 +4924,7 @@ function renderScrapyardView(){
     '<div class="total-box" style="margin-bottom:18px;"><span>إجمالي المستحق للسداد</span><span class="num text-amber">'+fmtMoney(total)+'</span></div>' +
     (kind==='used' ? scrapyardSupplierTotalsHtml() : '') +
     '<div class="section-block"><div class="section-head"><span class="section-title">القطع (غير المسدّدة)</span>' +
-      (canManage || kind!=='used' ? '' : '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-scrapyard-supplier">➕ تشليحة جديدة</button>') +
+      (canManage || kind!=='used' ? '' : '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-scrapyard-supplier">➕ تشليح جديد</button>') +
     '</div>' +
       (groups.length ? groups.map(g=>scrapyardOrderGroupHtml(g, canManage)).join('') : '<div class="expense-empty-hint">ما فيه قطع غير مسدّدة حاليًا</div>') +
     '</div>';
@@ -4787,8 +4937,8 @@ function openQuickAddScrapyardSupplierModal(){
   root.innerHTML =
     '<div class="modal-backdrop" data-close-confirm>' +
       '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
-        '<div class="modal-title">إضافة تشليحة جديدة</div>' +
-        '<label class="field"><span class="field-label">الاسم</span><input type="text" id="quick-scrapyard-name-input" placeholder="اسم التشليحة"></label>' +
+        '<div class="modal-title">إضافة تشليح جديد</div>' +
+        '<label class="field"><span class="field-label">الاسم</span><input type="text" id="quick-scrapyard-name-input" placeholder="اسم التشليح"></label>' +
         '<label class="field"><span class="field-label">رقم الجوال</span><input type="tel" id="quick-scrapyard-phone-input" placeholder="05XXXXXXXX"></label>' +
         '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' +
           '<button type="button" class="btn btn-ghost" id="quick-scrapyard-cancel-btn">إلغاء</button>' +
@@ -4814,7 +4964,7 @@ function openQuickAddScrapyardSupplierModal(){
       handles_new: false, handles_used: true, extra_phones: []
     });
     close();
-    showToast('تم إضافة التشليحة', 'ok');
+    showToast('تم إضافة التشليح', 'ok');
     renderScrapyardView();
   });
 }
@@ -4921,7 +5071,7 @@ function scrapyardPartRowHtml(p, canManage){
 
   const supplierSelectHtml = (canManage || scrapyardSharedState.activeKind !== 'used') ? '' : (
     '<select class="scrapyard-supplier-select" data-part-id="'+p.part_id+'" data-order-id="'+p.order_id+'">' +
-      '<option value="">— بدون تشليحة —</option>' +
+      '<option value="">— بدون تشليح —</option>' +
       (scrapyardSharedState.suppliers||[]).filter(s=>s.handles_used!==false).map(s=>'<option value="'+s.id+'"'+(p.supplier_id===s.id?' selected':'')+'>'+escapeHtml(s.name||s.phone||'مورد')+'</option>').join('') +
     '</select>'
   );
@@ -5133,8 +5283,8 @@ function bindScrapyardEvents(){
       const orderId = sel.getAttribute('data-order-id');
       const supplierId = e.target.value || null;
       const { error } = await sb.rpc('set_part_supplier', { p_order_id: orderId, p_part_id: partId, p_supplier_id: supplierId });
-      if(error){ showToast('تعذر حفظ التشليحة: ' + error.message, 'error'); return; }
-      showToast('تم حفظ التشليحة', 'ok');
+      if(error){ showToast('تعذر حفظ التشليح: ' + error.message, 'error'); return; }
+      showToast('تم حفظ التشليح', 'ok');
       await loadScrapyardData(scrapyardSharedState.activeKind);
       renderScrapyardView();
     });
