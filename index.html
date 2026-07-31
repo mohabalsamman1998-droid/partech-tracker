@@ -188,7 +188,7 @@
   .expense-entries-list{display:flex;flex-direction:column;gap:6px;margin-bottom:8px;}
   .expense-empty-hint{font-size:12px;color:var(--text-faint);padding:4px 0;}
   .purchase-history-section{margin-top:14px;}
-  .purchase-history-section-title{font-size:12.5px;font-weight:700;color:var(--text-dim);margin-bottom:8px;}
+  .purchase-history-section-title{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12.5px;font-weight:700;color:var(--text-dim);margin-bottom:8px;}
   .purchase-history-row{
     display:block;width:100%;text-align:right;background:var(--surface-2);border:1px solid var(--border-soft);
     border-radius:8px;padding:10px 12px;margin-bottom:6px;cursor:pointer;font-family:'Tajawal',sans-serif;
@@ -4201,18 +4201,25 @@ function isoToDisplayDate(iso){
 }
 
 /* سجل مشتريات المورد — مقسّم لجارية (غير مسددة) وسابقة (مسددة)، كل صف يفتح طلبيته */
+/* مجمّعة بالطلبية — مو بكل قطعة لحالها؛ الضغط يفتح الطلبية ويفرّد القطع هناك */
 function supplierPurchaseHistory(supplierId){
+  const ongoingMap = {}, pastMap = {};
   const ongoing = [], past = [];
   (appData.orders||[]).forEach(o=>{
     (o.parts||[]).forEach(p=>{
       if(p.supplierId !== supplierId) return;
       const paid = p.used ? o.paidToAmer : o.paidToSupplier;
-      const row = {
-        orderId: o.id, orderNumber: o.orderNumber, orderLabel: o.orderLabel,
-        amount: round2((Number(p.qty)||1) * (Number(p.costPrice)||0)),
-        desc: p.description||'', date: o.suppliedAt || o.updatedAt || o.createdAt || ''
-      };
-      (paid ? past : ongoing).push(row);
+      const map = paid ? pastMap : ongoingMap;
+      const list = paid ? past : ongoing;
+      if(!map[o.id]){
+        map[o.id] = {
+          orderId: o.id, orderNumber: o.orderNumber, orderLabel: o.orderLabel,
+          amount: 0, count: 0, date: o.suppliedAt || o.updatedAt || o.createdAt || ''
+        };
+        list.push(map[o.id]);
+      }
+      map[o.id].amount = round2(map[o.id].amount + (Number(p.qty)||1) * (Number(p.costPrice)||0));
+      map[o.id].count++;
     });
   });
   const byDateDesc = (a,b)=> new Date(b.date||0) - new Date(a.date||0);
@@ -4223,11 +4230,11 @@ function supplierPurchaseHistory(supplierId){
 function purchaseHistoryRowHtml(row){
   return '<button type="button" class="purchase-history-row" data-open-order="'+row.orderId+'">' +
     '<div class="purchase-history-row-main">' +
-      '<span class="purchase-history-desc">'+escapeHtml(row.desc)+'</span>' +
+      '<span class="purchase-history-desc">'+escapeHtml(row.orderNumber||'')+(row.orderLabel?' — '+escapeHtml(row.orderLabel):'')+'</span>' +
       '<span class="num text-rust">'+fmtMoney(row.amount)+'</span>' +
     '</div>' +
     '<div class="purchase-history-row-sub">' +
-      '<span>'+escapeHtml(row.orderNumber||'')+(row.orderLabel?' — '+escapeHtml(row.orderLabel):'')+'</span>' +
+      '<span>'+row.count+' قطعة</span>' +
       '<span>'+isoToDisplayDate(row.date)+'</span>' +
     '</div>' +
   '</button>';
@@ -4237,6 +4244,8 @@ function openSupplierHistoryModal(supplierId){
   const supplier = (appData.suppliers||[]).find(s=>s.id===supplierId);
   const label = supplier ? (supplier.name||supplier.phone||'مورد') : 'مورد';
   const { ongoing, past } = supplierPurchaseHistory(supplierId);
+  const ongoingTotal = round2(ongoing.reduce((s,r)=>s+r.amount,0));
+  const pastTotal = round2(past.reduce((s,r)=>s+r.amount,0));
   const root = document.getElementById('modal-root');
   root.innerHTML =
     '<div class="modal-backdrop" data-close-backdrop>' +
@@ -4244,11 +4253,11 @@ function openSupplierHistoryModal(supplierId){
         '<div class="modal-header"><div class="modal-title">سجل مشتريات — '+escapeHtml(label)+'</div>' +
           '<button type="button" class="icon-btn" id="supplier-history-close-btn" aria-label="إغلاق">✕</button></div>' +
         '<div class="purchase-history-section">' +
-          '<div class="purchase-history-section-title">جارية (غير مسددة)</div>' +
+          '<div class="purchase-history-section-title"><span>جارية (غير مسددة)</span><span class="num text-rust">'+fmtMoney(ongoingTotal)+'</span></div>' +
           (ongoing.length ? ongoing.map(purchaseHistoryRowHtml).join('') : '<div class="expense-empty-hint">ما فيه مشتريات جارية</div>') +
         '</div>' +
         '<div class="purchase-history-section">' +
-          '<div class="purchase-history-section-title">سابقة (مسددة)</div>' +
+          '<div class="purchase-history-section-title"><span>سابقة (مسددة)</span><span class="num text-green">'+fmtMoney(pastTotal)+'</span></div>' +
           (past.length ? past.map(purchaseHistoryRowHtml).join('') : '<div class="expense-empty-hint">ما فيه مشتريات سابقة</div>') +
         '</div>' +
       '</div>' +
@@ -4293,8 +4302,24 @@ function supplierRowHtml(s){
   '</div>';
 }
 
-function suppliersViewHtml(){
+let suppliersSearchQuery = '';
+function suppliersMatchingSearch(){
+  const q = suppliersSearchQuery.trim().toLowerCase();
   const rows = appData.suppliers||[];
+  if(!q) return rows;
+  return rows.filter(s=>{
+    const hay = [s.name, s.phone].concat(Array.isArray(s.extraPhones)?s.extraPhones:[]).join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+}
+
+function suppliersItemsListHtml(){
+  const rows = suppliersMatchingSearch();
+  if(!rows.length) return '<div class="expense-empty-hint">'+(suppliersSearchQuery.trim() ? 'ما فيه نتائج مطابقة' : 'ما فيه موردين مضافين بعد')+'</div>';
+  return rows.map(supplierRowHtml).join('');
+}
+
+function suppliersViewHtml(){
   return '<div class="tasks-header">' +
       '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-suppliers">→ رجوع للطلبيات</button>' +
       '<div class="tasks-title">🏭 الموردين</div>' +
@@ -4305,10 +4330,16 @@ function suppliersViewHtml(){
         '<input type="tel" id="new-supplier-phone-input" class="task-add-input" placeholder="رقم الجوال (اختياري)">' +
         '<button type="button" class="btn btn-sm btn-add-part" id="add-supplier-btn">+ إضافة</button>' +
       '</div>' +
-      '<div class="task-items-list" id="suppliers-items-list">' +
-        (rows.length ? rows.map(supplierRowHtml).join('') : '<div class="expense-empty-hint">ما فيه موردين مضافين بعد</div>') +
-      '</div>' +
+      '<input type="text" id="suppliers-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث بالاسم أو رقم الجوال..." value="'+escapeHtml(suppliersSearchQuery)+'">' +
+      '<div class="task-items-list" id="suppliers-items-list">' + suppliersItemsListHtml() + '</div>' +
     '</div>';
+}
+
+function refreshSuppliersList(){
+  const list = document.getElementById('suppliers-items-list');
+  if(!list) return;
+  list.innerHTML = suppliersItemsListHtml();
+  bindSupplierRowEvents();
 }
 
 function renderSuppliersView(){
@@ -4325,12 +4356,22 @@ function bindSuppliersViewEvents(){
     const name = nameInput.value.trim();
     const phone = phoneInput.value.trim();
     if(!name && !phone){ showToast('اكتب اسم أو رقم جوال على الأقل', 'error'); return; }
-    const newSupplier = { id: uid('sup'), name, phone, notes:'', extraPhones: [], handlesNew: true, handlesUsed: true };
+    const newSupplier = { id: uid('sup'), name, phone, notes:'', extraPhones: [], handlesNew: false, handlesUsed: false };
     if(!Array.isArray(appData.suppliers)) appData.suppliers = [];
     appData.suppliers.push(newSupplier);
-    renderSuppliersView();
+    nameInput.value = ''; phoneInput.value = '';
+    refreshSuppliersList();
     await persistSupplier(newSupplier);
   });
+  const searchInput = document.getElementById('suppliers-search-input');
+  searchInput.addEventListener('input', e=>{
+    suppliersSearchQuery = e.target.value;
+    refreshSuppliersList();
+  });
+  bindSupplierRowEvents();
+}
+
+function bindSupplierRowEvents(){
   document.querySelectorAll('#suppliers-items-list .task-item-row').forEach(row=>{
     const sid = row.getAttribute('data-supplier-id');
     const supplier = (appData.suppliers||[]).find(s=>s.id===sid);
@@ -4345,13 +4386,23 @@ function bindSuppliersViewEvents(){
     row.querySelector('.supplier-add-phone-btn').addEventListener('click', async ()=>{
       if(!Array.isArray(supplier.extraPhones)) supplier.extraPhones = [];
       supplier.extraPhones.push('');
-      renderSuppliersView();
+      refreshSuppliersList();
       await persistSupplier(supplier);
     });
     row.querySelector('.supplier-handles-new-check').addEventListener('change', async e=>{
+      if(!e.target.checked && !supplier.handlesUsed){
+        e.target.checked = true;
+        showToast('لازم تحدد نوع واحد على الأقل', 'error');
+        return;
+      }
       supplier.handlesNew = e.target.checked; await persistSupplier(supplier);
     });
     row.querySelector('.supplier-handles-used-check').addEventListener('change', async e=>{
+      if(!e.target.checked && !supplier.handlesNew){
+        e.target.checked = true;
+        showToast('لازم تحدد نوع واحد على الأقل', 'error');
+        return;
+      }
       supplier.handlesUsed = e.target.checked; await persistSupplier(supplier);
     });
     row.querySelectorAll('.supplier-extra-phone-input').forEach(inp=>{
@@ -4365,7 +4416,7 @@ function bindSuppliersViewEvents(){
       btn.addEventListener('click', async ()=>{
         const idx = Number(btn.getAttribute('data-phone-index'));
         supplier.extraPhones.splice(idx, 1);
-        renderSuppliersView();
+        refreshSuppliersList();
         await persistSupplier(supplier);
       });
     });
@@ -4377,7 +4428,7 @@ function bindSuppliersViewEvents(){
         dangerous: true,
         onConfirm: async ()=>{
           appData.suppliers = appData.suppliers.filter(s=>s.id!==sid);
-          renderSuppliersView();
+          refreshSuppliersList();
           await deleteSupplier(sid);
         }
       });
@@ -4452,6 +4503,8 @@ function openCustomerHistoryModal(customerId){
   const customer = (appData.customers||[]).find(c=>c.id===customerId);
   const label = customer ? (customer.name||customer.phone||'عميل') : 'عميل';
   const { ongoing, past } = customerOrderHistory(customerId);
+  const ongoingTotal = round2(ongoing.reduce((s,r)=>s+r.remaining,0));
+  const pastTotal = round2(past.reduce((s,r)=>s+r.total,0));
   const root = document.getElementById('modal-root');
   root.innerHTML =
     '<div class="modal-backdrop" data-close-backdrop>' +
@@ -4459,11 +4512,11 @@ function openCustomerHistoryModal(customerId){
         '<div class="modal-header"><div class="modal-title">سجل طلبيات — '+escapeHtml(label)+'</div>' +
           '<button type="button" class="icon-btn" id="customer-history-close-btn" aria-label="إغلاق">✕</button></div>' +
         '<div class="purchase-history-section">' +
-          '<div class="purchase-history-section-title">جارية (لم تُسدد بالكامل)</div>' +
+          '<div class="purchase-history-section-title"><span>جارية (لم تُسدد بالكامل)</span><span class="num text-rust">'+fmtMoney(ongoingTotal)+'</span></div>' +
           (ongoing.length ? ongoing.map(orderHistoryRowHtml).join('') : '<div class="expense-empty-hint">ما فيه طلبيات جارية</div>') +
         '</div>' +
         '<div class="purchase-history-section">' +
-          '<div class="purchase-history-section-title">سابقة (مسددة)</div>' +
+          '<div class="purchase-history-section-title"><span>سابقة (مسددة)</span><span class="num text-green">'+fmtMoney(pastTotal)+'</span></div>' +
           (past.length ? past.map(orderHistoryRowHtml).join('') : '<div class="expense-empty-hint">ما فيه طلبيات سابقة</div>') +
         '</div>' +
       '</div>' +
@@ -4482,8 +4535,24 @@ function openCustomerHistoryModal(customerId){
   });
 }
 
-function customersViewHtml(){
+let customersSearchQuery = '';
+function customersMatchingSearch(){
+  const q = customersSearchQuery.trim().toLowerCase();
   const rows = appData.customers||[];
+  if(!q) return rows;
+  return rows.filter(c=>{
+    const hay = [c.name, c.phone].join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+}
+
+function customersItemsListHtml(){
+  const rows = customersMatchingSearch();
+  if(!rows.length) return '<div class="expense-empty-hint">'+(customersSearchQuery.trim() ? 'ما فيه نتائج مطابقة' : 'ما فيه عملاء مضافين بعد')+'</div>';
+  return rows.map(customerRowHtml).join('');
+}
+
+function customersViewHtml(){
   return '<div class="tasks-header">' +
       '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-customers">→ رجوع للطلبيات</button>' +
       '<div class="tasks-title">👤 العملاء</div>' +
@@ -4494,10 +4563,16 @@ function customersViewHtml(){
         '<input type="tel" id="new-customer-phone-input" class="task-add-input" placeholder="رقم الجوال (اختياري)">' +
         '<button type="button" class="btn btn-sm btn-add-part" id="add-customer-btn">+ إضافة</button>' +
       '</div>' +
-      '<div class="task-items-list" id="customers-items-list">' +
-        (rows.length ? rows.map(customerRowHtml).join('') : '<div class="expense-empty-hint">ما فيه عملاء مضافين بعد</div>') +
-      '</div>' +
+      '<input type="text" id="customers-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث بالاسم أو رقم الجوال..." value="'+escapeHtml(customersSearchQuery)+'">' +
+      '<div class="task-items-list" id="customers-items-list">' + customersItemsListHtml() + '</div>' +
     '</div>';
+}
+
+function refreshCustomersList(){
+  const list = document.getElementById('customers-items-list');
+  if(!list) return;
+  list.innerHTML = customersItemsListHtml();
+  bindCustomerRowEvents();
 }
 
 function renderCustomersView(){
@@ -4517,9 +4592,19 @@ function bindCustomersViewEvents(){
     const newCustomer = { id: uid('cust'), name, phone, notes:'' };
     if(!Array.isArray(appData.customers)) appData.customers = [];
     appData.customers.push(newCustomer);
-    renderCustomersView();
+    nameInput.value = ''; phoneInput.value = '';
+    refreshCustomersList();
     await persistCustomer(newCustomer);
   });
+  const searchInput = document.getElementById('customers-search-input');
+  searchInput.addEventListener('input', e=>{
+    customersSearchQuery = e.target.value;
+    refreshCustomersList();
+  });
+  bindCustomerRowEvents();
+}
+
+function bindCustomerRowEvents(){
   document.querySelectorAll('#customers-items-list .task-item-row').forEach(row=>{
     const cid = row.getAttribute('data-customer-id');
     const customer = (appData.customers||[]).find(c=>c.id===cid);
@@ -4539,7 +4624,7 @@ function bindCustomersViewEvents(){
         dangerous: true,
         onConfirm: async ()=>{
           appData.customers = appData.customers.filter(c=>c.id!==cid);
-          renderCustomersView();
+          refreshCustomersList();
           await deleteCustomer(cid);
         }
       });
