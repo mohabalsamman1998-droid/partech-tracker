@@ -4330,6 +4330,10 @@ function suppliersViewHtml(){
         '<input type="tel" id="new-supplier-phone-input" class="task-add-input" placeholder="رقم الجوال (اختياري)">' +
         '<button type="button" class="btn btn-sm btn-add-part" id="add-supplier-btn">+ إضافة</button>' +
       '</div>' +
+      '<div class="supplier-kinds-row" style="margin-bottom:12px;">' +
+        '<label class="supplier-kind-toggle"><input type="checkbox" id="new-supplier-handles-new-check"><span>قطع جديدة</span></label>' +
+        '<label class="supplier-kind-toggle"><input type="checkbox" id="new-supplier-handles-used-check"><span>قطع مستعملة (تشليح)</span></label>' +
+      '</div>' +
       '<input type="text" id="suppliers-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث بالاسم أو رقم الجوال..." value="'+escapeHtml(suppliersSearchQuery)+'">' +
       '<div class="task-items-list" id="suppliers-items-list">' + suppliersItemsListHtml() + '</div>' +
     '</div>';
@@ -4353,13 +4357,23 @@ function bindSuppliersViewEvents(){
   document.getElementById('add-supplier-btn').addEventListener('click', async ()=>{
     const nameInput = document.getElementById('new-supplier-name-input');
     const phoneInput = document.getElementById('new-supplier-phone-input');
+    const handlesNewCheck = document.getElementById('new-supplier-handles-new-check');
+    const handlesUsedCheck = document.getElementById('new-supplier-handles-used-check');
     const name = nameInput.value.trim();
     const phone = phoneInput.value.trim();
     if(!name && !phone){ showToast('اكتب اسم أو رقم جوال على الأقل', 'error'); return; }
-    const newSupplier = { id: uid('sup'), name, phone, notes:'', extraPhones: [], handlesNew: false, handlesUsed: false };
+    if(!handlesNewCheck.checked && !handlesUsedCheck.checked){
+      showToast('لازم تحدد نوع واحد على الأقل (قطع جديدة/مستعملة)', 'error');
+      return;
+    }
+    const newSupplier = {
+      id: uid('sup'), name, phone, notes:'', extraPhones: [],
+      handlesNew: handlesNewCheck.checked, handlesUsed: handlesUsedCheck.checked
+    };
     if(!Array.isArray(appData.suppliers)) appData.suppliers = [];
     appData.suppliers.push(newSupplier);
     nameInput.value = ''; phoneInput.value = '';
+    handlesNewCheck.checked = false; handlesUsedCheck.checked = false;
     refreshSuppliersList();
     await persistSupplier(newSupplier);
   });
