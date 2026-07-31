@@ -3882,8 +3882,8 @@ function applyRemoteOrderChange(payload){
   renderTable();
   updateCustomersBadge();
   if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
-  if(document.getElementById('suppliers-view').style.display !== 'none'){ renderSuppliersView(); }
-  if(document.getElementById('customers-view').style.display !== 'none'){ renderCustomersView(); }
+  if(document.getElementById('suppliers-view').style.display !== 'none'){ refreshSuppliersList(); }
+  if(document.getElementById('customers-view').style.display !== 'none'){ refreshCustomersList(); }
   // صاحب الحساب لو فاتح شاشة سداد التشاليح/الجديد وقت وصول تعديل من مكان تاني — نحدّثها كمان
   const scrapRoot = document.getElementById('scrapyard-root');
   if(scrapRoot && scrapRoot.style.display !== 'none' && scrapyardSharedState.canManage && scrapyardCurrentScreen === 'settlement'){
@@ -4087,7 +4087,7 @@ function applyRemoteSupplierChange(payload){
     if(idx>=0) appData.suppliers[idx] = supplier; else appData.suppliers.push(supplier);
   }
   const view = document.getElementById('suppliers-view');
-  if(view && view.style.display !== 'none'){ renderSuppliersView(); }
+  if(view && view.style.display !== 'none'){ refreshSuppliersList(); }
 }
 
 function subscribeSuppliersRealtime(){
@@ -4138,7 +4138,7 @@ function applyRemoteCustomerChange(payload){
   }
   updateCustomersBadge();
   const view = document.getElementById('customers-view');
-  if(view && view.style.display !== 'none'){ renderCustomersView(); }
+  if(view && view.style.display !== 'none'){ refreshCustomersList(); }
 }
 
 function subscribeCustomersRealtime(){
@@ -4276,15 +4276,38 @@ function openSupplierHistoryModal(supplierId){
   });
 }
 
+let editingSuppliers = {};
+
 function supplierRowHtml(s){
+  const isEditing = !!editingSuppliers[s.id];
   const extraPhones = Array.isArray(s.extraPhones) ? s.extraPhones : [];
+
+  if(!isEditing){
+    const kindsLabel = [
+      s.handlesNew ? 'قطع جديدة' : null,
+      s.handlesUsed ? 'قطع مستعملة (تشليح)' : null
+    ].filter(Boolean).join(' + ') || 'غير محدد';
+    const phones = [s.phone].concat(extraPhones).filter(Boolean).join(' / ');
+    return '<div class="task-item-row supplier-item-row" data-supplier-id="'+s.id+'">' +
+      '<div class="supplier-row-main">' +
+        '<span class="purchase-history-desc">'+escapeHtml(s.name||'بدون اسم')+'</span>' +
+        '<span class="expense-entry-view-date">'+escapeHtml(phones||'—')+'</span>' +
+        '<span class="num text-rust">'+fmtMoney(supplierOwedAmount(s.id))+'</span>' +
+        '<button type="button" class="icon-btn supplier-history-btn" title="سجل المشتريات" aria-label="سجل المشتريات">📋</button>' +
+        '<button type="button" class="icon-btn supplier-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' +
+        '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' +
+      '</div>' +
+      '<div class="purchase-history-row-sub"><span>'+escapeHtml(kindsLabel)+'</span></div>' +
+    '</div>';
+  }
+
   return '<div class="task-item-row supplier-item-row" data-supplier-id="'+s.id+'">' +
     '<div class="supplier-row-main">' +
       '<input type="text" class="supplier-name-input" placeholder="اسم المورد" value="'+escapeHtml(s.name||'')+'">' +
       '<input type="tel" class="supplier-phone-input" placeholder="رقم الجوال" value="'+escapeHtml(s.phone||'')+'">' +
       '<span class="num text-rust">'+fmtMoney(supplierOwedAmount(s.id))+'</span>' +
-      '<button type="button" class="icon-btn supplier-history-btn" data-supplier-id="'+s.id+'" title="سجل المشتريات" aria-label="سجل المشتريات">📋</button>' +
       '<button type="button" class="icon-btn supplier-add-phone-btn" title="إضافة رقم آخر" aria-label="إضافة رقم">➕</button>' +
+      '<button type="button" class="btn btn-sm expense-add-entry-btn supplier-save-btn">💾 حفظ</button>' +
       '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' +
     '</div>' +
     '<div class="supplier-kinds-row">' +
@@ -4390,35 +4413,82 @@ function bindSupplierRowEvents(){
     const sid = row.getAttribute('data-supplier-id');
     const supplier = (appData.suppliers||[]).find(s=>s.id===sid);
     if(!supplier) return;
-    row.querySelector('.supplier-name-input').addEventListener('change', async e=>{
-      supplier.name = e.target.value; await persistSupplier(supplier);
-    });
-    row.querySelector('.supplier-phone-input').addEventListener('change', async e=>{
-      supplier.phone = e.target.value; await persistSupplier(supplier);
-    });
+
     row.querySelector('.supplier-history-btn').addEventListener('click', ()=> openSupplierHistoryModal(sid));
-    row.querySelector('.supplier-add-phone-btn').addEventListener('click', async ()=>{
-      if(!Array.isArray(supplier.extraPhones)) supplier.extraPhones = [];
-      supplier.extraPhones.push('');
-      refreshSuppliersList();
-      await persistSupplier(supplier);
+    row.querySelector('.task-item-remove-btn').addEventListener('click', ()=>{
+      confirmAction({
+        title: 'حذف هذا المورد؟',
+        message: 'الطلبيات القديمة المرتبطة به بتبقى، بس بدون اسم مورد محدد.',
+        confirmLabel: 'تأكيد الحذف',
+        dangerous: true,
+        onConfirm: async ()=>{
+          appData.suppliers = appData.suppliers.filter(s=>s.id!==sid);
+          delete editingSuppliers[sid];
+          refreshSuppliersList();
+          await deleteSupplier(sid);
+        }
+      });
     });
-    row.querySelector('.supplier-handles-new-check').addEventListener('change', async e=>{
-      if(!e.target.checked && !supplier.handlesUsed){
-        e.target.checked = true;
-        showToast('لازم تحدد نوع واحد على الأقل', 'error');
-        return;
-      }
-      supplier.handlesNew = e.target.checked; await persistSupplier(supplier);
-    });
-    row.querySelector('.supplier-handles-used-check').addEventListener('change', async e=>{
-      if(!e.target.checked && !supplier.handlesNew){
-        e.target.checked = true;
-        showToast('لازم تحدد نوع واحد على الأقل', 'error');
-        return;
-      }
-      supplier.handlesUsed = e.target.checked; await persistSupplier(supplier);
-    });
+
+    const editBtn = row.querySelector('.supplier-edit-btn');
+    if(editBtn){
+      editBtn.addEventListener('click', ()=>{
+        editingSuppliers[sid] = true;
+        refreshSuppliersList();
+      });
+    }
+
+    const saveBtn = row.querySelector('.supplier-save-btn');
+    if(saveBtn){
+      saveBtn.addEventListener('click', ()=>{
+        delete editingSuppliers[sid];
+        refreshSuppliersList();
+      });
+    }
+
+    const nameInput = row.querySelector('.supplier-name-input');
+    if(nameInput){
+      nameInput.addEventListener('change', async e=>{
+        supplier.name = e.target.value; await persistSupplier(supplier);
+      });
+    }
+    const phoneInput = row.querySelector('.supplier-phone-input');
+    if(phoneInput){
+      phoneInput.addEventListener('change', async e=>{
+        supplier.phone = e.target.value; await persistSupplier(supplier);
+      });
+    }
+    const addPhoneBtn = row.querySelector('.supplier-add-phone-btn');
+    if(addPhoneBtn){
+      addPhoneBtn.addEventListener('click', async ()=>{
+        if(!Array.isArray(supplier.extraPhones)) supplier.extraPhones = [];
+        supplier.extraPhones.push('');
+        refreshSuppliersList();
+        await persistSupplier(supplier);
+      });
+    }
+    const handlesNewCheck = row.querySelector('.supplier-handles-new-check');
+    if(handlesNewCheck){
+      handlesNewCheck.addEventListener('change', async e=>{
+        if(!e.target.checked && !supplier.handlesUsed){
+          e.target.checked = true;
+          showToast('لازم تحدد نوع واحد على الأقل', 'error');
+          return;
+        }
+        supplier.handlesNew = e.target.checked; await persistSupplier(supplier);
+      });
+    }
+    const handlesUsedCheck = row.querySelector('.supplier-handles-used-check');
+    if(handlesUsedCheck){
+      handlesUsedCheck.addEventListener('change', async e=>{
+        if(!e.target.checked && !supplier.handlesNew){
+          e.target.checked = true;
+          showToast('لازم تحدد نوع واحد على الأقل', 'error');
+          return;
+        }
+        supplier.handlesUsed = e.target.checked; await persistSupplier(supplier);
+      });
+    }
     row.querySelectorAll('.supplier-extra-phone-input').forEach(inp=>{
       inp.addEventListener('change', async e=>{
         const idx = Number(inp.getAttribute('data-phone-index'));
@@ -4432,19 +4502,6 @@ function bindSupplierRowEvents(){
         supplier.extraPhones.splice(idx, 1);
         refreshSuppliersList();
         await persistSupplier(supplier);
-      });
-    });
-    row.querySelector('.task-item-remove-btn').addEventListener('click', ()=>{
-      confirmAction({
-        title: 'حذف هذا المورد؟',
-        message: 'الطلبيات القديمة المرتبطة به بتبقى، بس بدون اسم مورد محدد.',
-        confirmLabel: 'تأكيد الحذف',
-        dangerous: true,
-        onConfirm: async ()=>{
-          appData.suppliers = appData.suppliers.filter(s=>s.id!==sid);
-          refreshSuppliersList();
-          await deleteSupplier(sid);
-        }
       });
     });
   });
