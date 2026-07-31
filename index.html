@@ -865,7 +865,6 @@ try{
 }catch(e){
   console.error('Supabase init failed — تحقق من SUPABASE_URL / SUPABASE_ANON_KEY أعلاه', e);
 }
-const STORAGE_ROW_ID = 'main';
 const STORAGE_KEY = 'partech-parts-orders';
 
 function showPersistentErrorToast(msg){
@@ -1024,20 +1023,62 @@ function groupTaskRows(rows){
   return t;
 }
 
+/* حقول الطلبية يلي انصعدت لأعمدة حقيقية بجدول orders — أي حقل ثاني يترسم تلقائيًا بعمود extra */
+const ORDER_PROMOTED_KEYS = ['id','orderNumber','orderLabel','customerPhone','confirmed','supplied',
+  'suppliedAt','paidToAmer','paidToSupplier','parts','customerPayments','createdAt','updatedAt'];
+
+function orderRowToObject(row){
+  const obj = Object.assign({}, row.extra || {});
+  obj.id = row.id;
+  obj.orderNumber = row.order_number || '';
+  obj.orderLabel = row.order_label || '';
+  obj.customerPhone = row.customer_phone || '';
+  obj.confirmed = !!row.confirmed;
+  obj.supplied = !!row.supplied;
+  obj.suppliedAt = row.supplied_at ? new Date(row.supplied_at).toISOString() : null;
+  obj.paidToAmer = !!row.paid_to_amer;
+  obj.paidToSupplier = !!row.paid_to_supplier;
+  obj.parts = Array.isArray(row.parts) ? row.parts : [];
+  obj.customerPayments = Array.isArray(row.customer_payments) ? row.customer_payments : [];
+  obj.createdAt = row.created_at ? new Date(row.created_at).toISOString() : '';
+  obj.updatedAt = row.updated_at ? new Date(row.updated_at).toISOString() : '';
+  return obj;
+}
+
+function orderObjectToRow(order){
+  const extra = {};
+  Object.keys(order||{}).forEach(k=>{ if(!ORDER_PROMOTED_KEYS.includes(k)) extra[k] = order[k]; });
+  return {
+    id: order.id,
+    order_number: order.orderNumber || '',
+    order_label: order.orderLabel || '',
+    customer_phone: order.customerPhone || '',
+    confirmed: !!order.confirmed,
+    supplied: !!order.supplied,
+    supplied_at: order.suppliedAt || null,
+    paid_to_amer: !!order.paidToAmer,
+    paid_to_supplier: !!order.paidToSupplier,
+    parts: Array.isArray(order.parts) ? order.parts : [],
+    customer_payments: Array.isArray(order.customerPayments) ? order.customerPayments : [],
+    extra: extra,
+    created_at: order.createdAt || new Date().toISOString(),
+    updated_at: order.updatedAt || new Date().toISOString()
+  };
+}
+
 async function loadData(){
   try{
     if(!sb) throw new Error('NO_DB');
-    const [appDataRes, treasuryRes, tasksRes] = await Promise.all([
-      sb.from('app_data').select('json').eq('id', STORAGE_ROW_ID).maybeSingle(),
+    const [ordersRes, treasuryRes, tasksRes] = await Promise.all([
+      sb.from('orders').select('*'),
       sb.from('treasury_entries').select('*'),
       sb.from('tasks').select('*')
     ]);
-    if(appDataRes.error) throw appDataRes.error;
+    if(ordersRes.error) throw ordersRes.error;
     if(treasuryRes.error) throw treasuryRes.error;
     if(tasksRes.error) throw tasksRes.error;
-    const parsed = (appDataRes.data && appDataRes.data.json) ? JSON.parse(appDataRes.data.json) : {};
     appData = {
-      orders: Array.isArray(parsed.orders) ? parsed.orders : [],
+      orders: (ordersRes.data||[]).map(orderRowToObject),
       treasury: groupTreasuryRows(treasuryRes.data),
       tasks: groupTaskRows(tasksRes.data)
     };
@@ -1093,16 +1134,6 @@ function migrateLegacyCustomerPayment(){
       }
     }
   });
-}
-
-async function persist(){
-  try{
-    if(!sb) throw new Error('NO_DB');
-    const { error } = await sb.from('app_data').upsert({ id: STORAGE_ROW_ID, json: JSON.stringify(appData), updated_at: new Date().toISOString() });
-    if(error) throw error;
-  }catch(e){
-    showToast('تعذر حفظ البيانات: ' + (e && e.message ? e.message : ''), 'error');
-  }
 }
 
 function showToast(msg, type){
@@ -1950,7 +1981,7 @@ async function onSaveOrder(){
   const idx = appData.orders.findIndex(o=>o.id===draft.id);
   if(idx>=0) appData.orders[idx]=draft; else appData.orders.push(draft);
 
-  await persist();
+  await persistOrder(draft);
   closeModal();
   renderKPIs();
   renderTable();
@@ -2030,7 +2061,7 @@ function confirmDelete(orderId){
     dangerous: true,
     onConfirm: async ()=>{
       appData.orders = appData.orders.filter(o=>o.id!==orderId);
-      await persist();
+      await deleteOrder(orderId);
       renderKPIs();
       renderTable();
       showToast('تم حذف الطلبية', 'ok');
@@ -2059,7 +2090,7 @@ function confirmToggleConfirmation(orderId){
         order.suppliedAt = null;
       }
       order.updatedAt = new Date().toISOString();
-      await persist();
+      await persistOrder(order);
       renderKPIs();
       renderTable();
       showToast(willConfirm ? 'تم تأكيد الطلبية' : 'تم إلغاء تأكيد الطلبية', 'ok');
@@ -2280,7 +2311,7 @@ async function persistDocMeta(showToastMsg){
   if(!order) return;
   const field = docState.type==='invoice' ? 'invoiceDoc' : 'quoteDoc';
   order[field] = Object.assign({}, docState.data);
-  await persist();
+  await persistOrder(order);
   renderTable();
   if(showToastMsg) showToast('تم حفظ بيانات '+(docState.type==='invoice'?'الفاتورة':'عرض السعر'), 'ok');
 }
@@ -2573,7 +2604,8 @@ function handleScrapyardProposalDecision(proposalId, accept){
           showToast('تعذر تطبيق الاقتراح — الطلبية أو القطعة غير موجودة', 'error');
           return;
         }
-        await persist();
+        const order = appData.orders.find(o=>o.id===pr.order_id);
+        await persistOrder(order);
         renderKPIs();
         renderTable();
       }
@@ -2635,14 +2667,17 @@ let scrapyardAppDataChannel = null;
 function subscribeScrapyardAppDataRealtime(){
   if(!sb || scrapyardAppDataChannel || scrapyardSharedState.canManage) return;
   scrapyardAppDataChannel = sb.channel('scrapyard-app-data-changes')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'app_data', filter: 'id=eq.' + STORAGE_ROW_ID }, ()=>{
+    // الطلبيات (وقطعها) صارت بجدول orders منفصل — بيؤثر على شاشتي التسوية والرئيسية (مؤشراتها مبنية على القطع)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, ()=>{
       const scrapRoot = document.getElementById('scrapyard-root');
       if(!scrapRoot || scrapRoot.style.display === 'none') return;
       if(scrapyardCurrentScreen === 'settlement'){
         loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
+      } else if(scrapyardCurrentScreen === 'home'){
+        loadScrapyardHomeTotals().then(renderScrapyardHomeView);
       }
     })
-    // المهام (purchases tasks) انتقلت لجدول tasks منفصل — صارت تتبع تحديثاته هو، مو app_data
+    // المهام (purchases tasks) بجدول tasks منفصل — بيؤثر على شاشتي المهام والرئيسية
     .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, ()=>{
       const scrapRoot = document.getElementById('scrapyard-root');
       if(!scrapRoot || scrapRoot.style.display === 'none') return;
@@ -3584,13 +3619,13 @@ function confirmImportOverwrite(parsedData){
       migrateLegacyTreasury();
       migrateLegacyTasks();
       try{
+        await replaceAllOrders(appData.orders);
         await replaceAllTreasuryEntries(appData.treasury);
         await replaceAllTaskItems(appData.tasks);
       }catch(e){
-        showToast('تعذر استبدال بيانات الصندوق/المهام: ' + (e && e.message ? e.message : ''), 'error');
+        showToast('تعذر استبدال البيانات: ' + (e && e.message ? e.message : ''), 'error');
         return;
       }
-      await persist();
       if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
       renderKPIs();
       renderTable();
@@ -3630,7 +3665,7 @@ async function init(){
   bindToolbar();
   renderTable();
   updateTasksBadge();
-  subscribeAppDataRealtime();
+  subscribeOrdersRealtime();
   subscribeTreasuryRealtime();
   subscribeTasksRealtime();
   refreshScrapyardPendingCount();
@@ -3638,17 +3673,23 @@ async function init(){
 }
 
 /* ---------- live sync of shared app data across all open sessions, via Supabase Realtime ---------- */
-let appDataChannel = null;
 let treasuryChannel = null;
 let tasksChannel = null;
+let ordersChannel = null;
 
-function applyRemoteAppData(json){
-  try{
-    const parsed = JSON.parse(json);
-    appData.orders = Array.isArray(parsed.orders) ? parsed.orders : [];
-    migrateLegacyCustomerPayment();
-    migrateLegacyOrderLabel();
-  }catch(e){ return; }
+function applyRemoteOrderChange(payload){
+  if(!Array.isArray(appData.orders)) appData.orders = [];
+  if(payload.eventType === 'DELETE'){
+    const oldId = payload.old && payload.old.id;
+    if(!oldId) return;
+    appData.orders = appData.orders.filter(o=>o.id!==oldId);
+  } else {
+    const row = payload.new;
+    if(!row || !row.id) return;
+    const order = orderRowToObject(row);
+    const idx = appData.orders.findIndex(o=>o.id===order.id);
+    if(idx>=0) appData.orders[idx] = order; else appData.orders.push(order);
+  }
   renderKPIs();
   renderTable();
   if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
@@ -3659,13 +3700,42 @@ function applyRemoteAppData(json){
   }
 }
 
-function subscribeAppDataRealtime(){
-  if(!sb || appDataChannel) return;
-  appDataChannel = sb.channel('app-data-changes')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'app_data', filter: 'id=eq.' + STORAGE_ROW_ID }, (payload)=>{
-      if(payload.new && payload.new.json) applyRemoteAppData(payload.new.json);
-    })
+function subscribeOrdersRealtime(){
+  if(!sb || ordersChannel) return;
+  ordersChannel = sb.channel('orders-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, applyRemoteOrderChange)
     .subscribe();
+}
+
+async function persistOrder(order){
+  try{
+    if(!sb) throw new Error('NO_DB');
+    const { error } = await sb.from('orders').upsert(orderObjectToRow(order));
+    if(error) throw error;
+  }catch(e){
+    showToast('تعذر حفظ الطلبية: ' + (e && e.message ? e.message : ''), 'error');
+  }
+}
+
+async function deleteOrder(id){
+  try{
+    if(!sb) throw new Error('NO_DB');
+    const { error } = await sb.from('orders').delete().eq('id', id);
+    if(error) throw error;
+  }catch(e){
+    showToast('تعذر حذف الطلبية: ' + (e && e.message ? e.message : ''), 'error');
+  }
+}
+
+async function replaceAllOrders(ordersArray){
+  if(!sb) return;
+  const rows = (ordersArray||[]).map(orderObjectToRow);
+  const { error: delError } = await sb.from('orders').delete().not('id', 'is', null);
+  if(delError) throw delError;
+  if(rows.length){
+    const { error: insError } = await sb.from('orders').insert(rows);
+    if(insError) throw insError;
+  }
 }
 
 /* ---------- treasury_entries: own table + own realtime channel (migrated off the app_data blob) ---------- */
