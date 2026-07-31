@@ -316,6 +316,25 @@
   .supplier-name-input:focus,.supplier-phone-input:focus,.customer-name-input:focus,.customer-phone-input:focus{
     outline:none;border-color:var(--green-line);
   }
+  .supplier-item-row{flex-direction:column;align-items:stretch;}
+  .supplier-row-main{display:flex;align-items:center;gap:10px;}
+  .supplier-add-phone-btn{color:var(--green);border-color:var(--green-line);flex-shrink:0;}
+  .supplier-add-phone-btn:hover{background:var(--green-dim);}
+  .supplier-extra-phones{display:flex;flex-direction:column;gap:6px;margin-top:8px;padding-inline-start:12px;border-inline-start:2px solid var(--border-soft);}
+  .supplier-extra-phone-row{display:flex;align-items:center;gap:8px;}
+  .supplier-extra-phone-input{
+    flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);
+    padding:6px 10px;border-radius:6px;font-size:13px;font-family:'Tajawal',sans-serif;
+  }
+  .supplier-extra-phone-input:focus{outline:none;border-color:var(--green-line);}
+  .supplier-remove-phone-btn{
+    background:transparent;border:1px solid var(--border);color:var(--text-faint);
+    width:26px;height:26px;border-radius:6px;cursor:pointer;font-size:11px;flex-shrink:0;
+  }
+  .supplier-remove-phone-btn:hover{border-color:var(--rust-line);color:var(--rust);}
+  .supplier-kinds-row{display:flex;gap:16px;flex-wrap:wrap;margin-top:4px;}
+  .supplier-kind-toggle{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-dim);cursor:pointer;}
+  .supplier-kind-toggle input{accent-color:var(--green);cursor:pointer;}
 
   /* toolbar */
   .toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;}
@@ -1090,7 +1109,12 @@ function orderObjectToRow(order){
 }
 
 function groupSupplierOrCustomerRows(rows){
-  return (rows||[]).map(r=>({ id: r.id, name: r.name||'', phone: r.phone||'', notes: r.notes||'' }));
+  return (rows||[]).map(r=>({
+    id: r.id, name: r.name||'', phone: r.phone||'', notes: r.notes||'',
+    extraPhones: Array.isArray(r.extra_phones) ? r.extra_phones : [],
+    handlesNew: r.handles_new !== false,
+    handlesUsed: r.handles_used !== false
+  }));
 }
 
 async function loadData(){
@@ -1529,7 +1553,7 @@ function partRowHtml(p, i){
         '<label class="mini-label mini-label-supplier">المورد' +
           '<select class="part-supplier-select">' +
             '<option value="">— بدون مورد —</option>' +
-            (appData.suppliers||[]).map(s=>'<option value="'+s.id+'"'+(p.supplierId===s.id?' selected':'')+'>'+escapeHtml(s.name||s.phone||'مورد')+'</option>').join('') +
+            (appData.suppliers||[]).filter(s=>s.handlesNew).map(s=>'<option value="'+s.id+'"'+(p.supplierId===s.id?' selected':'')+'>'+escapeHtml(s.name||s.phone||'مورد')+'</option>').join('') +
           '</select>' +
         '</label>'
       )) +
@@ -4044,7 +4068,9 @@ function applyRemoteSupplierChange(payload){
   } else {
     const row = payload.new;
     if(!row || !row.id) return;
-    const supplier = { id: row.id, name: row.name||'', phone: row.phone||'', notes: row.notes||'' };
+    const supplier = { id: row.id, name: row.name||'', phone: row.phone||'', notes: row.notes||'',
+      extraPhones: Array.isArray(row.extra_phones) ? row.extra_phones : [],
+      handlesNew: row.handles_new !== false, handlesUsed: row.handles_used !== false };
     const idx = appData.suppliers.findIndex(s=>s.id===supplier.id);
     if(idx>=0) appData.suppliers[idx] = supplier; else appData.suppliers.push(supplier);
   }
@@ -4062,7 +4088,12 @@ function subscribeSuppliersRealtime(){
 async function persistSupplier(supplier){
   try{
     if(!sb) throw new Error('NO_DB');
-    const { error } = await sb.from('suppliers').upsert({ id: supplier.id, name: supplier.name||'', phone: supplier.phone||'', notes: supplier.notes||'' });
+    const { error } = await sb.from('suppliers').upsert({
+      id: supplier.id, name: supplier.name||'', phone: supplier.phone||'', notes: supplier.notes||'',
+      extra_phones: Array.isArray(supplier.extraPhones) ? supplier.extraPhones : [],
+      handles_new: supplier.handlesNew !== false,
+      handles_used: supplier.handlesUsed !== false
+    });
     if(error) throw error;
   }catch(e){
     showToast('تعذر حفظ المورد: ' + (e && e.message ? e.message : ''), 'error');
@@ -4151,11 +4182,27 @@ function supplierOwedAmount(supplierId){
 }
 
 function supplierRowHtml(s){
-  return '<div class="task-item-row" data-supplier-id="'+s.id+'">' +
-    '<input type="text" class="supplier-name-input" placeholder="اسم المورد" value="'+escapeHtml(s.name||'')+'">' +
-    '<input type="tel" class="supplier-phone-input" placeholder="رقم الجوال" value="'+escapeHtml(s.phone||'')+'">' +
-    '<span class="num text-rust">'+fmtMoney(supplierOwedAmount(s.id))+'</span>' +
-    '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' +
+  const extraPhones = Array.isArray(s.extraPhones) ? s.extraPhones : [];
+  return '<div class="task-item-row supplier-item-row" data-supplier-id="'+s.id+'">' +
+    '<div class="supplier-row-main">' +
+      '<input type="text" class="supplier-name-input" placeholder="اسم المورد" value="'+escapeHtml(s.name||'')+'">' +
+      '<input type="tel" class="supplier-phone-input" placeholder="رقم الجوال" value="'+escapeHtml(s.phone||'')+'">' +
+      '<span class="num text-rust">'+fmtMoney(supplierOwedAmount(s.id))+'</span>' +
+      '<button type="button" class="icon-btn supplier-add-phone-btn" title="إضافة رقم آخر" aria-label="إضافة رقم">➕</button>' +
+      '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' +
+    '</div>' +
+    '<div class="supplier-kinds-row">' +
+      '<label class="supplier-kind-toggle"><input type="checkbox" class="supplier-handles-new-check"'+(s.handlesNew?' checked':'')+'><span>قطع جديدة</span></label>' +
+      '<label class="supplier-kind-toggle"><input type="checkbox" class="supplier-handles-used-check"'+(s.handlesUsed?' checked':'')+'><span>قطع مستعملة (تشليح)</span></label>' +
+    '</div>' +
+    (extraPhones.length ? '<div class="supplier-extra-phones">' +
+      extraPhones.map((ph,i)=>
+        '<div class="supplier-extra-phone-row">' +
+          '<input type="tel" class="supplier-extra-phone-input" data-phone-index="'+i+'" placeholder="رقم إضافي" value="'+escapeHtml(ph||'')+'">' +
+          '<button type="button" class="icon-btn supplier-remove-phone-btn" data-phone-index="'+i+'" aria-label="حذف الرقم">✕</button>' +
+        '</div>'
+      ).join('') +
+    '</div>' : '') +
   '</div>';
 }
 
@@ -4191,7 +4238,7 @@ function bindSuppliersViewEvents(){
     const name = nameInput.value.trim();
     const phone = phoneInput.value.trim();
     if(!name && !phone){ showToast('اكتب اسم أو رقم جوال على الأقل', 'error'); return; }
-    const newSupplier = { id: uid('sup'), name, phone, notes:'' };
+    const newSupplier = { id: uid('sup'), name, phone, notes:'', extraPhones: [], handlesNew: true, handlesUsed: true };
     if(!Array.isArray(appData.suppliers)) appData.suppliers = [];
     appData.suppliers.push(newSupplier);
     renderSuppliersView();
@@ -4206,6 +4253,33 @@ function bindSuppliersViewEvents(){
     });
     row.querySelector('.supplier-phone-input').addEventListener('change', async e=>{
       supplier.phone = e.target.value; await persistSupplier(supplier);
+    });
+    row.querySelector('.supplier-add-phone-btn').addEventListener('click', async ()=>{
+      if(!Array.isArray(supplier.extraPhones)) supplier.extraPhones = [];
+      supplier.extraPhones.push('');
+      renderSuppliersView();
+      await persistSupplier(supplier);
+    });
+    row.querySelector('.supplier-handles-new-check').addEventListener('change', async e=>{
+      supplier.handlesNew = e.target.checked; await persistSupplier(supplier);
+    });
+    row.querySelector('.supplier-handles-used-check').addEventListener('change', async e=>{
+      supplier.handlesUsed = e.target.checked; await persistSupplier(supplier);
+    });
+    row.querySelectorAll('.supplier-extra-phone-input').forEach(inp=>{
+      inp.addEventListener('change', async e=>{
+        const idx = Number(inp.getAttribute('data-phone-index'));
+        supplier.extraPhones[idx] = e.target.value;
+        await persistSupplier(supplier);
+      });
+    });
+    row.querySelectorAll('.supplier-remove-phone-btn').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const idx = Number(btn.getAttribute('data-phone-index'));
+        supplier.extraPhones.splice(idx, 1);
+        renderSuppliersView();
+        await persistSupplier(supplier);
+      });
     });
     row.querySelector('.task-item-remove-btn').addEventListener('click', ()=>{
       confirmAction({
@@ -4789,7 +4863,7 @@ function scrapyardPartRowHtml(p, canManage){
   const supplierSelectHtml = canManage ? '' : (
     '<select class="scrapyard-supplier-select" data-part-id="'+p.part_id+'" data-order-id="'+p.order_id+'">' +
       '<option value="">— بدون تشليحة —</option>' +
-      (scrapyardSharedState.suppliers||[]).map(s=>'<option value="'+s.id+'"'+(p.supplier_id===s.id?' selected':'')+'>'+escapeHtml(s.name||s.phone||'مورد')+'</option>').join('') +
+      (scrapyardSharedState.suppliers||[]).filter(s=>s.handles_used!==false).map(s=>'<option value="'+s.id+'"'+(p.supplier_id===s.id?' selected':'')+'>'+escapeHtml(s.name||s.phone||'مورد')+'</option>').join('') +
     '</select>'
   );
 
