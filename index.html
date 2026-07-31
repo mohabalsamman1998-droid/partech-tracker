@@ -539,6 +539,8 @@
   .total-box span:first-child{font-size:10.5px;color:var(--text-faint);font-weight:600;}
   .total-box span.num{font-size:13.5px;}
   .total-box-sub{font-size:10px;color:var(--text-faint);font-weight:600;}
+  .scrapyard-supplier-total-row{display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:8px 2px;border-bottom:1px solid var(--border-soft);}
+  .scrapyard-supplier-total-row:last-child{border-bottom:none;}
 
   .cost-split-row{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:14px;}
   .cost-split-box{
@@ -4732,6 +4734,23 @@ async function togglePurchasesTaskDone(taskId, newDone){
   }
 }
 
+/* المستحق لكل تشليحة على حدة — مبني على القطع المستعملة غير المسدّدة الظاهرة حاليًا بس */
+function scrapyardSupplierTotalsHtml(){
+  const totals = {};
+  (scrapyardSharedState.parts||[]).forEach(p=>{
+    if(!p.supplier_id) return;
+    totals[p.supplier_id] = round2((totals[p.supplier_id]||0) + (Number(p.cost_price)||0)*(Number(p.qty)||1));
+  });
+  const ids = Object.keys(totals);
+  if(!ids.length) return '';
+  const rows = ids.map(sid=>{
+    const supplier = (scrapyardSharedState.suppliers||[]).find(s=>s.id===sid);
+    const name = supplier ? (supplier.name||supplier.phone||'مورد') : 'غير معروف';
+    return '<div class="scrapyard-supplier-total-row"><span>'+escapeHtml(name)+'</span><span class="num text-amber">'+fmtMoney(totals[sid])+'</span></div>';
+  }).join('');
+  return '<div class="section-block"><div class="section-head"><span class="section-title">المستحق لكل تشليحة</span></div>' + rows + '</div>';
+}
+
 function renderScrapyardView(){
   scrapyardCurrentScreen = 'settlement';
   const root = document.getElementById('scrapyard-root');
@@ -4753,8 +4772,9 @@ function renderScrapyardView(){
       '<div class="brand">'+SETTLEMENT_KINDS[kind].title+'</div>' +
     '</header>' +
     '<div class="total-box" style="margin-bottom:18px;"><span>إجمالي المستحق للسداد</span><span class="num text-amber">'+fmtMoney(total)+'</span></div>' +
+    (kind==='used' ? scrapyardSupplierTotalsHtml() : '') +
     '<div class="section-block"><div class="section-head"><span class="section-title">القطع (غير المسدّدة)</span>' +
-      (canManage ? '' : '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-scrapyard-supplier">➕ تشليحة جديدة</button>') +
+      (canManage || kind!=='used' ? '' : '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-scrapyard-supplier">➕ تشليحة جديدة</button>') +
     '</div>' +
       (groups.length ? groups.map(g=>scrapyardOrderGroupHtml(g, canManage)).join('') : '<div class="expense-empty-hint">ما فيه قطع غير مسدّدة حاليًا</div>') +
     '</div>';
@@ -4899,7 +4919,7 @@ function scrapyardPartRowHtml(p, canManage){
     '</div>';
   }
 
-  const supplierSelectHtml = canManage ? '' : (
+  const supplierSelectHtml = (canManage || scrapyardSharedState.activeKind !== 'used') ? '' : (
     '<select class="scrapyard-supplier-select" data-part-id="'+p.part_id+'" data-order-id="'+p.order_id+'">' +
       '<option value="">— بدون تشليحة —</option>' +
       (scrapyardSharedState.suppliers||[]).filter(s=>s.handles_used!==false).map(s=>'<option value="'+s.id+'"'+(p.supplier_id===s.id?' selected':'')+'>'+escapeHtml(s.name||s.phone||'مورد')+'</option>').join('') +
