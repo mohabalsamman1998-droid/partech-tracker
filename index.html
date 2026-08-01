@@ -3825,9 +3825,19 @@ function amerCustodyTopupsTotal(matchFn){
   const filterFn = matchFn || entryMatchesPeriod;
   return round2((appData.treasury.amerCustody||[]).filter(filterFn).reduce((sum,entry)=> sum + (Number(entry.amount)||0), 0));
 }
+/* إجمالي تكلفة التشليح "المسددة عبر عهدة عامر" فقط — يستبعد الطلبيات المعلَّمة custodyLegacy،
+   وهي طلبيات قديمة اتّسدّدت مباشرة من الصندوق قبل ما تُستحدث العهدة أصلًا؛ لو دخلت بحساب العهدة
+   بترجع تخلق عجز وهمي (دين على عامر ما إله علاقة بالعهدة الفعلية اللي انولّت له). */
+function paidToScrapyardTotalForCustody(){
+  let total = 0;
+  (appData.orders||[]).forEach(o=>{
+    if(!o.confirmed || !o.paidToAmer || o.custodyLegacy) return;
+    total += orderTotals(o).costToScrapyard;
+  });
+  return round2(total);
+}
 function amerCustodyBalance(){
-  const f = computeAggregateFinancials();
-  return round2(amerCustodyTopupsTotalAll() - f.paidToScrapyardTotal);
+  return round2(amerCustodyTopupsTotalAll() - paidToScrapyardTotalForCustody());
 }
 function amerCustodyDeficit(){
   return round2(Math.max(0, -amerCustodyBalance()));
