@@ -331,6 +331,8 @@
   }
   .supplier-item-row{flex-direction:column;align-items:stretch;}
   .supplier-row-main{display:flex;align-items:center;gap:10px;}
+  .customer-item-row{flex-direction:column;align-items:stretch;}
+  .customer-row-main{display:flex;align-items:center;gap:10px;}
   .supplier-add-phone-btn{color:var(--green);border-color:var(--green-line);flex-shrink:0;}
   .supplier-add-phone-btn:hover{background:var(--green-dim);}
   .supplier-extra-phones{display:flex;flex-direction:column;gap:6px;margin-top:8px;padding-inline-start:12px;border-inline-start:2px solid var(--border-soft);}
@@ -832,7 +834,7 @@
 
     /* suppliers / customers rows: many inline pieces (name, phone, count, amount, buttons) —
        wrap instead of overflowing horizontally, and let name/phone inputs take a full row each */
-    .task-item-row,.supplier-row-main{flex-wrap:wrap;row-gap:8px;}
+    .task-item-row,.supplier-row-main,.customer-row-main{flex-wrap:wrap;row-gap:8px;}
     .task-item-row .purchase-history-desc,.task-item-row .expense-entry-view-date{flex:1 1 auto;min-width:80px;}
     .task-item-row .supplier-name-input,.task-item-row .supplier-phone-input,
     .task-item-row .customer-name-input,.task-item-row .customer-phone-input{flex:1 1 140px;}
@@ -1005,16 +1007,27 @@ function orderActiveParts(order){
   return order.partsSelectionEnabled ? parts.filter(p=>p.included!==false) : parts;
 }
 
-/* إجمالي دفعات الزبون الفعلي — يستبعد دائمًا أي دفعة "مرتجع" (returnAdjustment)، بشكل نهائي دائم.
-   مبلغ الزبون المرتجع لا "يرجع للصندوق" أبدًا من هذا المسار — إللي يرجع للصندوق هو تحصيل المورد
-   فقط (سعر الشراء)، عن طريق استبعاد تكلفة القطعة من costToSupplier/costToScrapyard بمجرد التحصيل
-   (بـ orderTotals). مثال: قطعة شراء 100 بيع 200 — الإرجاع يخصم 200 من الصندوق فورًا، وتحصيل
-   المورد يرجّع 100 بس (مو 200) لأنه هذا اللي فعليًا رجعلنا. */
+/* إجمالي دفعات الزبون لحساب الطلبية نفسها (المتبقي عليه/حالة السداد) — يستبعد دائمًا أي دفعة
+   "مرتجع" (returnAdjustment) بشكل فوري، بغض النظر عن تأكيد إرجاع المبلغ فعليًا، حتى تبقى أرقام
+   الطلبية متزنة ومايتوقف الحفظ بسبب "تجاوز المبلغ المستحق". */
 function computeCustomerPaidAmount(order, excludePaymentId){
   return (order.customerPayments||[]).reduce((sum,p)=>{
     if(excludePaymentId && p.id===excludePaymentId) return sum;
     const amt = Number(p.amount)||0;
     return p.returnAdjustment ? sum - amt : sum + amt;
+  }, 0);
+}
+
+/* إجمالي دفعات الزبون لحساب الصندوق فقط — دفعة "مرتجع" ما تُخصم إلا بعد ما يتأكَّد فعليًا إنه
+   المبلغ رجع للزبون (part.customerRefundConfirmed). قبل التأكيد الصندوق يبقى كأنه ما صار إرجاع
+   أصلًا (نفس منطق تحصيل المورد: القطعة تبقى "مسدد عنها" بالصندوق لحد ما يصير تأكيد صريح). */
+function computeCustomerPaidAmountForBox(order){
+  return (order.customerPayments||[]).reduce((sum,p)=>{
+    const amt = Number(p.amount)||0;
+    if(!p.returnAdjustment) return sum + amt;
+    const linkedPart = (order.parts||[]).find(pp=>pp.id===p.linkedPartId);
+    const confirmed = linkedPart && linkedPart.customerRefundConfirmed;
+    return confirmed ? sum - amt : sum;
   }, 0);
 }
 
@@ -1054,6 +1067,7 @@ function orderTotals(order){
   const deliveryFeeAmount = (hasSell && deliveryFeeEnabled) ? round2(Number(order.deliveryFeeAmount)||0) : 0;
   const sellTotal = partsSellTotal + feeAmount + serviceFeeAmount + deliveryFeeAmount; // المبلغ الكامل المستحق من الزبون (شامل نسبة الخدمة، نسبة الخدمات، وأجور التوصيل)
   const customerPaidAmount = round2(computeCustomerPaidAmount(order));
+  const customerPaidAmountForBox = round2(computeCustomerPaidAmountForBox(order));
   const customerRemaining = hasSell ? round2(sellTotal - customerPaidAmount) : 0;
   const customerFullyPaid = hasSell && customerRemaining <= 0.01;
   const profit = sellTotal - costTotal;
@@ -1079,6 +1093,7 @@ function orderTotals(order){
     deliveryFeeEnabled,
     sellTotal,
     customerPaidAmount,
+    customerPaidAmountForBox,
     customerRemaining,
     customerFullyPaid,
     hasSell,
@@ -1276,7 +1291,7 @@ function computeAggregateFinancials(matchPeriodFn){
     if(!o.paidToAmer) dueToScrapyard += t.costToScrapyard; else paidToScrapyardTotal += t.costToScrapyard;
     if(!o.paidToSupplier) dueToSuppliers += t.costToSupplier; else paidToSuppliersTotal += t.costToSupplier;
     if(t.hasSell && t.customerRemaining>0) dueFromCustomers += t.customerRemaining;
-    customerReceiptsTotal += t.customerPaidAmount;
+    customerReceiptsTotal += t.customerPaidAmountForBox;
     if(t.hasSell){
       collectedProfit += t.collectedProfit;
       uncollectedProfit += t.uncollectedProfit;
@@ -2141,6 +2156,7 @@ function applyPartReturn(part){
   const overpay = round2(t.customerPaidAmount - (t.hasSell ? t.sellTotal : 0));
   if(overpay > 0.01){
     const refundAmount = round2(Math.min(overpay, sellAmount));
+    part.customerRefundConfirmed = false; // ما يخصم من الصندوق إلا بعد تأكيد صريح من شاشة العملاء إنه رجع فعليًا
     if(!Array.isArray(draft.customerPayments)) draft.customerPayments = [];
     draft.customerPayments.push({
       id: uid('pay'), amount: refundAmount, method: 'مرتجع', date: todayNumeric(),
@@ -2264,7 +2280,8 @@ async function onSaveOrder(){
       supplierId: p.supplierId || null,
       returned: !!p.returned,
       returnHasReceivable: !!p.returnHasReceivable,
-      returnCollected: !!p.returnCollected
+      returnCollected: !!p.returnCollected,
+      customerRefundConfirmed: !!p.customerRefundConfirmed
     }));
   if(cleanedParts.length===0){ showToast('لازم تضيف وصف لقطعة وحدة على الأقل', 'error'); return false; }
 
@@ -4830,6 +4847,41 @@ function customerOrderStats(customerId){
   return { count, remaining: round2(remaining) };
 }
 
+/* قطع رجعها العميل ودفع ثمنها مسبقًا — لازم إرجاع مبلغها له، ما تُخصم من الصندوق إلا بعد تأكيد صريح */
+function customerRefundsPending(customerId){
+  const rows = [];
+  (appData.orders||[]).forEach(o=>{
+    if(o.customerId !== customerId) return;
+    (o.parts||[]).forEach(p=>{
+      if(!p.returned || p.customerRefundConfirmed) return;
+      const adjustment = (o.customerPayments||[]).find(pay=>pay.returnAdjustment && pay.linkedPartId===p.id);
+      if(!adjustment) return;
+      rows.push({
+        orderId: o.id, orderNumber: o.orderNumber, orderLabel: o.orderLabel, partId: p.id,
+        description: p.description||'', amount: round2(Number(adjustment.amount)||0)
+      });
+    });
+  });
+  return rows;
+}
+
+function customerRefundTotal(customerId){
+  return round2(customerRefundsPending(customerId).reduce((s,r)=>s+r.amount,0));
+}
+
+function customerRefundRowHtml(row){
+  return '<div class="purchase-history-row return-receivable-row">' +
+    '<div class="purchase-history-row-main">' +
+      '<span class="purchase-history-desc">'+escapeHtml(row.description)+'</span>' +
+      '<span class="num text-rust">'+fmtMoney(row.amount)+'</span>' +
+    '</div>' +
+    '<div class="purchase-history-row-sub">' +
+      '<span>'+escapeHtml(row.orderNumber||'')+(row.orderLabel?' — '+escapeHtml(row.orderLabel):'')+'</span>' +
+      '<button type="button" class="btn btn-sm btn-primary customer-refund-confirm-btn" data-order-id="'+row.orderId+'" data-part-id="'+row.partId+'">✅ تم إرجاع المبلغ للعميل</button>' +
+    '</div>' +
+  '</div>';
+}
+
 let editingCustomers = {};
 
 function customerRowHtml(c){
@@ -4837,23 +4889,29 @@ function customerRowHtml(c){
   const stats = customerOrderStats(c.id);
 
   if(!isEditing){
-    return '<div class="task-item-row" data-customer-id="'+c.id+'">' +
-      '<span class="purchase-history-desc">'+escapeHtml(c.name||'بدون اسم')+'</span>' +
-      '<span class="expense-entry-view-date">'+escapeHtml(c.phone||'—')+'</span>' +
-      '<span class="expense-entry-view-date">'+stats.count+' طلبية</span>' +
-      '<span class="num '+(stats.remaining>0?'text-rust':'text-green')+'">'+fmtMoney(stats.remaining)+'</span>' +
-      '<button type="button" class="icon-btn customer-history-btn" title="سجل الطلبيات" aria-label="سجل الطلبيات">📋</button>' +
-      '<button type="button" class="icon-btn customer-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' +
+    const refundTotal = customerRefundTotal(c.id);
+    return '<div class="task-item-row customer-item-row" data-customer-id="'+c.id+'">' +
+      '<div class="customer-row-main">' +
+        '<span class="purchase-history-desc">'+escapeHtml(c.name||'بدون اسم')+'</span>' +
+        '<span class="expense-entry-view-date">'+escapeHtml(c.phone||'—')+'</span>' +
+        '<span class="expense-entry-view-date">'+stats.count+' طلبية</span>' +
+        '<span class="num '+(stats.remaining>0?'text-rust':'text-green')+'">'+fmtMoney(stats.remaining)+'</span>' +
+        '<button type="button" class="icon-btn customer-history-btn" title="سجل الطلبيات" aria-label="سجل الطلبيات">📋</button>' +
+        '<button type="button" class="icon-btn customer-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' +
+      '</div>' +
+      (refundTotal>0 ? '<div class="purchase-history-row-sub"><span class="text-rust">يجب إرجاع له: '+fmtMoney(refundTotal)+'</span></div>' : '') +
     '</div>';
   }
 
-  return '<div class="task-item-row" data-customer-id="'+c.id+'">' +
-    '<input type="text" class="customer-name-input" placeholder="اسم العميل" value="'+escapeHtml(c.name||'')+'">' +
-    '<input type="tel" class="customer-phone-input" placeholder="رقم الجوال" value="'+escapeHtml(c.phone||'')+'">' +
-    '<span class="expense-entry-view-date">'+stats.count+' طلبية</span>' +
-    '<span class="num '+(stats.remaining>0?'text-rust':'text-green')+'">'+fmtMoney(stats.remaining)+'</span>' +
-    '<button type="button" class="btn btn-sm expense-add-entry-btn customer-save-btn">💾 حفظ</button>' +
-    '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' +
+  return '<div class="task-item-row customer-item-row" data-customer-id="'+c.id+'">' +
+    '<div class="customer-row-main">' +
+      '<input type="text" class="customer-name-input" placeholder="اسم العميل" value="'+escapeHtml(c.name||'')+'">' +
+      '<input type="tel" class="customer-phone-input" placeholder="رقم الجوال" value="'+escapeHtml(c.phone||'')+'">' +
+      '<span class="expense-entry-view-date">'+stats.count+' طلبية</span>' +
+      '<span class="num '+(stats.remaining>0?'text-rust':'text-green')+'">'+fmtMoney(stats.remaining)+'</span>' +
+      '<button type="button" class="btn btn-sm expense-add-entry-btn customer-save-btn">💾 حفظ</button>' +
+      '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' +
+    '</div>' +
   '</div>';
 }
 
@@ -4892,12 +4950,18 @@ function openCustomerHistoryModal(customerId){
   const { ongoing, past } = customerOrderHistory(customerId);
   const ongoingTotal = round2(ongoing.reduce((s,r)=>s+r.remaining,0));
   const pastTotal = round2(past.reduce((s,r)=>s+r.total,0));
+  const refunds = customerRefundsPending(customerId);
+  const refundsTotal = round2(refunds.reduce((s,r)=>s+r.amount,0));
   const root = document.getElementById('modal-root');
   root.innerHTML =
     '<div class="modal-backdrop" data-close-backdrop>' +
       '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
         '<div class="modal-header"><div class="modal-title">سجل طلبيات — '+escapeHtml(label)+'</div>' +
           '<button type="button" class="icon-btn" id="customer-history-close-btn" aria-label="إغلاق">✕</button></div>' +
+        (refunds.length ? '<div class="purchase-history-section">' +
+          '<div class="purchase-history-section-title"><span>يجب إرجاعه للعميل</span><span class="num text-rust">'+fmtMoney(refundsTotal)+'</span></div>' +
+          refunds.map(customerRefundRowHtml).join('') +
+        '</div>' : '') +
         '<div class="purchase-history-section">' +
           '<div class="purchase-history-section-title"><span>جارية (لم تُسدد بالكامل)</span><span class="num text-rust">'+fmtMoney(ongoingTotal)+'</span></div>' +
           (ongoing.length ? ongoing.map(orderHistoryRowHtml).join('') : '<div class="expense-empty-hint">ما فيه طلبيات جارية</div>') +
@@ -4918,6 +4982,30 @@ function openCustomerHistoryModal(customerId){
     btn.addEventListener('click', ()=>{
       close();
       openModal('edit', btn.getAttribute('data-open-order'));
+    });
+  });
+  root.querySelectorAll('.customer-refund-confirm-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const orderId = btn.getAttribute('data-order-id');
+      const partId = btn.getAttribute('data-part-id');
+      confirmAction({
+        title: 'تأكيد إرجاع هذا المبلغ للعميل؟',
+        message: 'رح يُخصم المبلغ تلقائيًا من صافي الصندوق.',
+        confirmLabel: 'تم الإرجاع',
+        dangerous: true,
+        onConfirm: async ()=>{
+          const order = appData.orders.find(o=>o.id===orderId);
+          if(!order) return;
+          const part = (order.parts||[]).find(p=>p.id===partId);
+          if(!part) return;
+          part.customerRefundConfirmed = true;
+          order.updatedAt = new Date().toISOString();
+          await persistOrder(order);
+          showToast('تم تسجيل إرجاع المبلغ، وخُصم من الصندوق', 'ok');
+          refreshCustomersList();
+          openCustomerHistoryModal(customerId);
+        }
+      });
     });
   });
 }
