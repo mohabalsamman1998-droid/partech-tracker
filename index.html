@@ -544,6 +544,26 @@
   }
   .part-remove-btn:hover{border-color:var(--rust-line);color:var(--rust);}
 
+  .searchable-select{position:relative;}
+  .searchable-select-input{
+    background:var(--bg);border:1px solid var(--border);color:var(--text-dim);
+    padding:8px 8px;border-radius:6px;font-size:12px;font-family:'Tajawal',sans-serif;width:100%;
+  }
+  .searchable-select-input:focus{outline:none;border-color:var(--green-line);}
+  .searchable-select-dropdown{
+    position:absolute;top:calc(100% + 4px);right:0;left:0;z-index:60;
+    background:var(--surface);border:1px solid var(--border);border-radius:8px;
+    max-height:220px;overflow-y:auto;box-shadow:0 8px 20px rgba(0,0,0,.25);
+  }
+  .searchable-select-option{
+    display:block;width:100%;text-align:right;background:transparent;border:none;
+    color:var(--text);padding:9px 10px;font-size:13px;font-family:'Tajawal',sans-serif;cursor:pointer;
+    border-bottom:1px solid var(--border-soft);
+  }
+  .searchable-select-option:last-child{border-bottom:none;}
+  .searchable-select-option:hover{background:var(--surface-2);}
+  .searchable-select-empty{padding:10px;font-size:12.5px;color:var(--text-faint);text-align:center;}
+
   .toggle-row{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13.5px;font-weight:600;cursor:pointer;}
   .toggle-row input{width:17px;height:17px;accent-color:var(--green);cursor:pointer;}
   .fee-percent-row{display:flex;align-items:center;gap:8px;margin-top:8px;margin-inline-start:25px;font-size:12.5px;color:var(--text-dim);}
@@ -994,6 +1014,45 @@ function fmtSigned(n){
 
 function escapeHtml(s){
   return (s==null?'':String(s)).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/* قائمة اختيار قابلة للبحث (بديل عن <select> عادي) — لازمة كل ما يكبر عدد الخيارات (موردين/عملاء)
+   وصار التمرير بينها بطيء. options: [{id,label,sublabel?}]. */
+function searchableSelectHtml(inputClass, options, selectedId, placeholder){
+  const selected = options.find(o=>o.id===selectedId);
+  return '<div class="searchable-select" data-selected-id="'+(selectedId||'')+'">' +
+    '<input type="text" class="searchable-select-input '+inputClass+'" placeholder="'+escapeHtml(placeholder||'')+'" value="'+escapeHtml(selected?selected.label:'')+'" autocomplete="off">' +
+    '<div class="searchable-select-dropdown" style="display:none;"></div>' +
+  '</div>';
+}
+
+/* getOptions: دالة ترجع [{id,label,sublabel?}] وقت الاستدعاء (مش مصفوفة ثابتة) عشان تعكس أي
+   إضافة حديثة (مثلا مورد جديد انضاف بينما المودال مفتوح). onSelect(id) يستدعى بعد أي اختيار. */
+function bindSearchableSelect(wrapEl, getOptions, onSelect){
+  const input = wrapEl.querySelector('.searchable-select-input');
+  const dropdown = wrapEl.querySelector('.searchable-select-dropdown');
+  if(!input || !dropdown) return;
+  const renderOptions = (filterText)=>{
+    const q = (filterText||'').trim().toLowerCase();
+    const options = getOptions();
+    const matches = q ? options.filter(o=> o.label.toLowerCase().includes(q) || (o.sublabel||'').toLowerCase().includes(q)) : options;
+    dropdown.innerHTML = matches.length
+      ? matches.map(o=>'<button type="button" class="searchable-select-option" data-id="'+o.id+'">'+escapeHtml(o.label)+(o.sublabel?' — '+escapeHtml(o.sublabel):'')+'</button>').join('')
+      : '<div class="searchable-select-empty">ما فيه نتائج</div>';
+    dropdown.querySelectorAll('.searchable-select-option').forEach(btn=>{
+      btn.addEventListener('mousedown', e=>{
+        e.preventDefault(); // قبل blur الـ input حتى ما يسكر القائمة قبل ما ياخذ الكلك
+        const opt = options.find(o=>o.id===btn.getAttribute('data-id'));
+        input.value = opt ? opt.label : '';
+        wrapEl.setAttribute('data-selected-id', opt ? opt.id : '');
+        dropdown.style.display = 'none';
+        onSelect(opt ? opt.id : '');
+      });
+    });
+  };
+  input.addEventListener('focus', ()=>{ input.select(); renderOptions(''); dropdown.style.display='block'; });
+  input.addEventListener('input', ()=>{ renderOptions(input.value); dropdown.style.display='block'; });
+  input.addEventListener('blur', ()=>{ setTimeout(()=>{ dropdown.style.display='none'; }, 150); });
 }
 
 function partDisplayName(p){
@@ -1692,10 +1751,9 @@ function partRowHtml(p, i){
       '<label class="mini-label mini-label-cost">سعر الشراء<input type="number" min="0" step="0.01" class="part-cost-input num" value="'+costVal+'"></label>' +
       '<label class="mini-label mini-label-sell">سعر البيع<input type="number" min="0" step="0.01" class="part-sell-input num" placeholder="—" value="'+sellVal+'"></label>' +
       '<label class="mini-label mini-label-supplier">'+(p.used?'التشليح':'المورد')+
-        '<select class="part-supplier-select">' +
-          '<option value="">'+(p.used?'— بدون تشليح —':'— بدون مورد —')+'</option>' +
-          (appData.suppliers||[]).filter(s=> p.used ? s.handlesUsed : s.handlesNew).map(s=>'<option value="'+s.id+'"'+(p.supplierId===s.id?' selected':'')+'>'+escapeHtml(s.name||s.phone||'مورد')+'</option>').join('') +
-        '</select>' +
+        searchableSelectHtml('part-supplier-select',
+          (appData.suppliers||[]).filter(s=> p.used ? s.handlesUsed : s.handlesNew).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
+          p.supplierId, p.used?'— بدون تشليح —':'— بدون مورد —') +
       '</label>' +
     '</div>' +
     '<button type="button" class="part-remove-btn" data-remove-part="'+p.id+'" aria-label="حذف القطعة">✕</button>' +
@@ -1712,10 +1770,11 @@ function modalHtml(d){
         '<div class="field">' +
           '<span class="field-label">العميل (اختياري)</span>' +
           '<div class="phone-field-row">' +
-            '<select id="order-customer-select">' +
-              '<option value="">— بدون عميل محدد —</option>' +
-              (appData.customers||[]).map(c=>'<option value="'+c.id+'"'+(d.customerId===c.id?' selected':'')+'>'+escapeHtml(c.name||c.phone||'عميل')+'</option>').join('') +
-            '</select>' +
+            '<div id="order-customer-select" style="flex:1;">' +
+              searchableSelectHtml('order-customer-select-input',
+                (appData.customers||[]).map(c=>({id:c.id, label:c.name||c.phone||'عميل', sublabel:c.phone})),
+                d.customerId, '— بدون عميل محدد —') +
+            '</div>' +
             '<button type="button" class="icon-btn" id="order-add-customer-btn" aria-label="عميل جديد">➕</button>' +
           '</div>' +
         '</div>' +
@@ -1853,22 +1912,23 @@ function attachModalHandlers(){
   bindReturnModeControls();
 
   root.querySelector('#order-label-input').addEventListener('input', e=>{ draft.orderLabel = e.target.value; });
-  root.querySelector('#order-customer-select').addEventListener('change', e=>{
-    draft.customerId = e.target.value || null;
-    const c = (appData.customers||[]).find(c=>c.id===draft.customerId);
-    draft.customerPhone = c ? (c.phone||'') : '';
-  });
+  bindSearchableSelect(root.querySelector('#order-customer-select .searchable-select'),
+    ()=> (appData.customers||[]).map(c=>({id:c.id, label:c.name||c.phone||'عميل', sublabel:c.phone})),
+    (id)=>{
+      draft.customerId = id || null;
+      const c = (appData.customers||[]).find(c=>c.id===draft.customerId);
+      draft.customerPhone = c ? (c.phone||'') : '';
+    }
+  );
   root.querySelector('#order-add-customer-btn').addEventListener('click', ()=>{
     openQuickAddCustomerModal((newCustomer)=>{
       draft.customerId = newCustomer.id;
       draft.customerPhone = newCustomer.phone || '';
-      const sel = document.getElementById('order-customer-select');
-      if(sel){
-        const opt = document.createElement('option');
-        opt.value = newCustomer.id;
-        opt.textContent = newCustomer.name || newCustomer.phone || 'عميل';
-        sel.appendChild(opt);
-        sel.value = newCustomer.id;
+      const wrap = document.querySelector('#order-customer-select .searchable-select');
+      if(wrap){
+        wrap.setAttribute('data-selected-id', newCustomer.id);
+        const input = wrap.querySelector('.searchable-select-input');
+        if(input) input.value = newCustomer.name || newCustomer.phone || 'عميل';
       }
     });
   });
@@ -2046,9 +2106,12 @@ function bindPartRowEvents(){
         updateModalTotals();
       });
     }
-    const supplierSelect = row.querySelector('.part-supplier-select');
-    if(supplierSelect){
-      supplierSelect.addEventListener('change', e=>{ part.supplierId = e.target.value || null; });
+    const supplierSelectWrap = row.querySelector('.part-supplier-select').closest('.searchable-select');
+    if(supplierSelectWrap){
+      bindSearchableSelect(supplierSelectWrap,
+        ()=> (appData.suppliers||[]).filter(s=> part.used ? s.handlesUsed : s.handlesNew).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
+        (id)=>{ part.supplierId = id || null; }
+      );
     }
     const removeBtn = row.querySelector('[data-remove-part]');
     if(removeBtn){
@@ -5838,7 +5901,8 @@ function renderScrapyardView(){
     (kind==='used' ? scrapyardSupplierTotalsHtml() : '') +
     scrapyardReturnReceivablesHtml() +
     '<div class="section-block"><div class="section-head"><span class="section-title">القطع (غير المسدّدة)</span>' +
-      (canManage || kind!=='used' ? '' : '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-scrapyard-supplier">➕ تشليح جديد</button>') +
+      (canManage || kind!=='used' ? '' : '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-scrapyard-supplier">➕ تشليح جديد</button>' +
+        '<button type="button" class="btn btn-ghost btn-sm" id="btn-manage-scrapyard-suppliers">✏️ تعديل الموردين</button>') +
     '</div>' +
       (groups.length ? groups.map(g=>scrapyardOrderGroupHtml(g, canManage)).join('') : '<div class="expense-empty-hint">ما فيه قطع غير مسدّدة حاليًا</div>') +
     '</div>';
@@ -5880,6 +5944,131 @@ function openQuickAddScrapyardSupplierModal(){
     close();
     showToast('تم إضافة التشليح', 'ok');
     renderScrapyardView();
+  });
+}
+
+/* تعديل الموردين (التشاليح) من شاشة عامر — اسم/رقم/أرقام إضافية. نفس صلاحية الحفظ اللي عند
+   صاحب الحساب (RLS بجدول suppliers مفتوحة لأي مستخدم مسموح، بما فيه عامر)، بس ما فيه واجهة
+   له كانت أصلًا غير "إضافة تشليح جديد" — هذا يكمّلها بالتعديل. */
+let editingScrapyardSuppliers = {};
+
+function scrapyardSupplierEditRowHtml(s){
+  const isEditing = !!editingScrapyardSuppliers[s.id];
+  const extraPhones = Array.isArray(s.extra_phones) ? s.extra_phones : [];
+  if(!isEditing){
+    const phones = [s.phone].concat(extraPhones).filter(Boolean).join(' / ');
+    return '<div class="task-item-row supplier-item-row" data-supplier-id="'+s.id+'">' +
+      '<div class="supplier-row-main">' +
+        '<span class="purchase-history-desc">'+escapeHtml(s.name||'بدون اسم')+'</span>' +
+        '<span class="expense-entry-view-date">'+escapeHtml(phones||'—')+'</span>' +
+        '<button type="button" class="icon-btn scrapyard-supplier-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' +
+      '</div>' +
+    '</div>';
+  }
+  return '<div class="task-item-row supplier-item-row" data-supplier-id="'+s.id+'">' +
+    '<div class="supplier-row-main">' +
+      '<input type="text" class="supplier-name-input" placeholder="اسم المورد" value="'+escapeHtml(s.name||'')+'">' +
+      '<input type="tel" class="supplier-phone-input" placeholder="رقم الجوال" value="'+escapeHtml(s.phone||'')+'">' +
+      '<button type="button" class="icon-btn scrapyard-supplier-add-phone-btn" title="إضافة رقم آخر" aria-label="إضافة رقم">➕</button>' +
+      '<button type="button" class="btn btn-sm expense-add-entry-btn scrapyard-supplier-save-btn">💾 حفظ</button>' +
+    '</div>' +
+    (extraPhones.length ? '<div class="supplier-extra-phones">' +
+      extraPhones.map((ph,i)=>
+        '<div class="supplier-extra-phone-row">' +
+          '<input type="tel" class="supplier-extra-phone-input" data-phone-index="'+i+'" placeholder="رقم إضافي" value="'+escapeHtml(ph||'')+'">' +
+          '<button type="button" class="icon-btn scrapyard-supplier-remove-phone-btn" data-phone-index="'+i+'" aria-label="حذف الرقم">✕</button>' +
+        '</div>'
+      ).join('') +
+    '</div>' : '') +
+  '</div>';
+}
+
+function scrapyardSupplierManageListHtml(){
+  const rows = (scrapyardSharedState.suppliers||[]).filter(s=>s.handles_used!==false);
+  if(!rows.length) return '<div class="expense-empty-hint">ما فيه موردين مضافين بعد</div>';
+  return rows.map(scrapyardSupplierEditRowHtml).join('');
+}
+
+function openScrapyardSupplierManageModal(){
+  editingScrapyardSuppliers = {};
+  const root = document.getElementById('modal-root');
+  root.innerHTML =
+    '<div class="modal-backdrop" data-close-backdrop>' +
+      '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
+        '<div class="modal-header"><div class="modal-title">تعديل الموردين (التشاليح)</div>' +
+          '<button type="button" class="icon-btn" id="scrapyard-supplier-manage-close-btn" aria-label="إغلاق">✕</button></div>' +
+        '<div class="task-items-list" id="scrapyard-supplier-manage-list">' + scrapyardSupplierManageListHtml() + '</div>' +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  root.querySelector('[data-close-backdrop]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-backdrop')) close();
+  });
+  root.querySelector('#scrapyard-supplier-manage-close-btn').addEventListener('click', close);
+  bindScrapyardSupplierManageEvents();
+}
+
+function refreshScrapyardSupplierManageList(){
+  const list = document.getElementById('scrapyard-supplier-manage-list');
+  if(!list) return;
+  list.innerHTML = scrapyardSupplierManageListHtml();
+  bindScrapyardSupplierManageEvents();
+}
+
+function bindScrapyardSupplierManageEvents(){
+  const list = document.getElementById('scrapyard-supplier-manage-list');
+  if(!list) return;
+  list.querySelectorAll('.supplier-item-row').forEach(row=>{
+    const sid = row.getAttribute('data-supplier-id');
+    const supplier = (scrapyardSharedState.suppliers||[]).find(s=>s.id===sid);
+    if(!supplier) return;
+    const editBtn = row.querySelector('.scrapyard-supplier-edit-btn');
+    if(editBtn){
+      editBtn.addEventListener('click', ()=>{
+        editingScrapyardSuppliers[sid] = true;
+        refreshScrapyardSupplierManageList();
+      });
+    }
+    const nameInput = row.querySelector('.supplier-name-input');
+    if(nameInput) nameInput.addEventListener('input', e=>{ supplier.name = e.target.value; });
+    const phoneInput = row.querySelector('.supplier-phone-input');
+    if(phoneInput) phoneInput.addEventListener('input', e=>{ supplier.phone = e.target.value; });
+    const addPhoneBtn = row.querySelector('.scrapyard-supplier-add-phone-btn');
+    if(addPhoneBtn){
+      addPhoneBtn.addEventListener('click', ()=>{
+        if(!Array.isArray(supplier.extra_phones)) supplier.extra_phones = [];
+        supplier.extra_phones.push('');
+        refreshScrapyardSupplierManageList();
+      });
+    }
+    row.querySelectorAll('.supplier-extra-phone-input').forEach(inp=>{
+      inp.addEventListener('input', e=>{
+        const idx = Number(inp.getAttribute('data-phone-index'));
+        supplier.extra_phones[idx] = e.target.value;
+      });
+    });
+    row.querySelectorAll('.scrapyard-supplier-remove-phone-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const idx = Number(btn.getAttribute('data-phone-index'));
+        supplier.extra_phones.splice(idx, 1);
+        refreshScrapyardSupplierManageList();
+      });
+    });
+    const saveBtn = row.querySelector('.scrapyard-supplier-save-btn');
+    if(saveBtn){
+      saveBtn.addEventListener('click', async ()=>{
+        delete editingScrapyardSuppliers[sid];
+        refreshScrapyardSupplierManageList();
+        await persistSupplier({
+          id: supplier.id, name: supplier.name, phone: supplier.phone,
+          extraPhones: Array.isArray(supplier.extra_phones) ? supplier.extra_phones.filter(Boolean) : [],
+          handlesNew: supplier.handles_new !== false, handlesUsed: supplier.handles_used !== false
+        });
+        showToast('تم حفظ المورد', 'ok');
+        renderScrapyardView();
+      });
+    }
   });
 }
 
@@ -5984,10 +6173,11 @@ function scrapyardPartRowHtml(p, canManage){
   }
 
   const supplierSelectHtml = (canManage || scrapyardSharedState.activeKind !== 'used') ? '' : (
-    '<select class="scrapyard-supplier-select" data-part-id="'+p.part_id+'" data-order-id="'+p.order_id+'">' +
-      '<option value="">— بدون تشليح —</option>' +
-      (scrapyardSharedState.suppliers||[]).filter(s=>s.handles_used!==false).map(s=>'<option value="'+s.id+'"'+(p.supplier_id===s.id?' selected':'')+'>'+escapeHtml(s.name||s.phone||'مورد')+'</option>').join('') +
-    '</select>'
+    '<div class="scrapyard-supplier-select-wrap" data-part-id="'+p.part_id+'" data-order-id="'+p.order_id+'">' +
+      searchableSelectHtml('scrapyard-supplier-select',
+        (scrapyardSharedState.suppliers||[]).filter(s=>s.handles_used!==false).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
+        p.supplier_id, '— بدون تشليح —') +
+    '</div>'
   );
 
   return '<div class="scrapyard-part-row">' +
@@ -6096,6 +6286,8 @@ function bindScrapyardEvents(){
   bindScrapyardThemeToggle();
   const addSupplierBtn = document.getElementById('btn-add-scrapyard-supplier');
   if(addSupplierBtn) addSupplierBtn.addEventListener('click', openQuickAddScrapyardSupplierModal);
+  const manageSuppliersBtn = document.getElementById('btn-manage-scrapyard-suppliers');
+  if(manageSuppliersBtn) manageSuppliersBtn.addEventListener('click', openScrapyardSupplierManageModal);
   const addCustodyTopupBtn = document.getElementById('btn-add-amer-custody-topup');
   if(addCustodyTopupBtn) addCustodyTopupBtn.addEventListener('click', ()=>{
     if(!Array.isArray(appData.treasury.amerCustody)) appData.treasury.amerCustody = [];
@@ -6209,17 +6401,19 @@ function bindScrapyardEvents(){
   root.querySelectorAll('[data-unconfirm-order]').forEach(btn=>{
     btn.addEventListener('click', ()=> unconfirmScrapyardOrder(btn.getAttribute('data-unconfirm-order')));
   });
-  root.querySelectorAll('.scrapyard-supplier-select').forEach(sel=>{
-    sel.addEventListener('change', async e=>{
-      const partId = sel.getAttribute('data-part-id');
-      const orderId = sel.getAttribute('data-order-id');
-      const supplierId = e.target.value || null;
-      const { error } = await sb.rpc('set_part_supplier', { p_order_id: orderId, p_part_id: partId, p_supplier_id: supplierId });
-      if(error){ showToast('تعذر حفظ التشليح: ' + error.message, 'error'); return; }
-      showToast('تم حفظ التشليح', 'ok');
-      await loadScrapyardData(scrapyardSharedState.activeKind);
-      renderScrapyardView();
-    });
+  root.querySelectorAll('.scrapyard-supplier-select-wrap').forEach(wrap=>{
+    const partId = wrap.getAttribute('data-part-id');
+    const orderId = wrap.getAttribute('data-order-id');
+    bindSearchableSelect(wrap.querySelector('.searchable-select'),
+      ()=> (scrapyardSharedState.suppliers||[]).filter(s=>s.handles_used!==false).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
+      async (supplierId)=>{
+        const { error } = await sb.rpc('set_part_supplier', { p_order_id: orderId, p_part_id: partId, p_supplier_id: supplierId || null });
+        if(error){ showToast('تعذر حفظ التشليح: ' + error.message, 'error'); return; }
+        showToast('تم حفظ التشليح', 'ok');
+        await loadScrapyardData(scrapyardSharedState.activeKind);
+        renderScrapyardView();
+      }
+    );
   });
   root.querySelectorAll('[data-withdraw-proposal]').forEach(btn=>{
     btn.addEventListener('click', ()=> withdrawScrapyardProposal(btn.getAttribute('data-withdraw-proposal')));
