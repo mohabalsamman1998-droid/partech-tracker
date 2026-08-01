@@ -3359,6 +3359,7 @@ function treasuryAmerCustodyRowHtml(){
     '<span class="expense-category-label">عهدة عامر (سداد التشاليح)</span>' +
     '<span class="num text-green expense-category-subtotal" data-subtotal-key="amerCustody">'+fmtSigned(categorySubtotal('amerCustody'))+'</span>' +
     '<button type="button" class="btn btn-ghost btn-sm expense-add-entry-btn" data-add-entry-key="amerCustody" data-add-entry-label="عهدة عامر">+ سداد لعهدة عامر</button>' +
+    '<button type="button" class="btn btn-ghost btn-sm" id="btn-withdraw-amer-custody">➖ سحب من العهدة</button>' +
     '<button type="button" class="expense-history-btn" data-history-key="amerCustody" data-history-label="عهدة عامر">📋 '+count+'</button>' +
   '</div>';
 }
@@ -3583,6 +3584,48 @@ function bindTreasuryAddButtons(){
       editingExpenseEntries[newEntry.id] = true;
       openExpenseHistoryModal(key, label);
     });
+  });
+  const withdrawBtn = document.getElementById('btn-withdraw-amer-custody');
+  if(withdrawBtn) withdrawBtn.addEventListener('click', openWithdrawCustodyModal);
+}
+
+/* سحب من عهدة عامر يدويًا — يرجع المبلغ للصندوق مباشرة (بنفس آلية "كاش" عند تحصيل مرتجع
+   تشليح: قيد سالب بعهدة عامر يقلّل رصيدها ويزيد صافي الصندوق بنفس المبلغ). */
+function openWithdrawCustodyModal(){
+  const root = document.getElementById('modal-root');
+  root.innerHTML =
+    '<div class="modal-backdrop" data-close-backdrop>' +
+      '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
+        '<div class="modal-title">➖ سحب من عهدة عامر</div>' +
+        '<p class="modal-sub">المبلغ يُخصم من رصيد العهدة ويُضاف مباشرة لصافي الصندوق.</p>' +
+        '<label class="field"><span class="field-label">المبلغ</span><input type="number" min="0" step="0.01" id="withdraw-custody-amount-input" placeholder="المبلغ"></label>' +
+        '<label class="field"><span class="field-label">التاريخ</span><input type="date" id="withdraw-custody-date-input" value="'+dmyToIso(todayNumeric())+'"></label>' +
+        '<label class="field"><span class="field-label">تفاصيل (اختياري)</span><input type="text" id="withdraw-custody-note-input" placeholder="مثلا: السبب"></label>' +
+        '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' +
+          '<button type="button" class="btn btn-ghost" id="withdraw-custody-cancel-btn">إلغاء</button>' +
+          '<button type="button" class="btn btn-primary" id="withdraw-custody-save-btn">💾 سحب</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  root.querySelector('[data-close-backdrop]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-backdrop')) close();
+  });
+  root.querySelector('#withdraw-custody-cancel-btn').addEventListener('click', close);
+  root.querySelector('#withdraw-custody-save-btn').addEventListener('click', async ()=>{
+    const amountInput = document.getElementById('withdraw-custody-amount-input');
+    const dateInput = document.getElementById('withdraw-custody-date-input');
+    const noteInput = document.getElementById('withdraw-custody-note-input');
+    const amount = Number(amountInput.value);
+    if(!amountInput.value || isNaN(amount) || amount<=0){ showToast('أدخل مبلغًا صحيحًا', 'error'); return; }
+    if(!Array.isArray(appData.treasury.amerCustody)) appData.treasury.amerCustody = [];
+    const newEntry = { id: uid('exp'), amount: -amount, date: isoToDmy(dateInput.value), note: (noteInput.value||'').trim() || 'سحب من عهدة عامر' };
+    appData.treasury.amerCustody.push(newEntry);
+    close();
+    renderTreasuryView();
+    await persistTreasuryEntry(newEntry, 'amerCustody');
+    showToast('تم السحب من العهدة وإضافة المبلغ للصندوق', 'ok');
   });
 }
 
@@ -4759,57 +4802,30 @@ function openSupplierHistoryModal(supplierId){
   });
 }
 
-/* تحصيل مرتجع من تشليح: اختيار بين كاش (يضاف للصندوق مباشرة، ويُخصم من رصيد عهدة عامر لأنه
-   خرج فعليًا من يده) أو إضافة لعهدة عامر (يبقى معه، الصندوق ما يتأثر — نفس أثر أي تحصيل تشليح عادي). */
+/* تحصيل مرتجع من تشليح: دايمًا يروح لرصيد العهدة (رصيد المشتريات) — نفس أثر أي تحصيل تشليح
+   عادي، الصندوق ما يتأثر مباشرة. لو صاحب الحساب يبي يرجع المبلغ فعليًا للصندوق، عنده "سحب من
+   العهدة" بشاشة الصندوق (منفصل عن التحصيل نفسه). */
 function confirmCollectScrapyardReturn(orderId, partId, supplierId){
-  const root = document.getElementById('confirm-root');
-  root.innerHTML =
-    '<div class="modal-backdrop" data-close-confirm>' +
-      '<div class="modal-card modal-card-sm" role="alertdialog" aria-modal="true">' +
-        '<div class="modal-title">كيف تم تحصيل هذا المبلغ من التشليح؟</div>' +
-        '<p class="modal-sub">كاش: استلمته يدك مباشرة ورح يُضاف للصندوق. عهدة عامر: بقي مع عامر ضمن عهدته.</p>' +
-        '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;flex-wrap:wrap;gap:8px;">' +
-          '<button type="button" class="btn btn-ghost" id="confirm-action-cancel-btn">إلغاء</button>' +
-          '<button type="button" class="btn btn-primary" id="collect-choice-custody-btn">🗂️ بقيت مع عامر (عهدة)</button>' +
-          '<button type="button" class="btn btn-primary" id="collect-choice-cash-btn">💵 كاش للصندوق</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>';
-  root.classList.add('modal-open');
-  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
-  root.querySelector('[data-close-confirm]').addEventListener('click', e=>{
-    if(e.target.hasAttribute('data-close-confirm')) close();
-  });
-  root.querySelector('#confirm-action-cancel-btn').addEventListener('click', close);
-  const doCollect = async (toCash)=>{
-    close();
-    const order = appData.orders.find(o=>o.id===orderId);
-    if(!order) return;
-    const part = (order.parts||[]).find(p=>p.id===partId);
-    if(!part) return;
-    const amount = round2((Number(part.qty)||1)*(Number(part.costPrice)||0));
-    part.returnCollected = true;
-    order.updatedAt = new Date().toISOString();
-    await persistOrder(order);
-    if(toCash){
-      // "de-topup" بمقدار المبلغ: هو فعليًا خرج من عهدة عامر لحظة ما سلّمه كاش، فيُخصم من إجمالي
-      // العهدة (سالب) بنفس الوقت اللي يُضاف فيه للصندوق (لأن صافي الصندوق يخصم عهدة عامر بالكامل).
-      const entry = { id: uid('amerCustody'), amount: -amount, date: new Date().toISOString().slice(0,10), note: 'تحصيل كاش من مرتجع تشليح — '+(part.description||'') };
-      appData.treasury.amerCustody = appData.treasury.amerCustody || [];
-      appData.treasury.amerCustody.push(entry);
-      await persistTreasuryEntry(entry, 'amerCustody');
-      showToast('تم تسجيل التحصيل، وأُضيف المبلغ للصندوق كاش', 'ok');
-    } else {
-      showToast('تم تسجيل التحصيل، وبقي المبلغ ضمن عهدة عامر', 'ok');
+  confirmAction({
+    title: 'تأكيد تحصيل هذا المبلغ من التشليح؟',
+    message: 'رح يُضاف لرصيد العهدة (رصيد المشتريات). لو تبي ترجعه للصندوق، فيه "سحب من العهدة" بشاشة الصندوق.',
+    confirmLabel: 'تم التحصيل',
+    onConfirm: async ()=>{
+      const order = appData.orders.find(o=>o.id===orderId);
+      if(!order) return;
+      const part = (order.parts||[]).find(p=>p.id===partId);
+      if(!part) return;
+      part.returnCollected = true;
+      order.updatedAt = new Date().toISOString();
+      await persistOrder(order);
+      showToast('تم تسجيل التحصيل، وأُضيف لرصيد العهدة', 'ok');
+      refreshSuppliersList();
+      updateSuppliersBadge();
+      renderKPIs();
+      if(document.getElementById('treasury-view') && document.getElementById('treasury-view').style.display !== 'none') renderTreasuryView();
+      openSupplierHistoryModal(supplierId);
     }
-    refreshSuppliersList();
-    updateSuppliersBadge();
-    renderKPIs();
-    if(document.getElementById('treasury-view') && document.getElementById('treasury-view').style.display !== 'none') renderTreasuryView();
-    openSupplierHistoryModal(supplierId);
-  };
-  root.querySelector('#collect-choice-custody-btn').addEventListener('click', ()=> doCollect(false));
-  root.querySelector('#collect-choice-cash-btn').addEventListener('click', ()=> doCollect(true));
+  });
 }
 
 let editingSuppliers = {};
