@@ -1010,6 +1010,13 @@ function orderActiveParts(order){
   return order.partsSelectionEnabled ? parts.filter(p=>p.included!==false) : parts;
 }
 
+/* قطعة مستبعدة يدويًا عبر "🎯 تحديد القطع" (order.partsSelectionEnabled=true و part.included=false)
+   ما لازم تدخل بأي حساب مورد/تشليح/عميل — نفس منطق orderActiveParts بس لاستخدامه بدوال تكرر
+   على o.parts مباشرة (مو عن طريق orderTotals) */
+function partIsIncludedInOrder(order, part){
+  return !order.partsSelectionEnabled || part.included !== false;
+}
+
 /* إجمالي دفعات الزبون لحساب الطلبية نفسها (المتبقي عليه/حالة السداد) — يستبعد دائمًا أي دفعة
    "مرتجع" (returnAdjustment) بشكل فوري، بغض النظر عن تأكيد إرجاع المبلغ فعليًا، حتى تبقى أرقام
    الطلبية متزنة ومايتوقف الحفظ بسبب "تجاوز المبلغ المستحق". */
@@ -4556,6 +4563,7 @@ function supplierOwedAmount(supplierId){
     (o.parts||[]).forEach(p=>{
       if(p.supplierId !== supplierId) return;
       if(p.returned) return; // القطعة المرتجعة لها حسابها المنفصل (مسترجع بانتظار التحصيل)، مو ضمن المستحق العادي
+      if(!partIsIncludedInOrder(o,p)) return; // قطعة مستبعدة يدويًا من الطلبية — ما تُحسب
       const paid = p.used ? o.paidToAmer : o.paidToSupplier;
       if(paid) return;
       total += (Number(p.qty)||1) * (Number(p.costPrice)||0);
@@ -4581,6 +4589,7 @@ function supplierPurchaseHistory(supplierId){
     (o.parts||[]).forEach(p=>{
       if(p.supplierId !== supplierId) return;
       if(p.returned) return; // القطعة المرتجعة لها حسابها المنفصل (مسترجع بانتظار التحصيل)، مو ضمن سجل المشتريات العادي
+      if(!partIsIncludedInOrder(o,p)) return; // قطعة مستبعدة يدويًا من الطلبية — ما تُحسب
       const paid = p.used ? o.paidToAmer : o.paidToSupplier;
       const map = paid ? pastMap : ongoingMap;
       const list = paid ? past : ongoing;
@@ -4608,6 +4617,7 @@ function supplierReturnReceivables(supplierId){
     (o.parts||[]).forEach(p=>{
       if(p.supplierId !== supplierId) return;
       if(!p.returned || !p.returnHasReceivable || p.returnCollected) return;
+      if(!partIsIncludedInOrder(o,p)) return; // قطعة مستبعدة يدويًا من الطلبية — ما تُحسب
       rows.push({
         orderId: o.id, orderNumber: o.orderNumber, orderLabel: o.orderLabel, partId: p.id,
         description: p.description||'', amount: round2((Number(p.qty)||1)*(Number(p.costPrice)||0))
@@ -4995,6 +5005,7 @@ function customerRefundsPending(customerId){
     if(!o.confirmed) return; // الإرجاع بكل تفرعاته يخص الطلبيات المؤكدة فقط
     (o.parts||[]).forEach(p=>{
       if(!p.returned || p.customerRefundConfirmed) return;
+      if(!partIsIncludedInOrder(o,p)) return; // قطعة مستبعدة يدويًا من الطلبية — ما تُحسب
       const adjustment = (o.customerPayments||[]).find(pay=>pay.returnAdjustment && pay.linkedPartId===p.id);
       if(!adjustment) return;
       rows.push({
@@ -5384,6 +5395,7 @@ function ownerScrapyardPartsFromAppData(kind){
   appData.orders.filter(o=>o.supplied && !o[paidField]).forEach(o=>{
     (o.parts||[]).forEach(p=>{
       if(p.returned) return; // القطعة المرتجعة لها مسارها المنفصل (مرتجعات)، مو ضمن قائمة "غير المسدّدة"
+      if(!partIsIncludedInOrder(o,p)) return; // قطعة مستبعدة يدويًا من الطلبية — ما تُحسب
       if(!!p.used === wantUsed){
         list.push({ order_id:o.id, order_number:o.orderNumber, order_label:o.orderLabel, supplied_at:o.suppliedAt||null, part_id:p.id, description:p.description, qty:p.qty, cost_price:p.costPrice, supplier_id:p.supplierId||null });
       }
@@ -5402,6 +5414,7 @@ function ownerScrapyardReturnReceivablesFromAppData(kind){
     (o.parts||[]).forEach(p=>{
       if(!p.returned || !p.returnHasReceivable || p.returnCollected) return;
       if(!!p.used !== wantUsed) return;
+      if(!partIsIncludedInOrder(o,p)) return; // قطعة مستبعدة يدويًا من الطلبية — ما تُحسب
       list.push({ order_id:o.id, order_number:o.orderNumber, order_label:o.orderLabel, part_id:p.id, description:p.description, qty:p.qty, cost_price:p.costPrice, supplier_id:p.supplierId||null });
     });
   });
