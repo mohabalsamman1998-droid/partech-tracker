@@ -1733,7 +1733,7 @@ function modalHtml(d){
             '<button type="button" id="add-payment-btn" class="btn btn-ghost btn-sm">+ إضافة دفعة</button>' +
             '<div class="payment-summary-row">' +
               '<span>إجمالي المدفوع<span class="num" id="total-paid-display">0 ر.س</span></span>' +
-              '<span>المتبقي عليه<span class="num payment-remaining-display" id="customer-remaining-display">0 ر.س</span></span>' +
+              '<span><span id="customer-remaining-label">المتبقي عليه</span><span class="num payment-remaining-display" id="customer-remaining-display">0 ر.س</span></span>' +
             '</div>' +
             '<div id="customer-refund-status-wrap">'+orderCustomerRefundStatusHtml(d)+'</div>' +
           '</div>' +
@@ -2181,16 +2181,7 @@ function bindPaymentRowEvents(){
       amountInput.addEventListener('input', e=>{
         let val = e.target.value===''? '' : Number(e.target.value);
         if(val !== '' && val < 0) val = 0;
-        const t = orderTotals(draft);
-        if(t.hasSell && val !== ''){
-          const othersTotal = computeCustomerPaidAmount(draft, pid);
-          const maxAllowed = round2(Math.max(0, t.sellTotal - othersTotal));
-          if(val > maxAllowed){
-            val = maxAllowed;
-            e.target.value = val;
-            showToast('لا يمكن أن يتجاوز مجموع الدفعات المبلغ المستحق من الزبون ('+fmtMoney(t.sellTotal)+')', 'error');
-          }
-        }
+        // أي زيادة عن المبلغ المستحق مقبولة — تظهر "زيادة" بدل "المتبقي عليه" بملخص الدفعات
         payment.amount = val;
         updateModalTotals();
       });
@@ -2255,11 +2246,14 @@ function updateModalTotals(){
     }
   }
   const remainEl = document.getElementById('customer-remaining-display');
+  const remainLabelEl = document.getElementById('customer-remaining-label');
   if(remainEl){
-    remainEl.textContent = t.hasSell ? fmtMoney(Math.max(t.customerRemaining,0)) : (t.allPartsReturned?'مرتجعة':'لم يُسعّر بعد');
+    const isExcess = t.hasSell && t.customerRemaining < -0.01;
+    if(remainLabelEl) remainLabelEl.textContent = isExcess ? 'زيادة' : 'المتبقي عليه';
+    remainEl.textContent = t.hasSell ? fmtMoney(isExcess ? Math.abs(t.customerRemaining) : Math.max(t.customerRemaining,0)) : (t.allPartsReturned?'مرتجعة':'لم يُسعّر بعد');
     remainEl.classList.remove('text-green','text-amber');
-    remainEl.classList.toggle('text-green', t.hasSell && t.customerRemaining<=0.01);
-    remainEl.classList.toggle('text-amber', t.hasSell && t.customerRemaining>0.01);
+    remainEl.classList.toggle('text-green', t.hasSell && t.customerRemaining<=0.01 && !isExcess);
+    remainEl.classList.toggle('text-amber', t.hasSell && (t.customerRemaining>0.01 || isExcess));
   }
   const paidEl = document.getElementById('total-paid-display');
   if(paidEl) paidEl.textContent = fmtMoney(t.customerPaidAmount);
@@ -2328,12 +2322,7 @@ async function onSaveOrder(){
       linkedPartId: p.linkedPartId || null
     }));
 
-  const totalsCheck = orderTotals(draft);
-  if(totalsCheck.hasSell && totalsCheck.customerRemaining < -0.01){
-    showToast('مجموع الدفعات يتجاوز المبلغ المستحق من الزبون ('+fmtMoney(totalsCheck.sellTotal)+')', 'error');
-    return false;
-  }
-
+  // أي زيادة بمجموع الدفعات عن المستحق مقبولة الآن (تظهر "زيادة" بملخص الطلبية) — بدون حظر الحفظ
   draft.parts = cleanedParts;
   draft.customerPayments = cleanedPayments;
   draft.orderNumber = draft.orderNumber.trim();
