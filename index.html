@@ -5163,7 +5163,7 @@ function renderScrapyardView(){
     '<div class="total-box" style="margin-bottom:18px;"><span>إجمالي المستحق للسداد</span><span class="num text-amber">'+fmtMoney(total)+'</span></div>' +
     (kind==='used' ? scrapyardSupplierTotalsHtml() : '') +
     '<div class="section-block"><div class="section-head"><span class="section-title">القطع (غير المسدّدة)</span>' +
-      (canManage ? scrapyardReturnControlsHtml() : (kind!=='used' ? '' : '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-scrapyard-supplier">➕ تشليح جديد</button>')) +
+      (canManage || kind!=='used' ? '' : '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-scrapyard-supplier">➕ تشليح جديد</button>') +
     '</div>' +
       (groups.length ? groups.map(g=>scrapyardOrderGroupHtml(g, canManage)).join('') : '<div class="expense-empty-hint">ما فيه قطع غير مسدّدة حاليًا</div>') +
     '</div>';
@@ -5208,16 +5208,16 @@ function openQuickAddScrapyardSupplierModal(){
   });
 }
 
-/* لصاحب الحساب بس — تحديد قطع من أي طلبية للإرجاع دفعة وحدة، بدون المرور بمسار اقتراح عامر */
-function scrapyardReturnControlsHtml(){
-  const eligibleParts = (scrapyardSharedState.parts||[]).filter(p=>!scrapyardProposalForPart(p.part_id));
+/* لصاحب الحساب بس — تحديد قطع من هذه الطلبية بالذات للإرجاع، بدون المرور بمسار اقتراح عامر */
+function scrapyardOrderReturnControlsHtml(group){
+  const eligibleParts = group.parts.filter(p=>!scrapyardProposalForPart(p.part_id));
   if(!eligibleParts.length) return '';
   const selectedParts = eligibleParts.filter(p=>scrapyardReturnSelection[p.part_id]);
   const allSelected = selectedParts.length === eligibleParts.length;
   const selectedTotal = round2(selectedParts.reduce((s,p)=> s+(Number(p.cost_price)||0)*(Number(p.qty)||1), 0));
   return '<div class="scrapyard-return-controls">' +
-    '<label class="scrapyard-select-all-toggle"><input type="checkbox" id="scrapyard-select-all-check"'+(allSelected?' checked':'')+'><span>تحديد الكل</span></label>' +
-    '<button type="button" class="btn btn-ghost btn-sm" id="btn-scrapyard-return-selected"'+(selectedParts.length?'':' disabled')+'>🔄 إرجاع المحدد'+(selectedParts.length?' ('+selectedParts.length+' — '+fmtMoney(selectedTotal)+')':'')+'</button>' +
+    '<label class="scrapyard-select-all-toggle"><input type="checkbox" class="scrapyard-select-all-order-check" data-order-id="'+group.order_id+'"'+(allSelected?' checked':'')+'><span>تحديد الكل</span></label>' +
+    '<button type="button" class="btn btn-ghost btn-sm scrapyard-return-order-btn" data-order-id="'+group.order_id+'"'+(selectedParts.length?'':' disabled')+'>🔄 إرجاع المحدد'+(selectedParts.length?' ('+selectedParts.length+' — '+fmtMoney(selectedTotal)+')':'')+'</button>' +
   '</div>';
 }
 
@@ -5243,14 +5243,14 @@ function scrapyardOrderGroupHtml(group, canManage){
       '</div>' +
       '<span class="scrapyard-mgmt-actions" aria-hidden="true"></span>' +
     '</div>' +
-    (!canManage ?
-      '<div class="scrapyard-order-actions">' +
+    (canManage
+      ? scrapyardOrderReturnControlsHtml(group)
+      : '<div class="scrapyard-order-actions">' +
         (addDraft ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-add-part-order="'+group.order_id+'">+ اقتراح قطعة جديدة</button>') +
         (confirmation
           ? '<button type="button" class="btn btn-sm btn-confirmed-green" data-unconfirm-order="'+group.order_id+'" title="اضغط للتراجع عن التأكيد">✅ تم تأكيد المبلغ</button>'
           : '<button type="button" class="btn btn-ghost btn-sm" data-confirm-order="'+group.order_id+'">تأكيد المبلغ</button>') +
-      '</div>'
-      : '') +
+      '</div>') +
   '</div>';
 }
 
@@ -5562,16 +5562,16 @@ function bindScrapyardEvents(){
     });
   });
 
-  // تحديد قطع للإرجاع دفعة وحدة (لصاحب الحساب بس)
-  const selectAllCheck = document.getElementById('scrapyard-select-all-check');
-  if(selectAllCheck){
-    selectAllCheck.addEventListener('change', e=>{
-      const eligibleIds = (scrapyardSharedState.parts||[]).filter(p=>!scrapyardProposalForPart(p.part_id)).map(p=>p.part_id);
+  // تحديد قطع من نفس الطلبية للإرجاع (لصاحب الحساب بس) — زر "إرجاع المحدد" موجود جوه كل طلبية على حدة
+  root.querySelectorAll('.scrapyard-select-all-order-check').forEach(chk=>{
+    chk.addEventListener('change', e=>{
+      const orderId = chk.getAttribute('data-order-id');
+      const eligibleIds = (scrapyardSharedState.parts||[]).filter(p=>p.order_id===orderId && !scrapyardProposalForPart(p.part_id)).map(p=>p.part_id);
       if(e.target.checked){ eligibleIds.forEach(id=>{ scrapyardReturnSelection[id] = true; }); }
       else { eligibleIds.forEach(id=>{ delete scrapyardReturnSelection[id]; }); }
       renderScrapyardView();
     });
-  }
+  });
   root.querySelectorAll('.scrapyard-return-check').forEach(chk=>{
     chk.addEventListener('change', e=>{
       const partId = chk.getAttribute('data-part-id');
@@ -5579,28 +5579,29 @@ function bindScrapyardEvents(){
       renderScrapyardView();
     });
   });
-  const returnSelectedBtn = document.getElementById('btn-scrapyard-return-selected');
-  if(returnSelectedBtn){
-    returnSelectedBtn.addEventListener('click', ()=>{
-      const selectedIds = Object.keys(scrapyardReturnSelection).filter(id=>scrapyardReturnSelection[id]);
+  root.querySelectorAll('.scrapyard-return-order-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const orderId = btn.getAttribute('data-order-id');
+      const selectedIds = (scrapyardSharedState.parts||[])
+        .filter(p=>p.order_id===orderId && scrapyardReturnSelection[p.part_id])
+        .map(p=>p.part_id);
       if(!selectedIds.length) return;
       const selectedParts = (scrapyardSharedState.parts||[]).filter(p=>selectedIds.includes(p.part_id));
       const total = round2(selectedParts.reduce((s,p)=> s+(Number(p.cost_price)||0)*(Number(p.qty)||1), 0));
       confirmAction({
         title: 'إرجاع '+selectedIds.length+' قطعة بقيمة '+fmtMoney(total)+'؟',
-        message: 'رح تُحذف هذه القطع نهائيًا من طلبياتها، ويُخصم مبلغها تلقائيًا من المستحق للسداد.',
+        message: 'رح تُحذف هذه القطع نهائيًا من الطلبية، ويُخصم مبلغها تلقائيًا من المستحق للسداد.',
         confirmLabel: 'تأكيد الإرجاع',
         dangerous: true,
-        onConfirm: performScrapyardReturn
+        onConfirm: ()=> performScrapyardReturn(selectedIds)
       });
     });
-  }
+  });
 }
 
 /* تنفيذ الإرجاع الفعلي — يحذف القطع المحددة من طلبياتها ويحفظ التعديل، بدون المرور بمسار اقتراح عامر */
-async function performScrapyardReturn(){
-  const selectedIds = Object.keys(scrapyardReturnSelection).filter(id=>scrapyardReturnSelection[id]);
-  if(!selectedIds.length) return;
+async function performScrapyardReturn(selectedIds){
+  if(!selectedIds || !selectedIds.length) return;
   const selectedParts = (scrapyardSharedState.parts||[]).filter(p=>selectedIds.includes(p.part_id));
   const affectedOrderIds = [...new Set(selectedParts.map(p=>p.order_id))];
   let totalReturned = 0;
