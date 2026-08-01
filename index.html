@@ -985,6 +985,13 @@ function fmtMoney(n){
   return v.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:2}) + ' ر.س';
 }
 
+/* نفس fmtMoney بس بإشارة صريحة (+/-) بدل ما نفترض دايمًا موجب — لازم لفئات زي عهدة عامر اللي
+   ممكن تحتوي قيود سالبة (تحصيل كاش من مرتجع تشليح يُخصم من إجمالي العهدة). */
+function fmtSigned(n){
+  const v = Number(n)||0;
+  return (v>=0?'+':'') + fmtMoney(v);
+}
+
 function escapeHtml(s){
   return (s==null?'':String(s)).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
@@ -3305,9 +3312,9 @@ function categorySubtotal(key){
 function expenseEntryRowHtml(entry, categoryKey){
   const isEditing = !!editingExpenseEntries[entry.id];
   const isSupport = categoryKey === 'support' || categoryKey === 'amerCustody';
-  const colorClass = isSupport ? 'text-green' : 'text-rust';
+  const colorClass = isSupport ? ((Number(entry.amount)||0) < 0 ? 'text-rust' : 'text-green') : 'text-rust';
   if(!isEditing){
-    const amountText = (entry.amount===''||entry.amount==null) ? '—' : (isSupport?'+':'')+fmtMoney(entry.amount);
+    const amountText = (entry.amount===''||entry.amount==null) ? '—' : (isSupport?fmtSigned(entry.amount):fmtMoney(entry.amount));
     return '<div class="expense-entry-row" data-expense-key="'+categoryKey+'" data-entry-id="'+entry.id+'">' +
       '<span class="expense-entry-view-amount num '+colorClass+'">'+amountText+'</span>' +
       '<span class="expense-entry-view-date">'+escapeHtml(entry.date||'—')+'</span>' +
@@ -3342,7 +3349,7 @@ function treasuryAmerCustodyRowHtml(){
   const count = (appData.treasury.amerCustody || []).filter(entryMatchesPeriod).length;
   return '<div class="expense-category-row">' +
     '<span class="expense-category-label">عهدة عامر (سداد التشاليح)</span>' +
-    '<span class="num text-green expense-category-subtotal" data-subtotal-key="amerCustody">+'+fmtMoney(categorySubtotal('amerCustody'))+'</span>' +
+    '<span class="num text-green expense-category-subtotal" data-subtotal-key="amerCustody">'+fmtSigned(categorySubtotal('amerCustody'))+'</span>' +
     '<button type="button" class="btn btn-ghost btn-sm expense-add-entry-btn" data-add-entry-key="amerCustody" data-add-entry-label="عهدة عامر">+ سداد لعهدة عامر</button>' +
     '<button type="button" class="expense-history-btn" data-history-key="amerCustody" data-history-label="عهدة عامر">📋 '+count+'</button>' +
   '</div>';
@@ -3433,7 +3440,7 @@ function renderTreasuryView(){
         '<div class="treasury-summary">' +
           '<div class="treasury-summary-row"><span>إجمالي المصاريف</span><span class="num text-rust" id="treasury-total-expenses">'+fmtMoney(t.totalExpenses)+'</span></div>' +
           '<div class="treasury-summary-row"><span>إجمالي الدعم الخارجي</span><span class="num text-green" id="treasury-total-support">+'+fmtMoney(t.totalSupport)+'</span></div>' +
-          '<div class="treasury-summary-row"><span>إجمالي عهدة عامر</span><span class="num text-green" id="treasury-total-amer-custody">+'+fmtMoney(amerCustodyTopupsTotal())+'</span></div>' +
+          '<div class="treasury-summary-row"><span>إجمالي عهدة عامر</span><span class="num text-green" id="treasury-total-amer-custody">'+fmtSigned(amerCustodyTopupsTotal())+'</span></div>' +
         '</div>' +
       '</div>' +
     '</div>' +
@@ -3736,7 +3743,7 @@ function refreshExpenseEntries(key){
 
 function updateExpenseCategorySubtotal(key){
   const el = document.querySelector('[data-subtotal-key="'+key+'"]');
-  if(el) el.textContent = (key==='support'?'+':'')+fmtMoney(categorySubtotal(key));
+  if(el) el.textContent = (key==='support'||key==='amerCustody') ? fmtSigned(categorySubtotal(key)) : fmtMoney(categorySubtotal(key));
 }
 
 function updateTreasurySummary(){
@@ -3746,7 +3753,7 @@ function updateTreasurySummary(){
   const supportEl = document.getElementById('treasury-total-support');
   if(supportEl) supportEl.textContent = '+'+fmtMoney(t.totalSupport);
   const custodyEl = document.getElementById('treasury-total-amer-custody');
-  if(custodyEl) custodyEl.textContent = '+'+fmtMoney(amerCustodyTopupsTotal());
+  if(custodyEl) custodyEl.textContent = fmtSigned(amerCustodyTopupsTotal());
   const netEl = document.getElementById('treasury-net');
   if(netEl){
     netEl.textContent = fmtMoney(t.net);
@@ -4620,7 +4627,8 @@ function supplierReturnReceivables(supplierId){
       if(!partIsIncludedInOrder(o,p)) return; // قطعة مستبعدة يدويًا من الطلبية — ما تُحسب
       rows.push({
         orderId: o.id, orderNumber: o.orderNumber, orderLabel: o.orderLabel, partId: p.id,
-        description: p.description||'', amount: round2((Number(p.qty)||1)*(Number(p.costPrice)||0))
+        description: p.description||'', amount: round2((Number(p.qty)||1)*(Number(p.costPrice)||0)),
+        used: !!p.used
       });
     });
   });
@@ -4644,7 +4652,7 @@ function returnReceivableRowHtml(row){
     '</div>' +
     '<div class="purchase-history-row-sub">' +
       '<span>'+escapeHtml(row.orderNumber||'')+(row.orderLabel?' — '+escapeHtml(row.orderLabel):'')+'</span>' +
-      '<button type="button" class="btn btn-sm btn-primary return-collect-btn" data-order-id="'+row.orderId+'" data-part-id="'+row.partId+'">✅ تم التحصيل</button>' +
+      '<button type="button" class="btn btn-sm btn-primary return-collect-btn" data-order-id="'+row.orderId+'" data-part-id="'+row.partId+'" data-used="'+(row.used?'1':'')+'">✅ تم التحصيل</button>' +
     '</div>' +
   '</div>';
 }
@@ -4706,26 +4714,84 @@ function openSupplierHistoryModal(supplierId){
     btn.addEventListener('click', ()=>{
       const orderId = btn.getAttribute('data-order-id');
       const partId = btn.getAttribute('data-part-id');
-      confirmAction({
-        title: 'تأكيد تحصيل هذا المبلغ من المورد؟',
-        message: 'رح يُضاف المبلغ تلقائيًا لصافي الصندوق.',
-        confirmLabel: 'تم التحصيل',
-        onConfirm: async ()=>{
-          const order = appData.orders.find(o=>o.id===orderId);
-          if(!order) return;
-          const part = (order.parts||[]).find(p=>p.id===partId);
-          if(!part) return;
-          part.returnCollected = true;
-          order.updatedAt = new Date().toISOString();
-          await persistOrder(order);
-          showToast('تم تسجيل التحصيل، وأُضيف المبلغ للصندوق', 'ok');
-          refreshSuppliersList();
-          updateSuppliersBadge();
-          openSupplierHistoryModal(supplierId);
-        }
-      });
+      const isUsed = btn.getAttribute('data-used')==='1';
+      if(isUsed){
+        confirmCollectScrapyardReturn(orderId, partId, supplierId);
+      } else {
+        confirmAction({
+          title: 'تأكيد تحصيل هذا المبلغ من المورد؟',
+          message: 'رح يُضاف المبلغ تلقائيًا لصافي الصندوق.',
+          confirmLabel: 'تم التحصيل',
+          onConfirm: async ()=>{
+            const order = appData.orders.find(o=>o.id===orderId);
+            if(!order) return;
+            const part = (order.parts||[]).find(p=>p.id===partId);
+            if(!part) return;
+            part.returnCollected = true;
+            order.updatedAt = new Date().toISOString();
+            await persistOrder(order);
+            showToast('تم تسجيل التحصيل، وأُضيف المبلغ للصندوق', 'ok');
+            refreshSuppliersList();
+            updateSuppliersBadge();
+            openSupplierHistoryModal(supplierId);
+          }
+        });
+      }
     });
   });
+}
+
+/* تحصيل مرتجع من تشليح: اختيار بين كاش (يضاف للصندوق مباشرة، ويُخصم من رصيد عهدة عامر لأنه
+   خرج فعليًا من يده) أو إضافة لعهدة عامر (يبقى معه، الصندوق ما يتأثر — نفس أثر أي تحصيل تشليح عادي). */
+function confirmCollectScrapyardReturn(orderId, partId, supplierId){
+  const root = document.getElementById('confirm-root');
+  root.innerHTML =
+    '<div class="modal-backdrop" data-close-confirm>' +
+      '<div class="modal-card modal-card-sm" role="alertdialog" aria-modal="true">' +
+        '<div class="modal-title">كيف تم تحصيل هذا المبلغ من التشليح؟</div>' +
+        '<p class="modal-sub">كاش: استلمته يدك مباشرة ورح يُضاف للصندوق. عهدة عامر: بقي مع عامر ضمن عهدته.</p>' +
+        '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;flex-wrap:wrap;gap:8px;">' +
+          '<button type="button" class="btn btn-ghost" id="confirm-action-cancel-btn">إلغاء</button>' +
+          '<button type="button" class="btn btn-primary" id="collect-choice-custody-btn">🗂️ بقيت مع عامر (عهدة)</button>' +
+          '<button type="button" class="btn btn-primary" id="collect-choice-cash-btn">💵 كاش للصندوق</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  root.querySelector('[data-close-confirm]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-confirm')) close();
+  });
+  root.querySelector('#confirm-action-cancel-btn').addEventListener('click', close);
+  const doCollect = async (toCash)=>{
+    close();
+    const order = appData.orders.find(o=>o.id===orderId);
+    if(!order) return;
+    const part = (order.parts||[]).find(p=>p.id===partId);
+    if(!part) return;
+    const amount = round2((Number(part.qty)||1)*(Number(part.costPrice)||0));
+    part.returnCollected = true;
+    order.updatedAt = new Date().toISOString();
+    await persistOrder(order);
+    if(toCash){
+      // "de-topup" بمقدار المبلغ: هو فعليًا خرج من عهدة عامر لحظة ما سلّمه كاش، فيُخصم من إجمالي
+      // العهدة (سالب) بنفس الوقت اللي يُضاف فيه للصندوق (لأن صافي الصندوق يخصم عهدة عامر بالكامل).
+      const entry = { id: uid('amerCustody'), amount: -amount, date: new Date().toISOString().slice(0,10), note: 'تحصيل كاش من مرتجع تشليح — '+(part.description||'') };
+      appData.treasury.amerCustody = appData.treasury.amerCustody || [];
+      appData.treasury.amerCustody.push(entry);
+      await persistTreasuryEntry(entry, 'amerCustody');
+      showToast('تم تسجيل التحصيل، وأُضيف المبلغ للصندوق كاش', 'ok');
+    } else {
+      showToast('تم تسجيل التحصيل، وبقي المبلغ ضمن عهدة عامر', 'ok');
+    }
+    refreshSuppliersList();
+    updateSuppliersBadge();
+    renderKPIs();
+    if(document.getElementById('treasury-view') && document.getElementById('treasury-view').style.display !== 'none') renderTreasuryView();
+    openSupplierHistoryModal(supplierId);
+  };
+  root.querySelector('#collect-choice-custody-btn').addEventListener('click', ()=> doCollect(false));
+  root.querySelector('#collect-choice-cash-btn').addEventListener('click', ()=> doCollect(true));
 }
 
 let editingSuppliers = {};
