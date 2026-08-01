@@ -1057,6 +1057,8 @@ function orderTotals(order){
   });
   const hasSell = pricedCount>0;
   const fullyPriced = sellEligibleCount>0 && pricedCount===sellEligibleCount;
+  // كل القطع النشطة رجعت (مافيه ولا وحدة تنتظر تسعير) — الحالة "مرتجعة" مو "لم تُسعّر بعد"
+  const allPartsReturned = activeParts.length>0 && sellEligibleCount===0;
   const feeEnabled = !!order.feeEnabled;
   const feePercent = Number(order.feePercent)||0;
   const feeAmount = (hasSell && feeEnabled) ? round2(partsSellTotal * feePercent / 100) : 0;
@@ -1098,6 +1100,7 @@ function orderTotals(order){
     customerFullyPaid,
     hasSell,
     fullyPriced,
+    allPartsReturned,
     profit,
     collectedProfit,
     uncollectedProfit
@@ -1110,7 +1113,7 @@ function orderStatusFlags(order){
     waitingAmerPayment: t.costToScrapyard>0 && !order.paidToAmer,
     waitingSupplierPayment: t.costToSupplier>0 && !order.paidToSupplier,
     waitingSupply: order.confirmed && !order.supplied,
-    waitingPricing: !t.hasSell,
+    waitingPricing: !t.hasSell && !t.allPartsReturned,
     waitingCustomerPayment: order.confirmed && order.supplied && t.hasSell && !t.customerFullyPaid,
     complete: order.confirmed && (t.costToScrapyard===0 || order.paidToAmer) && (t.costToSupplier===0 || order.paidToSupplier) && t.customerFullyPaid && t.fullyPriced
   });
@@ -1399,7 +1402,7 @@ function rowHtml(order){
     )+'</td>' +
     '<td class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? '<span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+'</td>' +
     '<td>'+((order.customerPhone||'').trim() ? '<button type="button" class="icon-btn" data-contact-open="'+order.id+'" aria-label="تواصل">📞</button>' : '<span class="muted">—</span>')+'</td>' +
-    '<td class="num">'+(t.hasSell? '<span class="text-green">'+fmtMoney(t.sellTotal)+'</span>' : '<span class="muted">لم يُسعّر بعد</span>')+'</td>' +
+    '<td class="num">'+(t.hasSell? '<span class="text-green">'+fmtMoney(t.sellTotal)+'</span>' : '<span class="muted">'+(t.allPartsReturned?'مرتجعة':'لم يُسعّر بعد')+'</span>')+'</td>' +
     '<td>'+(order.confirmed && t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد '+fmtMoney(t.costToScrapyard),'غير مسدد '+fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>')+'</td>' +
     '<td>'+(order.confirmed && t.costToSupplier>0 ? stampBadge(order.paidToSupplier,'مسدد '+fmtMoney(t.costToSupplier),'غير مسدد '+fmtMoney(t.costToSupplier)) : '<span class="muted">—</span>')+'</td>' +
     '<td>'+(order.confirmed ? customerPaymentCellHtml(t, true) : '<span class="muted">—</span>')+'</td>' +
@@ -1423,7 +1426,7 @@ function cardHtml(order){
         ((order.customerPhone||'').trim() ? '<button type="button" class="icon-btn" data-contact-open="'+order.id+'" aria-label="تواصل">📞</button>' : '') +
       '</div>' +
     '</div>' +
-    '<div class="order-card-row"><span>إجمالي البيع</span><span class="num '+(t.hasSell?'text-green':'')+'">'+(t.hasSell?fmtMoney(t.sellTotal):'لم يُسعّر بعد')+'</span></div>' +
+    '<div class="order-card-row"><span>إجمالي البيع</span><span class="num '+(t.hasSell?'text-green':'')+'">'+(t.hasSell?fmtMoney(t.sellTotal):(t.allPartsReturned?'مرتجعة':'لم يُسعّر بعد'))+'</span></div>' +
     '<div class="order-card-badges">' +
       (order.confirmed && t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد للتشليح '+fmtMoney(t.costToScrapyard),'غير مسدد للتشليح '+fmtMoney(t.costToScrapyard)) : '') +
       (order.confirmed && t.costToSupplier>0 ? stampBadge(order.paidToSupplier,'مسدد للمورد '+fmtMoney(t.costToSupplier),'غير مسدد للمورد '+fmtMoney(t.costToSupplier)) : '') +
@@ -2220,7 +2223,7 @@ function refreshPaymentsList(){
 function updateModalTotals(){
   const t = orderTotals(draft);
   document.getElementById('total-cost-display').textContent = fmtMoney(t.costTotal);
-  document.getElementById('total-sell-display').textContent = t.hasSell? fmtMoney(t.sellTotal) : 'لم يُسعّر بعد';
+  document.getElementById('total-sell-display').textContent = t.hasSell? fmtMoney(t.sellTotal) : (t.allPartsReturned?'مرتجعة':'لم يُسعّر بعد');
   const costSupplierEl = document.getElementById('cost-supplier-display');
   if(costSupplierEl) costSupplierEl.textContent = fmtMoney(t.costToSupplier);
   const costAmerEl = document.getElementById('cost-amer-display');
@@ -2251,7 +2254,7 @@ function updateModalTotals(){
   }
   const remainEl = document.getElementById('customer-remaining-display');
   if(remainEl){
-    remainEl.textContent = t.hasSell ? fmtMoney(Math.max(t.customerRemaining,0)) : 'لم يُسعّر بعد';
+    remainEl.textContent = t.hasSell ? fmtMoney(Math.max(t.customerRemaining,0)) : (t.allPartsReturned?'مرتجعة':'لم يُسعّر بعد');
     remainEl.classList.remove('text-green','text-amber');
     remainEl.classList.toggle('text-green', t.hasSell && t.customerRemaining<=0.01);
     remainEl.classList.toggle('text-amber', t.hasSell && t.customerRemaining>0.01);
@@ -4473,6 +4476,7 @@ function supplierPurchaseHistory(supplierId){
 function supplierReturnReceivables(supplierId){
   const rows = [];
   (appData.orders||[]).forEach(o=>{
+    if(!o.confirmed) return; // الإرجاع بكل تفرعاته يخص الطلبيات المؤكدة فقط
     (o.parts||[]).forEach(p=>{
       if(p.supplierId !== supplierId) return;
       if(!p.returned || !p.returnHasReceivable || p.returnCollected) return;
@@ -4852,6 +4856,7 @@ function customerRefundsPending(customerId){
   const rows = [];
   (appData.orders||[]).forEach(o=>{
     if(o.customerId !== customerId) return;
+    if(!o.confirmed) return; // الإرجاع بكل تفرعاته يخص الطلبيات المؤكدة فقط
     (o.parts||[]).forEach(p=>{
       if(!p.returned || p.customerRefundConfirmed) return;
       const adjustment = (o.customerPayments||[]).find(pay=>pay.returnAdjustment && pay.linkedPartId===p.id);
@@ -5188,7 +5193,7 @@ const SETTLEMENT_KINDS = {
   new:  { title:'سداد الجديد',   homeLabel:'🧾 سداد الجديد',   rpc:'get_new_parts_supplier',   paidField:'paidToSupplier' }
 };
 
-let scrapyardSharedState = { email:'', canManage:false, activeKind:'used', parts:[], proposals:[], confirmations:[], partsByKind:{used:[],new:[]}, tasks:[], suppliers:[] };
+let scrapyardSharedState = { email:'', canManage:false, activeKind:'used', parts:[], returnReceivables:[], proposals:[], confirmations:[], partsByKind:{used:[],new:[]}, tasks:[], suppliers:[] };
 let scrapyardCurrentScreen = null; // 'home' | 'settlement' | 'tasks' — يحدّد هل نحدّث الشاشة تلقائيًا عند وصول تغيير لحظي
 
 async function initScrapyardView(email){
@@ -5234,9 +5239,26 @@ function ownerScrapyardPartsFromAppData(kind){
   // الطلبيات يلي تم توريدها فقط — غير الموردة ما بتظهر بشاشة السداد
   appData.orders.filter(o=>o.supplied && !o[paidField]).forEach(o=>{
     (o.parts||[]).forEach(p=>{
+      if(p.returned) return; // القطعة المرتجعة لها مسارها المنفصل (مرتجعات)، مو ضمن قائمة "غير المسدّدة"
       if(!!p.used === wantUsed){
-        list.push({ order_id:o.id, order_number:o.orderNumber, order_label:o.orderLabel, supplied_at:o.suppliedAt||null, part_id:p.id, description:p.description, qty:p.qty, cost_price:p.costPrice });
+        list.push({ order_id:o.id, order_number:o.orderNumber, order_label:o.orderLabel, supplied_at:o.suppliedAt||null, part_id:p.id, description:p.description, qty:p.qty, cost_price:p.costPrice, supplier_id:p.supplierId||null });
       }
+    });
+  });
+  return list;
+}
+
+/* قطع مرتجعة مدفوعة مسبقًا وبانتظار التحصيل — تُخصم من إجمالي المستحق للسداد بهذه الشاشة
+   (لصاحب الحساب محليًا؛ لعامر عن طريق get_scrapyard_return_receivables). عرض فقط، بدون
+   إمكانية تأكيد التحصيل هون — هذا حصريًا بشاشة الموردين عند صاحب الحساب. */
+function ownerScrapyardReturnReceivablesFromAppData(kind){
+  const list = [];
+  const wantUsed = kind === 'used';
+  appData.orders.filter(o=>o.confirmed).forEach(o=>{
+    (o.parts||[]).forEach(p=>{
+      if(!p.returned || !p.returnHasReceivable || p.returnCollected) return;
+      if(!!p.used !== wantUsed) return;
+      list.push({ order_id:o.id, order_number:o.orderNumber, order_label:o.orderLabel, part_id:p.id, description:p.description, qty:p.qty, cost_price:p.costPrice, supplier_id:p.supplierId||null });
     });
   });
   return list;
@@ -5270,6 +5292,7 @@ async function loadScrapyardData(kind){
   try{
     if(scrapyardSharedState.canManage){
       scrapyardSharedState.parts = ownerScrapyardPartsFromAppData(kind);
+      scrapyardSharedState.returnReceivables = ownerScrapyardReturnReceivablesFromAppData(kind);
       const [proposalsRes, confirmationsRes, suppliersRes] = await Promise.all([
         sb.from('scrapyard_proposals').select('*').eq('kind', kind).order('created_at', {ascending:false}),
         sb.from('scrapyard_order_confirmations').select('*').eq('kind', kind),
@@ -5280,14 +5303,16 @@ async function loadScrapyardData(kind){
       scrapyardSharedState.confirmations = confirmationsRes.data || [];
       scrapyardSharedState.suppliers = suppliersRes.error ? [] : (suppliersRes.data || []);
     } else {
-      const [partsRes, proposalsRes, confirmationsRes, suppliersRes] = await Promise.all([
+      const [partsRes, returnReceivablesRes, proposalsRes, confirmationsRes, suppliersRes] = await Promise.all([
         sb.rpc(SETTLEMENT_KINDS[kind].rpc),
+        sb.rpc('get_scrapyard_return_receivables', { p_kind: kind }),
         sb.from('scrapyard_proposals').select('*').eq('kind', kind).eq('submitted_by', scrapyardSharedState.email).order('created_at', {ascending:false}),
         sb.from('scrapyard_order_confirmations').select('*').eq('kind', kind),
         sb.from('suppliers').select('*')
       ]);
       if(partsRes.error) throw partsRes.error;
       scrapyardSharedState.parts = partsRes.data || [];
+      scrapyardSharedState.returnReceivables = returnReceivablesRes.error ? [] : (returnReceivablesRes.data || []);
       scrapyardSharedState.proposals = proposalsRes.data || [];
       scrapyardSharedState.confirmations = confirmationsRes.data || [];
       scrapyardSharedState.suppliers = suppliersRes.error ? [] : (suppliersRes.data || []);
@@ -5472,12 +5497,17 @@ async function togglePurchasesTaskDone(taskId, newDone){
   }
 }
 
-/* المستحق لكل تشليح على حدة — مبني على القطع المستعملة غير المسدّدة الظاهرة حاليًا بس */
+/* المستحق لكل تشليح على حدة (صافي) — مبني على القطع المستعملة غير المسدّدة الظاهرة حاليًا،
+   مطروح منه أي مبلغ مسترجع بانتظار التحصيل من نفس التشليح */
 function scrapyardSupplierTotalsHtml(){
   const totals = {};
   (scrapyardSharedState.parts||[]).forEach(p=>{
     if(!p.supplier_id) return;
     totals[p.supplier_id] = round2((totals[p.supplier_id]||0) + (Number(p.cost_price)||0)*(Number(p.qty)||1));
+  });
+  (scrapyardSharedState.returnReceivables||[]).forEach(p=>{
+    if(!p.supplier_id) return;
+    totals[p.supplier_id] = round2((totals[p.supplier_id]||0) - (Number(p.cost_price)||0)*(Number(p.qty)||1));
   });
   const ids = Object.keys(totals);
   if(!ids.length) return '';
@@ -5489,12 +5519,34 @@ function scrapyardSupplierTotalsHtml(){
   return '<div class="section-block"><div class="section-head"><span class="section-title">المستحق لكل تشليح</span></div>' + rows + '</div>';
 }
 
+/* عرض القطع المرتجعة اللي المفروض تُحصّل قيمتها من المورد/التشليح — معلومة فقط بهذي الشاشة،
+   ما فيها زر تحصيل (هذا حصريًا بشاشة الموردين عند صاحب الحساب) */
+function scrapyardReturnReceivablesHtml(){
+  const rows = scrapyardSharedState.returnReceivables||[];
+  if(!rows.length) return '';
+  const total = round2(rows.reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0));
+  const rowsHtml = rows.map(p=>{
+    const supplier = (scrapyardSharedState.suppliers||[]).find(s=>s.id===p.supplier_id);
+    const name = supplier ? (supplier.name||supplier.phone||'مورد') : 'غير محدد';
+    const amount = round2((Number(p.cost_price)||0)*(Number(p.qty)||1));
+    return '<div class="scrapyard-part-row">' +
+      '<span class="scrapyard-part-desc">'+escapeHtml(p.description||'')+'</span>' +
+      '<span class="num scrapyard-qty-slot">×'+(p.qty||1)+'</span>' +
+      '<span class="num text-green">'+fmtMoney(amount)+'</span>' +
+      '<span class="scrapyard-days-since muted">'+escapeHtml(name)+'</span>' +
+    '</div>';
+  }).join('');
+  return '<div class="section-block"><div class="section-head"><span class="section-title">🔄 مرتجعات (مخصومة من الإجمالي أعلاه)</span><span class="num text-green">'+fmtMoney(total)+'</span></div>' + rowsHtml + '</div>';
+}
+
 function renderScrapyardView(){
   scrapyardCurrentScreen = 'settlement';
   const root = document.getElementById('scrapyard-root');
   const kind = scrapyardSharedState.activeKind;
   const groups = groupScrapyardPartsByOrder(scrapyardSharedState.parts);
-  const total = scrapyardSharedState.parts.reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0);
+  const rawTotal = scrapyardSharedState.parts.reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0);
+  const returnReceivablesTotal = (scrapyardSharedState.returnReceivables||[]).reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0);
+  const total = round2(rawTotal - returnReceivablesTotal);
   const canManage = scrapyardSharedState.canManage;
 
   root.innerHTML =
@@ -5511,6 +5563,7 @@ function renderScrapyardView(){
     '</header>' +
     '<div class="total-box" style="margin-bottom:18px;"><span>إجمالي المستحق للسداد</span><span class="num text-amber">'+fmtMoney(total)+'</span></div>' +
     (kind==='used' ? scrapyardSupplierTotalsHtml() : '') +
+    scrapyardReturnReceivablesHtml() +
     '<div class="section-block"><div class="section-head"><span class="section-title">القطع (غير المسدّدة)</span>' +
       (canManage || kind!=='used' ? '' : '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-scrapyard-supplier">➕ تشليح جديد</button>') +
     '</div>' +
