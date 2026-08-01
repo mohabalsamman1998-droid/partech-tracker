@@ -891,7 +891,7 @@
       <div class="topbar-actions">
         <button id="btn-open-treasury" class="btn btn-ghost btn-with-badge">📦 الصندوق<span id="treasury-scrapyard-badge" class="tasks-badge"></span></button>
         <button id="btn-open-tasks" class="btn btn-ghost btn-with-badge">✅ TASKS<span id="tasks-badge" class="tasks-badge"></span></button>
-        <button id="btn-open-suppliers" class="btn btn-ghost">🏭 الموردين</button>
+        <button id="btn-open-suppliers" class="btn btn-ghost btn-with-badge">🏭 الموردين<span id="suppliers-receivables-badge" class="tasks-badge"></span></button>
         <button id="btn-open-customers" class="btn btn-ghost btn-with-badge">👤 العملاء<span id="customers-overdue-badge" class="tasks-badge"></span></button>
       </div>
     </header>
@@ -2325,6 +2325,8 @@ async function onSaveOrder(){
   closeModal();
   renderKPIs();
   renderTable();
+  updateCustomersBadge();
+  updateSuppliersBadge();
   showToast('تم حفظ الطلبية', 'ok');
   return true;
 }
@@ -3704,10 +3706,29 @@ function overdueCustomersCount(){
   return count;
 }
 
+/* عدد العملاء اللي عندهم مبلغ لازم يرجعلهم (مرتجعات بانتظار التأكيد) — يُجمع مع المتأخرين
+   بالسداد بنفس الشارة، لأن الاثنين "أشياء تحتاج انتباهك بخصوص العملاء" */
+function customersWithPendingRefundsCount(){
+  return (appData.customers||[]).filter(c=> customerRefundTotal(c.id) > 0).length;
+}
+
 function updateCustomersBadge(){
   const badge = document.getElementById('customers-overdue-badge');
   if(!badge) return;
-  const total = overdueCustomersCount();
+  const total = overdueCustomersCount() + customersWithPendingRefundsCount();
+  badge.textContent = total > 0 ? total : '';
+  badge.style.display = total > 0 ? 'flex' : 'none';
+}
+
+/* عدد الموردين/التشاليح اللي عندهم مبلغ مسترجع بانتظار التحصيل */
+function suppliersWithPendingReceivablesCount(){
+  return (appData.suppliers||[]).filter(s=> supplierReturnReceivableTotal(s.id) > 0).length;
+}
+
+function updateSuppliersBadge(){
+  const badge = document.getElementById('suppliers-receivables-badge');
+  if(!badge) return;
+  const total = suppliersWithPendingReceivablesCount();
   badge.textContent = total > 0 ? total : '';
   badge.style.display = total > 0 ? 'flex' : 'none';
 }
@@ -4088,6 +4109,7 @@ async function init(){
   renderTable();
   updateTasksBadge();
   updateCustomersBadge();
+  updateSuppliersBadge();
   subscribeOrdersRealtime();
   subscribeTreasuryRealtime();
   subscribeTasksRealtime();
@@ -4120,6 +4142,7 @@ function applyRemoteOrderChange(payload){
   renderKPIs();
   renderTable();
   updateCustomersBadge();
+  updateSuppliersBadge();
   if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
   if(document.getElementById('suppliers-view').style.display !== 'none'){ refreshSuppliersList(); }
   if(document.getElementById('customers-view').style.display !== 'none'){ refreshCustomersList(); }
@@ -4580,6 +4603,7 @@ function openSupplierHistoryModal(supplierId){
           await persistOrder(order);
           showToast('تم تسجيل التحصيل، وأُضيف المبلغ للصندوق', 'ok');
           refreshSuppliersList();
+          updateSuppliersBadge();
           openSupplierHistoryModal(supplierId);
         }
       });
@@ -5006,6 +5030,7 @@ function openCustomerHistoryModal(customerId){
           await persistOrder(order);
           showToast('تم تسجيل إرجاع المبلغ، وخُصم من الصندوق', 'ok');
           refreshCustomersList();
+          updateCustomersBadge();
           openCustomerHistoryModal(customerId);
         }
       });
