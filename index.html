@@ -2370,7 +2370,14 @@ async function onSaveOrder(){
   if(idx>=0) appData.orders[idx]=draft; else appData.orders.push(draft);
 
   await persistOrder(draft);
-  closeModal();
+
+  // حفظ الطلبية ما يطلعك منها — يبقى المودال مفتوح، بس يحدّث حالته (زي تحول "جديدة" لموجودة، إلخ)
+  editingPayments = {};
+  const root = document.getElementById('modal-root');
+  root.innerHTML = modalHtml(draft);
+  attachModalHandlers();
+  updateModalTotals();
+
   renderKPIs();
   renderTable();
   updateCustomersBadge();
@@ -3251,8 +3258,9 @@ function treasuryTotals(){
   const extraIndicatorsSupport = treasurySupportTotal(entryMatchesExtraIndicatorsPeriod);
   // صافي الصندوق = نقدي حقيقي: كل ما دفعه الزبائن + دعم خارجي، ناقص كل ما دُفع فعليًا للموردين والتشليح، ناقص مصاريف الصندوق
   const net = round2(f.customerReceiptsTotal + extraIndicatorsSupport - f.paidToSuppliersTotal - f.paidToScrapyardTotal - extraIndicatorsExpenses);
-  // الصندوق بافتراض انتهاء التحصيل والسداد = لو تحصّلت كل ديون الزبائن ودُفعت كل مستحقات الموردين/التشاليح
-  const netAfterSettlement = round2(net + f.dueFromCustomers - f.dueToScrapyard - f.dueToSuppliers);
+  // الصندوق بافتراض انتهاء التحصيل والسداد = لو تحصّلت كل ديون الزبائن ودُفعت كل مستحقات الموردين/التشاليح،
+  // وكمان لو تحصّلت كل مرتجعات الموردين المعلّقة ورجعت كل مبالغ العملاء المعلّقة
+  const netAfterSettlement = round2(net + f.dueFromCustomers - f.dueToScrapyard - f.dueToSuppliers + totalSupplierReturnReceivables() - totalCustomerRefundsPending());
   // الديون للموردين = إجمالي المستحق غير المسدد للتشاليح والموردين معًا
   const debtsToSuppliers = round2(f.dueToScrapyard + f.dueToSuppliers);
   const volumes = computeTreasuryVolumes();
@@ -3758,6 +3766,10 @@ function overdueCustomersCount(){
    بالسداد بنفس الشارة، لأن الاثنين "أشياء تحتاج انتباهك بخصوص العملاء" */
 function customersWithPendingRefundsCount(){
   return (appData.customers||[]).filter(c=> customerRefundTotal(c.id) > 0).length;
+}
+
+function totalCustomerRefundsPending(){
+  return round2((appData.customers||[]).reduce((sum,c)=> sum + customerRefundTotal(c.id), 0));
 }
 
 function updateCustomersBadge(){
