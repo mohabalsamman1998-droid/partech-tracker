@@ -4299,7 +4299,6 @@ function supplierRowHtml(s){
         '<span class="num text-rust">'+fmtMoney(supplierOwedAmount(s.id))+'</span>' +
         '<button type="button" class="icon-btn supplier-history-btn" title="سجل المشتريات" aria-label="سجل المشتريات">📋</button>' +
         '<button type="button" class="icon-btn supplier-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' +
-        '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' +
       '</div>' +
       '<div class="purchase-history-row-sub"><span>'+escapeHtml(kindsLabel)+'</span></div>' +
     '</div>';
@@ -4418,21 +4417,26 @@ function bindSupplierRowEvents(){
     const supplier = (appData.suppliers||[]).find(s=>s.id===sid);
     if(!supplier) return;
 
-    row.querySelector('.supplier-history-btn').addEventListener('click', ()=> openSupplierHistoryModal(sid));
-    row.querySelector('.task-item-remove-btn').addEventListener('click', ()=>{
-      confirmAction({
-        title: 'حذف هذا المورد؟',
-        message: 'الطلبيات القديمة المرتبطة به بتبقى، بس بدون اسم مورد محدد.',
-        confirmLabel: 'تأكيد الحذف',
-        dangerous: true,
-        onConfirm: async ()=>{
-          appData.suppliers = appData.suppliers.filter(s=>s.id!==sid);
-          delete editingSuppliers[sid];
-          refreshSuppliersList();
-          await deleteSupplier(sid);
-        }
+    const historyBtn = row.querySelector('.supplier-history-btn');
+    if(historyBtn) historyBtn.addEventListener('click', ()=> openSupplierHistoryModal(sid));
+
+    const removeBtn = row.querySelector('.task-item-remove-btn');
+    if(removeBtn){
+      removeBtn.addEventListener('click', ()=>{
+        confirmAction({
+          title: 'حذف هذا المورد؟',
+          message: 'الطلبيات القديمة المرتبطة به بتبقى، بس بدون اسم مورد محدد.',
+          confirmLabel: 'تأكيد الحذف',
+          dangerous: true,
+          onConfirm: async ()=>{
+            appData.suppliers = appData.suppliers.filter(s=>s.id!==sid);
+            delete editingSuppliers[sid];
+            refreshSuppliersList();
+            await deleteSupplier(sid);
+          }
+        });
       });
-    });
+    }
 
     const editBtn = row.querySelector('.supplier-edit-btn');
     if(editBtn){
@@ -4548,7 +4552,6 @@ function customerRowHtml(c){
       '<span class="num '+(stats.remaining>0?'text-rust':'text-green')+'">'+fmtMoney(stats.remaining)+'</span>' +
       '<button type="button" class="icon-btn customer-history-btn" title="سجل الطلبيات" aria-label="سجل الطلبيات">📋</button>' +
       '<button type="button" class="icon-btn customer-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' +
-      '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' +
     '</div>';
   }
 
@@ -4731,20 +4734,23 @@ function bindCustomerRowEvents(){
       });
     }
 
-    row.querySelector('.task-item-remove-btn').addEventListener('click', ()=>{
-      confirmAction({
-        title: 'حذف هذا العميل؟',
-        message: 'الطلبيات القديمة المرتبطة فيه بتبقى، بس بدون عميل محدد.',
-        confirmLabel: 'تأكيد الحذف',
-        dangerous: true,
-        onConfirm: async ()=>{
-          appData.customers = appData.customers.filter(c=>c.id!==cid);
-          delete editingCustomers[cid];
-          refreshCustomersList();
-          await deleteCustomer(cid);
-        }
+    const removeBtn = row.querySelector('.task-item-remove-btn');
+    if(removeBtn){
+      removeBtn.addEventListener('click', ()=>{
+        confirmAction({
+          title: 'حذف هذا العميل؟',
+          message: 'الطلبيات القديمة المرتبطة فيه بتبقى، بس بدون عميل محدد.',
+          confirmLabel: 'تأكيد الحذف',
+          dangerous: true,
+          onConfirm: async ()=>{
+            appData.customers = appData.customers.filter(c=>c.id!==cid);
+            delete editingCustomers[cid];
+            refreshCustomersList();
+            await deleteCustomer(cid);
+          }
+        });
       });
-    });
+    }
   });
 }
 
