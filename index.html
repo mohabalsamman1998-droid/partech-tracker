@@ -1293,11 +1293,13 @@ function computeAggregateFinancials(matchPeriodFn){
 function renderKPIs(){
   const el = document.getElementById('kpi-row');
   const f = computeAggregateFinancials();
+  const returnsOwedToUs = totalSupplierReturnReceivables();
   el.innerHTML =
     '<div class="kpi-card"><div class="kpi-label">الطلبيات المؤكدة</div><div class="kpi-value num">'+f.confirmedCount+'</div>'+(f.unconfirmedCount>0?'<div class="kpi-sub">+ '+f.unconfirmedCount+' بانتظار التأكيد</div>':'')+'</div>' +
     '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للتشليح</div><div class="kpi-value num">'+fmtMoney(f.dueToScrapyard)+'</div></div>' +
     '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للموردين</div><div class="kpi-value num">'+fmtMoney(f.dueToSuppliers)+'</div></div>' +
-    '<div class="kpi-card kpi-amber"><div class="kpi-label">مستحق من الزبائن</div><div class="kpi-value num">'+fmtMoney(f.dueFromCustomers)+'</div></div>';
+    '<div class="kpi-card kpi-amber"><div class="kpi-label">مستحق من الزبائن</div><div class="kpi-value num">'+fmtMoney(f.dueFromCustomers)+'</div></div>' +
+    (returnsOwedToUs>0 ? '<div class="kpi-card kpi-green"><div class="kpi-label">لنا من التشاليح/الموردين (مرتجعات)</div><div class="kpi-value num">'+fmtMoney(returnsOwedToUs)+'</div></div>' : '');
 }
 
 /* ---------- filters ---------- */
@@ -4468,6 +4470,11 @@ function supplierReturnReceivables(supplierId){
 
 function supplierReturnReceivableTotal(supplierId){
   return round2(supplierReturnReceivables(supplierId).reduce((s,r)=>s+r.amount,0));
+}
+
+/* إجمالي المبالغ المستحقة لنا من كل الموردين والتشاليح مجتمعين (مرتجعات بانتظار التحصيل) — لمؤشر الصفحة الرئيسية */
+function totalSupplierReturnReceivables(){
+  return round2((appData.suppliers||[]).reduce((sum,s)=> sum + supplierReturnReceivableTotal(s.id), 0));
 }
 
 function returnReceivableRowHtml(row){
