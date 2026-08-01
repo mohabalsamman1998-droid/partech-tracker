@@ -3148,6 +3148,14 @@ function subscribeScrapyardAppDataRealtime(){
         loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
       }
     })
+    // عهدة عامر (treasury_entries) — لو صاحب الحساب سدد لعهدة عامر وعامر فاتح صفحته الرئيسية وقتها
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'treasury_entries' }, ()=>{
+      const scrapRoot = document.getElementById('scrapyard-root');
+      if(!scrapRoot || scrapRoot.style.display === 'none') return;
+      if(scrapyardCurrentScreen === 'home'){
+        loadScrapyardHomeTotals().then(renderScrapyardHomeView);
+      }
+    })
     .subscribe();
 }
 
@@ -5424,7 +5432,7 @@ const SETTLEMENT_KINDS = {
   new:  { title:'سداد الجديد',   homeLabel:'🧾 سداد الجديد',   rpc:'get_new_parts_supplier',   paidField:'paidToSupplier' }
 };
 
-let scrapyardSharedState = { email:'', canManage:false, activeKind:'used', parts:[], returnReceivables:[], proposals:[], confirmations:[], partsByKind:{used:[],new:[]}, tasks:[], suppliers:[] };
+let scrapyardSharedState = { email:'', canManage:false, activeKind:'used', parts:[], returnReceivables:[], proposals:[], confirmations:[], partsByKind:{used:[],new:[]}, tasks:[], suppliers:[], custodyBalance:0 };
 let scrapyardCurrentScreen = null; // 'home' | 'settlement' | 'tasks' — يحدّد هل نحدّث الشاشة تلقائيًا عند وصول تغيير لحظي
 
 async function initScrapyardView(email){
@@ -5504,20 +5512,23 @@ function goToScrapyardHome(){
 
 /* يُستخدم فقط لصفحة عامر الرئيسية — يجيب مجموع كل نوع (تشاليح + جديد) لعرضهم كمؤشرين، والمهام */
 async function loadScrapyardHomeTotals(){
-  const [usedRes, newRes, tasksRes, suppliersRes] = await Promise.all([
+  const [usedRes, newRes, tasksRes, suppliersRes, custodyRes] = await Promise.all([
     sb.rpc('get_scrapyard_used_parts'),
     sb.rpc('get_new_parts_supplier'),
     sb.rpc('get_purchases_tasks'),
-    sb.from('suppliers').select('*')
+    sb.from('suppliers').select('*'),
+    sb.rpc('get_amer_custody_balance')
   ]);
   if(usedRes.error) console.error('get_scrapyard_used_parts:', usedRes.error);
   if(newRes.error) console.error('get_new_parts_supplier:', newRes.error);
   if(tasksRes.error) console.error('get_purchases_tasks:', tasksRes.error);
   if(suppliersRes.error) console.error('suppliers:', suppliersRes.error);
+  if(custodyRes.error) console.error('get_amer_custody_balance:', custodyRes.error);
   scrapyardSharedState.partsByKind.used = usedRes.error ? [] : (usedRes.data || []);
   scrapyardSharedState.partsByKind.new = newRes.error ? [] : (newRes.data || []);
   scrapyardSharedState.tasks = tasksRes.error ? [] : (tasksRes.data || []);
   scrapyardSharedState.suppliers = suppliersRes.error ? [] : (suppliersRes.data || []);
+  scrapyardSharedState.custodyBalance = custodyRes.error ? 0 : (Number(custodyRes.data)||0);
 }
 
 async function loadScrapyardData(kind){
@@ -5645,6 +5656,7 @@ function renderScrapyardHomeView(){
   const usedTotal = (scrapyardSharedState.partsByKind.used||[]).reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0);
   const newTotal = (scrapyardSharedState.partsByKind.new||[]).reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0);
   const pendingTasks = (scrapyardSharedState.tasks||[]).filter(t=>!t.done).length;
+  const custodyBalance = scrapyardSharedState.custodyBalance||0;
 
   root.innerHTML =
     '<div class="app-top-utility-row">' +
@@ -5652,6 +5664,7 @@ function renderScrapyardHomeView(){
       '<img class="app-corner-logo" src="'+PARTECH_LOGO_DATA_URI+'" id="scrapyard-home-logo-img" alt="PARTECH" title="الصفحة الرئيسية">' +
     '</div>' +
     '<header class="topbar"><div class="brand">قسم المشتريات</div></header>' +
+    '<div class="total-box" style="margin-bottom:18px;"><span>رصيدك (عهدة عامر)</span><span class="num '+(custodyBalance<0?'text-rust':'text-green')+'">'+fmtMoney(custodyBalance)+'</span></div>' +
     '<button type="button" class="scrapyard-home-tile" id="btn-open-scrapyard-settlement">' +
       '<span class="scrapyard-home-tile-label">'+SETTLEMENT_KINDS.used.homeLabel+'</span>' +
       '<span class="scrapyard-home-tile-value num">'+fmtMoney(usedTotal)+'</span>' +
