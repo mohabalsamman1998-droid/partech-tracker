@@ -206,10 +206,6 @@
   .scrapyard-order-header{font-family:'Cairo',sans-serif;font-weight:800;font-size:14px;color:var(--green);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border-soft);}
   .scrapyard-order-header-clickable{cursor:pointer;}
   .scrapyard-order-header-clickable:hover{text-decoration:underline;}
-  .scrapyard-return-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
-  .scrapyard-select-all-toggle{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-dim);cursor:pointer;font-weight:700;}
-  .scrapyard-select-all-toggle input{accent-color:var(--rust);cursor:pointer;width:16px;height:16px;}
-  .scrapyard-return-check{width:18px;height:18px;accent-color:var(--rust);cursor:pointer;}
   .scrapyard-part-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-soft);flex-wrap:wrap;}
   .scrapyard-part-row:last-of-type{border-bottom:none;}
   .scrapyard-part-desc{flex:1;min-width:120px;font-size:15px;font-weight:700;color:var(--text);}
@@ -4916,7 +4912,6 @@ async function loadScrapyardHomeTotals(){
 
 async function loadScrapyardData(kind){
   scrapyardSharedState.activeKind = kind;
-  scrapyardReturnSelection = {};
   try{
     if(scrapyardSharedState.canManage){
       scrapyardSharedState.parts = ownerScrapyardPartsFromAppData(kind);
@@ -4995,7 +4990,6 @@ function scrapyardConfirmationForOrder(orderId){
 let scrapyardPriceDrafts = {};   // part_id -> السعر المقترح يلي عم يُكتب حاليًا
 let scrapyardAddDrafts = {};     // order_id -> {description, qty, price} لصف القطعة الجديدة المفتوح
 let scrapyardEditOpenFor = {};   // part_id -> true — خانة تعديل السعر مفتوحة (تظهر فقط بعد الضغط على "تعديل")
-let scrapyardReturnSelection = {}; // part_id -> true — تحديد صاحب الحساب لقطع يريد إرجاعها دفعة وحدة (بدون المرور بمسار اقتراح عامر)
 
 /* مجموع جديد للطلبية بعد اقتراح سعر جديد (سواء وهو عم يُكتب أو بعد إرساله) — null لو ما فيه أي تغيير مقترح */
 function scrapyardGroupProposedSubtotal(group){
@@ -5208,19 +5202,6 @@ function openQuickAddScrapyardSupplierModal(){
   });
 }
 
-/* لصاحب الحساب بس — تحديد قطع من هذه الطلبية بالذات للإرجاع، بدون المرور بمسار اقتراح عامر */
-function scrapyardOrderReturnControlsHtml(group){
-  const eligibleParts = group.parts.filter(p=>!scrapyardProposalForPart(p.part_id));
-  if(!eligibleParts.length) return '';
-  const selectedParts = eligibleParts.filter(p=>scrapyardReturnSelection[p.part_id]);
-  const allSelected = selectedParts.length === eligibleParts.length;
-  const selectedTotal = round2(selectedParts.reduce((s,p)=> s+(Number(p.cost_price)||0)*(Number(p.qty)||1), 0));
-  return '<div class="scrapyard-return-controls">' +
-    '<label class="scrapyard-select-all-toggle"><input type="checkbox" class="scrapyard-select-all-order-check" data-order-id="'+group.order_id+'"'+(allSelected?' checked':'')+'><span>تحديد الكل</span></label>' +
-    '<button type="button" class="btn btn-ghost btn-sm scrapyard-return-order-btn" data-order-id="'+group.order_id+'"'+(selectedParts.length?'':' disabled')+'>🔄 إرجاع المحدد'+(selectedParts.length?' ('+selectedParts.length+' — '+fmtMoney(selectedTotal)+')':'')+'</button>' +
-  '</div>';
-}
-
 function scrapyardOrderGroupHtml(group, canManage){
   const subtotal = group.parts.reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0);
   const proposedSubtotal = scrapyardGroupProposedSubtotal(group);
@@ -5243,14 +5224,14 @@ function scrapyardOrderGroupHtml(group, canManage){
       '</div>' +
       '<span class="scrapyard-mgmt-actions" aria-hidden="true"></span>' +
     '</div>' +
-    (canManage
-      ? scrapyardOrderReturnControlsHtml(group)
-      : '<div class="scrapyard-order-actions">' +
+    (!canManage ?
+      '<div class="scrapyard-order-actions">' +
         (addDraft ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-add-part-order="'+group.order_id+'">+ اقتراح قطعة جديدة</button>') +
         (confirmation
           ? '<button type="button" class="btn btn-sm btn-confirmed-green" data-unconfirm-order="'+group.order_id+'" title="اضغط للتراجع عن التأكيد">✅ تم تأكيد المبلغ</button>'
           : '<button type="button" class="btn btn-ghost btn-sm" data-confirm-order="'+group.order_id+'">تأكيد المبلغ</button>') +
-      '</div>') +
+      '</div>'
+      : '') +
   '</div>';
 }
 
@@ -5299,9 +5280,7 @@ function scrapyardPartRowHtml(p, canManage){
         '</div>';
   } else if(canManage){
     priceCells = scrapyardPriceCellHtml('السعر', p.cost_price, 'current');
-    actions = '<div class="scrapyard-mgmt-actions">' +
-      '<input type="checkbox" class="scrapyard-return-check" data-part-id="'+p.part_id+'"'+(scrapyardReturnSelection[p.part_id]?' checked':'')+' title="تحديد للإرجاع" aria-label="تحديد للإرجاع">' +
-    '</div>';
+    actions = '';
   } else if(scrapyardEditOpenFor[p.part_id]){
     // خانة السعر المقترح تظهر فقط بعد الضغط على "تعديل" — نفس شكل إدخال أسعار القطعة بالطلبية
     const draftVal = scrapyardPriceDrafts[p.part_id];
@@ -5562,71 +5541,6 @@ function bindScrapyardEvents(){
     });
   });
 
-  // تحديد قطع من نفس الطلبية للإرجاع (لصاحب الحساب بس) — زر "إرجاع المحدد" موجود جوه كل طلبية على حدة
-  root.querySelectorAll('.scrapyard-select-all-order-check').forEach(chk=>{
-    chk.addEventListener('change', e=>{
-      const orderId = chk.getAttribute('data-order-id');
-      const eligibleIds = (scrapyardSharedState.parts||[]).filter(p=>p.order_id===orderId && !scrapyardProposalForPart(p.part_id)).map(p=>p.part_id);
-      if(e.target.checked){ eligibleIds.forEach(id=>{ scrapyardReturnSelection[id] = true; }); }
-      else { eligibleIds.forEach(id=>{ delete scrapyardReturnSelection[id]; }); }
-      renderScrapyardView();
-    });
-  });
-  root.querySelectorAll('.scrapyard-return-check').forEach(chk=>{
-    chk.addEventListener('change', e=>{
-      const partId = chk.getAttribute('data-part-id');
-      if(e.target.checked) scrapyardReturnSelection[partId] = true; else delete scrapyardReturnSelection[partId];
-      renderScrapyardView();
-    });
-  });
-  root.querySelectorAll('.scrapyard-return-order-btn').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const orderId = btn.getAttribute('data-order-id');
-      const selectedIds = (scrapyardSharedState.parts||[])
-        .filter(p=>p.order_id===orderId && scrapyardReturnSelection[p.part_id])
-        .map(p=>p.part_id);
-      if(!selectedIds.length) return;
-      const selectedParts = (scrapyardSharedState.parts||[]).filter(p=>selectedIds.includes(p.part_id));
-      const total = round2(selectedParts.reduce((s,p)=> s+(Number(p.cost_price)||0)*(Number(p.qty)||1), 0));
-      confirmAction({
-        title: 'إرجاع '+selectedIds.length+' قطعة بقيمة '+fmtMoney(total)+'؟',
-        message: 'رح تُحذف هذه القطع نهائيًا من الطلبية، ويُخصم مبلغها تلقائيًا من المستحق للسداد.',
-        confirmLabel: 'تأكيد الإرجاع',
-        dangerous: true,
-        onConfirm: ()=> performScrapyardReturn(selectedIds)
-      });
-    });
-  });
-}
-
-/* تنفيذ الإرجاع الفعلي — يحذف القطع المحددة من طلبياتها ويحفظ التعديل، بدون المرور بمسار اقتراح عامر */
-async function performScrapyardReturn(selectedIds){
-  if(!selectedIds || !selectedIds.length) return;
-  const selectedParts = (scrapyardSharedState.parts||[]).filter(p=>selectedIds.includes(p.part_id));
-  const affectedOrderIds = [...new Set(selectedParts.map(p=>p.order_id))];
-  let totalReturned = 0;
-  affectedOrderIds.forEach(orderId=>{
-    const order = appData.orders.find(o=>o.id===orderId);
-    if(!order) return;
-    const idsForThisOrder = selectedParts.filter(p=>p.order_id===orderId).map(p=>p.part_id);
-    (order.parts||[]).forEach(part=>{
-      if(idsForThisOrder.includes(part.id)) totalReturned += (Number(part.qty)||1) * (Number(part.costPrice)||0);
-    });
-    order.parts = (order.parts||[]).filter(part=>!idsForThisOrder.includes(part.id));
-    order.updatedAt = new Date().toISOString();
-  });
-  for(const orderId of affectedOrderIds){
-    const order = appData.orders.find(o=>o.id===orderId);
-    if(order) await persistOrder(order);
-  }
-  const count = selectedIds.length;
-  scrapyardReturnSelection = {};
-  renderKPIs();
-  renderTable();
-  showToast('تم إرجاع '+count+' قطعة بمبلغ '+fmtMoney(round2(totalReturned)), 'ok');
-  await loadScrapyardData(scrapyardSharedState.activeKind);
-  renderScrapyardView();
-  refreshScrapyardPendingCount();
 }
 
 /* إرسال السعر المقترح المكتوب داخل صف القطعة — بدون أي نافذة خارجية */
