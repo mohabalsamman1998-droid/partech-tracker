@@ -4738,11 +4738,18 @@ function supplierRowHtml(s){
 let suppliersSearchQuery = '';
 function suppliersMatchingSearch(){
   const q = suppliersSearchQuery.trim().toLowerCase();
-  const rows = appData.suppliers||[];
-  if(!q) return rows;
-  return rows.filter(s=>{
-    const hay = [s.name, s.phone].concat(Array.isArray(s.extraPhones)?s.extraPhones:[]).join(' ').toLowerCase();
-    return hay.includes(q);
+  let rows = appData.suppliers||[];
+  if(q){
+    rows = rows.filter(s=>{
+      const hay = [s.name, s.phone].concat(Array.isArray(s.extraPhones)?s.extraPhones:[]).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }
+  // اللي عندهم مسترجع بانتظار التحصيل يطلعوا فوق
+  return [...rows].sort((a,b)=>{
+    const ap = supplierReturnReceivableTotal(a.id)>0 ? 1 : 0;
+    const bp = supplierReturnReceivableTotal(b.id)>0 ? 1 : 0;
+    return bp-ap;
   });
 }
 
@@ -5114,11 +5121,18 @@ function openCustomerHistoryModal(customerId){
 let customersSearchQuery = '';
 function customersMatchingSearch(){
   const q = customersSearchQuery.trim().toLowerCase();
-  const rows = appData.customers||[];
-  if(!q) return rows;
-  return rows.filter(c=>{
-    const hay = [c.name, c.phone].join(' ').toLowerCase();
-    return hay.includes(q);
+  let rows = appData.customers||[];
+  if(q){
+    rows = rows.filter(c=>{
+      const hay = [c.name, c.phone].join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }
+  // اللي لازم يرجعلهم مبلغ (بانتظار التحويل) يطلعوا فوق
+  return [...rows].sort((a,b)=>{
+    const ap = customerRefundTotal(a.id)>0 ? 1 : 0;
+    const bp = customerRefundTotal(b.id)>0 ? 1 : 0;
+    return bp-ap;
   });
 }
 
