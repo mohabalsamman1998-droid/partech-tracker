@@ -3358,7 +3358,6 @@ function treasuryAmerCustodyRowHtml(){
   return '<div class="expense-category-row">' +
     '<span class="expense-category-label">عهدة عامر (سداد التشاليح)</span>' +
     '<span class="num text-green expense-category-subtotal" data-subtotal-key="amerCustody">'+fmtSigned(categorySubtotal('amerCustody'))+'</span>' +
-    '<button type="button" class="btn btn-ghost btn-sm" id="btn-withdraw-amer-custody">➖ سحب من العهدة</button>' +
     '<button type="button" class="expense-history-btn" data-history-key="amerCustody" data-history-label="عهدة عامر">📋 '+count+'</button>' +
   '</div>';
 }
@@ -3584,13 +3583,12 @@ function bindTreasuryAddButtons(){
       openExpenseHistoryModal(key, label);
     });
   });
-  const withdrawBtn = document.getElementById('btn-withdraw-amer-custody');
-  if(withdrawBtn) withdrawBtn.addEventListener('click', openWithdrawCustodyModal);
 }
 
 /* سحب من عهدة عامر يدويًا — يرجع المبلغ للصندوق مباشرة (بنفس آلية "كاش" عند تحصيل مرتجع
-   تشليح: قيد سالب بعهدة عامر يقلّل رصيدها ويزيد صافي الصندوق بنفس المبلغ). */
-function openWithdrawCustodyModal(){
+   تشليح: قيد سالب بعهدة عامر يقلّل رصيدها ويزيد صافي الصندوق بنفس المبلغ).
+   onSaved: دالة تحديث الشاشة بعد الحفظ — افتراضيًا شاشة الصندوق، أو شاشة سداد التشاليح لو استُدعيت منها. */
+function openWithdrawCustodyModal(onSaved){
   const root = document.getElementById('modal-root');
   root.innerHTML =
     '<div class="modal-backdrop" data-close-backdrop>' +
@@ -3622,7 +3620,7 @@ function openWithdrawCustodyModal(){
     const newEntry = { id: uid('exp'), amount: -amount, date: isoToDmy(dateInput.value), note: (noteInput.value||'').trim() || 'سحب من عهدة عامر' };
     appData.treasury.amerCustody.push(newEntry);
     close();
-    renderTreasuryView();
+    (onSaved||renderTreasuryView)();
     await persistTreasuryEntry(newEntry, 'amerCustody');
     showToast('تم السحب من العهدة وإضافة المبلغ للصندوق', 'ok');
   });
@@ -5833,7 +5831,10 @@ function renderScrapyardView(){
     '<div class="total-box" style="margin-bottom:18px;"><span>إجمالي المستحق للسداد</span><span class="num text-amber">'+fmtMoney(total)+'</span></div>' +
     (kind==='used' ? '<div class="total-box" style="margin-bottom:18px;"><span>رصيد المشتريات</span><span class="num '+(custodyBalance<0?'text-rust':'text-green')+'">'+fmtMoney(custodyBalance)+'</span></div>' : '') +
     (kind==='used' ? '<div class="total-box" style="margin-bottom:18px;"><span>المتبقي للسداد</span><span class="num '+(remainingToPay>0?'text-rust':'text-green')+'">'+fmtMoney(remainingToPay)+'</span></div>' : '') +
-    (kind==='used' && canManage ? '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-amer-custody-topup" style="margin-bottom:18px;">+ سداد لعهدة المشتريات</button>' : '') +
+    (kind==='used' && canManage ? '<div style="display:flex;gap:8px;margin-bottom:18px;">' +
+      '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-amer-custody-topup">+ سداد لعهدة المشتريات</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" id="btn-withdraw-amer-custody">➖ سحب من العهدة</button>' +
+    '</div>' : '') +
     (kind==='used' ? scrapyardSupplierTotalsHtml() : '') +
     scrapyardReturnReceivablesHtml() +
     '<div class="section-block"><div class="section-head"><span class="section-title">القطع (غير المسدّدة)</span>' +
@@ -6102,6 +6103,13 @@ function bindScrapyardEvents(){
     appData.treasury.amerCustody.push(newEntry);
     editingExpenseEntries[newEntry.id] = true;
     openExpenseHistoryModal('amerCustody', 'عهدة المشتريات', ()=>{
+      scrapyardSharedState.custodyBalance = amerCustodyBalance();
+      renderScrapyardView();
+    });
+  });
+  const withdrawCustodyBtn = document.getElementById('btn-withdraw-amer-custody');
+  if(withdrawCustodyBtn) withdrawCustodyBtn.addEventListener('click', ()=>{
+    openWithdrawCustodyModal(()=>{
       scrapyardSharedState.custodyBalance = amerCustodyBalance();
       renderScrapyardView();
     });
