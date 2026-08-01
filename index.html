@@ -497,6 +497,7 @@
   .btn-add-used-part:hover{background:rgba(232,178,61,.22);border-color:var(--amber);}
   .part-row{display:flex;gap:8px;align-items:flex-end;background:var(--surface);border:1px solid var(--border-soft);border-radius:var(--radius-sm);padding:10px;}
   .part-include-check{flex-shrink:0;align-self:center;width:18px;height:18px;accent-color:var(--green);cursor:pointer;}
+  .part-return-select-check{flex-shrink:0;align-self:center;width:18px;height:18px;accent-color:var(--rust);cursor:pointer;}
   .part-row-excluded{opacity:.5;}
   .part-row-excluded .part-desc-input{text-decoration:line-through;}
   .part-row-returned{opacity:.7;background:var(--surface-2);}
@@ -574,6 +575,8 @@
   .payments-block{margin-top:14px;}
   .payments-list{display:flex;flex-direction:column;gap:8px;margin-bottom:10px;}
   .payment-row{display:flex;gap:8px;align-items:center;background:var(--surface);border:1px solid var(--border-soft);border-radius:var(--radius-sm);padding:8px 10px;flex-wrap:wrap;}
+  .payment-row-return{background:var(--rust-dim);border-color:var(--rust-line);justify-content:space-between;}
+  .payment-return-label{color:var(--rust);font-weight:800;font-size:13.5px;font-family:'Cairo',sans-serif;}
   .payment-amount-input{
     width:100px;background:var(--bg);border:1px solid var(--border);color:var(--text);
     padding:7px 9px;border-radius:6px;font-size:13px;
@@ -1002,6 +1005,19 @@ function orderActiveParts(order){
   return order.partsSelectionEnabled ? parts.filter(p=>p.included!==false) : parts;
 }
 
+/* إجمالي دفعات الزبون الفعلي — يستبعد أي دفعة "مرتجع" (returnAdjustment) لسه ما تحصّل مبلغها من المورد؛
+   بمجرد ما تُحصّل (part.returnCollected) الدفعة ترجع تُحسب عاديًا لأن مبلغها "رجع للحسابات" فعليًا. */
+function computeCustomerPaidAmount(order, excludePaymentId){
+  return (order.customerPayments||[]).reduce((sum,p)=>{
+    if(excludePaymentId && p.id===excludePaymentId) return sum;
+    const amt = Number(p.amount)||0;
+    if(!p.returnAdjustment) return sum + amt;
+    const linkedPart = (order.parts||[]).find(pp=>pp.id===p.linkedPartId);
+    const restored = linkedPart && linkedPart.returnHasReceivable && linkedPart.returnCollected;
+    return restored ? sum : sum - amt;
+  }, 0);
+}
+
 function orderTotals(order){
   let costTotal = 0, costToScrapyard = 0, costToSupplier = 0, partsSellTotal = 0, pricedCount = 0, sellEligibleCount = 0;
   const activeParts = orderActiveParts(order);
@@ -1037,7 +1053,7 @@ function orderTotals(order){
   const deliveryFeeEnabled = !!order.deliveryFeeEnabled;
   const deliveryFeeAmount = (hasSell && deliveryFeeEnabled) ? round2(Number(order.deliveryFeeAmount)||0) : 0;
   const sellTotal = partsSellTotal + feeAmount + serviceFeeAmount + deliveryFeeAmount; // المبلغ الكامل المستحق من الزبون (شامل نسبة الخدمة، نسبة الخدمات، وأجور التوصيل)
-  const customerPaidAmount = (order.customerPayments||[]).reduce((sum,p)=> sum + (Number(p.amount)||0), 0);
+  const customerPaidAmount = round2(computeCustomerPaidAmount(order));
   const customerRemaining = hasSell ? round2(sellTotal - customerPaidAmount) : 0;
   const customerFullyPaid = hasSell && customerRemaining <= 0.01;
   const profit = sellTotal - costTotal;
@@ -1080,7 +1096,7 @@ function orderStatusFlags(order){
     waitingSupplierPayment: t.costToSupplier>0 && !order.paidToSupplier,
     waitingSupply: order.confirmed && !order.supplied,
     waitingPricing: !t.hasSell,
-    waitingCustomerPayment: t.hasSell && !t.customerFullyPaid,
+    waitingCustomerPayment: order.confirmed && order.supplied && t.hasSell && !t.customerFullyPaid,
     complete: order.confirmed && (t.costToScrapyard===0 || order.paidToAmer) && (t.costToSupplier===0 || order.paidToSupplier) && t.customerFullyPaid && t.fullyPriced
   });
 }
@@ -1457,6 +1473,12 @@ function renderTable(){
 /* ---------- modal (create/edit) ---------- */
 function paymentRowHtml(p){
   const amountVal = (p.amount===''||p.amount==null) ? '' : p.amount;
+  if(p.returnAdjustment){
+    return '<div class="payment-row payment-row-return" data-payment-id="'+p.id+'">' +
+      '<span class="payment-return-label">'+fmtMoney(Number(p.amount)||0)+' مرتجع</span>' +
+      '<span class="payment-date-display">'+escapeHtml(p.date||'')+'</span>' +
+    '</div>';
+  }
   return '<div class="payment-row" data-payment-id="'+p.id+'">' +
     '<input type="number" min="0" step="0.01" class="payment-amount-input num" placeholder="المبلغ" value="'+amountVal+'">' +
     '<select class="payment-method-select">' +
@@ -1578,6 +1600,9 @@ function bindPartAddControls(){
   });
 }
 
+let partReturnSelectionMode = false; // فعّال بعد الضغط على زر "إرجاع" بجانب "حذف الطلبية" — يظهر خانة تحديد بجانب كل قطعة
+let partReturnSelected = {}; // part_id -> true — القطع المحدَّدة حاليًا للإرجاع (قبل تأكيد الدفعة)
+
 function partRowHtml(p, i){
   const costVal = (p.costPrice===''||p.costPrice==null) ? '' : p.costPrice;
   const sellVal = (p.sellPrice===''||p.sellPrice==null) ? '' : p.sellPrice;
@@ -1602,6 +1627,7 @@ function partRowHtml(p, i){
   }
 
   return '<div class="part-row'+(selectionOn && !included ? ' part-row-excluded' : '')+'" data-part-id="'+p.id+'">' +
+    (partReturnSelectionMode ? '<input type="checkbox" class="part-return-select-check" '+(partReturnSelected[p.id]?'checked':'')+' title="تحديد للإرجاع">' : '') +
     (selectionOn ? '<input type="checkbox" class="part-include-check" '+(included?'checked':'')+' title="مشمولة بالطلبية">' : '') +
     '<div class="part-desc-wrap">' +
       '<div class="part-desc-row">' +
@@ -1623,7 +1649,6 @@ function partRowHtml(p, i){
         '</label>'
       )) +
     '</div>' +
-    '<button type="button" class="icon-btn" data-return-part="'+p.id+'" title="تسجيل إرجاع" aria-label="تسجيل إرجاع">🔄</button>' +
     '<button type="button" class="part-remove-btn" data-remove-part="'+p.id+'" aria-label="حذف القطعة">✕</button>' +
   '</div>';
 }
@@ -1695,6 +1720,7 @@ function modalHtml(d){
       '<div class="modal-footer">' +
         '<div class="modal-footer-utility">' +
           (!d.isNew ? '<button type="button" class="btn btn-sm btn-danger-ghost" id="modal-delete-btn">حذف الطلبية</button>' : '') +
+          (!d.isNew ? '<span id="return-mode-controls">'+returnModeControlsHtml()+'</span>' : '') +
           '<div class="parts-clipboard-mini">' +
             '<button type="button" class="btn-clip-mini" id="copy-parts-btn">📋 نسخ</button>' +
             '<button type="button" class="btn-clip-mini" id="paste-parts-btn">📥 لصق</button>' +
@@ -1713,6 +1739,8 @@ function modalHtml(d){
 
 function openModal(mode, orderId){
   selectedPartType = null;
+  partReturnSelectionMode = false;
+  partReturnSelected = {};
   if(mode==='create'){
     draft = {
       id: uid('ord'),
@@ -1770,6 +1798,8 @@ function attachModalHandlers(){
   });
   root.querySelector('#modal-close-btn').addEventListener('click', closeModal);
   root.querySelector('#modal-cancel-btn').addEventListener('click', closeModal);
+
+  bindReturnModeControls();
 
   root.querySelector('#order-label-input').addEventListener('input', e=>{ draft.orderLabel = e.target.value; });
   root.querySelector('#order-customer-select').addEventListener('change', e=>{
@@ -1998,27 +2028,11 @@ function bindPartRowEvents(){
         });
       });
     }
-    const returnBtn = row.querySelector('[data-return-part]');
-    if(returnBtn){
-      returnBtn.addEventListener('click', ()=>{
-        const hasReceivable = part.used ? draft.paidToAmer : draft.paidToSupplier;
-        if(hasReceivable && !part.supplierId){
-          showToast('حدد المورد لهذه القطعة أولًا حتى نقدر نتابع المبلغ المسترجع منه', 'error');
-          return;
-        }
-        confirmAction({
-          title: 'تسجيل إرجاع هذه القطعة؟',
-          message: (part.description ? 'القطعة: '+part.description+'. ' : '') +
-            (hasReceivable ? 'تم دفعها مسبقًا للمورد — رح يظهر مبلغها كمسترجع بانتظار التحصيل بشاشة الموردين.' : 'لسه ما انسددت — رح تُستبعد من حسابات الطلبية مباشرة.'),
-          confirmLabel: 'تأكيد الإرجاع',
-          dangerous: true,
-          onConfirm: ()=>{
-            part.returned = true;
-            part.returnHasReceivable = hasReceivable;
-            part.returnCollected = false;
-            refreshPartsList();
-          }
-        });
+    const returnSelectCheck = row.querySelector('.part-return-select-check');
+    if(returnSelectCheck){
+      returnSelectCheck.addEventListener('change', e=>{
+        if(e.target.checked) partReturnSelected[pid] = true; else delete partReturnSelected[pid];
+        refreshReturnModeControls();
       });
     }
     const undoReturnBtn = row.querySelector('[data-undo-return-part]');
@@ -2032,7 +2046,9 @@ function bindPartRowEvents(){
             delete part.returned;
             delete part.returnHasReceivable;
             delete part.returnCollected;
+            draft.customerPayments = (draft.customerPayments||[]).filter(p=>!(p.returnAdjustment && p.linkedPartId===pid));
             refreshPartsList();
+            refreshPaymentsList();
           }
         });
       });
@@ -2048,41 +2064,131 @@ function refreshPartsList(){
   updateModalTotals();
 }
 
+/* زر "إرجاع" جنب "حذف الطلبية" — يفعّل وضع تحديد القطع، وبعدها زر تأكيد يطبّق الإرجاع دفعة وحدة */
+function returnModeControlsHtml(){
+  const selectedCount = Object.keys(partReturnSelected).length;
+  return '<button type="button" class="btn btn-sm btn-ghost" id="modal-toggle-return-btn">'+(partReturnSelectionMode?'✕ إلغاء التحديد':'🔄 إرجاع')+'</button>' +
+    (partReturnSelectionMode ? '<button type="button" class="btn btn-sm btn-primary" id="modal-confirm-return-btn"'+(selectedCount?'':' disabled')+'>✅ تأكيد إرجاع المحدد ('+selectedCount+')</button>' : '');
+}
+
+function refreshReturnModeControls(){
+  const wrap = document.getElementById('return-mode-controls');
+  if(!wrap) return;
+  wrap.innerHTML = returnModeControlsHtml();
+  bindReturnModeControls();
+}
+
+function bindReturnModeControls(){
+  const toggleBtn = document.getElementById('modal-toggle-return-btn');
+  if(toggleBtn){
+    toggleBtn.addEventListener('click', ()=>{
+      partReturnSelectionMode = !partReturnSelectionMode;
+      if(!partReturnSelectionMode) partReturnSelected = {};
+      refreshPartsList();
+      refreshReturnModeControls();
+    });
+  }
+  const confirmBtn = document.getElementById('modal-confirm-return-btn');
+  if(confirmBtn){
+    confirmBtn.addEventListener('click', ()=>{
+      const selectedIds = Object.keys(partReturnSelected).filter(id=>partReturnSelected[id]);
+      if(!selectedIds.length) return;
+      const selectedParts = draft.parts.filter(p=>selectedIds.includes(p.id));
+      const missingSupplier = selectedParts.some(p=>{
+        const hasReceivable = p.used ? draft.paidToAmer : draft.paidToSupplier;
+        return hasReceivable && !p.supplierId;
+      });
+      if(missingSupplier){
+        showToast('حدد المورد لكل قطعة مدفوعة مسبقًا قبل تأكيد الإرجاع', 'error');
+        return;
+      }
+      const anyPaid = selectedParts.some(p=> p.used ? draft.paidToAmer : draft.paidToSupplier);
+      confirmAction({
+        title: 'تأكيد إرجاع '+selectedIds.length+' قطعة؟',
+        message: anyPaid
+          ? 'بعض القطع مدفوعة مسبقًا — مبلغها رح يظهر كمسترجع بانتظار التحصيل بشاشة الموردين، وينخصم من دفعة الزبون تلقائيًا.'
+          : 'رح تُستبعد من حسابات الطلبية مباشرة.',
+        confirmLabel: 'تأكيد الإرجاع',
+        dangerous: true,
+        onConfirm: ()=>{
+          selectedParts.forEach(p=> applyPartReturn(p));
+          partReturnSelected = {};
+          partReturnSelectionMode = false;
+          refreshPartsList();
+          refreshPaymentsList();
+          refreshReturnModeControls();
+        }
+      });
+    });
+  }
+}
+
+/* تطبيق إرجاع قطعة وحدة: تعليمها كمرتجعة، وإذا كان الزبون دفع أكثر من المطلوب بعد استبعادها
+   (يعني كان دفع ثمنها ضمن دفعاته) نضيف تلقائيًا دفعة "مرتجع" سالبة الأثر تعادل الفرق،
+   لحد ما يُحصّل مبلغها من المورد (عندها تُلغى تلقائيًا وترجع للحسابات — orderTotals يتكفّل بهيك). */
+function applyPartReturn(part){
+  const hasReceivable = part.used ? draft.paidToAmer : draft.paidToSupplier;
+  part.returned = true;
+  part.returnHasReceivable = hasReceivable;
+  part.returnCollected = false;
+
+  const sellAmount = (part.sellPrice!==null && part.sellPrice!==undefined && part.sellPrice!=='') ? (Number(part.qty)||1)*Number(part.sellPrice) : 0;
+  if(sellAmount<=0) return;
+
+  const t = orderTotals(draft);
+  const overpay = round2(t.customerPaidAmount - (t.hasSell ? t.sellTotal : 0));
+  if(overpay > 0.01){
+    const refundAmount = round2(Math.min(overpay, sellAmount));
+    if(!Array.isArray(draft.customerPayments)) draft.customerPayments = [];
+    draft.customerPayments.push({
+      id: uid('pay'), amount: refundAmount, method: 'مرتجع', date: todayNumeric(),
+      returnAdjustment: true, linkedPartId: part.id
+    });
+  }
+}
+
 function bindPaymentRowEvents(){
   const root = document.getElementById('modal-root');
   root.querySelectorAll('.payment-row').forEach(row=>{
     const pid = row.getAttribute('data-payment-id');
     const payment = (draft.customerPayments||[]).find(p=>p.id===pid);
     if(!payment) return;
-    row.querySelector('.payment-amount-input').addEventListener('input', e=>{
-      let val = e.target.value===''? '' : Number(e.target.value);
-      if(val !== '' && val < 0) val = 0;
-      const t = orderTotals(draft);
-      if(t.hasSell && val !== ''){
-        const othersTotal = (draft.customerPayments||[]).reduce((sum,p)=> p.id===pid ? sum : sum + (Number(p.amount)||0), 0);
-        const maxAllowed = round2(Math.max(0, t.sellTotal - othersTotal));
-        if(val > maxAllowed){
-          val = maxAllowed;
-          e.target.value = val;
-          showToast('لا يمكن أن يتجاوز مجموع الدفعات المبلغ المستحق من الزبون ('+fmtMoney(t.sellTotal)+')', 'error');
+    const amountInput = row.querySelector('.payment-amount-input');
+    if(amountInput){
+      amountInput.addEventListener('input', e=>{
+        let val = e.target.value===''? '' : Number(e.target.value);
+        if(val !== '' && val < 0) val = 0;
+        const t = orderTotals(draft);
+        if(t.hasSell && val !== ''){
+          const othersTotal = computeCustomerPaidAmount(draft, pid);
+          const maxAllowed = round2(Math.max(0, t.sellTotal - othersTotal));
+          if(val > maxAllowed){
+            val = maxAllowed;
+            e.target.value = val;
+            showToast('لا يمكن أن يتجاوز مجموع الدفعات المبلغ المستحق من الزبون ('+fmtMoney(t.sellTotal)+')', 'error');
+          }
         }
-      }
-      payment.amount = val;
-      updateModalTotals();
-    });
-    row.querySelector('.payment-method-select').addEventListener('change', e=>{ payment.method = e.target.value; });
-    row.querySelector('[data-remove-payment]').addEventListener('click', ()=>{
-      confirmAction({
-        title: 'حذف هذه الدفعة؟',
-        message: payment.amount ? 'المبلغ: '+fmtMoney(payment.amount) : undefined,
-        confirmLabel: 'تأكيد الحذف',
-        dangerous: true,
-        onConfirm: ()=>{
-          draft.customerPayments = draft.customerPayments.filter(p=>p.id!==pid);
-          refreshPaymentsList();
-        }
+        payment.amount = val;
+        updateModalTotals();
       });
-    });
+    }
+    const methodSelect = row.querySelector('.payment-method-select');
+    if(methodSelect) methodSelect.addEventListener('change', e=>{ payment.method = e.target.value; });
+    const removeBtn = row.querySelector('[data-remove-payment]');
+    if(removeBtn){
+      removeBtn.addEventListener('click', ()=>{
+        confirmAction({
+          title: 'حذف هذه الدفعة؟',
+          message: payment.amount ? 'المبلغ: '+fmtMoney(payment.amount) : undefined,
+          confirmLabel: 'تأكيد الحذف',
+          dangerous: true,
+          onConfirm: ()=>{
+            draft.customerPayments = draft.customerPayments.filter(p=>p.id!==pid);
+            refreshPaymentsList();
+          }
+        });
+      });
+    }
   });
 }
 
@@ -2161,7 +2267,7 @@ async function onSaveOrder(){
   if(cleanedParts.length===0){ showToast('لازم تضيف وصف لقطعة وحدة على الأقل', 'error'); return false; }
 
   const paymentsMissingMethod = (draft.customerPayments||[]).some(p=>
-    p.amount!=='' && p.amount!=null && Number(p.amount)>0 && !p.method
+    !p.returnAdjustment && p.amount!=='' && p.amount!=null && Number(p.amount)>0 && !p.method
   );
   if(paymentsMissingMethod){
     showToast('لازم تحدد طريقة الدفع (كاش/شبكة) لكل دفعة قبل الحفظ', 'error');
@@ -2174,13 +2280,14 @@ async function onSaveOrder(){
       id:p.id,
       amount: Number(p.amount)||0,
       method: p.method||'',
-      date: (p.date||'').trim()
+      date: (p.date||'').trim(),
+      returnAdjustment: !!p.returnAdjustment,
+      linkedPartId: p.linkedPartId || null
     }));
 
   const totalsCheck = orderTotals(draft);
-  const totalPaidCheck = cleanedPayments.reduce((sum,p)=> sum + p.amount, 0);
-  if(totalsCheck.hasSell && totalPaidCheck > totalsCheck.sellTotal + 0.01){
-    showToast('مجموع الدفعات ('+fmtMoney(totalPaidCheck)+') يتجاوز المبلغ المستحق من الزبون ('+fmtMoney(totalsCheck.sellTotal)+')', 'error');
+  if(totalsCheck.hasSell && totalsCheck.customerRemaining < -0.01){
+    showToast('مجموع الدفعات يتجاوز المبلغ المستحق من الزبون ('+fmtMoney(totalsCheck.sellTotal)+')', 'error');
     return false;
   }
 
