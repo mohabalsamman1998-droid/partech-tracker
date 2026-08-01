@@ -1744,10 +1744,7 @@ function modalHtml(d){
           '</div>' +
           '<div class="payments-block">' +
             '<div id="payments-list" class="payments-list">'+(d.customerPayments||[]).map(paymentRowHtml).join('')+'</div>' +
-            '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
-              '<button type="button" id="add-payment-btn" class="btn btn-ghost btn-sm">+ إضافة دفعة</button>' +
-              (!d.isNew ? '<button type="button" id="save-continue-btn" class="btn btn-ghost btn-sm">💾 حفظ</button>' : '') +
-            '</div>' +
+            '<button type="button" id="add-payment-btn" class="btn btn-ghost btn-sm">+ إضافة دفعة</button>' +
             '<div class="payment-summary-row">' +
               '<span>إجمالي المدفوع<span class="num" id="total-paid-display">0 ر.س</span></span>' +
               '<span><span id="customer-remaining-label">المتبقي عليه</span><span class="num payment-remaining-display" id="customer-remaining-display">0 ر.س</span></span>' +
@@ -1970,10 +1967,7 @@ function attachModalHandlers(){
 
   bindPartRowEvents();
 
-  root.querySelector('#modal-save-btn').addEventListener('click', ()=> onSaveOrder());
-
-  const saveContinueBtn = root.querySelector('#save-continue-btn');
-  if(saveContinueBtn) saveContinueBtn.addEventListener('click', confirmSaveKeepOpen);
+  root.querySelector('#modal-save-btn').addEventListener('click', onSaveOrder);
 
   const delBtn = root.querySelector('#modal-delete-btn');
   if(delBtn){
@@ -2320,7 +2314,7 @@ function orderCustomerRefundStatusHtml(order){
     (confirmedTotal>0 ? '<div class="customer-refund-status customer-refund-status-done">✅ تم إرجاع '+fmtMoney(confirmedTotal)+' للزبون</div>' : '');
 }
 
-async function onSaveOrder(keepOpen){
+async function onSaveOrder(){
   if(!draft.orderNumber || !draft.orderNumber.trim()){
     showToast('لازم تكتب رقم الطلب', 'error'); return false;
   }
@@ -2376,32 +2370,13 @@ async function onSaveOrder(keepOpen){
   if(idx>=0) appData.orders[idx]=draft; else appData.orders.push(draft);
 
   await persistOrder(draft);
-  if(keepOpen){
-    editingPayments = {};
-    const root = document.getElementById('modal-root');
-    root.innerHTML = modalHtml(draft);
-    attachModalHandlers();
-    updateModalTotals();
-  } else {
-    closeModal();
-  }
+  closeModal();
   renderKPIs();
   renderTable();
   updateCustomersBadge();
   updateSuppliersBadge();
   showToast('تم حفظ الطلبية', 'ok');
   return true;
-}
-
-/* حفظ بدون إغلاق النافذة — مفيد لإضافة دفعات على دفعات بدون ما تفتح وتسكر الطلبية كل مرة.
-   تأكيد صريح قبل التنفيذ لأنه بيحفظ فورًا كل تعديل/حذف صار لحد الآن بالطلبية (قطع، دفعات، ...). */
-function confirmSaveKeepOpen(){
-  confirmAction({
-    title: 'تأكيد حفظ التعديلات؟',
-    message: 'رح يُحفظ كل تغيير سويته لحد الآن (دفعات، قطع، إلخ) بدون إغلاق النافذة.',
-    confirmLabel: 'حفظ',
-    onConfirm: ()=> onSaveOrder(true)
-  });
 }
 
 /* ---------- contact customer: call or WhatsApp, from either the orders list or inside the order modal ---------- */
