@@ -1123,7 +1123,7 @@ function orderStatusFlags(order){
 }
 
 function defaultTreasury(){
-  return { delivery:[], transport:[], unexpectedLosses:[], salaries:[], hr:[], other:[], support:[] };
+  return { delivery:[], transport:[], unexpectedLosses:[], salaries:[], hr:[], other:[], support:[], amerCustody:[] };
 }
 
 function defaultTasks(){
@@ -1317,7 +1317,7 @@ function renderKPIs(){
   const returnsOwedToUs = totalSupplierReturnReceivables();
   el.innerHTML =
     '<div class="kpi-card"><div class="kpi-label">الطلبيات المؤكدة</div><div class="kpi-value num">'+f.confirmedCount+'</div>'+(f.unconfirmedCount>0?'<div class="kpi-sub">+ '+f.unconfirmedCount+' بانتظار التأكيد</div>':'')+'</div>' +
-    '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للتشليح</div><div class="kpi-value num">'+fmtMoney(f.dueToScrapyard)+'</div></div>' +
+    '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للتشليح</div><div class="kpi-value num">'+fmtMoney(round2(amerCustodyDeficit()+f.dueToScrapyard))+'</div></div>' +
     '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للموردين</div><div class="kpi-value num">'+fmtMoney(f.dueToSuppliers)+'</div></div>' +
     '<div class="kpi-card kpi-amber"><div class="kpi-label">مستحق من الزبائن</div><div class="kpi-value num">'+fmtMoney(f.dueFromCustomers)+'</div></div>' +
     (returnsOwedToUs>0 ? '<div class="kpi-card kpi-green"><div class="kpi-label">لنا من التشاليح/الموردين (مرتجعات)</div><div class="kpi-value num">'+fmtMoney(returnsOwedToUs)+'</div></div>' : '');
@@ -3256,19 +3256,24 @@ function treasuryTotals(){
     (appData.treasury[c.key]||[]).filter(entryMatchesExtraIndicatorsPeriod).forEach(entry=>{ extraIndicatorsExpenses += Number(entry.amount)||0; });
   });
   const extraIndicatorsSupport = treasurySupportTotal(entryMatchesExtraIndicatorsPeriod);
-  // صافي الصندوق = نقدي حقيقي: كل ما دفعه الزبائن + دعم خارجي، ناقص كل ما دُفع فعليًا للموردين والتشليح، ناقص مصاريف الصندوق
-  const net = round2(f.customerReceiptsTotal + extraIndicatorsSupport - f.paidToSuppliersTotal - f.paidToScrapyardTotal - extraIndicatorsExpenses);
-  // الصندوق بافتراض انتهاء التحصيل والسداد = لو تحصّلت كل ديون الزبائن ودُفعت كل مستحقات الموردين/التشاليح،
+  const extraIndicatorsAmerCustody = amerCustodyTopupsTotal(entryMatchesExtraIndicatorsPeriod);
+  const custodyDeficit = amerCustodyDeficit();
+  // صافي الصندوق = نقدي حقيقي: كل ما دفعه الزبائن + دعم خارجي، ناقص كل ما دُفع فعليًا للموردين + كل ما سُدد لعهدة عامر، ناقص مصاريف الصندوق
+  // (سداد طلبية "تم سداد التشليح" ما يأثر على الصندوق مباشرة — يُخصم من عهدة عامر بس، لحد ما تسدد لعهدة عامر فعليًا)
+  const net = round2(f.customerReceiptsTotal + extraIndicatorsSupport - f.paidToSuppliersTotal - extraIndicatorsAmerCustody - extraIndicatorsExpenses);
+  // الصندوق بافتراض انتهاء التحصيل والسداد = لو تحصّلت كل ديون الزبائن، ودُفعت كل مستحقات الموردين،
+  // وسدّدت عجز عهدة عامر (اللي دفعه فعليًا للتشاليح ولسه ما رجّعتله) + كل الطلبيات يلي لسه ما تسدد للتشليح،
   // وكمان لو تحصّلت كل مرتجعات الموردين المعلّقة ورجعت كل مبالغ العملاء المعلّقة
-  const netAfterSettlement = round2(net + f.dueFromCustomers - f.dueToScrapyard - f.dueToSuppliers + totalSupplierReturnReceivables() - totalCustomerRefundsPending());
-  // الديون للموردين = إجمالي المستحق غير المسدد للتشاليح والموردين معًا
-  const debtsToSuppliers = round2(f.dueToScrapyard + f.dueToSuppliers);
+  const netAfterSettlement = round2(net + f.dueFromCustomers - custodyDeficit - f.dueToScrapyard - f.dueToSuppliers + totalSupplierReturnReceivables() - totalCustomerRefundsPending());
+  // الديون للموردين = عجز عهدة عامر (تشاليح مدفوعة فعليًا ولسه ما رجّعتلها) + الطلبيات يلي لسه ما تسدد للتشليح + المستحق للموردين
+  const debtsToSuppliers = round2(custodyDeficit + f.dueToScrapyard + f.dueToSuppliers);
   const volumes = computeTreasuryVolumes();
   // صافي الأرباح الشهرية = أرباح الطلبيات المحصّلة بالشهر المحدد ناقص مصاريف نفس الشهر (بنفس فلتر مؤشرات إضافية)
   const netProfitVolume = round2(volumes.profitVolume - extraIndicatorsExpenses);
   return {
     totalExpenses, totalSupport, net, netAfterSettlement, debtsToSuppliers, dueFromCustomers: f.dueFromCustomers, uncollectedProfit: f.uncollectedProfit,
-    purchaseVolume: volumes.purchaseVolume, salesVolume: volumes.salesVolume, profitVolume: volumes.profitVolume, netProfitVolume: netProfitVolume
+    purchaseVolume: volumes.purchaseVolume, salesVolume: volumes.salesVolume, profitVolume: volumes.profitVolume, netProfitVolume: netProfitVolume,
+    amerCustodyBalance: amerCustodyBalance(), amerCustodyDeficit: custodyDeficit
   };
 }
 
@@ -3292,7 +3297,7 @@ function categorySubtotal(key){
 
 function expenseEntryRowHtml(entry, categoryKey){
   const isEditing = !!editingExpenseEntries[entry.id];
-  const isSupport = categoryKey === 'support';
+  const isSupport = categoryKey === 'support' || categoryKey === 'amerCustody';
   const colorClass = isSupport ? 'text-green' : 'text-rust';
   if(!isEditing){
     const amountText = (entry.amount===''||entry.amount==null) ? '—' : (isSupport?'+':'')+fmtMoney(entry.amount);
@@ -3319,8 +3324,20 @@ function treasurySupportRowHtml(){
   return '<div class="expense-category-row">' +
     '<span class="expense-category-label">دعم الصندوق من الخارج</span>' +
     '<span class="num text-green expense-category-subtotal" data-subtotal-key="support">+'+fmtMoney(categorySubtotal('support'))+'</span>' +
-    '<button type="button" class="btn btn-ghost btn-sm expense-add-entry-btn" data-add-entry-key="support">+ إضافة دعم</button>' +
+    '<button type="button" class="btn btn-ghost btn-sm expense-add-entry-btn" data-add-entry-key="support" data-add-entry-label="دعم الصندوق من الخارج">+ إضافة دعم</button>' +
     '<button type="button" class="expense-history-btn" data-history-key="support" data-history-label="دعم الصندوق من الخارج">📋 '+count+'</button>' +
+  '</div>';
+}
+
+/* عهدة عامر — مبلغ تسدّده لعامر يُخصم من الصندوق فورًا، ويُعتبر تسديدًا لحساب التشاليح
+   (بدل ما تُخصم كل طلبية "تم سداد التشليح" من الصندوق مباشرة، تُخصم من هذه العهدة). */
+function treasuryAmerCustodyRowHtml(){
+  const count = (appData.treasury.amerCustody || []).filter(entryMatchesPeriod).length;
+  return '<div class="expense-category-row">' +
+    '<span class="expense-category-label">عهدة عامر (سداد التشاليح)</span>' +
+    '<span class="num text-green expense-category-subtotal" data-subtotal-key="amerCustody">+'+fmtMoney(categorySubtotal('amerCustody'))+'</span>' +
+    '<button type="button" class="btn btn-ghost btn-sm expense-add-entry-btn" data-add-entry-key="amerCustody" data-add-entry-label="عهدة عامر">+ سداد لعهدة عامر</button>' +
+    '<button type="button" class="expense-history-btn" data-history-key="amerCustody" data-history-label="عهدة عامر">📋 '+count+'</button>' +
   '</div>';
 }
 
@@ -3369,6 +3386,11 @@ function renderTreasuryView(){
       '<span class="treasury-profit-value text-rust">'+fmtMoney(t.debtsToSuppliers)+'</span>' +
     '</div>' +
     '<div class="treasury-profit-card">' +
+      '<span class="treasury-profit-label">رصيد عهدة عامر</span>' +
+      '<span class="treasury-profit-value '+(t.amerCustodyBalance<0?'text-rust':'text-green')+'">'+fmtMoney(t.amerCustodyBalance)+'</span>' +
+      (t.amerCustodyDeficit>0 ? '<div class="kpi-sub" style="color:var(--rust);">عليك سداد '+fmtMoney(t.amerCustodyDeficit)+' لعامر</div>' : '') +
+    '</div>' +
+    '<div class="treasury-profit-card">' +
       '<span class="treasury-profit-label">مستحق من الزبائن</span>' +
       '<span class="treasury-profit-value">'+fmtMoney(t.dueFromCustomers)+'</span>' +
     '</div>' +
@@ -3399,10 +3421,12 @@ function renderTreasuryView(){
         '<div class="expense-categories">' +
           EXPENSE_CATEGORIES.map(expenseCategoryRowHtml).join('') +
           treasurySupportRowHtml() +
+          treasuryAmerCustodyRowHtml() +
         '</div>' +
         '<div class="treasury-summary">' +
           '<div class="treasury-summary-row"><span>إجمالي المصاريف</span><span class="num text-rust" id="treasury-total-expenses">'+fmtMoney(t.totalExpenses)+'</span></div>' +
           '<div class="treasury-summary-row"><span>إجمالي الدعم الخارجي</span><span class="num text-green" id="treasury-total-support">+'+fmtMoney(t.totalSupport)+'</span></div>' +
+          '<div class="treasury-summary-row"><span>إجمالي عهدة عامر</span><span class="num text-green" id="treasury-total-amer-custody">+'+fmtMoney(amerCustodyTopupsTotal())+'</span></div>' +
         '</div>' +
       '</div>' +
     '</div>' +
@@ -3440,6 +3464,7 @@ function renderTreasuryView(){
   });
   EXPENSE_CATEGORIES.forEach(c=> bindExpenseEntryEvents(c.key));
   bindExpenseEntryEvents('support');
+  bindExpenseEntryEvents('amerCustody');
   bindScrapyardEntryEvents();
   updateScrapyardBadges();
   updateTreasurySummary();
@@ -3528,12 +3553,13 @@ function bindTreasuryAddButtons(){
   const el = document.getElementById('treasury-view');
   el.querySelectorAll('[data-add-entry-key]').forEach(btn=>{
     const key = btn.getAttribute('data-add-entry-key');
+    const label = btn.getAttribute('data-add-entry-label') || 'دعم الصندوق من الخارج';
     btn.addEventListener('click', ()=>{
       if(!Array.isArray(appData.treasury[key])) appData.treasury[key] = [];
       const newEntry = {id: uid('exp'), amount:'', date: todayNumeric(), note:''};
       appData.treasury[key].push(newEntry);
       editingExpenseEntries[newEntry.id] = true;
-      openExpenseHistoryModal(key, 'دعم الصندوق من الخارج');
+      openExpenseHistoryModal(key, label);
     });
   });
 }
@@ -3712,6 +3738,8 @@ function updateTreasurySummary(){
   if(totalEl) totalEl.textContent = fmtMoney(t.totalExpenses);
   const supportEl = document.getElementById('treasury-total-support');
   if(supportEl) supportEl.textContent = '+'+fmtMoney(t.totalSupport);
+  const custodyEl = document.getElementById('treasury-total-amer-custody');
+  if(custodyEl) custodyEl.textContent = '+'+fmtMoney(amerCustodyTopupsTotal());
   const netEl = document.getElementById('treasury-net');
   if(netEl){
     netEl.textContent = fmtMoney(t.net);
@@ -3770,6 +3798,25 @@ function customersWithPendingRefundsCount(){
 
 function totalCustomerRefundsPending(){
   return round2((appData.customers||[]).reduce((sum,c)=> sum + customerRefundTotal(c.id), 0));
+}
+
+/* ---------- عهدة عامر (لسداد التشاليح) ----------
+   بدل ما يُخصم من الصندوق كل ما تُعلَّم طلبية "تم سداد التشليح"، الطلبية تُخصم من عهدة عامر بس.
+   الصندوق يتأثر فقط لحظة إضافة/سداد لعهدة عامر (من هون). عجز العهدة (لو صارت سالبة) = المبلغ
+   اللي لازم تسدده لعامر عشان تغطي اللي دفعه فعليًا للتشاليح ولسه ما رجعتله إياه. */
+function amerCustodyTopupsTotalAll(){
+  return round2((appData.treasury.amerCustody||[]).reduce((sum,entry)=> sum + (Number(entry.amount)||0), 0));
+}
+function amerCustodyTopupsTotal(matchFn){
+  const filterFn = matchFn || entryMatchesPeriod;
+  return round2((appData.treasury.amerCustody||[]).filter(filterFn).reduce((sum,entry)=> sum + (Number(entry.amount)||0), 0));
+}
+function amerCustodyBalance(){
+  const f = computeAggregateFinancials();
+  return round2(amerCustodyTopupsTotalAll() - f.paidToScrapyardTotal);
+}
+function amerCustodyDeficit(){
+  return round2(Math.max(0, -amerCustodyBalance()));
 }
 
 function updateCustomersBadge(){
