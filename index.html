@@ -499,6 +499,8 @@
   .part-include-check{flex-shrink:0;align-self:center;width:18px;height:18px;accent-color:var(--green);cursor:pointer;}
   .part-row-excluded{opacity:.5;}
   .part-row-excluded .part-desc-input{text-decoration:line-through;}
+  .part-row-returned{opacity:.7;background:var(--surface-2);}
+  .part-desc-returned{color:var(--text);font-size:13.5px;font-family:'Tajawal',sans-serif;text-decoration:line-through;}
   .part-desc-row{display:flex;align-items:center;gap:8px;}
   .part-index-badge{
     flex-shrink:0;color:var(--text-dim);font-family:'Cairo',sans-serif;font-weight:800;font-size:12.5px;
@@ -1001,20 +1003,31 @@ function orderActiveParts(order){
 }
 
 function orderTotals(order){
-  let costTotal = 0, costToScrapyard = 0, costToSupplier = 0, partsSellTotal = 0, pricedCount = 0;
+  let costTotal = 0, costToScrapyard = 0, costToSupplier = 0, partsSellTotal = 0, pricedCount = 0, sellEligibleCount = 0;
   const activeParts = orderActiveParts(order);
   activeParts.forEach(p=>{
     const qty = Number(p.qty)||1;
-    const lineCost = qty * (Number(p.costPrice)||0);
-    costTotal += lineCost;
-    if(p.used){ costToScrapyard += lineCost; } else { costToSupplier += lineCost; }
-    if(p.sellPrice !== null && p.sellPrice !== undefined && p.sellPrice !== ''){
-      partsSellTotal += qty * (Number(p.sellPrice)||0);
-      pricedCount++;
+    const returned = !!p.returned;
+    // قطعة مرتجعة قبل ما تُدفع تُستبعد فورًا من كل الحسابات؛ إذا كانت مدفوعة مسبقًا للمورد تبقى ضمن تكلفته
+    // (وبالتالي ضمن "المستحق للمورد") لحد ما يُحصّل المبلغ منه فعليًا عبر شاشة الموردين — عندها تُستبعد كمان.
+    const keepCost = !returned || (p.returnHasReceivable && !p.returnCollected);
+    // القطعة المرتجعة ما تُحسب على الزبون مباشرة، بغض النظر عن حالة تحصيل مبلغها من المورد
+    const keepSell = !returned;
+    if(keepCost){
+      const lineCost = qty * (Number(p.costPrice)||0);
+      costTotal += lineCost;
+      if(p.used){ costToScrapyard += lineCost; } else { costToSupplier += lineCost; }
+    }
+    if(keepSell){
+      sellEligibleCount++;
+      if(p.sellPrice !== null && p.sellPrice !== undefined && p.sellPrice !== ''){
+        partsSellTotal += qty * (Number(p.sellPrice)||0);
+        pricedCount++;
+      }
     }
   });
   const hasSell = pricedCount>0;
-  const fullyPriced = activeParts.length>0 && pricedCount===activeParts.length;
+  const fullyPriced = sellEligibleCount>0 && pricedCount===sellEligibleCount;
   const feeEnabled = !!order.feeEnabled;
   const feePercent = Number(order.feePercent)||0;
   const feeAmount = (hasSell && feeEnabled) ? round2(partsSellTotal * feePercent / 100) : 0;
@@ -1571,6 +1584,23 @@ function partRowHtml(p, i){
   const qtyVal = (p.qty===''||p.qty==null) ? 1 : p.qty;
   const selectionOn = !!(typeof draft !== 'undefined' && draft && draft.partsSelectionEnabled);
   const included = p.included !== false;
+
+  if(p.returned){
+    const statusLabel = p.returnHasReceivable
+      ? (p.returnCollected ? '✅ مرتجعة — تم تحصيل المبلغ من المورد' : '🔄 مرتجعة — بانتظار تحصيل المبلغ من المورد')
+      : '🔄 مرتجعة';
+    return '<div class="part-row part-row-returned" data-part-id="'+p.id+'">' +
+      '<div class="part-desc-wrap">' +
+        '<div class="part-desc-row"><span class="part-index-badge">'+((i!=null?i:0)+1)+'</span><span class="part-desc-returned">'+escapeHtml(p.description)+'</span></div>' +
+        '<span class="used-badge used-badge-off">'+statusLabel+'</span>' +
+      '</div>' +
+      '<div class="part-price-group">' +
+        '<span class="num">'+qtyVal+' × '+fmtMoney(Number(costVal)||0)+'</span>' +
+      '</div>' +
+      (p.returnCollected ? '' : '<button type="button" class="icon-btn" data-undo-return-part="'+p.id+'" title="تراجع عن الإرجاع" aria-label="تراجع عن الإرجاع">↩️</button>') +
+    '</div>';
+  }
+
   return '<div class="part-row'+(selectionOn && !included ? ' part-row-excluded' : '')+'" data-part-id="'+p.id+'">' +
     (selectionOn ? '<input type="checkbox" class="part-include-check" '+(included?'checked':'')+' title="مشمولة بالطلبية">' : '') +
     '<div class="part-desc-wrap">' +
@@ -1593,6 +1623,7 @@ function partRowHtml(p, i){
         '</label>'
       )) +
     '</div>' +
+    '<button type="button" class="icon-btn" data-return-part="'+p.id+'" title="تسجيل إرجاع" aria-label="تسجيل إرجاع">🔄</button>' +
     '<button type="button" class="part-remove-btn" data-remove-part="'+p.id+'" aria-label="حذف القطعة">✕</button>' +
   '</div>';
 }
@@ -1909,35 +1940,48 @@ function bindPartRowEvents(){
         refreshPartsList();
       });
     }
-    row.querySelector('.part-desc-input').addEventListener('input', e=>{ part.description = e.target.value; });
-    row.querySelector('.part-qty-input').addEventListener('input', e=>{
-      part.qty = e.target.value===''? 1 : Number(e.target.value);
-      updateModalTotals();
-    });
-    row.querySelector('.part-cost-input').addEventListener('input', e=>{
-      part.costPrice = e.target.value===''? '' : Number(e.target.value);
-      updateModalTotals();
-    });
-    row.querySelector('.part-sell-input').addEventListener('input', e=>{
-      part.sellPrice = e.target.value===''? null : Number(e.target.value);
-      updateModalTotals();
-    });
+    const descInput = row.querySelector('.part-desc-input');
+    if(descInput) descInput.addEventListener('input', e=>{ part.description = e.target.value; });
+    const qtyInput = row.querySelector('.part-qty-input');
+    if(qtyInput){
+      qtyInput.addEventListener('input', e=>{
+        part.qty = e.target.value===''? 1 : Number(e.target.value);
+        updateModalTotals();
+      });
+    }
+    const costInput = row.querySelector('.part-cost-input');
+    if(costInput){
+      costInput.addEventListener('input', e=>{
+        part.costPrice = e.target.value===''? '' : Number(e.target.value);
+        updateModalTotals();
+      });
+    }
+    const sellInput = row.querySelector('.part-sell-input');
+    if(sellInput){
+      sellInput.addEventListener('input', e=>{
+        part.sellPrice = e.target.value===''? null : Number(e.target.value);
+        updateModalTotals();
+      });
+    }
     const supplierSelect = row.querySelector('.part-supplier-select');
     if(supplierSelect){
       supplierSelect.addEventListener('change', e=>{ part.supplierId = e.target.value || null; });
     }
-    row.querySelector('[data-remove-part]').addEventListener('click', ()=>{
-      confirmAction({
-        title: 'حذف هذه القطعة؟',
-        message: part.description ? 'القطعة: '+part.description : undefined,
-        confirmLabel: 'تأكيد الحذف',
-        dangerous: true,
-        onConfirm: ()=>{
-          draft.parts = draft.parts.filter(p=>p.id!==pid);
-          refreshPartsList();
-        }
+    const removeBtn = row.querySelector('[data-remove-part]');
+    if(removeBtn){
+      removeBtn.addEventListener('click', ()=>{
+        confirmAction({
+          title: 'حذف هذه القطعة؟',
+          message: part.description ? 'القطعة: '+part.description : undefined,
+          confirmLabel: 'تأكيد الحذف',
+          dangerous: true,
+          onConfirm: ()=>{
+            draft.parts = draft.parts.filter(p=>p.id!==pid);
+            refreshPartsList();
+          }
+        });
       });
-    });
+    }
     const toggleUsedBtn = row.querySelector('[data-toggle-used]');
     if(toggleUsedBtn){
       toggleUsedBtn.addEventListener('click', ()=>{
@@ -1950,6 +1994,45 @@ function bindPartRowEvents(){
             part.used = willBeUsed;
             refreshPartsList();
             await cancelPendingScrapyardProposalsForPart(part.id);
+          }
+        });
+      });
+    }
+    const returnBtn = row.querySelector('[data-return-part]');
+    if(returnBtn){
+      returnBtn.addEventListener('click', ()=>{
+        const hasReceivable = part.used ? draft.paidToAmer : draft.paidToSupplier;
+        if(hasReceivable && !part.supplierId){
+          showToast('حدد المورد لهذه القطعة أولًا حتى نقدر نتابع المبلغ المسترجع منه', 'error');
+          return;
+        }
+        confirmAction({
+          title: 'تسجيل إرجاع هذه القطعة؟',
+          message: (part.description ? 'القطعة: '+part.description+'. ' : '') +
+            (hasReceivable ? 'تم دفعها مسبقًا للمورد — رح يظهر مبلغها كمسترجع بانتظار التحصيل بشاشة الموردين.' : 'لسه ما انسددت — رح تُستبعد من حسابات الطلبية مباشرة.'),
+          confirmLabel: 'تأكيد الإرجاع',
+          dangerous: true,
+          onConfirm: ()=>{
+            part.returned = true;
+            part.returnHasReceivable = hasReceivable;
+            part.returnCollected = false;
+            refreshPartsList();
+          }
+        });
+      });
+    }
+    const undoReturnBtn = row.querySelector('[data-undo-return-part]');
+    if(undoReturnBtn){
+      undoReturnBtn.addEventListener('click', ()=>{
+        confirmAction({
+          title: 'التراجع عن إرجاع هذه القطعة؟',
+          message: 'رح ترجع القطعة لحساب الطلبية بشكل طبيعي.',
+          confirmLabel: 'تراجع',
+          onConfirm: ()=>{
+            delete part.returned;
+            delete part.returnHasReceivable;
+            delete part.returnCollected;
+            refreshPartsList();
           }
         });
       });
@@ -2070,7 +2153,10 @@ async function onSaveOrder(){
       sellPrice: (p.sellPrice===''||p.sellPrice===null||p.sellPrice===undefined)? null : Number(p.sellPrice),
       used: !!p.used,
       included: p.included!==false,
-      supplierId: p.supplierId || null
+      supplierId: p.supplierId || null,
+      returned: !!p.returned,
+      returnHasReceivable: !!p.returnHasReceivable,
+      returnCollected: !!p.returnCollected
     }));
   if(cleanedParts.length===0){ showToast('لازم تضيف وصف لقطعة وحدة على الأقل', 'error'); return false; }
 
@@ -4212,6 +4298,7 @@ function supplierOwedAmount(supplierId){
     if(!o.supplied) return; // قبل اتمام التوريد ما يُحسب على المورد شي — بس يترتبط بالطلبية لغرض التحليل لاحقًا
     (o.parts||[]).forEach(p=>{
       if(p.supplierId !== supplierId) return;
+      if(p.returned) return; // القطعة المرتجعة لها حسابها المنفصل (مسترجع بانتظار التحصيل)، مو ضمن المستحق العادي
       const paid = p.used ? o.paidToAmer : o.paidToSupplier;
       if(paid) return;
       total += (Number(p.qty)||1) * (Number(p.costPrice)||0);
@@ -4236,6 +4323,7 @@ function supplierPurchaseHistory(supplierId){
     if(!o.supplied) return; // قبل اتمام التوريد الطلبية ما تظهر بسجل المشتريات، بس الربط محفوظ
     (o.parts||[]).forEach(p=>{
       if(p.supplierId !== supplierId) return;
+      if(p.returned) return; // القطعة المرتجعة لها حسابها المنفصل (مسترجع بانتظار التحصيل)، مو ضمن سجل المشتريات العادي
       const paid = p.used ? o.paidToAmer : o.paidToSupplier;
       const map = paid ? pastMap : ongoingMap;
       const list = paid ? past : ongoing;
@@ -4253,6 +4341,39 @@ function supplierPurchaseHistory(supplierId){
   const byDateDesc = (a,b)=> new Date(b.date||0) - new Date(a.date||0);
   ongoing.sort(byDateDesc); past.sort(byDateDesc);
   return { ongoing, past };
+}
+
+/* قطع رجعها الزبون بعد ما كانت مدفوعة للمورد مسبقًا — المورد صار يستحق ردّها لحد ما تُحصّل فعليًا */
+function supplierReturnReceivables(supplierId){
+  const rows = [];
+  (appData.orders||[]).forEach(o=>{
+    (o.parts||[]).forEach(p=>{
+      if(p.supplierId !== supplierId) return;
+      if(!p.returned || !p.returnHasReceivable || p.returnCollected) return;
+      rows.push({
+        orderId: o.id, orderNumber: o.orderNumber, orderLabel: o.orderLabel, partId: p.id,
+        description: p.description||'', amount: round2((Number(p.qty)||1)*(Number(p.costPrice)||0))
+      });
+    });
+  });
+  return rows;
+}
+
+function supplierReturnReceivableTotal(supplierId){
+  return round2(supplierReturnReceivables(supplierId).reduce((s,r)=>s+r.amount,0));
+}
+
+function returnReceivableRowHtml(row){
+  return '<div class="purchase-history-row return-receivable-row">' +
+    '<div class="purchase-history-row-main">' +
+      '<span class="purchase-history-desc">'+escapeHtml(row.description)+'</span>' +
+      '<span class="num text-green">'+fmtMoney(row.amount)+'</span>' +
+    '</div>' +
+    '<div class="purchase-history-row-sub">' +
+      '<span>'+escapeHtml(row.orderNumber||'')+(row.orderLabel?' — '+escapeHtml(row.orderLabel):'')+'</span>' +
+      '<button type="button" class="btn btn-sm btn-primary return-collect-btn" data-order-id="'+row.orderId+'" data-part-id="'+row.partId+'">✅ تم التحصيل</button>' +
+    '</div>' +
+  '</div>';
 }
 
 function purchaseHistoryRowHtml(row){
@@ -4274,12 +4395,18 @@ function openSupplierHistoryModal(supplierId){
   const { ongoing, past } = supplierPurchaseHistory(supplierId);
   const ongoingTotal = round2(ongoing.reduce((s,r)=>s+r.amount,0));
   const pastTotal = round2(past.reduce((s,r)=>s+r.amount,0));
+  const receivables = supplierReturnReceivables(supplierId);
+  const receivablesTotal = round2(receivables.reduce((s,r)=>s+r.amount,0));
   const root = document.getElementById('modal-root');
   root.innerHTML =
     '<div class="modal-backdrop" data-close-backdrop>' +
       '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
         '<div class="modal-header"><div class="modal-title">سجل مشتريات — '+escapeHtml(label)+'</div>' +
           '<button type="button" class="icon-btn" id="supplier-history-close-btn" aria-label="إغلاق">✕</button></div>' +
+        (receivables.length ? '<div class="purchase-history-section">' +
+          '<div class="purchase-history-section-title"><span>مرتجعات بانتظار التحصيل</span><span class="num text-green">'+fmtMoney(receivablesTotal)+'</span></div>' +
+          receivables.map(returnReceivableRowHtml).join('') +
+        '</div>' : '') +
         '<div class="purchase-history-section">' +
           '<div class="purchase-history-section-title"><span>جارية (غير مسددة)</span><span class="num text-rust">'+fmtMoney(ongoingTotal)+'</span></div>' +
           (ongoing.length ? ongoing.map(purchaseHistoryRowHtml).join('') : '<div class="expense-empty-hint">ما فيه مشتريات جارية</div>') +
@@ -4302,6 +4429,29 @@ function openSupplierHistoryModal(supplierId){
       openModal('edit', btn.getAttribute('data-open-order'));
     });
   });
+  root.querySelectorAll('.return-collect-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const orderId = btn.getAttribute('data-order-id');
+      const partId = btn.getAttribute('data-part-id');
+      confirmAction({
+        title: 'تأكيد تحصيل هذا المبلغ من المورد؟',
+        message: 'رح يُضاف المبلغ تلقائيًا لصافي الصندوق.',
+        confirmLabel: 'تم التحصيل',
+        onConfirm: async ()=>{
+          const order = appData.orders.find(o=>o.id===orderId);
+          if(!order) return;
+          const part = (order.parts||[]).find(p=>p.id===partId);
+          if(!part) return;
+          part.returnCollected = true;
+          order.updatedAt = new Date().toISOString();
+          await persistOrder(order);
+          showToast('تم تسجيل التحصيل، وأُضيف المبلغ للصندوق', 'ok');
+          refreshSuppliersList();
+          openSupplierHistoryModal(supplierId);
+        }
+      });
+    });
+  });
 }
 
 let editingSuppliers = {};
@@ -4316,6 +4466,7 @@ function supplierRowHtml(s){
       s.handlesUsed ? 'قطع مستعملة (تشليح)' : null
     ].filter(Boolean).join(' + ') || 'غير محدد';
     const phones = [s.phone].concat(extraPhones).filter(Boolean).join(' / ');
+    const returnTotal = supplierReturnReceivableTotal(s.id);
     return '<div class="task-item-row supplier-item-row" data-supplier-id="'+s.id+'">' +
       '<div class="supplier-row-main">' +
         '<span class="purchase-history-desc">'+escapeHtml(s.name||'بدون اسم')+'</span>' +
@@ -4324,7 +4475,9 @@ function supplierRowHtml(s){
         '<button type="button" class="icon-btn supplier-history-btn" title="سجل المشتريات" aria-label="سجل المشتريات">📋</button>' +
         '<button type="button" class="icon-btn supplier-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' +
       '</div>' +
-      '<div class="purchase-history-row-sub"><span>'+escapeHtml(kindsLabel)+'</span></div>' +
+      '<div class="purchase-history-row-sub"><span>'+escapeHtml(kindsLabel)+'</span>' +
+        (returnTotal>0 ? '<span class="text-green">مسترجع بانتظار التحصيل: '+fmtMoney(returnTotal)+'</span>' : '') +
+      '</div>' +
     '</div>';
   }
 
