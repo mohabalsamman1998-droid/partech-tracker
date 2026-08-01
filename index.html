@@ -1005,16 +1005,16 @@ function orderActiveParts(order){
   return order.partsSelectionEnabled ? parts.filter(p=>p.included!==false) : parts;
 }
 
-/* إجمالي دفعات الزبون الفعلي — يستبعد أي دفعة "مرتجع" (returnAdjustment) لسه ما تحصّل مبلغها من المورد؛
-   بمجرد ما تُحصّل (part.returnCollected) الدفعة ترجع تُحسب عاديًا لأن مبلغها "رجع للحسابات" فعليًا. */
+/* إجمالي دفعات الزبون الفعلي — يستبعد دائمًا أي دفعة "مرتجع" (returnAdjustment)، بشكل نهائي دائم.
+   مبلغ الزبون المرتجع لا "يرجع للصندوق" أبدًا من هذا المسار — إللي يرجع للصندوق هو تحصيل المورد
+   فقط (سعر الشراء)، عن طريق استبعاد تكلفة القطعة من costToSupplier/costToScrapyard بمجرد التحصيل
+   (بـ orderTotals). مثال: قطعة شراء 100 بيع 200 — الإرجاع يخصم 200 من الصندوق فورًا، وتحصيل
+   المورد يرجّع 100 بس (مو 200) لأنه هذا اللي فعليًا رجعلنا. */
 function computeCustomerPaidAmount(order, excludePaymentId){
   return (order.customerPayments||[]).reduce((sum,p)=>{
     if(excludePaymentId && p.id===excludePaymentId) return sum;
     const amt = Number(p.amount)||0;
-    if(!p.returnAdjustment) return sum + amt;
-    const linkedPart = (order.parts||[]).find(pp=>pp.id===p.linkedPartId);
-    const restored = linkedPart && linkedPart.returnHasReceivable && linkedPart.returnCollected;
-    return restored ? sum : sum - amt;
+    return p.returnAdjustment ? sum - amt : sum + amt;
   }, 0);
 }
 
