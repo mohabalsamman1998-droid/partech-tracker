@@ -3358,7 +3358,6 @@ function treasuryAmerCustodyRowHtml(){
   return '<div class="expense-category-row">' +
     '<span class="expense-category-label">عهدة عامر (سداد التشاليح)</span>' +
     '<span class="num text-green expense-category-subtotal" data-subtotal-key="amerCustody">'+fmtSigned(categorySubtotal('amerCustody'))+'</span>' +
-    '<button type="button" class="btn btn-ghost btn-sm expense-add-entry-btn" data-add-entry-key="amerCustody" data-add-entry-label="عهدة عامر">+ سداد لعهدة عامر</button>' +
     '<button type="button" class="btn btn-ghost btn-sm" id="btn-withdraw-amer-custody">➖ سحب من العهدة</button>' +
     '<button type="button" class="expense-history-btn" data-history-key="amerCustody" data-history-label="عهدة عامر">📋 '+count+'</button>' +
   '</div>';
@@ -3409,7 +3408,7 @@ function renderTreasuryView(){
       '<span class="treasury-profit-value text-rust">'+fmtMoney(t.debtsToSuppliers)+'</span>' +
     '</div>' +
     '<div class="treasury-profit-card">' +
-      '<span class="treasury-profit-label">رصيد عهدة عامر</span>' +
+      '<span class="treasury-profit-label">رصيد المشتريات</span>' +
       '<span class="treasury-profit-value '+(t.amerCustodyBalance<0?'text-rust':'text-green')+'">'+fmtMoney(t.amerCustodyBalance)+'</span>' +
       (t.amerCustodyDeficit>0 ? '<div class="kpi-sub" style="color:var(--rust);">عليك سداد '+fmtMoney(t.amerCustodyDeficit)+' لعامر</div>' : '') +
     '</div>' +
@@ -3597,7 +3596,7 @@ function openWithdrawCustodyModal(){
     '<div class="modal-backdrop" data-close-backdrop>' +
       '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
         '<div class="modal-title">➖ سحب من عهدة عامر</div>' +
-        '<p class="modal-sub">المبلغ يُخصم من رصيد العهدة ويُضاف مباشرة لصافي الصندوق.</p>' +
+        '<p class="modal-sub">المبلغ يُخصم من رصيد المشتريات ويُضاف مباشرة لصافي الصندوق.</p>' +
         '<label class="field"><span class="field-label">المبلغ</span><input type="number" min="0" step="0.01" id="withdraw-custody-amount-input" placeholder="المبلغ"></label>' +
         '<label class="field"><span class="field-label">التاريخ</span><input type="date" id="withdraw-custody-date-input" value="'+dmyToIso(todayNumeric())+'"></label>' +
         '<label class="field"><span class="field-label">تفاصيل (اختياري)</span><input type="text" id="withdraw-custody-note-input" placeholder="مثلا: السبب"></label>' +
@@ -3629,7 +3628,7 @@ function openWithdrawCustodyModal(){
   });
 }
 
-function openExpenseHistoryModal(key, label){
+function openExpenseHistoryModal(key, label, onClosed){
   const root = document.getElementById('modal-root');
   const matching = (appData.treasury[key] || []).filter(entryMatchesPeriod).slice().reverse();
   root.innerHTML =
@@ -3643,7 +3642,7 @@ function openExpenseHistoryModal(key, label){
       '</div>' +
     '</div>';
   root.classList.add('modal-open');
-  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); renderTreasuryView(); };
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); (onClosed||renderTreasuryView)(); };
   root.querySelector('[data-close-backdrop]').addEventListener('click', e=>{
     if(e.target.hasAttribute('data-close-backdrop')) close();
   });
@@ -4802,13 +4801,13 @@ function openSupplierHistoryModal(supplierId){
   });
 }
 
-/* تحصيل مرتجع من تشليح: دايمًا يروح لرصيد العهدة (رصيد المشتريات) — نفس أثر أي تحصيل تشليح
+/* تحصيل مرتجع من تشليح: دايمًا يروح لرصيد المشتريات — نفس أثر أي تحصيل تشليح
    عادي، الصندوق ما يتأثر مباشرة. لو صاحب الحساب يبي يرجع المبلغ فعليًا للصندوق، عنده "سحب من
    العهدة" بشاشة الصندوق (منفصل عن التحصيل نفسه). */
 function confirmCollectScrapyardReturn(orderId, partId, supplierId){
   confirmAction({
     title: 'تأكيد تحصيل هذا المبلغ من التشليح؟',
-    message: 'رح يُضاف لرصيد العهدة (رصيد المشتريات). لو تبي ترجعه للصندوق، فيه "سحب من العهدة" بشاشة الصندوق.',
+    message: 'رح يُضاف لرصيد المشتريات. لو تبي ترجعه للصندوق، فيه "سحب من العهدة" بشاشة الصندوق.',
     confirmLabel: 'تم التحصيل',
     onConfirm: async ()=>{
       const order = appData.orders.find(o=>o.id===orderId);
@@ -4818,7 +4817,7 @@ function confirmCollectScrapyardReturn(orderId, partId, supplierId){
       part.returnCollected = true;
       order.updatedAt = new Date().toISOString();
       await persistOrder(order);
-      showToast('تم تسجيل التحصيل، وأُضيف لرصيد العهدة', 'ok');
+      showToast('تم تسجيل التحصيل، وأُضيف لرصيد المشتريات', 'ok');
       refreshSuppliersList();
       updateSuppliersBadge();
       renderKPIs();
@@ -5825,8 +5824,9 @@ function renderScrapyardView(){
       '<div class="brand">'+SETTLEMENT_KINDS[kind].title+'</div>' +
     '</header>' +
     '<div class="total-box" style="margin-bottom:18px;"><span>إجمالي المستحق للسداد</span><span class="num text-amber">'+fmtMoney(total)+'</span></div>' +
-    (kind==='used' ? '<div class="total-box" style="margin-bottom:18px;"><span>رصيد العهدة</span><span class="num '+(custodyBalance<0?'text-rust':'text-green')+'">'+fmtMoney(custodyBalance)+'</span></div>' : '') +
+    (kind==='used' ? '<div class="total-box" style="margin-bottom:18px;"><span>رصيد المشتريات</span><span class="num '+(custodyBalance<0?'text-rust':'text-green')+'">'+fmtMoney(custodyBalance)+'</span></div>' : '') +
     (kind==='used' ? '<div class="total-box" style="margin-bottom:18px;"><span>المتبقي للسداد</span><span class="num '+(remainingToPay>0?'text-rust':'text-green')+'">'+fmtMoney(remainingToPay)+'</span></div>' : '') +
+    (kind==='used' && canManage ? '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-amer-custody-topup" style="margin-bottom:18px;">+ سداد لعهدة المشتريات</button>' : '') +
     (kind==='used' ? scrapyardSupplierTotalsHtml() : '') +
     scrapyardReturnReceivablesHtml() +
     '<div class="section-block"><div class="section-head"><span class="section-title">القطع (غير المسدّدة)</span>' +
@@ -6088,6 +6088,17 @@ function bindScrapyardEvents(){
   bindScrapyardThemeToggle();
   const addSupplierBtn = document.getElementById('btn-add-scrapyard-supplier');
   if(addSupplierBtn) addSupplierBtn.addEventListener('click', openQuickAddScrapyardSupplierModal);
+  const addCustodyTopupBtn = document.getElementById('btn-add-amer-custody-topup');
+  if(addCustodyTopupBtn) addCustodyTopupBtn.addEventListener('click', ()=>{
+    if(!Array.isArray(appData.treasury.amerCustody)) appData.treasury.amerCustody = [];
+    const newEntry = {id: uid('exp'), amount:'', date: todayNumeric(), note:''};
+    appData.treasury.amerCustody.push(newEntry);
+    editingExpenseEntries[newEntry.id] = true;
+    openExpenseHistoryModal('amerCustody', 'عهدة المشتريات', ()=>{
+      scrapyardSharedState.custodyBalance = amerCustodyBalance();
+      renderScrapyardView();
+    });
+  });
 
   // خانة تعديل السعر تظهر فقط بعد الضغط على "تعديل"
   root.querySelectorAll('[data-open-price-edit]').forEach(btn=>{
