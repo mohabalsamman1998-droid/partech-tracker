@@ -2704,9 +2704,17 @@ function formatDateDMY(yyyyMmDd){
 }
 const TREASURY_ALLOWED_EMAILS = ['mohabalsamman1998@gmail.com','homam.techno@gmail.com','sammaneng@gmail.com'];
 
-async function openTreasuryView(){
+/* الشاشات (طلبيات/صندوق/مهام/موردين/عملاء) كلها تشترك بنفس التوب بار — لازم نخفي البقية دايمًا عند فتح وحدة، غير كذا تظهر شاشتين فوق بعض */
+function hideAllSecondaryViews(){
   document.getElementById('orders-view').style.display = 'none';
+  document.getElementById('treasury-view').style.display = 'none';
   document.getElementById('tasks-view').style.display = 'none';
+  document.getElementById('suppliers-view').style.display = 'none';
+  document.getElementById('customers-view').style.display = 'none';
+}
+
+async function openTreasuryView(){
+  hideAllSecondaryViews();
   document.getElementById('treasury-view').style.display = 'block';
   document.getElementById('treasury-view').innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
   if(TREASURY_ALLOWED_EMAILS.includes(presenceEmail)) await refreshScrapyardPendingCount();
@@ -3494,8 +3502,7 @@ function updateCustomersBadge(){
 }
 
 function openTasksView(){
-  document.getElementById('orders-view').style.display = 'none';
-  document.getElementById('treasury-view').style.display = 'none';
+  hideAllSecondaryViews();
   document.getElementById('tasks-view').style.display = 'block';
   activeTaskCategory = null;
   renderTasksView();
@@ -4191,7 +4198,7 @@ async function deleteCustomer(id){
 
 /* ---------- شاشة الموردين ---------- */
 function openSuppliersView(){
-  document.getElementById('orders-view').style.display = 'none';
+  hideAllSecondaryViews();
   document.getElementById('suppliers-view').style.display = 'block';
   renderSuppliersView();
 }
@@ -4204,6 +4211,7 @@ function closeSuppliersView(){
 function supplierOwedAmount(supplierId){
   let total = 0;
   (appData.orders||[]).forEach(o=>{
+    if(!o.supplied) return; // قبل اتمام التوريد ما يُحسب على المورد شي — بس يترتبط بالطلبية لغرض التحليل لاحقًا
     (o.parts||[]).forEach(p=>{
       if(p.supplierId !== supplierId) return;
       const paid = p.used ? o.paidToAmer : o.paidToSupplier;
@@ -4227,6 +4235,7 @@ function supplierPurchaseHistory(supplierId){
   const ongoingMap = {}, pastMap = {};
   const ongoing = [], past = [];
   (appData.orders||[]).forEach(o=>{
+    if(!o.supplied) return; // قبل اتمام التوريد الطلبية ما تظهر بسجل المشتريات، بس الربط محفوظ
     (o.parts||[]).forEach(p=>{
       if(p.supplierId !== supplierId) return;
       const paid = p.used ? o.paidToAmer : o.paidToSupplier;
@@ -4534,7 +4543,7 @@ function bindSupplierRowEvents(){
 
 /* ---------- شاشة العملاء ---------- */
 function openCustomersView(){
-  document.getElementById('orders-view').style.display = 'none';
+  hideAllSecondaryViews();
   document.getElementById('customers-view').style.display = 'block';
   renderCustomersView();
 }
@@ -4548,6 +4557,7 @@ function customerOrderStats(customerId){
   let count = 0, remaining = 0;
   (appData.orders||[]).forEach(o=>{
     if(o.customerId !== customerId) return;
+    if(!o.supplied) return; // قبل اتمام التوريد ما تُحسب على العميل — بس الربط محفوظ لغرض التحليل لاحقًا
     count++;
     const t = orderTotals(o);
     if(t.hasSell) remaining += t.customerRemaining;
@@ -4587,6 +4597,7 @@ function customerOrderHistory(customerId){
   const ongoing = [], past = [];
   (appData.orders||[]).forEach(o=>{
     if(o.customerId !== customerId) return;
+    if(!o.supplied) return; // قبل اتمام التوريد الطلبية ما تظهر بسجل العميل، بس الربط محفوظ
     const t = orderTotals(o);
     const row = {
       orderId: o.id, orderNumber: o.orderNumber, orderLabel: o.orderLabel,
