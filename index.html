@@ -604,6 +604,9 @@
   .payment-summary-row span{display:flex;flex-direction:column;gap:4px;}
   .payment-summary-row .num{color:var(--text);font-size:14px;}
   .payment-remaining-display{font-size:14px;}
+  .customer-refund-status{margin-top:8px;padding:9px 12px;border-radius:6px;font-size:12.5px;font-weight:800;text-align:center;}
+  .customer-refund-status-pending{background:var(--rust-dim);border:1px solid var(--rust-line);color:var(--rust);}
+  .customer-refund-status-done{background:var(--green-dim);border:1px solid var(--green-line);color:var(--green);margin-top:6px;}
 
   .modal-footer{display:flex;justify-content:space-between;align-items:center;margin-top:6px;flex-wrap:wrap;gap:10px;}
   .modal-footer-actions{display:flex;gap:8px;}
@@ -1732,6 +1735,7 @@ function modalHtml(d){
               '<span>إجمالي المدفوع<span class="num" id="total-paid-display">0 ر.س</span></span>' +
               '<span>المتبقي عليه<span class="num payment-remaining-display" id="customer-remaining-display">0 ر.س</span></span>' +
             '</div>' +
+            '<div id="customer-refund-status-wrap">'+orderCustomerRefundStatusHtml(d)+'</div>' +
           '</div>' +
         '</div>' +
       '</div>' +
@@ -2259,6 +2263,25 @@ function updateModalTotals(){
   }
   const paidEl = document.getElementById('total-paid-display');
   if(paidEl) paidEl.textContent = fmtMoney(t.customerPaidAmount);
+  const refundStatusWrap = document.getElementById('customer-refund-status-wrap');
+  if(refundStatusWrap) refundStatusWrap.innerHTML = orderCustomerRefundStatusHtml(draft);
+}
+
+/* حالة إرجاع مبلغ الزبون لهذه الطلبية — قطعة رجعت وكان مدفوع ثمنها: "يجب إرجاع X للزبون"
+   لحد ما يُأكَّد الإرجاع فعليًا من شاشة العملاء (عندها تتحول لـ"تم الإرجاع") */
+function orderCustomerRefundStatusHtml(order){
+  let pendingTotal = 0, confirmedTotal = 0;
+  (order.parts||[]).forEach(p=>{
+    if(!p.returned) return;
+    const adj = (order.customerPayments||[]).find(pay=>pay.returnAdjustment && pay.linkedPartId===p.id);
+    if(!adj) return;
+    if(p.customerRefundConfirmed) confirmedTotal += Number(adj.amount)||0;
+    else pendingTotal += Number(adj.amount)||0;
+  });
+  pendingTotal = round2(pendingTotal); confirmedTotal = round2(confirmedTotal);
+  if(pendingTotal<=0 && confirmedTotal<=0) return '';
+  return (pendingTotal>0 ? '<div class="customer-refund-status customer-refund-status-pending">يجب إرجاع '+fmtMoney(pendingTotal)+' للزبون</div>' : '') +
+    (confirmedTotal>0 ? '<div class="customer-refund-status customer-refund-status-done">✅ تم إرجاع '+fmtMoney(confirmedTotal)+' للزبون</div>' : '');
 }
 
 async function onSaveOrder(){
