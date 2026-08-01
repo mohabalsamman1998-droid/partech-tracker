@@ -1603,13 +1603,6 @@ function modalHtml(d){
       '<div class="modal-body">' +
         '<label class="field"><span class="field-label">رقم الطلب (تلقائي)</span><input type="text" class="order-number-input" value="'+escapeHtml(d.orderNumber)+'" readonly></label>' +
         '<div class="field">' +
-          '<span class="field-label">رقم جوال العميل</span>' +
-          '<div class="phone-field-row">' +
-            '<input type="tel" id="order-phone-input" placeholder="05XXXXXXXX" value="'+escapeHtml(d.customerPhone||'')+'">' +
-            '<button type="button" class="icon-btn" id="order-phone-contact-btn" aria-label="تواصل">📞</button>' +
-          '</div>' +
-        '</div>' +
-        '<div class="field">' +
           '<span class="field-label">العميل (اختياري)</span>' +
           '<div class="phone-field-row">' +
             '<select id="order-customer-select">' +
@@ -1746,12 +1739,15 @@ function attachModalHandlers(){
   root.querySelector('#modal-cancel-btn').addEventListener('click', closeModal);
 
   root.querySelector('#order-label-input').addEventListener('input', e=>{ draft.orderLabel = e.target.value; });
-  root.querySelector('#order-phone-input').addEventListener('input', e=>{ draft.customerPhone = e.target.value; });
-  root.querySelector('#order-phone-contact-btn').addEventListener('click', ()=> openContactModal(draft.customerPhone));
-  root.querySelector('#order-customer-select').addEventListener('change', e=>{ draft.customerId = e.target.value || null; });
+  root.querySelector('#order-customer-select').addEventListener('change', e=>{
+    draft.customerId = e.target.value || null;
+    const c = (appData.customers||[]).find(c=>c.id===draft.customerId);
+    draft.customerPhone = c ? (c.phone||'') : '';
+  });
   root.querySelector('#order-add-customer-btn').addEventListener('click', ()=>{
     openQuickAddCustomerModal((newCustomer)=>{
       draft.customerId = newCustomer.id;
+      draft.customerPhone = newCustomer.phone || '';
       const sel = document.getElementById('order-customer-select');
       if(sel){
         const opt = document.createElement('option');
