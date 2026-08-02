@@ -559,6 +559,8 @@
     width:32px;height:32px;border-radius:6px;cursor:pointer;font-size:13px;flex-shrink:0;
   }
   .part-remove-btn:hover{border-color:var(--rust-line);color:var(--rust);}
+  .part-whatsapp-btn{flex-shrink:0;align-self:flex-end;color:var(--green);border-color:var(--green-line);background:var(--green-dim);white-space:nowrap;}
+  .part-whatsapp-btn:hover{background:rgba(34,208,122,.22);border-color:var(--green);}
 
   .searchable-select{position:relative;}
   .searchable-select-input{
@@ -2546,6 +2548,20 @@ function confirmReturnOrderToQuote(){
 let quoteDraft = null;
 let selectedQuotePartType = null;
 let quoteModalRole = 'sales'; // 'sales' (المبيعات — يملأ الطلب، يعتمد، يحذف) | 'purchasing' (عامر — يسعّر فقط)
+
+/* واتساب ما يوفر رابط يفتح كاميرا/جروب مع كابشن تلقائي على مرفق — أقصى شي ممكن: فتح رابط
+   دعوة الجروب (يفتح الجروب مباشرة لو عامر عضو فيه أصلاً) + نسخ نص "رقم الطلبية — اسم القطعة"
+   للحافظة حتى يلصقه هو كابشن يدويًا قبل ما يرسل الصورة/الفيديو. */
+const WHATSAPP_OPS_GROUP_LINK = 'https://chat.whatsapp.com/GRWLhskD8kXJemXSRrFouj?s=cl&p=i&mlu=0&ilr=0';
+
+function openWhatsAppForPart(part){
+  const caption = [quoteDraft.orderNumber, quoteDraft.orderLabel, part.description].filter(Boolean).join(' — ');
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(caption).catch(()=>{});
+  }
+  window.open(WHATSAPP_OPS_GROUP_LINK, '_blank');
+  showToast('نُسخ "'+caption+'" — الصقه كابشن قبل ما ترسل الصورة/الفيديو بجروب العمليات', 'ok');
+}
 let quoteOriginalSnapshot = null; // حالة الطلب وقت الفتح — لمقارنتها وقت الحفظ ومعرفة هل صار تعديل فعلي أو لا
 
 function quotesMatchingList(){
@@ -2707,7 +2723,9 @@ function quotePartRowHtml(p, i){
       '<label class="mini-label mini-label-cost">سعر الشراء<input type="number" min="0" step="0.01" class="part-cost-input num" value="'+costVal+'"></label>' +
       supplierFieldHtml +
     '</div>' +
-    (readOnly ? '' : '<button type="button" class="part-remove-btn" data-remove-quote-part="'+p.id+'" aria-label="حذف القطعة">✕</button>') +
+    (readOnly
+      ? '<button type="button" class="btn btn-sm part-whatsapp-btn" data-whatsapp-part="'+p.id+'" aria-label="إرسال صورة القطعة بجروب العمليات">📷 صورة</button>'
+      : '<button type="button" class="part-remove-btn" data-remove-quote-part="'+p.id+'" aria-label="حذف القطعة">✕</button>') +
   '</div>';
 }
 
@@ -2753,6 +2771,8 @@ function bindQuotePartRowEvents(){
           refreshQuotePartsList();
         });
       });
+      const whatsappBtn = row.querySelector('[data-whatsapp-part]');
+      if(whatsappBtn) whatsappBtn.addEventListener('click', ()=> openWhatsAppForPart(part));
     }
     const costInput = row.querySelector('.part-cost-input');
     if(costInput){
