@@ -24,6 +24,7 @@
     --rust-dim:rgba(226,112,58,.14);
     --rust-line:rgba(226,112,58,.45);
     --amber:#E8B23D;
+    --amber-ink:#06170F;
     --amber-dim:rgba(232,178,61,.14);
     --amber-line:rgba(232,178,61,.45);
     --radius:12px;
@@ -47,6 +48,7 @@
     --rust-dim:rgba(181,72,29,.12);
     --rust-line:rgba(181,72,29,.5);
     --amber:#9C6A00;
+    --amber-ink:#FFFFFF;
     --amber-dim:rgba(156,106,0,.14);
     --amber-line:rgba(156,106,0,.5);
   }
@@ -89,6 +91,8 @@
   .contact-options-col a.btn{display:block;text-align:center;text-decoration:none;}
   .btn-primary{background:var(--green);border-color:var(--green);color:var(--green-ink);}
   .btn-primary:hover{background:#2be389;border-color:#2be389;}
+  .btn-amber{background:var(--amber);border-color:var(--amber);color:var(--amber-ink);}
+  .btn-amber:hover{filter:brightness(1.08);}
   .btn-ghost{background:transparent;}
   .btn-sm{padding:7px 12px;font-size:13px;}
   .btn-with-badge{position:relative;overflow:visible;}
@@ -311,6 +315,8 @@
   .task-add-input:focus{outline:none;border-color:var(--green-line);}
   .task-items-list{display:flex;flex-direction:column;gap:8px;}
   .task-item-row{display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:8px;padding:10px 12px;}
+  .quote-row{cursor:pointer;border-inline-start:3px solid var(--amber-line);}
+  .quote-row:hover{border-color:var(--amber-line);}
   .task-item-check{width:20px;height:20px;accent-color:var(--green);cursor:pointer;flex-shrink:0;}
   .task-item-text{flex:1;font-size:14px;}
   .task-item-done{opacity:.55;}
@@ -924,6 +930,7 @@
 
       <div class="new-order-btn-row">
         <button type="button" id="btn-toggle-orders-list" class="btn btn-primary" aria-expanded="false">📋 الطلبيات</button>
+        <button type="button" id="btn-toggle-quotes-list" class="btn btn-amber" aria-expanded="false">🧾 طلبات التسعير</button>
       </div>
 
       <div id="orders-list-section" style="display:none;">
@@ -940,6 +947,14 @@
         </section>
 
         <section id="table-container" class="table-container"></section>
+      </div>
+
+      <div id="quotes-list-section" style="display:none;">
+        <div class="new-order-btn-row">
+          <button type="button" id="btn-new-quote" class="btn btn-amber">+ إضافة طلب تسعير</button>
+        </div>
+
+        <section id="quotes-table-container" class="table-container"></section>
       </div>
 
       <div style="text-align:center;margin-top:24px;opacity:.55;">
@@ -1368,7 +1383,8 @@ function showToast(msg, type){
 
 /* ---------- KPIs ---------- */
 function computeAggregateFinancials(matchPeriodFn){
-  const confirmedOrders = appData.orders.filter(o=>o.confirmed).filter(o=> matchPeriodFn ? matchPeriodFn(o) : true);
+  const realOrders = appData.orders.filter(o=>!o.isQuote);
+  const confirmedOrders = realOrders.filter(o=>o.confirmed).filter(o=> matchPeriodFn ? matchPeriodFn(o) : true);
   let dueToScrapyard = 0, dueToSuppliers = 0, dueFromCustomers = 0, collectedProfit = 0, uncollectedProfit = 0;
   let paidToScrapyardTotal = 0, paidToSuppliersTotal = 0, customerReceiptsTotal = 0;
   confirmedOrders.forEach(o=>{
@@ -1384,7 +1400,7 @@ function computeAggregateFinancials(matchPeriodFn){
   });
   return {
     confirmedCount: confirmedOrders.length,
-    unconfirmedCount: appData.orders.length - confirmedOrders.length,
+    unconfirmedCount: realOrders.length - confirmedOrders.length,
     dueToScrapyard, dueToSuppliers, dueFromCustomers, collectedProfit, uncollectedProfit,
     paidToScrapyardTotal, paidToSuppliersTotal, customerReceiptsTotal
   };
@@ -1528,7 +1544,7 @@ function orderNumberSortKey(order){
 function renderTable(){
   const el = document.getElementById('table-container');
   try{
-    const orders = appData.orders.filter(orderMatches).sort((a,b)=> orderNumberSortKey(b) - orderNumberSortKey(a));
+    const orders = appData.orders.filter(o=>!o.isQuote).filter(orderMatches).sort((a,b)=> orderNumberSortKey(b) - orderNumberSortKey(a));
 
     if(orders.length===0){
       el.innerHTML = '<div class="empty-state">' +
@@ -2480,6 +2496,422 @@ async function onSaveOrder(){
   updateSuppliersBadge();
   showToast('تم حفظ الطلبية', 'ok');
   return true;
+}
+
+/* ---------- طلبات التسعير: نسخة مصغّرة من نافذة الطلبية (بدون سعر بيع/دفعات/رسوم) —
+   نفس رقم تسلسل الطلبيات (PT-)، ومخزّنة بنفس appData.orders بعلامة isQuote:true حتى
+   تختفي عن قائمة "الطلبيات" وكل الحسابات المالية إلى أن تُعتمد (يومها تصير طلبية عادية
+   فعليًا — نفس السجل، بدون نسخ أو رقم جديد). ---------- */
+let quoteDraft = null;
+let selectedQuotePartType = null;
+
+function quotesMatchingList(){
+  return (appData.orders||[]).filter(o=>o.isQuote).sort((a,b)=> orderNumberSortKey(b) - orderNumberSortKey(a));
+}
+
+function quoteRowHtml(o){
+  const t = orderTotals(o);
+  const customer = (appData.customers||[]).find(c=>c.id===o.customerId);
+  const customerLabel = customer ? (customer.name||customer.phone||'') : '';
+  return '<div class="task-item-row quote-row" data-quote-id="'+o.id+'">' +
+    '<div class="supplier-row-main">' +
+      '<span class="purchase-history-desc">'+escapeHtml(o.orderNumber)+(o.orderLabel?' — '+escapeHtml(o.orderLabel):'')+'</span>' +
+      '<span class="expense-entry-view-date">'+escapeHtml(customerLabel||'—')+'</span>' +
+      '<span class="num text-rust">'+fmtMoney(t.costTotal)+'</span>' +
+    '</div>' +
+    '<div class="purchase-history-row-sub"><span>'+(o.parts||[]).length+' قطعة</span></div>' +
+  '</div>';
+}
+
+function quotesListHtml(){
+  const rows = quotesMatchingList();
+  if(!rows.length) return '<div class="expense-empty-hint">ما فيه طلبات تسعير بعد</div>';
+  return rows.map(quoteRowHtml).join('');
+}
+
+function renderQuotesList(){
+  const el = document.getElementById('quotes-table-container');
+  if(!el) return;
+  el.innerHTML = quotesListHtml();
+  el.querySelectorAll('.quote-row').forEach(row=>{
+    row.addEventListener('click', ()=> openQuoteModal('edit', row.getAttribute('data-quote-id')));
+  });
+}
+
+function quotePartTypeGateHtml(){
+  return '<div class="part-type-gate">' +
+      '<span class="part-type-gate-label">حدد نوع القطعة قبل الإضافة</span>' +
+      '<div class="part-type-pills">' +
+        '<button type="button" class="type-pill type-pill-new'+(selectedQuotePartType==='new'?' type-pill-active':'')+'" data-quote-part-type="new">غير مستعملة</button>' +
+        '<button type="button" class="type-pill type-pill-used'+(selectedQuotePartType==='used'?' type-pill-active':'')+'" data-quote-part-type="used">مستعملة</button>' +
+      '</div>' +
+    '</div>' +
+    '<div class="add-part-action" id="quote-add-part-action">' +
+      (selectedQuotePartType
+        ? '<button type="button" id="quote-add-part-btn" class="btn btn-sm '+(selectedQuotePartType==='used'?'btn-add-used-part':'btn-add-part')+'">+ إضافة قطعة '+(selectedQuotePartType==='used'?'(مستعملة)':'(غير مستعملة)')+'</button>'
+        : '<span class="add-part-hint">اختر النوع فوق ليظهر زر الإضافة</span>') +
+    '</div>';
+}
+
+function bindQuotePartTypeGate(){
+  const wrap = document.getElementById('quote-part-type-gate-wrap');
+  if(!wrap) return;
+  wrap.querySelectorAll('.type-pill').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      selectedQuotePartType = btn.getAttribute('data-quote-part-type');
+      refreshQuotePartAddControls();
+    });
+  });
+  const addBtn = document.getElementById('quote-add-part-btn');
+  if(addBtn){
+    addBtn.addEventListener('click', ()=>{
+      quoteDraft.parts.push({id:uid('p'), description:'', qty:1, costPrice:'', sellPrice:null, used: selectedQuotePartType==='used', supplierId: null});
+      refreshQuotePartsList();
+    });
+  }
+}
+
+function quotePartAddControlsHtml(){
+  if(!quoteDraft.parts || quoteDraft.parts.length===0){
+    return quotePartTypeGateHtml();
+  }
+  return '<div class="add-part-btns">' +
+    '<button type="button" id="quote-add-part-btn-new" class="btn btn-sm btn-add-part">+ إضافة قطعة</button>' +
+    '<button type="button" id="quote-add-part-btn-used" class="btn btn-sm btn-add-used-part">+ إضافة قطعة مستعملة</button>' +
+  '</div>';
+}
+
+function refreshQuotePartAddControls(){
+  const wrap = document.getElementById('quote-part-type-gate-wrap');
+  if(!wrap) return;
+  wrap.innerHTML = quotePartAddControlsHtml();
+  bindQuotePartAddControls();
+}
+
+function bindQuotePartAddControls(){
+  if(!quoteDraft.parts || quoteDraft.parts.length===0){
+    bindQuotePartTypeGate();
+    return;
+  }
+  const wrap = document.getElementById('quote-part-type-gate-wrap');
+  if(!wrap) return;
+  const newBtn = wrap.querySelector('#quote-add-part-btn-new');
+  const usedBtn = wrap.querySelector('#quote-add-part-btn-used');
+  if(newBtn) newBtn.addEventListener('click', ()=>{
+    quoteDraft.parts.push({id:uid('p'), description:'', qty:1, costPrice:'', sellPrice:null, used:false, supplierId: null});
+    refreshQuotePartsList();
+  });
+  if(usedBtn) usedBtn.addEventListener('click', ()=>{
+    quoteDraft.parts.push({id:uid('p'), description:'', qty:1, costPrice:'', sellPrice:null, used:true, supplierId: null});
+    refreshQuotePartsList();
+  });
+}
+
+function quotePartRowHtml(p, i){
+  const costVal = (p.costPrice===''||p.costPrice==null) ? '' : p.costPrice;
+  const qtyVal = (p.qty===''||p.qty==null) ? 1 : p.qty;
+  return '<div class="part-row" data-part-id="'+p.id+'">' +
+    '<div class="part-desc-wrap">' +
+      '<div class="part-desc-row">' +
+        '<span class="part-index-badge">'+((i!=null?i:0)+1)+'</span>' +
+        '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="'+escapeHtml(p.description)+'">' +
+      '</div>' +
+      '<button type="button" class="used-badge'+(p.used?'':' used-badge-off')+'" data-toggle-used="'+p.id+'">'+(p.used?'مستعمل':'غير مستعمل')+' ✏️</button>' +
+    '</div>' +
+    '<div class="part-price-group">' +
+      '<label class="mini-label">العدد<input type="number" min="1" step="1" class="part-qty-input num" value="'+qtyVal+'"></label>' +
+      '<label class="mini-label mini-label-cost">سعر الشراء<input type="number" min="0" step="0.01" class="part-cost-input num" value="'+costVal+'"></label>' +
+      '<label class="mini-label mini-label-supplier">'+(p.used?'التشليح':'المورد')+
+        searchableSelectHtml('quote-part-supplier-select',
+          (appData.suppliers||[]).filter(s=> p.used ? s.handlesUsed : s.handlesNew).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
+          p.supplierId, p.used?'— بدون تشليح —':'— بدون مورد —') +
+      '</label>' +
+    '</div>' +
+    '<button type="button" class="part-remove-btn" data-remove-quote-part="'+p.id+'" aria-label="حذف القطعة">✕</button>' +
+  '</div>';
+}
+
+function bindQuotePartRowEvents(){
+  const root = document.getElementById('modal-root');
+  root.querySelectorAll('#quote-parts-list .part-row').forEach(row=>{
+    const pid = row.getAttribute('data-part-id');
+    const part = quoteDraft.parts.find(p=>p.id===pid);
+    if(!part) return;
+    const descInput = row.querySelector('.part-desc-input');
+    if(descInput) descInput.addEventListener('input', e=>{ part.description = e.target.value; });
+    const qtyInput = row.querySelector('.part-qty-input');
+    if(qtyInput){
+      qtyInput.addEventListener('input', e=>{
+        part.qty = e.target.value===''? 1 : Number(e.target.value);
+        updateQuoteModalTotals();
+      });
+    }
+    const costInput = row.querySelector('.part-cost-input');
+    if(costInput){
+      costInput.addEventListener('input', e=>{
+        part.costPrice = e.target.value===''? '' : Number(e.target.value);
+        updateQuoteModalTotals();
+      });
+    }
+    const supplierSelectEl = row.querySelector('.quote-part-supplier-select');
+    const supplierSelectWrap = supplierSelectEl ? supplierSelectEl.closest('.searchable-select') : null;
+    if(supplierSelectWrap){
+      bindSearchableSelect(supplierSelectWrap,
+        ()=> (appData.suppliers||[]).filter(s=> part.used ? s.handlesUsed : s.handlesNew).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
+        (id)=>{ part.supplierId = id || null; }
+      );
+    }
+    const toggleUsedBtn = row.querySelector('[data-toggle-used]');
+    if(toggleUsedBtn){
+      toggleUsedBtn.addEventListener('click', ()=>{
+        part.used = !part.used;
+        refreshQuotePartsList();
+      });
+    }
+    const removeBtn = row.querySelector('[data-remove-quote-part]');
+    if(removeBtn){
+      removeBtn.addEventListener('click', ()=>{
+        quoteDraft.parts = quoteDraft.parts.filter(p=>p.id!==pid);
+        refreshQuotePartsList();
+      });
+    }
+  });
+}
+
+function refreshQuotePartsList(){
+  const list = document.getElementById('quote-parts-list');
+  list.innerHTML = quoteDraft.parts.map(quotePartRowHtml).join('');
+  bindQuotePartRowEvents();
+  refreshQuotePartAddControls();
+  updateQuoteModalTotals();
+}
+
+function updateQuoteModalTotals(){
+  const t = orderTotals(quoteDraft);
+  const costEl = document.getElementById('quote-total-cost-display');
+  if(costEl) costEl.textContent = fmtMoney(t.costTotal);
+}
+
+function quoteModalHtml(d){
+  return '<div class="modal-backdrop" data-close-backdrop>' +
+    '<div class="modal-card" role="dialog" aria-modal="true">' +
+      '<div class="modal-header"><div><div class="modal-title">'+(d.isNew?'طلب تسعير جديد':'تعديل طلب التسعير')+'</div><div class="modal-sub">البيانات تُحفظ عند الضغط على حفظ</div></div>' +
+        '<button class="icon-btn" id="quote-modal-close-btn" aria-label="إغلاق">✕</button></div>' +
+      '<div class="modal-body">' +
+        '<label class="field"><span class="field-label">رقم التسعيرة (تلقائي)</span><input type="text" class="order-number-input" value="'+escapeHtml(d.orderNumber)+'" readonly></label>' +
+        '<div class="field">' +
+          '<span class="field-label">العميل (اختياري)</span>' +
+          '<div class="phone-field-row">' +
+            '<div id="quote-customer-select" style="flex:1;">' +
+              searchableSelectHtml('quote-customer-select-input',
+                (appData.customers||[]).map(c=>({id:c.id, label:c.name||c.phone||'عميل', sublabel:c.phone})),
+                d.customerId, '— بدون عميل محدد —') +
+            '</div>' +
+            '<button type="button" class="icon-btn" id="quote-add-customer-btn" aria-label="عميل جديد">➕</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="field">' +
+          '<span class="field-label">الطلبية</span>' +
+          '<input type="text" id="quote-label-input" placeholder="مثال: اسم الزبون / نوع السيارة / أي وصف مختصر" value="'+escapeHtml(d.orderLabel||'')+'">' +
+        '</div>' +
+        '<div class="section-block">' +
+          '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span></div>' +
+          '<div id="quote-parts-list" class="parts-list">'+d.parts.map(quotePartRowHtml).join('')+'</div>' +
+          '<div id="quote-part-type-gate-wrap">'+quotePartAddControlsHtml()+'</div>' +
+        '</div>' +
+        '<div class="section-block section-sales">' +
+          '<div class="totals-row">' +
+            '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="quote-total-cost-display">0 ر.س</span></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="modal-footer">' +
+        '<div class="modal-footer-utility">' +
+          (!d.isNew ? '<button type="button" class="btn btn-sm btn-danger-ghost" id="quote-delete-btn">🗑️ حذف طلب التسعير</button>' : '') +
+        '</div>' +
+        '<span></span>' +
+        '<div class="modal-footer-actions">' +
+          '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' +
+          '<button type="button" class="btn btn-ghost" id="quote-save-btn">💾 حفظ</button>' +
+          '<button type="button" class="btn btn-primary" id="quote-approve-btn">✅ اعتماد</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+function openQuoteModal(mode, orderId){
+  selectedQuotePartType = null;
+  if(mode==='create'){
+    quoteDraft = {
+      id: uid('ord'),
+      orderNumber: nextOrderNumber(),
+      orderLabel: '',
+      parts: [],
+      partsSelectionEnabled:false,
+      paidToAmer:false,
+      paidToSupplier:false,
+      supplied:false,
+      customerPhone:'',
+      customerId: null,
+      customerPayments:[],
+      confirmed:false,
+      feeEnabled:false,
+      feePercent:0,
+      serviceFeeEnabled:false,
+      serviceFeePercent:0,
+      deliveryFeeEnabled:false,
+      deliveryFeeAmount:0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      isQuote: true,
+      isNew: true
+    };
+  } else {
+    const found = appData.orders.find(o=>o.id===orderId);
+    if(!found) return;
+    quoteDraft = JSON.parse(JSON.stringify(found));
+    quoteDraft.isNew = false;
+  }
+  const root = document.getElementById('modal-root');
+  root.innerHTML = quoteModalHtml(quoteDraft);
+  root.classList.add('modal-open');
+  attachQuoteModalHandlers();
+  updateQuoteModalTotals();
+  document.addEventListener('keydown', quoteEscListener);
+}
+
+function closeQuoteModal(){
+  const root = document.getElementById('modal-root');
+  root.innerHTML='';
+  root.classList.remove('modal-open');
+  quoteDraft=null;
+  document.removeEventListener('keydown', quoteEscListener);
+}
+
+function quoteEscListener(e){ if(e.key==='Escape') closeQuoteModal(); }
+
+function attachQuoteModalHandlers(){
+  const root = document.getElementById('modal-root');
+  root.querySelector('[data-close-backdrop]').addEventListener('click', (e)=>{
+    if(e.target.hasAttribute('data-close-backdrop')) closeQuoteModal();
+  });
+  root.querySelector('#quote-modal-close-btn').addEventListener('click', closeQuoteModal);
+  root.querySelector('#quote-cancel-btn').addEventListener('click', closeQuoteModal);
+
+  root.querySelector('#quote-label-input').addEventListener('input', e=>{ quoteDraft.orderLabel = e.target.value; });
+  bindSearchableSelect(root.querySelector('#quote-customer-select .searchable-select'),
+    ()=> (appData.customers||[]).map(c=>({id:c.id, label:c.name||c.phone||'عميل', sublabel:c.phone})),
+    (id)=>{
+      quoteDraft.customerId = id || null;
+      const c = (appData.customers||[]).find(c=>c.id===quoteDraft.customerId);
+      quoteDraft.customerPhone = c ? (c.phone||'') : '';
+    }
+  );
+  root.querySelector('#quote-add-customer-btn').addEventListener('click', ()=>{
+    openQuickAddCustomerModal((newCustomer)=>{
+      quoteDraft.customerId = newCustomer.id;
+      quoteDraft.customerPhone = newCustomer.phone || '';
+      const wrap = document.querySelector('#quote-customer-select .searchable-select');
+      if(wrap){
+        wrap.setAttribute('data-selected-id', newCustomer.id);
+        const input = wrap.querySelector('.searchable-select-input');
+        if(input) input.value = newCustomer.name || newCustomer.phone || 'عميل';
+      }
+    });
+  });
+
+  bindQuotePartAddControls();
+  bindQuotePartRowEvents();
+
+  root.querySelector('#quote-save-btn').addEventListener('click', onSaveQuote);
+  root.querySelector('#quote-approve-btn').addEventListener('click', onApproveQuote);
+
+  const deleteBtn = root.querySelector('#quote-delete-btn');
+  if(deleteBtn){
+    deleteBtn.addEventListener('click', ()=>{
+      const id = quoteDraft.id;
+      confirmAction({
+        title: 'حذف طلب التسعير هذا؟',
+        message: 'هذا الإجراء نهائي ولا يمكن التراجع عنه.',
+        confirmLabel: 'تأكيد الحذف',
+        dangerous: true,
+        onConfirm: async ()=>{
+          closeQuoteModal();
+          appData.orders = appData.orders.filter(o=>o.id!==id);
+          await deleteOrder(id);
+          renderQuotesList();
+          showToast('تم حذف طلب التسعير', 'ok');
+        }
+      });
+    });
+  }
+}
+
+function cleanedQuoteParts(){
+  return quoteDraft.parts
+    .filter(p=>p.description && p.description.trim())
+    .map(p=>({
+      id:p.id,
+      description:p.description.trim(),
+      qty: (p.qty===''||p.qty==null||Number(p.qty)<=0) ? 1 : Number(p.qty),
+      costPrice: p.costPrice===''? 0 : Number(p.costPrice)||0,
+      sellPrice: null,
+      used: !!p.used,
+      included: true,
+      supplierId: p.supplierId || null
+    }));
+}
+
+async function onSaveQuote(){
+  const dup = appData.orders.find(o=>o.orderNumber.trim()===quoteDraft.orderNumber.trim() && o.id!==quoteDraft.id);
+  if(dup){ showToast('رقم التسعيرة تضارب مع طلبية أخرى، أعد فتح النافذة', 'error'); return false; }
+  const cleanedParts = cleanedQuoteParts();
+  if(cleanedParts.length===0){ showToast('لازم تضيف وصف لقطعة وحدة على الأقل', 'error'); return false; }
+
+  quoteDraft.parts = cleanedParts;
+  quoteDraft.orderLabel = (quoteDraft.orderLabel||'').trim();
+  quoteDraft.updatedAt = new Date().toISOString();
+  delete quoteDraft.isNew;
+
+  const idx = appData.orders.findIndex(o=>o.id===quoteDraft.id);
+  if(idx>=0) appData.orders[idx]=quoteDraft; else appData.orders.push(quoteDraft);
+
+  await persistOrder(quoteDraft);
+
+  const root = document.getElementById('modal-root');
+  root.innerHTML = quoteModalHtml(quoteDraft);
+  attachQuoteModalHandlers();
+  updateQuoteModalTotals();
+
+  renderQuotesList();
+  showToast('تم حفظ طلب التسعير', 'ok');
+  return true;
+}
+
+async function onApproveQuote(){
+  const dup = appData.orders.find(o=>o.orderNumber.trim()===quoteDraft.orderNumber.trim() && o.id!==quoteDraft.id);
+  if(dup){ showToast('رقم التسعيرة تضارب مع طلبية أخرى، أعد فتح النافذة', 'error'); return; }
+  const cleanedParts = cleanedQuoteParts();
+  if(cleanedParts.length===0){ showToast('لازم تضيف وصف لقطعة وحدة على الأقل', 'error'); return; }
+
+  quoteDraft.parts = cleanedParts;
+  quoteDraft.orderLabel = (quoteDraft.orderLabel||'').trim();
+  quoteDraft.updatedAt = new Date().toISOString();
+  quoteDraft.isQuote = false;
+  delete quoteDraft.isNew;
+
+  const idx = appData.orders.findIndex(o=>o.id===quoteDraft.id);
+  if(idx>=0) appData.orders[idx]=quoteDraft; else appData.orders.push(quoteDraft);
+
+  const approvedNumber = quoteDraft.orderNumber;
+  await persistOrder(quoteDraft);
+  closeQuoteModal();
+
+  renderKPIs();
+  renderTable();
+  renderQuotesList();
+  showToast('تم اعتماد طلب التسعير — صار طلبية '+approvedNumber, 'ok');
 }
 
 /* ---------- contact customer: call or WhatsApp, from either the orders list or inside the order modal ---------- */
@@ -4317,6 +4749,13 @@ function bindToolbar(){
     document.getElementById('btn-toggle-orders-list').setAttribute('aria-expanded', opening ? 'true' : 'false');
   });
   document.getElementById('btn-new-order').addEventListener('click', ()=> openModal('create'));
+  document.getElementById('btn-toggle-quotes-list').addEventListener('click', ()=>{
+    const el = document.getElementById('quotes-list-section');
+    const opening = el.style.display === 'none';
+    el.style.display = opening ? '' : 'none';
+    document.getElementById('btn-toggle-quotes-list').setAttribute('aria-expanded', opening ? 'true' : 'false');
+  });
+  document.getElementById('btn-new-quote').addEventListener('click', ()=> openQuoteModal('create'));
   document.getElementById('btn-open-treasury').addEventListener('click', openTreasuryView);
   document.getElementById('btn-open-tasks').addEventListener('click', openTasksView);
   document.getElementById('btn-open-suppliers').addEventListener('click', openSuppliersView);
@@ -4346,6 +4785,7 @@ async function init(){
   renderFilterButtons();
   bindToolbar();
   renderTable();
+  renderQuotesList();
   updateTasksBadge();
   updateCustomersBadge();
   updateSuppliersBadge();
@@ -4380,6 +4820,7 @@ function applyRemoteOrderChange(payload){
   }
   renderKPIs();
   renderTable();
+  renderQuotesList();
   updateCustomersBadge();
   updateSuppliersBadge();
   if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
