@@ -2519,6 +2519,7 @@ async function onSaveOrder(){
 let quoteDraft = null;
 let selectedQuotePartType = null;
 let quoteModalRole = 'sales'; // 'sales' (المبيعات — يملأ الطلب، يعتمد، يحذف) | 'purchasing' (عامر — يسعّر فقط)
+let quoteOriginalSnapshot = null; // حالة الطلب وقت الفتح — لمقارنتها وقت الحفظ ومعرفة هل صار تعديل فعلي أو لا
 
 function quotesMatchingList(){
   return (appData.orders||[]).filter(o=>o.isQuote).sort((a,b)=> orderNumberSortKey(b) - orderNumberSortKey(a));
@@ -2792,7 +2793,8 @@ function quoteModalHtml(d){
       '<button type="button" class="btn btn-primary" id="quote-save-send-btn">حفظ و إرسال</button>'
     ) : (
       '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' +
-      '<button type="button" class="btn btn-ghost" id="quote-save-btn">💾 حفظ و إرسال</button>' +
+      '<button type="button" class="btn btn-ghost" id="quote-save-btn">💾 حفظ</button>' +
+      '<button type="button" class="btn btn-ghost" id="quote-send-btn">📤 حفظ و إرسال</button>' +
       '<button type="button" class="btn btn-primary" id="quote-approve-btn">✅ اعتماد</button>'
     );
 
@@ -2824,6 +2826,23 @@ function quoteModalHtml(d){
       '</div>' +
     '</div>' +
   '</div>';
+}
+
+/* بصمة محتوى طلب التسعير (وصف/ملاحظات المبيعات/العدد/السعر/النوع/المورد لكل قطعة + الطلبية + العميل) —
+   تُقارَن وقت الحفظ بحالتها وقت الفتح لمعرفة هل المبيعات عدّل شي فعليًا (مش بس ضغط حفظ بدون تغيير) */
+function quoteContentSnapshot(d){
+  return JSON.stringify({
+    orderLabel: (d.orderLabel||'').trim(),
+    customerId: d.customerId||null,
+    parts: (d.parts||[]).filter(p=>p.description && p.description.trim()).map(p=>({
+      description: (p.description||'').trim(),
+      notes: (p.notes||'').trim(),
+      qty: (p.qty===''||p.qty==null||Number(p.qty)<=0) ? 1 : Number(p.qty),
+      costPrice: p.costPrice===''? 0 : Number(p.costPrice)||0,
+      used: p.used===null ? null : !!p.used,
+      supplierId: p.supplierId||null
+    }))
+  });
 }
 
 function openQuoteModal(mode, orderId, role){
@@ -2861,6 +2880,7 @@ function openQuoteModal(mode, orderId, role){
     quoteDraft = JSON.parse(JSON.stringify(found));
     quoteDraft.isNew = false;
   }
+  quoteOriginalSnapshot = quoteContentSnapshot(quoteDraft);
   const root = document.getElementById('modal-root');
   root.innerHTML = quoteModalHtml(quoteDraft);
   root.classList.add('modal-open');
@@ -2934,6 +2954,7 @@ function attachQuoteModalHandlers(){
   }
 
   root.querySelector('#quote-save-btn').addEventListener('click', onSaveQuote);
+  root.querySelector('#quote-send-btn').addEventListener('click', onSendQuote);
   root.querySelector('#quote-approve-btn').addEventListener('click', onApproveQuote);
 
   const deleteBtn = root.querySelector('#quote-delete-btn');
@@ -2974,23 +2995,29 @@ function cleanedQuoteParts(){
     }));
 }
 
-async function onSaveQuote(){
+/* حفظ (بدون إرسال) وحفظ و إرسال يشتركان بنفس منطق التحقق والحفظ — يختلفان فقط إذا صار تعديل
+   فعلي (مقارنة ببصمة وقت الفتح) وقت "حفظ و إرسال" فقط: عندها ترجع الطلبية معلّقة (صفراء) عند عامر. */
+async function saveQuoteDraft(markSent){
   const dup = appData.orders.find(o=>o.orderNumber.trim()===quoteDraft.orderNumber.trim() && o.id!==quoteDraft.id);
   if(dup){ showToast('رقم التسعيرة تضارب مع طلبية أخرى، أعد فتح النافذة', 'error'); return false; }
   const cleanedParts = cleanedQuoteParts();
   if(cleanedParts.length===0){ showToast('لازم تضيف وصف لقطعة وحدة على الأقل', 'error'); return false; }
 
+  const wasEdited = quoteContentSnapshot(quoteDraft) !== quoteOriginalSnapshot;
+
   quoteDraft.parts = cleanedParts;
   quoteDraft.orderLabel = (quoteDraft.orderLabel||'').trim();
   quoteDraft.updatedAt = new Date().toISOString();
-  // أي تعديل وإرسال من المبيعات يرجّعها معلّقة (صفراء) — عامر لازم يعيد مراجعتها/تسعيرها من جديد
-  quoteDraft.quoteReady = false;
+  if(markSent && wasEdited){
+    quoteDraft.quoteReady = false;
+  }
   delete quoteDraft.isNew;
 
   const idx = appData.orders.findIndex(o=>o.id===quoteDraft.id);
   if(idx>=0) appData.orders[idx]=quoteDraft; else appData.orders.push(quoteDraft);
 
   await persistOrder(quoteDraft);
+  quoteOriginalSnapshot = quoteContentSnapshot(quoteDraft);
 
   const root = document.getElementById('modal-root');
   root.innerHTML = quoteModalHtml(quoteDraft);
@@ -2998,9 +3025,12 @@ async function onSaveQuote(){
   updateQuoteModalTotals();
 
   renderQuotesList();
-  showToast('تم الحفظ والإرسال', 'ok');
+  showToast(markSent ? 'تم الحفظ والإرسال' : 'تم الحفظ', 'ok');
   return true;
 }
+
+async function onSaveQuote(){ return saveQuoteDraft(false); }
+async function onSendQuote(){ return saveQuoteDraft(true); }
 
 async function onApproveQuote(){
   const dup = appData.orders.find(o=>o.orderNumber.trim()===quoteDraft.orderNumber.trim() && o.id!==quoteDraft.id);
