@@ -499,7 +499,6 @@
   .btn-add-used-part:hover{background:rgba(232,178,61,.22);border-color:var(--amber);}
   .part-row{display:flex;gap:8px;align-items:flex-end;background:var(--surface);border:1px solid var(--border-soft);border-radius:var(--radius-sm);padding:10px;}
   .part-include-check{flex-shrink:0;align-self:center;width:18px;height:18px;accent-color:var(--green);cursor:pointer;}
-  .part-return-select-check{flex-shrink:0;align-self:center;width:18px;height:18px;accent-color:var(--rust);cursor:pointer;}
   .part-row-excluded{opacity:.5;}
   .part-row-excluded .part-desc-input{text-decoration:line-through;}
   .part-row-returned{opacity:.7;background:var(--surface-2);}
@@ -1710,9 +1709,6 @@ function bindPartAddControls(){
   });
 }
 
-let partReturnSelectionMode = false; // فعّال بعد الضغط على زر "إرجاع" بجانب "حذف الطلبية" — يظهر خانة تحديد بجانب كل قطعة
-let partReturnSelected = {}; // part_id -> true — القطع المحدَّدة حاليًا للإرجاع (قبل تأكيد الدفعة)
-
 function partRowHtml(p, i){
   const costVal = (p.costPrice===''||p.costPrice==null) ? '' : p.costPrice;
   const sellVal = (p.sellPrice===''||p.sellPrice==null) ? '' : p.sellPrice;
@@ -1737,7 +1733,6 @@ function partRowHtml(p, i){
   }
 
   return '<div class="part-row'+(selectionOn && !included ? ' part-row-excluded' : '')+'" data-part-id="'+p.id+'">' +
-    (partReturnSelectionMode ? '<input type="checkbox" class="part-return-select-check" '+(partReturnSelected[p.id]?'checked':'')+' title="تحديد للإرجاع">' : '') +
     (selectionOn ? '<input type="checkbox" class="part-include-check" '+(included?'checked':'')+' title="مشمولة بالطلبية">' : '') +
     '<div class="part-desc-wrap">' +
       '<div class="part-desc-row">' +
@@ -1756,7 +1751,7 @@ function partRowHtml(p, i){
           p.supplierId, p.used?'— بدون تشليح —':'— بدون مورد —') +
       '</label>' +
     '</div>' +
-    '<button type="button" class="part-remove-btn" data-remove-part="'+p.id+'" aria-label="حذف القطعة">✕</button>' +
+    '<button type="button" class="part-remove-btn" data-part-actions="'+p.id+'" aria-label="خيارات القطعة (حذف أو إرجاع)">⋯</button>' +
   '</div>';
 }
 
@@ -1829,7 +1824,7 @@ function modalHtml(d){
       '<div class="modal-footer">' +
         '<div class="modal-footer-utility">' +
           (!d.isNew ? '<button type="button" class="btn btn-sm btn-danger-ghost" id="modal-delete-btn">حذف الطلبية</button>' : '') +
-          (!d.isNew ? '<span id="return-mode-controls">'+returnModeControlsHtml()+'</span>' : '') +
+          (!d.isNew ? '<button type="button" class="btn btn-sm btn-ghost" id="modal-return-order-btn">↩️ إرجاع الطلبية</button>' : '') +
           '<div class="parts-clipboard-mini">' +
             '<button type="button" class="btn-clip-mini" id="copy-parts-btn">📋 نسخ</button>' +
             '<button type="button" class="btn-clip-mini" id="paste-parts-btn">📥 لصق</button>' +
@@ -1848,8 +1843,6 @@ function modalHtml(d){
 
 function openModal(mode, orderId){
   selectedPartType = null;
-  partReturnSelectionMode = false;
-  partReturnSelected = {};
   editingPayments = {};
   if(mode==='create'){
     draft = {
@@ -1908,8 +1901,6 @@ function attachModalHandlers(){
   });
   root.querySelector('#modal-close-btn').addEventListener('click', closeModal);
   root.querySelector('#modal-cancel-btn').addEventListener('click', closeModal);
-
-  bindReturnModeControls();
 
   root.querySelector('#order-label-input').addEventListener('input', e=>{ draft.orderLabel = e.target.value; });
   bindSearchableSelect(root.querySelector('#order-customer-select .searchable-select'),
@@ -2052,6 +2043,11 @@ function attachModalHandlers(){
     });
   }
 
+  const returnOrderBtn = root.querySelector('#modal-return-order-btn');
+  if(returnOrderBtn){
+    returnOrderBtn.addEventListener('click', confirmReturnWholeOrder);
+  }
+
   const quoteBtn = root.querySelector('#modal-quote-btn');
   if(quoteBtn){
     quoteBtn.addEventListener('click', async ()=>{
@@ -2114,20 +2110,9 @@ function bindPartRowEvents(){
         (id)=>{ part.supplierId = id || null; }
       );
     }
-    const removeBtn = row.querySelector('[data-remove-part]');
-    if(removeBtn){
-      removeBtn.addEventListener('click', ()=>{
-        confirmAction({
-          title: 'حذف هذه القطعة؟',
-          message: part.description ? 'القطعة: '+part.description : undefined,
-          confirmLabel: 'تأكيد الحذف',
-          dangerous: true,
-          onConfirm: ()=>{
-            draft.parts = draft.parts.filter(p=>p.id!==pid);
-            refreshPartsList();
-          }
-        });
-      });
+    const actionsBtn = row.querySelector('[data-part-actions]');
+    if(actionsBtn){
+      actionsBtn.addEventListener('click', ()=> openPartActionChoice(part));
     }
     const toggleUsedBtn = row.querySelector('[data-toggle-used]');
     if(toggleUsedBtn){
@@ -2143,13 +2128,6 @@ function bindPartRowEvents(){
             await cancelPendingScrapyardProposalsForPart(part.id);
           }
         });
-      });
-    }
-    const returnSelectCheck = row.querySelector('.part-return-select-check');
-    if(returnSelectCheck){
-      returnSelectCheck.addEventListener('change', e=>{
-        if(e.target.checked) partReturnSelected[pid] = true; else delete partReturnSelected[pid];
-        refreshReturnModeControls();
       });
     }
     const undoReturnBtn = row.querySelector('[data-undo-return-part]');
@@ -2181,63 +2159,96 @@ function refreshPartsList(){
   updateModalTotals();
 }
 
-/* زر "إرجاع" جنب "حذف الطلبية" — يفعّل وضع تحديد القطع، وبعدها زر تأكيد يطبّق الإرجاع دفعة وحدة */
-function returnModeControlsHtml(){
-  const selectedCount = Object.keys(partReturnSelected).length;
-  return '<button type="button" class="btn btn-sm btn-ghost" id="modal-toggle-return-btn">'+(partReturnSelectionMode?'✕ إلغاء التحديد':'🔄 إرجاع')+'</button>' +
-    (partReturnSelectionMode ? '<button type="button" class="btn btn-sm btn-primary" id="modal-confirm-return-btn"'+(selectedCount?'':' disabled')+'>✅ تأكيد إرجاع المحدد ('+selectedCount+')</button>' : '');
-}
-
-function refreshReturnModeControls(){
-  const wrap = document.getElementById('return-mode-controls');
-  if(!wrap) return;
-  wrap.innerHTML = returnModeControlsHtml();
-  bindReturnModeControls();
-}
-
-function bindReturnModeControls(){
-  const toggleBtn = document.getElementById('modal-toggle-return-btn');
-  if(toggleBtn){
-    toggleBtn.addEventListener('click', ()=>{
-      partReturnSelectionMode = !partReturnSelectionMode;
-      if(!partReturnSelectionMode) partReturnSelected = {};
+/* زر "إرجاع الطلبية" جنب "حذف الطلبية" — يرجع كل القطع النشطة بالطلبية دفعة وحدة */
+function confirmReturnWholeOrder(){
+  const activeParts = orderActiveParts(draft).filter(p=>!p.returned);
+  if(!activeParts.length){
+    showToast('لا يوجد قطع قابلة للإرجاع بهذه الطلبية', 'error');
+    return;
+  }
+  const missingSupplier = activeParts.some(p=>{
+    const hasReceivable = p.used ? draft.paidToAmer : draft.paidToSupplier;
+    return hasReceivable && !p.supplierId;
+  });
+  if(missingSupplier){
+    showToast('حدد المورد لكل قطعة مدفوعة مسبقًا قبل تأكيد الإرجاع', 'error');
+    return;
+  }
+  const anyPaid = activeParts.some(p=> p.used ? draft.paidToAmer : draft.paidToSupplier);
+  confirmAction({
+    title: 'تأكيد إرجاع الطلبية بالكامل ('+activeParts.length+' قطعة)؟',
+    message: anyPaid
+      ? 'بعض القطع مدفوعة مسبقًا — مبلغها رح يظهر كمسترجع بانتظار التحصيل بشاشة الموردين، وينخصم من دفعة الزبون تلقائيًا.'
+      : 'رح تُستبعد كل قطع الطلبية من حساباتها مباشرة.',
+    confirmLabel: 'تأكيد إرجاع الطلبية',
+    dangerous: true,
+    onConfirm: ()=>{
+      activeParts.forEach(p=> applyPartReturn(p));
       refreshPartsList();
-      refreshReturnModeControls();
-    });
-  }
-  const confirmBtn = document.getElementById('modal-confirm-return-btn');
-  if(confirmBtn){
-    confirmBtn.addEventListener('click', ()=>{
-      const selectedIds = Object.keys(partReturnSelected).filter(id=>partReturnSelected[id]);
-      if(!selectedIds.length) return;
-      const selectedParts = draft.parts.filter(p=>selectedIds.includes(p.id));
-      const missingSupplier = selectedParts.some(p=>{
-        const hasReceivable = p.used ? draft.paidToAmer : draft.paidToSupplier;
-        return hasReceivable && !p.supplierId;
-      });
-      if(missingSupplier){
-        showToast('حدد المورد لكل قطعة مدفوعة مسبقًا قبل تأكيد الإرجاع', 'error');
-        return;
+      refreshPaymentsList();
+    }
+  });
+}
+
+/* زر "⋯" بجانب كل قطعة — يعرض خيار حذف القطعة أو إرجاعها لوحدها */
+function openPartActionChoice(part){
+  const root = document.getElementById('confirm-root');
+  root.innerHTML =
+    '<div class="modal-backdrop" data-close-confirm>' +
+      '<div class="modal-card modal-card-sm" role="alertdialog" aria-modal="true">' +
+        '<div class="modal-title">'+escapeHtml(part.description||'القطعة')+'</div>' +
+        '<p class="modal-sub">اختر الإجراء المطلوب لهذه القطعة</p>' +
+        '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;flex-wrap:wrap;">' +
+          '<button type="button" class="btn btn-ghost" id="part-action-cancel-btn">إلغاء</button>' +
+          '<button type="button" class="btn btn-ghost" id="part-action-return-btn">🔄 إرجاع</button>' +
+          '<button type="button" class="btn btn-danger" id="part-action-delete-btn">🗑️ حذف</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  root.querySelector('[data-close-confirm]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-confirm')) close();
+  });
+  root.querySelector('#part-action-cancel-btn').addEventListener('click', close);
+  root.querySelector('#part-action-delete-btn').addEventListener('click', ()=>{
+    close();
+    confirmAction({
+      title: 'حذف هذه القطعة؟',
+      message: part.description ? 'القطعة: '+part.description : undefined,
+      confirmLabel: 'تأكيد الحذف',
+      dangerous: true,
+      onConfirm: ()=>{
+        draft.parts = draft.parts.filter(p=>p.id!==part.id);
+        refreshPartsList();
       }
-      const anyPaid = selectedParts.some(p=> p.used ? draft.paidToAmer : draft.paidToSupplier);
-      confirmAction({
-        title: 'تأكيد إرجاع '+selectedIds.length+' قطعة؟',
-        message: anyPaid
-          ? 'بعض القطع مدفوعة مسبقًا — مبلغها رح يظهر كمسترجع بانتظار التحصيل بشاشة الموردين، وينخصم من دفعة الزبون تلقائيًا.'
-          : 'رح تُستبعد من حسابات الطلبية مباشرة.',
-        confirmLabel: 'تأكيد الإرجاع',
-        dangerous: true,
-        onConfirm: ()=>{
-          selectedParts.forEach(p=> applyPartReturn(p));
-          partReturnSelected = {};
-          partReturnSelectionMode = false;
-          refreshPartsList();
-          refreshPaymentsList();
-          refreshReturnModeControls();
-        }
-      });
     });
+  });
+  root.querySelector('#part-action-return-btn').addEventListener('click', ()=>{
+    close();
+    confirmSinglePartReturn(part);
+  });
+}
+
+function confirmSinglePartReturn(part){
+  const hasReceivable = part.used ? draft.paidToAmer : draft.paidToSupplier;
+  if(hasReceivable && !part.supplierId){
+    showToast('حدد المورد لهذه القطعة قبل تأكيد الإرجاع', 'error');
+    return;
   }
+  confirmAction({
+    title: 'تأكيد إرجاع هذه القطعة؟',
+    message: hasReceivable
+      ? 'القطعة مدفوعة مسبقًا — مبلغها رح يظهر كمسترجع بانتظار التحصيل بشاشة الموردين، وينخصم من دفعة الزبون تلقائيًا.'
+      : 'رح تُستبعد من حسابات الطلبية مباشرة.',
+    confirmLabel: 'تأكيد الإرجاع',
+    dangerous: true,
+    onConfirm: ()=>{
+      applyPartReturn(part);
+      refreshPartsList();
+      refreshPaymentsList();
+    }
+  });
 }
 
 /* تطبيق إرجاع قطعة وحدة: تعليمها كمرتجعة، وإذا كان الزبون دفع أكثر من المطلوب بعد استبعادها
