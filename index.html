@@ -524,6 +524,12 @@
     flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);
     padding:8px 10px;border-radius:6px;font-size:13.5px;font-family:'Tajawal',sans-serif;
   }
+  .part-notes-input,.part-purchasing-notes-input{
+    background:var(--bg);border:1px solid var(--border-soft);color:var(--text-dim);
+    padding:6px 10px;border-radius:6px;font-size:12px;font-family:'Tajawal',sans-serif;
+  }
+  .part-purchasing-notes-input{border-color:var(--amber-line);}
+  .part-notes-readonly{font-size:12px;color:var(--text-faint);padding:2px 2px;}
   .used-badge{align-self:flex-start;font-size:10px;font-weight:700;color:var(--amber);background:var(--amber-dim);border:1px solid var(--amber-line);border-radius:4px;padding:1px 8px;cursor:pointer;font-family:'Tajawal',sans-serif;}
   .used-badge:hover{filter:brightness(1.1);}
   .used-badge-off{color:var(--text-faint);background:var(--surface-2);border-color:var(--border-soft);}
@@ -2648,12 +2654,24 @@ function quotePartRowHtml(p, i){
     '</label>'
   );
 
+  // ملاحظات المبيعات: قابلة للتعديل عند المبيعات، وللقراءة فقط عند عامر (يشوفها بس)
+  const salesNotesHtml = readOnly
+    ? (p.notes ? '<div class="part-notes-readonly">ملاحظة المبيعات: '+escapeHtml(p.notes)+'</div>' : '')
+    : '<input type="text" class="part-notes-input" placeholder="ملاحظات (اختياري)" value="'+escapeHtml(p.notes||'')+'">';
+
+  // ملاحظات عامر: قابلة للتعديل عنده بس، وللقراءة فقط عند المبيعات (يشوفوها بعد ما يرسلها)
+  const purchasingNotesHtml = readOnly
+    ? '<input type="text" class="part-purchasing-notes-input" placeholder="ملاحظاتك (اختياري)" value="'+escapeHtml(p.purchasingNotes||'')+'">'
+    : (p.purchasingNotes ? '<div class="part-notes-readonly">ملاحظة عامر: '+escapeHtml(p.purchasingNotes)+'</div>' : '');
+
   return '<div class="part-row" data-part-id="'+p.id+'">' +
     '<div class="part-desc-wrap">' +
       '<div class="part-desc-row">' +
         '<span class="part-index-badge">'+((i!=null?i:0)+1)+'</span>' +
-        '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="'+escapeHtml(p.description)+'"'+ro+'>' +
+        '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="'+escapeHtml(p.description)+'">' +
       '</div>' +
+      salesNotesHtml +
+      purchasingNotesHtml +
       usedBadgeHtml +
     '</div>' +
     '<div class="part-price-group">' +
@@ -2672,9 +2690,11 @@ function bindQuotePartRowEvents(){
     const pid = row.getAttribute('data-part-id');
     const part = quoteDraft.parts.find(p=>p.id===pid);
     if(!part) return;
+    const descInput = row.querySelector('.part-desc-input');
+    if(descInput) descInput.addEventListener('input', e=>{ part.description = e.target.value; });
     if(!readOnly){
-      const descInput = row.querySelector('.part-desc-input');
-      if(descInput) descInput.addEventListener('input', e=>{ part.description = e.target.value; });
+      const notesInput = row.querySelector('.part-notes-input');
+      if(notesInput) notesInput.addEventListener('input', e=>{ part.notes = e.target.value; });
       const qtyInput = row.querySelector('.part-qty-input');
       if(qtyInput){
         qtyInput.addEventListener('input', e=>{
@@ -2697,6 +2717,8 @@ function bindQuotePartRowEvents(){
         });
       }
     } else {
+      const purchasingNotesInput = row.querySelector('.part-purchasing-notes-input');
+      if(purchasingNotesInput) purchasingNotesInput.addEventListener('input', e=>{ part.purchasingNotes = e.target.value; });
       row.querySelectorAll('[data-resolve-used]').forEach(btn=>{
         btn.addEventListener('click', ()=>{
           part.used = btn.getAttribute('data-resolve-used') === 'true';
@@ -2941,6 +2963,8 @@ function cleanedQuoteParts(){
     .map(p=>({
       id:p.id,
       description:p.description.trim(),
+      notes: (p.notes||'').trim(),
+      purchasingNotes: (p.purchasingNotes||'').trim(),
       qty: (p.qty===''||p.qty==null||Number(p.qty)<=0) ? 1 : Number(p.qty),
       costPrice: p.costPrice===''? 0 : Number(p.costPrice)||0,
       sellPrice: null,
