@@ -2541,11 +2541,13 @@ function quotesListHtml(){
 
 function renderQuotesList(){
   const el = document.getElementById('quotes-table-container');
-  if(!el) return;
-  el.innerHTML = quotesListHtml();
-  el.querySelectorAll('.quote-row').forEach(row=>{
-    row.addEventListener('click', ()=> openQuoteModal('edit', row.getAttribute('data-quote-id')));
-  });
+  if(el){
+    el.innerHTML = quotesListHtml();
+    el.querySelectorAll('.quote-row').forEach(row=>{
+      row.addEventListener('click', ()=> openQuoteModal('edit', row.getAttribute('data-quote-id')));
+    });
+  }
+  refreshScrapyardQuotesListIfOpen();
 }
 
 function quotePartTypeGateHtml(){
@@ -2748,7 +2750,7 @@ function quoteModalHtml(d){
         '<span></span>' +
         '<div class="modal-footer-actions">' +
           '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' +
-          '<button type="button" class="btn btn-ghost" id="quote-save-btn">💾 حفظ</button>' +
+          '<button type="button" class="btn btn-ghost" id="quote-save-btn">💾 حفظ و إرسال</button>' +
           '<button type="button" class="btn btn-primary" id="quote-approve-btn">✅ اعتماد</button>' +
         '</div>' +
       '</div>' +
@@ -3646,6 +3648,8 @@ function subscribeScrapyardAppDataRealtime(){
         loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
       } else if(scrapyardCurrentScreen === 'home'){
         loadScrapyardHomeTotals().then(renderScrapyardHomeView);
+      } else if(scrapyardCurrentScreen === 'quotes'){
+        loadScrapyardQuotesData().then(refreshScrapyardQuotesListIfOpen);
       }
     })
     // المهام (purchases tasks) بجدول tasks منفصل — بيؤثر على شاشتي المهام والرئيسية
@@ -5963,7 +5967,7 @@ const SETTLEMENT_KINDS = {
 };
 
 let scrapyardSharedState = { email:'', canManage:false, activeKind:'used', parts:[], returnReceivables:[], proposals:[], confirmations:[], partsByKind:{used:[],new:[]}, tasks:[], suppliers:[], custodyBalance:0 };
-let scrapyardCurrentScreen = null; // 'home' | 'settlement' | 'tasks' — يحدّد هل نحدّث الشاشة تلقائيًا عند وصول تغيير لحظي
+let scrapyardCurrentScreen = null; // 'home' | 'settlement' | 'tasks' | 'quotes' — يحدّد هل نحدّث الشاشة تلقائيًا عند وصول تغيير لحظي
 
 async function initScrapyardView(email){
   scrapyardSharedState.email = email;
@@ -6212,6 +6216,9 @@ function renderScrapyardHomeView(){
     '<button type="button" class="scrapyard-home-tile" id="btn-open-purchases-tasks">' +
       '<span class="scrapyard-home-tile-label">✅ قائمة المهام</span>' +
       (pendingTasks>0 ? '<span class="inline-count-badge">'+pendingTasks+'</span>' : '<span class="scrapyard-home-tile-value num text-green">لا مهام</span>') +
+    '</button>' +
+    '<button type="button" class="scrapyard-home-tile" id="btn-open-scrapyard-quotes">' +
+      '<span class="scrapyard-home-tile-label">🧾 طلبات التسعير</span>' +
     '</button>';
 
   const logo = document.getElementById('scrapyard-home-logo-img');
@@ -6224,6 +6231,7 @@ function renderScrapyardHomeView(){
     loadScrapyardData('new').then(renderScrapyardView);
   });
   document.getElementById('btn-open-purchases-tasks').addEventListener('click', renderPurchasesTasksView);
+  document.getElementById('btn-open-scrapyard-quotes').addEventListener('click', openScrapyardQuotesView);
 }
 
 function renderPurchasesTasksView(){
@@ -6277,6 +6285,75 @@ async function togglePurchasesTaskDone(taskId, newDone){
     renderPurchasesTasksView();
     showToast('تعذر تحديث المهمة', 'error');
   }
+}
+
+/* ---------- طلبات التسعير عند عامر — نفس نافذة طلب التسعير المستخدمة بشاشة المبيعات
+   (openQuoteModal/onSaveQuote/onApproveQuote)، بس عامر ما عنده appData كامل عادةً فلازم نجيبه
+   خصيصًا أول ما يفتح هالشاشة. */
+async function openScrapyardQuotesView(){
+  scrapyardCurrentScreen = 'quotes';
+  const root = document.getElementById('scrapyard-root');
+  root.innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
+  await loadScrapyardQuotesData();
+  renderScrapyardQuotesView();
+}
+
+async function loadScrapyardQuotesData(){
+  try{
+    if(!sb) throw new Error('NO_DB');
+    const [ordersRes, customersRes, suppliersRes] = await Promise.all([
+      sb.from('orders').select('*'),
+      sb.from('customers').select('*'),
+      sb.from('suppliers').select('*')
+    ]);
+    if(ordersRes.error) throw ordersRes.error;
+    if(customersRes.error) throw customersRes.error;
+    if(suppliersRes.error) throw suppliersRes.error;
+    appData.orders = (ordersRes.data||[]).map(orderRowToObject);
+    appData.customers = groupSupplierOrCustomerRows(customersRes.data);
+    appData.suppliers = groupSupplierOrCustomerRows(suppliersRes.data);
+  }catch(e){
+    showToast('تعذر تحميل طلبات التسعير: ' + (e && e.message ? e.message : ''), 'error');
+  }
+}
+
+function renderScrapyardQuotesView(){
+  scrapyardCurrentScreen = 'quotes';
+  const root = document.getElementById('scrapyard-root');
+  root.innerHTML =
+    '<div class="app-top-utility-row">' +
+      '<div class="corner-mini-bar">' +
+        '<button type="button" class="btn btn-ghost btn-sm" id="btn-scrapyard-quotes-back">→ الرئيسية</button>' +
+        scrapyardThemeToggleHtml() +
+      '</div>' +
+      '<img class="app-corner-logo" src="'+PARTECH_LOGO_DATA_URI+'" id="scrapyard-quotes-logo-img" alt="PARTECH" title="الصفحة الرئيسية">' +
+    '</div>' +
+    '<header class="topbar"><div class="brand">طلبات التسعير</div></header>' +
+    '<div class="section-block">' +
+      '<div class="task-items-list" id="scrapyard-quotes-items-list">'+quotesListHtml()+'</div>' +
+    '</div>';
+
+  document.getElementById('btn-scrapyard-quotes-back').addEventListener('click', goToScrapyardHome);
+  const logo = document.getElementById('scrapyard-quotes-logo-img');
+  if(logo) logo.addEventListener('click', goToScrapyardHome);
+  bindScrapyardThemeToggle();
+  bindScrapyardQuoteRowEvents();
+}
+
+function bindScrapyardQuoteRowEvents(){
+  document.querySelectorAll('#scrapyard-quotes-items-list .quote-row').forEach(row=>{
+    row.addEventListener('click', ()=> openQuoteModal('edit', row.getAttribute('data-quote-id')));
+  });
+}
+
+function refreshScrapyardQuotesListIfOpen(){
+  if(scrapyardCurrentScreen !== 'quotes') return;
+  const scrapRoot = document.getElementById('scrapyard-root');
+  if(!scrapRoot || scrapRoot.style.display === 'none') return;
+  const list = document.getElementById('scrapyard-quotes-items-list');
+  if(!list) return;
+  list.innerHTML = quotesListHtml();
+  bindScrapyardQuoteRowEvents();
 }
 
 /* المستحق لكل تشليح على حدة (صافي) — مبني على القطع المستعملة غير المسدّدة الظاهرة حاليًا،
