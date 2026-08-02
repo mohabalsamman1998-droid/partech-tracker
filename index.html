@@ -2518,27 +2518,23 @@ async function onSaveOrder(){
   return true;
 }
 
-/* إرجاع طلبية موجودة لحالة "طلب تسعير" — نفس السجل (بدون نسخ أو رقم جديد)، تختفي فورًا من
-   "الطلبيات" وتظهر بـ"طلبات التسعير" عند عامر لإعادة تسعيرها (تصفر وتنتظر منه "حفظ و إرسال" من جديد). */
+/* إرجاع طلبية موجودة لحالة "طلب تسعير" — يفتح نفس السجل مباشرة بنافذة طلب التسعير للمراجعة/التعديل،
+   بدون أي حفظ فعلي هون؛ تبقى طلبية عادية فعليًا (ما توصل عند عامر) لحد ما يضغط "حفظ و اعادة طلب"
+   جوا النافذة يلي فتحت — لو سكّرها بدون حفظ، ما يصير أي تغيير. */
 function confirmReturnOrderToQuote(){
   confirmAction({
     title: 'إرجاع هذه الطلبية لطلب تسعير؟',
-    message: 'رح تختفي من قائمة الطلبيات وتظهر بطلبات التسعير عند عامر لإعادة تسعيرها.',
+    message: 'رح تنفتح كطلب تسعير للمراجعة — ما توصل لعامر إلا لما تضغط "حفظ و اعادة طلب" جوا.',
     confirmLabel: 'تأكيد الإرجاع',
     dangerous: true,
-    onConfirm: async ()=>{
+    onConfirm: ()=>{
       const id = draft.id;
-      draft.isQuote = true;
-      draft.quoteReady = false;
-      draft.updatedAt = new Date().toISOString();
-      const idx = appData.orders.findIndex(o=>o.id===id);
-      if(idx>=0) appData.orders[idx] = draft;
-      await persistOrder(draft);
       closeModal();
-      renderKPIs();
-      renderTable();
-      renderQuotesList();
-      showToast('تم إرجاع الطلبية لطلبات التسعير', 'ok');
+      openQuoteModal('edit', id);
+      if(quoteDraft){
+        quoteDraft.isQuote = true;
+        quoteDraft.quoteReady = false;
+      }
     }
   });
 }
