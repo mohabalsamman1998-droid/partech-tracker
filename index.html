@@ -318,6 +318,10 @@
   .task-item-row{display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:8px;padding:10px 12px;}
   .quote-row{cursor:pointer;border-inline-start:3px solid var(--amber-line);}
   .quote-row:hover{border-color:var(--amber-line);}
+  .quote-row-number{color:var(--text-faint);font-size:12.5px;}
+  .quote-row-label{font-size:19px;font-weight:800;color:var(--amber);}
+  .quote-row-ready{border-inline-start-color:var(--green-line);}
+  .quote-row-ready .quote-row-label{color:var(--green);}
   .task-item-check{width:20px;height:20px;accent-color:var(--green);cursor:pointer;flex-shrink:0;}
   .task-item-text{flex:1;font-size:14px;}
   .task-item-done{opacity:.55;}
@@ -2514,22 +2518,17 @@ async function onSaveOrder(){
    فعليًا — نفس السجل، بدون نسخ أو رقم جديد). ---------- */
 let quoteDraft = null;
 let selectedQuotePartType = null;
+let quoteModalRole = 'sales'; // 'sales' (المبيعات — يملأ الطلب، يعتمد، يحذف) | 'purchasing' (عامر — يسعّر فقط)
 
 function quotesMatchingList(){
   return (appData.orders||[]).filter(o=>o.isQuote).sort((a,b)=> orderNumberSortKey(b) - orderNumberSortKey(a));
 }
 
 function quoteRowHtml(o){
-  const t = orderTotals(o);
-  const customer = (appData.customers||[]).find(c=>c.id===o.customerId);
-  const customerLabel = customer ? (customer.name||customer.phone||'') : '';
-  return '<div class="task-item-row quote-row" data-quote-id="'+o.id+'">' +
-    '<div class="supplier-row-main">' +
-      '<span class="purchase-history-desc">'+escapeHtml(o.orderNumber)+(o.orderLabel?' — '+escapeHtml(o.orderLabel):'')+'</span>' +
-      '<span class="expense-entry-view-date">'+escapeHtml(customerLabel||'—')+'</span>' +
-      '<span class="num text-rust">'+fmtMoney(t.costTotal)+'</span>' +
-    '</div>' +
-    '<div class="purchase-history-row-sub"><span>'+(o.parts||[]).length+' قطعة</span></div>' +
+  const ready = !!o.quoteReady;
+  return '<div class="task-item-row quote-row'+(ready?' quote-row-ready':'')+'" data-quote-id="'+o.id+'">' +
+    '<span class="quote-row-number">'+escapeHtml(o.orderNumber)+'</span>' +
+    '<span class="quote-row-label">'+escapeHtml(o.orderLabel||'—')+'</span>' +
   '</div>';
 }
 
@@ -2628,16 +2627,20 @@ function bindQuotePartAddControls(){
 function quotePartRowHtml(p, i){
   const costVal = (p.costPrice===''||p.costPrice==null) ? '' : p.costPrice;
   const qtyVal = (p.qty===''||p.qty==null) ? 1 : p.qty;
+  const readOnly = quoteModalRole==='purchasing';
+  const ro = readOnly ? ' readonly' : '';
   return '<div class="part-row" data-part-id="'+p.id+'">' +
     '<div class="part-desc-wrap">' +
       '<div class="part-desc-row">' +
         '<span class="part-index-badge">'+((i!=null?i:0)+1)+'</span>' +
-        '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="'+escapeHtml(p.description)+'">' +
+        '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="'+escapeHtml(p.description)+'"'+ro+'>' +
       '</div>' +
-      '<button type="button" class="used-badge'+(p.used?'':' used-badge-off')+'" data-toggle-used="'+p.id+'">'+(p.used?'مستعمل':'غير مستعمل')+' ✏️</button>' +
+      (readOnly
+        ? '<span class="used-badge'+(p.used?'':' used-badge-off')+'">'+(p.used?'مستعمل':'غير مستعمل')+'</span>'
+        : '<button type="button" class="used-badge'+(p.used?'':' used-badge-off')+'" data-toggle-used="'+p.id+'">'+(p.used?'مستعمل':'غير مستعمل')+' ✏️</button>') +
     '</div>' +
     '<div class="part-price-group">' +
-      '<label class="mini-label">العدد<input type="number" min="1" step="1" class="part-qty-input num" value="'+qtyVal+'"></label>' +
+      '<label class="mini-label">العدد<input type="number" min="1" step="1" class="part-qty-input num" value="'+qtyVal+'"'+ro+'></label>' +
       '<label class="mini-label mini-label-cost">سعر الشراء<input type="number" min="0" step="0.01" class="part-cost-input num" value="'+costVal+'"></label>' +
       '<label class="mini-label mini-label-supplier">'+(p.used?'التشليح':'المورد')+
         searchableSelectHtml('quote-part-supplier-select',
@@ -2645,24 +2648,41 @@ function quotePartRowHtml(p, i){
           p.supplierId, p.used?'— بدون تشليح —':'— بدون مورد —') +
       '</label>' +
     '</div>' +
-    '<button type="button" class="part-remove-btn" data-remove-quote-part="'+p.id+'" aria-label="حذف القطعة">✕</button>' +
+    (readOnly ? '' : '<button type="button" class="part-remove-btn" data-remove-quote-part="'+p.id+'" aria-label="حذف القطعة">✕</button>') +
   '</div>';
 }
 
 function bindQuotePartRowEvents(){
   const root = document.getElementById('modal-root');
+  const readOnly = quoteModalRole==='purchasing';
   root.querySelectorAll('#quote-parts-list .part-row').forEach(row=>{
     const pid = row.getAttribute('data-part-id');
     const part = quoteDraft.parts.find(p=>p.id===pid);
     if(!part) return;
-    const descInput = row.querySelector('.part-desc-input');
-    if(descInput) descInput.addEventListener('input', e=>{ part.description = e.target.value; });
-    const qtyInput = row.querySelector('.part-qty-input');
-    if(qtyInput){
-      qtyInput.addEventListener('input', e=>{
-        part.qty = e.target.value===''? 1 : Number(e.target.value);
-        updateQuoteModalTotals();
-      });
+    if(!readOnly){
+      const descInput = row.querySelector('.part-desc-input');
+      if(descInput) descInput.addEventListener('input', e=>{ part.description = e.target.value; });
+      const qtyInput = row.querySelector('.part-qty-input');
+      if(qtyInput){
+        qtyInput.addEventListener('input', e=>{
+          part.qty = e.target.value===''? 1 : Number(e.target.value);
+          updateQuoteModalTotals();
+        });
+      }
+      const toggleUsedBtn = row.querySelector('[data-toggle-used]');
+      if(toggleUsedBtn){
+        toggleUsedBtn.addEventListener('click', ()=>{
+          part.used = !part.used;
+          refreshQuotePartsList();
+        });
+      }
+      const removeBtn = row.querySelector('[data-remove-quote-part]');
+      if(removeBtn){
+        removeBtn.addEventListener('click', ()=>{
+          quoteDraft.parts = quoteDraft.parts.filter(p=>p.id!==pid);
+          refreshQuotePartsList();
+        });
+      }
     }
     const costInput = row.querySelector('.part-cost-input');
     if(costInput){
@@ -2678,20 +2698,6 @@ function bindQuotePartRowEvents(){
         ()=> (appData.suppliers||[]).filter(s=> part.used ? s.handlesUsed : s.handlesNew).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
         (id)=>{ part.supplierId = id || null; }
       );
-    }
-    const toggleUsedBtn = row.querySelector('[data-toggle-used]');
-    if(toggleUsedBtn){
-      toggleUsedBtn.addEventListener('click', ()=>{
-        part.used = !part.used;
-        refreshQuotePartsList();
-      });
-    }
-    const removeBtn = row.querySelector('[data-remove-quote-part]');
-    if(removeBtn){
-      removeBtn.addEventListener('click', ()=>{
-        quoteDraft.parts = quoteDraft.parts.filter(p=>p.id!==pid);
-        refreshQuotePartsList();
-      });
     }
   });
 }
@@ -2711,31 +2717,55 @@ function updateQuoteModalTotals(){
 }
 
 function quoteModalHtml(d){
+  const isPurchasing = quoteModalRole==='purchasing';
+
+  const customerFieldHtml = isPurchasing ? '' : (
+    '<div class="field">' +
+      '<span class="field-label">العميل (اختياري)</span>' +
+      '<div class="phone-field-row">' +
+        '<div id="quote-customer-select" style="flex:1;">' +
+          searchableSelectHtml('quote-customer-select-input',
+            (appData.customers||[]).map(c=>({id:c.id, label:c.name||c.phone||'عميل', sublabel:c.phone})),
+            d.customerId, '— بدون عميل محدد —') +
+        '</div>' +
+        '<button type="button" class="icon-btn" id="quote-add-customer-btn" aria-label="عميل جديد">➕</button>' +
+      '</div>' +
+    '</div>'
+  );
+
+  const labelFieldHtml = isPurchasing
+    ? '<label class="field"><span class="field-label">الطلبية</span><input type="text" value="'+escapeHtml(d.orderLabel||'')+'" readonly></label>'
+    : '<div class="field"><span class="field-label">الطلبية</span><input type="text" id="quote-label-input" placeholder="مثال: اسم الزبون / نوع السيارة / أي وصف مختصر" value="'+escapeHtml(d.orderLabel||'')+'"></div>';
+
+  const partsControlsHtml = isPurchasing ? '' : '<div id="quote-part-type-gate-wrap">'+quotePartAddControlsHtml()+'</div>';
+
+  const footerUtilityHtml = (!isPurchasing && !d.isNew)
+    ? '<button type="button" class="btn btn-sm btn-danger-ghost" id="quote-delete-btn">🗑️ حذف طلب التسعير</button>'
+    : '';
+
+  const footerActionsHtml = isPurchasing
+    ? (
+      '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' +
+      '<button type="button" class="btn btn-ghost" id="quote-save-btn">حفظ</button>' +
+      '<button type="button" class="btn btn-primary" id="quote-save-send-btn">حفظ و إرسال</button>'
+    ) : (
+      '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' +
+      '<button type="button" class="btn btn-ghost" id="quote-save-btn">💾 حفظ و إرسال</button>' +
+      '<button type="button" class="btn btn-primary" id="quote-approve-btn">✅ اعتماد</button>'
+    );
+
   return '<div class="modal-backdrop" data-close-backdrop>' +
     '<div class="modal-card" role="dialog" aria-modal="true">' +
       '<div class="modal-header"><div><div class="modal-title">'+(d.isNew?'طلب تسعير جديد':'تعديل طلب التسعير')+'</div><div class="modal-sub">البيانات تُحفظ عند الضغط على حفظ</div></div>' +
         '<button class="icon-btn" id="quote-modal-close-btn" aria-label="إغلاق">✕</button></div>' +
       '<div class="modal-body">' +
         '<label class="field"><span class="field-label">رقم التسعيرة (تلقائي)</span><input type="text" class="order-number-input" value="'+escapeHtml(d.orderNumber)+'" readonly></label>' +
-        '<div class="field">' +
-          '<span class="field-label">العميل (اختياري)</span>' +
-          '<div class="phone-field-row">' +
-            '<div id="quote-customer-select" style="flex:1;">' +
-              searchableSelectHtml('quote-customer-select-input',
-                (appData.customers||[]).map(c=>({id:c.id, label:c.name||c.phone||'عميل', sublabel:c.phone})),
-                d.customerId, '— بدون عميل محدد —') +
-            '</div>' +
-            '<button type="button" class="icon-btn" id="quote-add-customer-btn" aria-label="عميل جديد">➕</button>' +
-          '</div>' +
-        '</div>' +
-        '<div class="field">' +
-          '<span class="field-label">الطلبية</span>' +
-          '<input type="text" id="quote-label-input" placeholder="مثال: اسم الزبون / نوع السيارة / أي وصف مختصر" value="'+escapeHtml(d.orderLabel||'')+'">' +
-        '</div>' +
+        customerFieldHtml +
+        labelFieldHtml +
         '<div class="section-block">' +
           '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span></div>' +
-          '<div id="quote-parts-list" class="parts-list">'+d.parts.map(quotePartRowHtml).join('')+'</div>' +
-          '<div id="quote-part-type-gate-wrap">'+quotePartAddControlsHtml()+'</div>' +
+          '<div id="quote-parts-list" class="parts-list">'+d.parts.map((p,i)=>quotePartRowHtml(p,i)).join('')+'</div>' +
+          partsControlsHtml +
         '</div>' +
         '<div class="section-block section-sales">' +
           '<div class="totals-row">' +
@@ -2744,21 +2774,16 @@ function quoteModalHtml(d){
         '</div>' +
       '</div>' +
       '<div class="modal-footer">' +
-        '<div class="modal-footer-utility">' +
-          (!d.isNew ? '<button type="button" class="btn btn-sm btn-danger-ghost" id="quote-delete-btn">🗑️ حذف طلب التسعير</button>' : '') +
-        '</div>' +
+        '<div class="modal-footer-utility">' + footerUtilityHtml + '</div>' +
         '<span></span>' +
-        '<div class="modal-footer-actions">' +
-          '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' +
-          '<button type="button" class="btn btn-ghost" id="quote-save-btn">💾 حفظ و إرسال</button>' +
-          '<button type="button" class="btn btn-primary" id="quote-approve-btn">✅ اعتماد</button>' +
-        '</div>' +
+        '<div class="modal-footer-actions">' + footerActionsHtml + '</div>' +
       '</div>' +
     '</div>' +
   '</div>';
 }
 
-function openQuoteModal(mode, orderId){
+function openQuoteModal(mode, orderId, role){
+  quoteModalRole = role==='purchasing' ? 'purchasing' : 'sales';
   selectedQuotePartType = null;
   if(mode==='create'){
     quoteDraft = {
@@ -2783,6 +2808,7 @@ function openQuoteModal(mode, orderId){
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isQuote: true,
+      quoteReady: false,
       isNew: true
     };
   } else {
@@ -2811,36 +2837,45 @@ function quoteEscListener(e){ if(e.key==='Escape') closeQuoteModal(); }
 
 function attachQuoteModalHandlers(){
   const root = document.getElementById('modal-root');
+  const isPurchasing = quoteModalRole==='purchasing';
   root.querySelector('[data-close-backdrop]').addEventListener('click', (e)=>{
     if(e.target.hasAttribute('data-close-backdrop')) closeQuoteModal();
   });
   root.querySelector('#quote-modal-close-btn').addEventListener('click', closeQuoteModal);
   root.querySelector('#quote-cancel-btn').addEventListener('click', closeQuoteModal);
 
-  root.querySelector('#quote-label-input').addEventListener('input', e=>{ quoteDraft.orderLabel = e.target.value; });
-  bindSearchableSelect(root.querySelector('#quote-customer-select .searchable-select'),
-    ()=> (appData.customers||[]).map(c=>({id:c.id, label:c.name||c.phone||'عميل', sublabel:c.phone})),
-    (id)=>{
-      quoteDraft.customerId = id || null;
-      const c = (appData.customers||[]).find(c=>c.id===quoteDraft.customerId);
-      quoteDraft.customerPhone = c ? (c.phone||'') : '';
-    }
-  );
-  root.querySelector('#quote-add-customer-btn').addEventListener('click', ()=>{
-    openQuickAddCustomerModal((newCustomer)=>{
-      quoteDraft.customerId = newCustomer.id;
-      quoteDraft.customerPhone = newCustomer.phone || '';
-      const wrap = document.querySelector('#quote-customer-select .searchable-select');
-      if(wrap){
-        wrap.setAttribute('data-selected-id', newCustomer.id);
-        const input = wrap.querySelector('.searchable-select-input');
-        if(input) input.value = newCustomer.name || newCustomer.phone || 'عميل';
+  if(!isPurchasing){
+    root.querySelector('#quote-label-input').addEventListener('input', e=>{ quoteDraft.orderLabel = e.target.value; });
+    bindSearchableSelect(root.querySelector('#quote-customer-select .searchable-select'),
+      ()=> (appData.customers||[]).map(c=>({id:c.id, label:c.name||c.phone||'عميل', sublabel:c.phone})),
+      (id)=>{
+        quoteDraft.customerId = id || null;
+        const c = (appData.customers||[]).find(c=>c.id===quoteDraft.customerId);
+        quoteDraft.customerPhone = c ? (c.phone||'') : '';
       }
+    );
+    root.querySelector('#quote-add-customer-btn').addEventListener('click', ()=>{
+      openQuickAddCustomerModal((newCustomer)=>{
+        quoteDraft.customerId = newCustomer.id;
+        quoteDraft.customerPhone = newCustomer.phone || '';
+        const wrap = document.querySelector('#quote-customer-select .searchable-select');
+        if(wrap){
+          wrap.setAttribute('data-selected-id', newCustomer.id);
+          const input = wrap.querySelector('.searchable-select-input');
+          if(input) input.value = newCustomer.name || newCustomer.phone || 'عميل';
+        }
+      });
     });
-  });
+    bindQuotePartAddControls();
+  }
 
-  bindQuotePartAddControls();
   bindQuotePartRowEvents();
+
+  if(isPurchasing){
+    root.querySelector('#quote-save-btn').addEventListener('click', onSaveQuotePricing);
+    root.querySelector('#quote-save-send-btn').addEventListener('click', onSaveAndSendQuotePricing);
+    return;
+  }
 
   root.querySelector('#quote-save-btn').addEventListener('click', onSaveQuote);
   root.querySelector('#quote-approve-btn').addEventListener('click', onApproveQuote);
@@ -2930,6 +2965,47 @@ async function onApproveQuote(){
   renderTable();
   renderQuotesList();
   showToast('تم اعتماد طلب التسعير — صار طلبية '+approvedNumber, 'ok');
+}
+
+/* عامر بس بيسعّر — "حفظ" يحفظ التقدّم بدون ما يعلّمها جاهزة (تبقى صفراء)،
+   و"حفظ و إرسال" يعلّمها جاهزة (quoteReady) فترجع خضراء عند المبيعات لمراجعتها/اعتمادها. */
+async function onSaveQuotePricing(){
+  const cleanedParts = cleanedQuoteParts();
+  if(cleanedParts.length===0){ showToast('لازم تضيف وصف لقطعة وحدة على الأقل', 'error'); return; }
+
+  quoteDraft.parts = cleanedParts;
+  quoteDraft.updatedAt = new Date().toISOString();
+
+  const idx = appData.orders.findIndex(o=>o.id===quoteDraft.id);
+  if(idx>=0) appData.orders[idx]=quoteDraft;
+
+  await persistOrder(quoteDraft);
+
+  const root = document.getElementById('modal-root');
+  root.innerHTML = quoteModalHtml(quoteDraft);
+  attachQuoteModalHandlers();
+  updateQuoteModalTotals();
+
+  renderQuotesList();
+  showToast('تم الحفظ', 'ok');
+}
+
+async function onSaveAndSendQuotePricing(){
+  const cleanedParts = cleanedQuoteParts();
+  if(cleanedParts.length===0){ showToast('لازم تضيف وصف لقطعة وحدة على الأقل', 'error'); return; }
+
+  quoteDraft.parts = cleanedParts;
+  quoteDraft.updatedAt = new Date().toISOString();
+  quoteDraft.quoteReady = true;
+
+  const idx = appData.orders.findIndex(o=>o.id===quoteDraft.id);
+  if(idx>=0) appData.orders[idx]=quoteDraft;
+
+  await persistOrder(quoteDraft);
+  closeQuoteModal();
+
+  renderQuotesList();
+  showToast('تم الحفظ والإرسال', 'ok');
 }
 
 /* ---------- contact customer: call or WhatsApp, from either the orders list or inside the order modal ---------- */
@@ -6342,7 +6418,7 @@ function renderScrapyardQuotesView(){
 
 function bindScrapyardQuoteRowEvents(){
   document.querySelectorAll('#scrapyard-quotes-items-list .quote-row').forEach(row=>{
-    row.addEventListener('click', ()=> openQuoteModal('edit', row.getAttribute('data-quote-id')));
+    row.addEventListener('click', ()=> openQuoteModal('edit', row.getAttribute('data-quote-id'), 'purchasing'));
   });
 }
 
