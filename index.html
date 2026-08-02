@@ -137,7 +137,7 @@
 
   /* KPI */
   .kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px;}
-  .new-order-btn-row{display:flex;justify-content:flex-end;margin-bottom:14px;}
+  .new-order-btn-row{display:flex;justify-content:flex-end;gap:10px;margin-bottom:14px;}
   .kpi-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;}
   .kpi-label{color:var(--text-dim);font-size:12.5px;margin-bottom:8px;}
   .kpi-value{font-size:19px;}
@@ -315,6 +315,7 @@
   .task-item-text{flex:1;font-size:14px;}
   .task-item-done{opacity:.55;}
   .task-item-done .task-item-text{text-decoration:line-through;color:var(--text-faint);}
+  .pricing-request-row-approved{opacity:.7;}
   .task-item-remove-btn{
     background:transparent;border:1px solid var(--border);color:var(--text-faint);
     width:30px;height:30px;border-radius:6px;cursor:pointer;font-size:12px;flex-shrink:0;
@@ -852,6 +853,7 @@
     .data-mgmt-label{width:100%;margin-inline-end:0;margin-bottom:2px;}
 
     /* new-order CTA: full-width, easy to tap */
+    .new-order-btn-row{flex-wrap:wrap;}
     .new-order-btn-row .btn{width:100%;}
 
     /* suppliers / customers rows: many inline pieces (name, phone, count, amount, buttons) —
@@ -915,6 +917,7 @@
         <button id="btn-open-tasks" class="btn btn-ghost btn-with-badge">✅ TASKS<span id="tasks-badge" class="tasks-badge"></span></button>
         <button id="btn-open-suppliers" class="btn btn-ghost btn-with-badge">🏭 الموردين<span id="suppliers-receivables-badge" class="tasks-badge"></span></button>
         <button id="btn-open-customers" class="btn btn-ghost btn-with-badge">👤 العملاء<span id="customers-overdue-badge" class="tasks-badge"></span></button>
+        <button id="btn-open-purchases" class="btn btn-ghost btn-with-badge">🛒 المشتريات<span id="purchases-pricing-badge" class="tasks-badge"></span></button>
       </div>
     </header>
 
@@ -923,6 +926,7 @@
 
       <div class="new-order-btn-row">
         <button id="btn-new-order" class="btn btn-primary">+ طلبية جديدة</button>
+        <button id="btn-new-pricing-request" class="btn btn-ghost">🧾 طلب تسعير</button>
       </div>
 
       <section class="toolbar">
@@ -944,6 +948,7 @@
     <div id="tasks-view" style="display:none;"></div>
     <div id="suppliers-view" style="display:none;"></div>
     <div id="customers-view" style="display:none;"></div>
+    <div id="purchases-view" style="display:none;"></div>
   </div>
 
   <div class="page" id="scrapyard-root" style="display:none;"></div>
@@ -1068,6 +1073,15 @@ function nextOrderNumber(){
   });
   const next = Math.max(max+1, ORDER_NUMBER_FLOOR);
   return 'PT-' + String(next).padStart(4,'0');
+}
+
+function nextPricingRequestNumber(){
+  let max = 0;
+  (appData.pricingRequests||[]).forEach(r=>{
+    const m = /^PR-(\d+)$/.exec(r.number||'');
+    if(m){ const n=parseInt(m[1],10); if(n>max) max=n; }
+  });
+  return 'PR-' + String(max+1).padStart(4,'0');
 }
 
 function orderActiveParts(order){
@@ -1265,6 +1279,37 @@ function orderObjectToRow(order){
   };
 }
 
+/* طلبات التسعير: المبيعات تطلب سعر قطعة، المشتريات تسعّرها، وعند الاعتماد تتحول لطلبية جديدة (order_id يربطها بها) */
+function pricingRequestRowToObject(row){
+  return {
+    id: row.id,
+    number: row.number || '',
+    partName: row.part_name || '',
+    extraDetails: row.extra_details || '',
+    price: row.price===null || row.price===undefined ? null : Number(row.price),
+    status: row.status || 'pending',
+    orderId: row.order_id || null,
+    requestedBy: row.requested_by || '',
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : '',
+    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : ''
+  };
+}
+
+function pricingRequestObjectToRow(req){
+  return {
+    id: req.id,
+    number: req.number || '',
+    part_name: req.partName || '',
+    extra_details: req.extraDetails || '',
+    price: (req.price===null || req.price===undefined || req.price==='') ? null : Number(req.price),
+    status: req.status || 'pending',
+    order_id: req.orderId || null,
+    requested_by: req.requestedBy || '',
+    created_at: req.createdAt || new Date().toISOString(),
+    updated_at: req.updatedAt || new Date().toISOString()
+  };
+}
+
 function groupSupplierOrCustomerRows(rows){
   return (rows||[]).map(r=>({
     id: r.id, name: r.name||'', phone: r.phone||'', notes: r.notes||'',
@@ -1277,27 +1322,30 @@ function groupSupplierOrCustomerRows(rows){
 async function loadData(){
   try{
     if(!sb) throw new Error('NO_DB');
-    const [ordersRes, treasuryRes, tasksRes, suppliersRes, customersRes] = await Promise.all([
+    const [ordersRes, treasuryRes, tasksRes, suppliersRes, customersRes, pricingRequestsRes] = await Promise.all([
       sb.from('orders').select('*'),
       sb.from('treasury_entries').select('*'),
       sb.from('tasks').select('*'),
       sb.from('suppliers').select('*'),
-      sb.from('customers').select('*')
+      sb.from('customers').select('*'),
+      sb.from('pricing_requests').select('*')
     ]);
     if(ordersRes.error) throw ordersRes.error;
     if(treasuryRes.error) throw treasuryRes.error;
     if(tasksRes.error) throw tasksRes.error;
     if(suppliersRes.error) throw suppliersRes.error;
     if(customersRes.error) throw customersRes.error;
+    if(pricingRequestsRes.error) throw pricingRequestsRes.error;
     appData = {
       orders: (ordersRes.data||[]).map(orderRowToObject),
       treasury: groupTreasuryRows(treasuryRes.data),
       tasks: groupTaskRows(tasksRes.data),
       suppliers: groupSupplierOrCustomerRows(suppliersRes.data),
-      customers: groupSupplierOrCustomerRows(customersRes.data)
+      customers: groupSupplierOrCustomerRows(customersRes.data),
+      pricingRequests: (pricingRequestsRes.data||[]).map(pricingRequestRowToObject)
     };
   }catch(e){
-    appData = { orders: [], treasury: defaultTreasury(), tasks: defaultTasks(), suppliers: [], customers: [] };
+    appData = { orders: [], treasury: defaultTreasury(), tasks: defaultTasks(), suppliers: [], customers: [], pricingRequests: [] };
     showToast('تعذر الاتصال بقاعدة البيانات — تحقق من إعداد Supabase (SUPABASE_URL / SUPABASE_ANON_KEY)', 'error');
   }
   migrateLegacyCustomerPayment();
@@ -3056,6 +3104,7 @@ function hideAllSecondaryViews(){
   document.getElementById('tasks-view').style.display = 'none';
   document.getElementById('suppliers-view').style.display = 'none';
   document.getElementById('customers-view').style.display = 'none';
+  document.getElementById('purchases-view').style.display = 'none';
 }
 
 async function openTreasuryView(){
@@ -4304,10 +4353,12 @@ function confirmImportOverwrite(parsedData){
 
 function bindToolbar(){
   document.getElementById('btn-new-order').addEventListener('click', ()=> openModal('create'));
+  document.getElementById('btn-new-pricing-request').addEventListener('click', openPricingRequestModal);
   document.getElementById('btn-open-treasury').addEventListener('click', openTreasuryView);
   document.getElementById('btn-open-tasks').addEventListener('click', openTasksView);
   document.getElementById('btn-open-suppliers').addEventListener('click', openSuppliersView);
   document.getElementById('btn-open-customers').addEventListener('click', openCustomersView);
+  document.getElementById('btn-open-purchases').addEventListener('click', openPurchasesView);
   document.getElementById('btn-who-online').addEventListener('click', showWhoIsOnline);
   document.getElementById('btn-theme-toggle').addEventListener('click', toggleTheme);
   document.getElementById('btn-logout').addEventListener('click', handleLogout);
@@ -4336,11 +4387,13 @@ async function init(){
   updateTasksBadge();
   updateCustomersBadge();
   updateSuppliersBadge();
+  updatePurchasesBadge();
   subscribeOrdersRealtime();
   subscribeTreasuryRealtime();
   subscribeTasksRealtime();
   subscribeSuppliersRealtime();
   subscribeCustomersRealtime();
+  subscribePricingRequestsRealtime();
   refreshScrapyardPendingCount();
   subscribeScrapyardRealtime();
 }
@@ -4414,6 +4467,53 @@ async function replaceAllOrders(ordersArray){
   if(rows.length){
     const { error: insError } = await sb.from('orders').insert(rows);
     if(insError) throw insError;
+  }
+}
+
+/* ---------- pricing_requests: own table + own realtime channel ---------- */
+let pricingRequestsChannel = null;
+
+function applyRemotePricingRequestChange(payload){
+  if(!Array.isArray(appData.pricingRequests)) appData.pricingRequests = [];
+  if(payload.eventType === 'DELETE'){
+    const oldId = payload.old && payload.old.id;
+    if(!oldId) return;
+    appData.pricingRequests = appData.pricingRequests.filter(r=>r.id!==oldId);
+  } else {
+    const row = payload.new;
+    if(!row || !row.id) return;
+    const req = pricingRequestRowToObject(row);
+    const idx = appData.pricingRequests.findIndex(r=>r.id===req.id);
+    if(idx>=0) appData.pricingRequests[idx] = req; else appData.pricingRequests.push(req);
+  }
+  updatePurchasesBadge();
+  if(document.getElementById('purchases-view').style.display !== 'none'){ refreshPricingRequestsList(); }
+}
+
+function subscribePricingRequestsRealtime(){
+  if(!sb || pricingRequestsChannel) return;
+  pricingRequestsChannel = sb.channel('pricing-requests-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'pricing_requests' }, applyRemotePricingRequestChange)
+    .subscribe();
+}
+
+async function persistPricingRequest(req){
+  try{
+    if(!sb) throw new Error('NO_DB');
+    const { error } = await sb.from('pricing_requests').upsert(pricingRequestObjectToRow(req));
+    if(error) throw error;
+  }catch(e){
+    showToast('تعذر حفظ طلب التسعير: ' + (e && e.message ? e.message : ''), 'error');
+  }
+}
+
+async function deletePricingRequest(id){
+  try{
+    if(!sb) throw new Error('NO_DB');
+    const { error } = await sb.from('pricing_requests').delete().eq('id', id);
+    if(error) throw error;
+  }catch(e){
+    showToast('تعذر حذف طلب التسعير: ' + (e && e.message ? e.message : ''), 'error');
   }
 }
 
@@ -5436,6 +5536,252 @@ function bindCustomerRowEvents(){
         });
       });
     }
+  });
+}
+
+/* ---------- شاشة المشتريات (طلبات التسعير) — المبيعات تطلب سعر قطعة، المشتريات تسعّرها، وعند
+   الاعتماد تتحول لطلبية جديدة. السعر يلي تدخله المشتريات يترسم كـ"سعر شراء" بالقطعة الناتجة،
+   وسعر البيع يبقى فاضي حتى يحدده المبيعات لاحقًا. */
+function openPurchasesView(){
+  hideAllSecondaryViews();
+  document.getElementById('purchases-view').style.display = 'block';
+  renderPurchasesView();
+}
+
+function closePurchasesView(){
+  document.getElementById('purchases-view').style.display = 'none';
+  document.getElementById('orders-view').style.display = '';
+}
+
+function pendingPricingRequestsCount(){
+  return (appData.pricingRequests||[]).filter(r=>r.status!=='approved').length;
+}
+
+function updatePurchasesBadge(){
+  const badge = document.getElementById('purchases-pricing-badge');
+  if(!badge) return;
+  const total = pendingPricingRequestsCount();
+  badge.textContent = total > 0 ? total : '';
+  badge.style.display = total > 0 ? 'flex' : 'none';
+}
+
+function sortedPricingRequests(){
+  const rows = appData.pricingRequests||[];
+  // طلبات لسه ما تحولت لطلبية تطلع فوق (اللي محتاجة تسعير أو اعتماد)، والمعتمدة تنزل تحت
+  return [...rows].sort((a,b)=>{
+    const ap = a.status==='approved' ? 1 : 0;
+    const bp = b.status==='approved' ? 1 : 0;
+    if(ap!==bp) return ap-bp;
+    return (a.number||'') < (b.number||'') ? 1 : -1;
+  });
+}
+
+function pricingRequestsListHtml(){
+  const rows = sortedPricingRequests();
+  if(!rows.length) return '<div class="expense-empty-hint">ما فيه طلبات تسعير بعد</div>';
+  return rows.map(pricingRequestRowHtml).join('');
+}
+
+function pricingRequestRowHtml(r){
+  const isApproved = r.status==='approved';
+  const statusLabel = isApproved
+    ? '✅ تحولت لطلبية '+escapeHtml(orderNumberForId(r.orderId))
+    : (r.status==='priced' ? '🟢 مسعّرة — بانتظار الاعتماد' : '🟡 بانتظار التسعير');
+
+  if(isApproved){
+    return '<div class="task-item-row pricing-request-row pricing-request-row-approved" data-request-id="'+r.id+'">' +
+      '<div class="supplier-row-main">' +
+        '<span class="purchase-history-desc">'+escapeHtml(r.number)+' — '+escapeHtml(r.partName)+'</span>' +
+        '<span class="expense-entry-view-date">'+statusLabel+'</span>' +
+      '</div>' +
+      (r.extraDetails ? '<div class="purchase-history-row-sub"><span>'+escapeHtml(r.extraDetails)+'</span></div>' : '') +
+    '</div>';
+  }
+
+  return '<div class="task-item-row pricing-request-row" data-request-id="'+r.id+'">' +
+    '<div class="supplier-row-main">' +
+      '<span class="purchase-history-desc">'+escapeHtml(r.number)+' — '+escapeHtml(r.partName)+'</span>' +
+      '<input type="number" min="0" step="0.01" class="payment-amount-input pricing-request-price-input" placeholder="السعر" value="'+(r.price===null||r.price===undefined?'':r.price)+'">' +
+      '<button type="button" class="btn btn-sm expense-add-entry-btn pricing-request-save-btn">💾 حفظ</button>' +
+      '<button type="button" class="btn btn-sm btn-primary pricing-request-approve-btn"'+(r.status==='priced'?'':' disabled title="لازم تسعّر القطعة أولًا"')+'>✅ اعتماد</button>' +
+      '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' +
+    '</div>' +
+    (r.extraDetails ? '<div class="purchase-history-row-sub"><span>تفاصيل إضافية: '+escapeHtml(r.extraDetails)+'</span></div>' : '') +
+  '</div>';
+}
+
+function orderNumberForId(orderId){
+  const order = (appData.orders||[]).find(o=>o.id===orderId);
+  return order ? order.orderNumber : '—';
+}
+
+function purchasesViewHtml(){
+  return '<div class="tasks-header">' +
+      '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-purchases">→ رجوع للطلبيات</button>' +
+      '<div class="tasks-title">🛒 المشتريات</div>' +
+    '</div>' +
+    '<div class="treasury-block">' +
+      '<div class="section-head"><span class="section-title">طلبات التسعير</span></div>' +
+      '<div class="task-items-list" id="pricing-requests-items-list">' + pricingRequestsListHtml() + '</div>' +
+    '</div>';
+}
+
+function renderPurchasesView(){
+  const el = document.getElementById('purchases-view');
+  el.innerHTML = purchasesViewHtml();
+  bindPurchasesViewEvents();
+}
+
+function bindPurchasesViewEvents(){
+  document.getElementById('btn-back-to-orders-from-purchases').addEventListener('click', closePurchasesView);
+  bindPricingRequestRowEvents();
+}
+
+function refreshPricingRequestsList(){
+  const list = document.getElementById('pricing-requests-items-list');
+  if(!list) return;
+  list.innerHTML = pricingRequestsListHtml();
+  bindPricingRequestRowEvents();
+}
+
+function bindPricingRequestRowEvents(){
+  document.querySelectorAll('#pricing-requests-items-list .pricing-request-row').forEach(row=>{
+    const rid = row.getAttribute('data-request-id');
+    const req = (appData.pricingRequests||[]).find(r=>r.id===rid);
+    if(!req) return;
+
+    const saveBtn = row.querySelector('.pricing-request-save-btn');
+    if(saveBtn){
+      saveBtn.addEventListener('click', async ()=>{
+        const priceInput = row.querySelector('.pricing-request-price-input');
+        const price = priceInput.value===''? null : Number(priceInput.value);
+        if(price!==null && (isNaN(price) || price<0)){ showToast('أدخل سعرًا صحيحًا', 'error'); return; }
+        const live = (appData.pricingRequests||[]).find(r=>r.id===rid);
+        if(!live) return;
+        live.price = price;
+        live.status = price>0 ? 'priced' : 'pending';
+        live.updatedAt = new Date().toISOString();
+        refreshPricingRequestsList();
+        updatePurchasesBadge();
+        await persistPricingRequest(live);
+        showToast('تم حفظ السعر', 'ok');
+      });
+    }
+
+    const approveBtn = row.querySelector('.pricing-request-approve-btn');
+    if(approveBtn && !approveBtn.disabled){
+      approveBtn.addEventListener('click', ()=> confirmApprovePricingRequest(rid));
+    }
+
+    const removeBtn = row.querySelector('.task-item-remove-btn');
+    if(removeBtn){
+      removeBtn.addEventListener('click', ()=>{
+        confirmAction({
+          title: 'حذف طلب التسعير هذا؟',
+          message: req.partName ? 'القطعة: '+req.partName : undefined,
+          confirmLabel: 'تأكيد الحذف',
+          dangerous: true,
+          onConfirm: async ()=>{
+            appData.pricingRequests = appData.pricingRequests.filter(r=>r.id!==rid);
+            refreshPricingRequestsList();
+            updatePurchasesBadge();
+            await deletePricingRequest(rid);
+          }
+        });
+      });
+    }
+  });
+}
+
+/* اعتماد طلب تسعير: يحوّله لطلبية جديدة بقطعة وحدة (اسمها = اسم القطعة المطلوبة، سعر الشراء = السعر
+   يلي حطّته المشتريات)، ويربط الطلب بها. سعر البيع يترك فاضي لحد ما المبيعات يحدده بالطلبية. */
+function confirmApprovePricingRequest(reqId){
+  const req = (appData.pricingRequests||[]).find(r=>r.id===reqId);
+  if(!req || req.status!=='priced') return;
+  confirmAction({
+    title: 'اعتماد طلب التسعير وتحويله لطلبية جديدة؟',
+    message: 'رح تُنشأ طلبية جديدة بقطعة "'+req.partName+'" وسعر شراء '+fmtMoney(req.price)+'.',
+    confirmLabel: 'اعتماد وإنشاء الطلبية',
+    onConfirm: async ()=>{
+      const live = (appData.pricingRequests||[]).find(r=>r.id===reqId);
+      if(!live || live.status!=='priced') return;
+      const newOrder = {
+        id: uid('ord'),
+        orderNumber: nextOrderNumber(),
+        orderLabel: '',
+        parts: [{ id: uid('p'), description: live.partName, qty:1, costPrice: live.price, sellPrice: null, used:false, supplierId: null }],
+        partsSelectionEnabled:false,
+        paidToAmer:false,
+        paidToSupplier:false,
+        supplied:false,
+        customerPhone:'',
+        customerId: null,
+        customerPayments:[],
+        confirmed:false,
+        feeEnabled:false,
+        feePercent:0,
+        serviceFeeEnabled:false,
+        serviceFeePercent:0,
+        deliveryFeeEnabled:false,
+        deliveryFeeAmount:0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      appData.orders.push(newOrder);
+      live.status = 'approved';
+      live.orderId = newOrder.id;
+      live.updatedAt = new Date().toISOString();
+      refreshPricingRequestsList();
+      updatePurchasesBadge();
+      renderKPIs();
+      renderTable();
+      await persistOrder(newOrder);
+      await persistPricingRequest(live);
+      showToast('تم إنشاء الطلبية '+newOrder.orderNumber, 'ok');
+    }
+  });
+}
+
+/* ---------- طلب تسعير جديد (زر بجانب "+ طلبية جديدة") — المبيعات يدخل اسم القطعة وتفاصيل إضافية
+   داخلية (ما تظهر لاحقًا بالطلبية)، ويترسل للمشتريات عن طريق شاشة المشتريات. ---------- */
+function openPricingRequestModal(){
+  const root = document.getElementById('modal-root');
+  const number = nextPricingRequestNumber();
+  root.innerHTML =
+    '<div class="modal-backdrop" data-close-backdrop>' +
+      '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
+        '<div class="modal-title">🧾 طلب تسعير جديد</div>' +
+        '<label class="field"><span class="field-label">رقم الطلب (تلقائي)</span><input type="text" value="'+escapeHtml(number)+'" readonly></label>' +
+        '<label class="field"><span class="field-label">اسم القطعة المطلوبة</span><input type="text" id="pricing-request-part-input" placeholder="مثال: شمعة أمامية يمين"></label>' +
+        '<label class="field"><span class="field-label">تفاصيل إضافية (اختياري، لا تظهر بالطلبية)</span><input type="text" id="pricing-request-details-input" placeholder="أي ملاحظة تساعد المشتريات"></label>' +
+        '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' +
+          '<button type="button" class="btn btn-ghost" id="pricing-request-cancel-btn">إلغاء</button>' +
+          '<button type="button" class="btn btn-primary" id="pricing-request-save-btn">💾 إرسال</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  root.querySelector('[data-close-backdrop]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-backdrop')) close();
+  });
+  root.querySelector('#pricing-request-cancel-btn').addEventListener('click', close);
+  root.querySelector('#pricing-request-save-btn').addEventListener('click', async ()=>{
+    const partInput = document.getElementById('pricing-request-part-input');
+    const detailsInput = document.getElementById('pricing-request-details-input');
+    const partName = partInput.value.trim();
+    if(!partName){ showToast('اكتب اسم القطعة المطلوبة', 'error'); return; }
+    const newRequest = {
+      id: uid('pr'), number, partName, extraDetails: detailsInput.value.trim(),
+      price: null, status: 'pending', orderId: null, requestedBy: presenceEmail||'',
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+    };
+    if(!Array.isArray(appData.pricingRequests)) appData.pricingRequests = [];
+    appData.pricingRequests.push(newRequest);
+    close();
+    updatePurchasesBadge();
+    showToast('تم إرسال طلب التسعير '+number, 'ok');
+    await persistPricingRequest(newRequest);
   });
 }
 
