@@ -3414,17 +3414,6 @@ function treasurySupportRowHtml(){
   '</div>';
 }
 
-/* عهدة عامر — مبلغ تسدّده لعامر يُخصم من الصندوق فورًا، ويُعتبر تسديدًا لحساب التشاليح
-   (بدل ما تُخصم كل طلبية "تم سداد التشليح" من الصندوق مباشرة، تُخصم من هذه العهدة). */
-function treasuryAmerCustodyRowHtml(){
-  const count = (appData.treasury.amerCustody || []).filter(entryMatchesPeriod).length;
-  return '<div class="expense-category-row">' +
-    '<span class="expense-category-label">عهدة عامر (سداد التشاليح)</span>' +
-    '<span class="num text-green expense-category-subtotal" data-subtotal-key="amerCustody">'+fmtSigned(categorySubtotal('amerCustody'))+'</span>' +
-    '<button type="button" class="expense-history-btn" data-history-key="amerCustody" data-history-label="عهدة عامر">📋 '+count+'</button>' +
-  '</div>';
-}
-
 function expenseCategoryRowHtml(c, i){
   const count = (appData.treasury[c.key] || []).filter(entryMatchesPeriod).length;
   return '<div class="expense-category-row">' +
@@ -3505,12 +3494,10 @@ function renderTreasuryView(){
         '<div class="expense-categories">' +
           EXPENSE_CATEGORIES.map(expenseCategoryRowHtml).join('') +
           treasurySupportRowHtml() +
-          treasuryAmerCustodyRowHtml() +
         '</div>' +
         '<div class="treasury-summary">' +
           '<div class="treasury-summary-row"><span>إجمالي المصاريف</span><span class="num text-rust" id="treasury-total-expenses">'+fmtMoney(t.totalExpenses)+'</span></div>' +
           '<div class="treasury-summary-row"><span>إجمالي الدعم الخارجي</span><span class="num text-green" id="treasury-total-support">+'+fmtMoney(t.totalSupport)+'</span></div>' +
-          '<div class="treasury-summary-row"><span>إجمالي عهدة عامر</span><span class="num text-green" id="treasury-total-amer-custody">'+fmtSigned(amerCustodyTopupsTotal())+'</span></div>' +
         '</div>' +
       '</div>' +
     '</div>' +
@@ -3548,7 +3535,6 @@ function renderTreasuryView(){
   });
   EXPENSE_CATEGORIES.forEach(c=> bindExpenseEntryEvents(c.key));
   bindExpenseEntryEvents('support');
-  bindExpenseEntryEvents('amerCustody');
   bindScrapyardEntryEvents();
   updateScrapyardBadges();
   updateTreasurySummary();
@@ -3863,8 +3849,6 @@ function updateTreasurySummary(){
   if(totalEl) totalEl.textContent = fmtMoney(t.totalExpenses);
   const supportEl = document.getElementById('treasury-total-support');
   if(supportEl) supportEl.textContent = '+'+fmtMoney(t.totalSupport);
-  const custodyEl = document.getElementById('treasury-total-amer-custody');
-  if(custodyEl) custodyEl.textContent = fmtSigned(amerCustodyTopupsTotal());
   const netEl = document.getElementById('treasury-net');
   if(netEl){
     netEl.textContent = fmtMoney(t.net);
@@ -5897,6 +5881,7 @@ function renderScrapyardView(){
     (kind==='used' && canManage ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;">' +
       '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-amer-custody-topup">+ سداد لعهدة المشتريات</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" id="btn-withdraw-amer-custody">➖ سحب من العهدة</button>' +
+      '<button type="button" class="expense-history-btn" id="btn-history-amer-custody">📋 سجل العهدة ('+(appData.treasury.amerCustody||[]).length+')</button>' +
     '</div>' : '') +
     (kind==='used' ? scrapyardSupplierTotalsHtml() : '') +
     scrapyardReturnReceivablesHtml() +
@@ -6302,6 +6287,13 @@ function bindScrapyardEvents(){
   const withdrawCustodyBtn = document.getElementById('btn-withdraw-amer-custody');
   if(withdrawCustodyBtn) withdrawCustodyBtn.addEventListener('click', ()=>{
     openWithdrawCustodyModal(()=>{
+      scrapyardSharedState.custodyBalance = amerCustodyBalance();
+      renderScrapyardView();
+    });
+  });
+  const historyCustodyBtn = document.getElementById('btn-history-amer-custody');
+  if(historyCustodyBtn) historyCustodyBtn.addEventListener('click', ()=>{
+    openExpenseHistoryModal('amerCustody', 'عهدة المشتريات', ()=>{
       scrapyardSharedState.custodyBalance = amerCustodyBalance();
       renderScrapyardView();
     });
