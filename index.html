@@ -1707,11 +1707,10 @@ function partAddControlsHtml(){
     // أول قطعة بالطلبية — لازم تحديد النوع أولاً قبل ظهور زر الإضافة
     return partTypeGateHtml();
   }
-  // من القطعة الثانية وطالع — رجوع للإعداد السابق: أزرار جاهزة مباشرة بدون اختيار مسبق
+  // من القطعة الثانية وطالع — رجوع للإعداد السابق: زرّان جاهزان مباشرة بدون اختيار مسبق
   return '<div class="add-part-btns">' +
     '<button type="button" id="add-part-btn-new" class="btn btn-sm btn-add-part">+ جديد</button>' +
     '<button type="button" id="add-part-btn-used" class="btn btn-sm btn-add-used-part">+ مستعمل</button>' +
-    '<button type="button" id="add-part-btn-either" class="btn btn-sm btn-ghost">+ جديد أو مستعمل</button>' +
   '</div>';
 }
 
@@ -1731,17 +1730,12 @@ function bindPartAddControls(){
   if(!wrap) return;
   const newBtn = wrap.querySelector('#add-part-btn-new');
   const usedBtn = wrap.querySelector('#add-part-btn-used');
-  const eitherBtn = wrap.querySelector('#add-part-btn-either');
   if(newBtn) newBtn.addEventListener('click', ()=>{
     draft.parts.push({id:uid('p'), description:'', qty:1, costPrice:'', sellPrice:null, used:false, supplierId: null});
     refreshPartsList();
   });
   if(usedBtn) usedBtn.addEventListener('click', ()=>{
     draft.parts.push({id:uid('p'), description:'', qty:1, costPrice:'', sellPrice:null, used:true, supplierId: null});
-    refreshPartsList();
-  });
-  if(eitherBtn) eitherBtn.addEventListener('click', ()=>{
-    draft.parts.push({id:uid('p'), description:'', qty:1, costPrice:'', sellPrice:null, used:false, supplierId: null});
     refreshPartsList();
   });
 }
@@ -2619,7 +2613,8 @@ function bindQuotePartAddControls(){
     refreshQuotePartsList();
   });
   if(eitherBtn) eitherBtn.addEventListener('click', ()=>{
-    quoteDraft.parts.push({id:uid('p'), description:'', qty:1, costPrice:'', sellPrice:null, used:false, supplierId: null});
+    // used:null = لسه ما تحدد نوعها — عامر يحسمها (جديد/مستعمل) بشاشة التسعير عنده
+    quoteDraft.parts.push({id:uid('p'), description:'', qty:1, costPrice:'', sellPrice:null, used:null, supplierId: null});
     refreshQuotePartsList();
   });
 }
@@ -2629,24 +2624,42 @@ function quotePartRowHtml(p, i){
   const qtyVal = (p.qty===''||p.qty==null) ? 1 : p.qty;
   const readOnly = quoteModalRole==='purchasing';
   const ro = readOnly ? ' readonly' : '';
+  const undetermined = p.used===null; // "جديد أو مستعمل" — لسه ما تحدد، عامر يحسمها
+
+  let usedBadgeHtml;
+  if(readOnly && undetermined){
+    // عامر يحسم النوع بنفسه هون (يظهر عنده فقط — المبيعات ما بتحتاج تقرر)
+    usedBadgeHtml = '<div class="part-type-pills">' +
+        '<button type="button" class="type-pill type-pill-new" data-resolve-used="false">جديد</button>' +
+        '<button type="button" class="type-pill type-pill-used" data-resolve-used="true">مستعمل</button>' +
+      '</div>';
+  } else if(readOnly){
+    usedBadgeHtml = '<span class="used-badge'+(p.used?'':' used-badge-off')+'">'+(p.used?'مستعمل':'غير مستعمل')+'</span>';
+  } else {
+    const label = undetermined ? 'جديد أو مستعمل' : (p.used?'مستعمل':'غير مستعمل');
+    usedBadgeHtml = '<button type="button" class="used-badge'+(p.used?'':' used-badge-off')+'" data-toggle-used="'+p.id+'">'+label+' ✏️</button>';
+  }
+
+  const supplierFieldHtml = (readOnly && undetermined) ? '' : (
+    '<label class="mini-label mini-label-supplier">'+(p.used?'التشليح':'المورد')+
+      searchableSelectHtml('quote-part-supplier-select',
+        (appData.suppliers||[]).filter(s=> p.used ? s.handlesUsed : s.handlesNew).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
+        p.supplierId, p.used?'— بدون تشليح —':'— بدون مورد —') +
+    '</label>'
+  );
+
   return '<div class="part-row" data-part-id="'+p.id+'">' +
     '<div class="part-desc-wrap">' +
       '<div class="part-desc-row">' +
         '<span class="part-index-badge">'+((i!=null?i:0)+1)+'</span>' +
         '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="'+escapeHtml(p.description)+'"'+ro+'>' +
       '</div>' +
-      (readOnly
-        ? '<span class="used-badge'+(p.used?'':' used-badge-off')+'">'+(p.used?'مستعمل':'غير مستعمل')+'</span>'
-        : '<button type="button" class="used-badge'+(p.used?'':' used-badge-off')+'" data-toggle-used="'+p.id+'">'+(p.used?'مستعمل':'غير مستعمل')+' ✏️</button>') +
+      usedBadgeHtml +
     '</div>' +
     '<div class="part-price-group">' +
       '<label class="mini-label">العدد<input type="number" min="1" step="1" class="part-qty-input num" value="'+qtyVal+'"'+ro+'></label>' +
       '<label class="mini-label mini-label-cost">سعر الشراء<input type="number" min="0" step="0.01" class="part-cost-input num" value="'+costVal+'"></label>' +
-      '<label class="mini-label mini-label-supplier">'+(p.used?'التشليح':'المورد')+
-        searchableSelectHtml('quote-part-supplier-select',
-          (appData.suppliers||[]).filter(s=> p.used ? s.handlesUsed : s.handlesNew).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
-          p.supplierId, p.used?'— بدون تشليح —':'— بدون مورد —') +
-      '</label>' +
+      supplierFieldHtml +
     '</div>' +
     (readOnly ? '' : '<button type="button" class="part-remove-btn" data-remove-quote-part="'+p.id+'" aria-label="حذف القطعة">✕</button>') +
   '</div>';
@@ -2672,7 +2685,7 @@ function bindQuotePartRowEvents(){
       const toggleUsedBtn = row.querySelector('[data-toggle-used]');
       if(toggleUsedBtn){
         toggleUsedBtn.addEventListener('click', ()=>{
-          part.used = !part.used;
+          part.used = part.used===null ? true : !part.used;
           refreshQuotePartsList();
         });
       }
@@ -2683,6 +2696,13 @@ function bindQuotePartRowEvents(){
           refreshQuotePartsList();
         });
       }
+    } else {
+      row.querySelectorAll('[data-resolve-used]').forEach(btn=>{
+        btn.addEventListener('click', ()=>{
+          part.used = btn.getAttribute('data-resolve-used') === 'true';
+          refreshQuotePartsList();
+        });
+      });
     }
     const costInput = row.querySelector('.part-cost-input');
     if(costInput){
@@ -2763,7 +2783,9 @@ function quoteModalHtml(d){
         customerFieldHtml +
         labelFieldHtml +
         '<div class="section-block">' +
-          '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span></div>' +
+          '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span>' +
+            (isPurchasing ? '<button type="button" class="btn btn-ghost btn-sm" id="quote-add-scrapyard-btn">➕ تشليح جديد</button>' : '') +
+          '</div>' +
           '<div id="quote-parts-list" class="parts-list">'+d.parts.map((p,i)=>quotePartRowHtml(p,i)).join('')+'</div>' +
           partsControlsHtml +
         '</div>' +
@@ -2874,6 +2896,18 @@ function attachQuoteModalHandlers(){
   if(isPurchasing){
     root.querySelector('#quote-save-btn').addEventListener('click', onSaveQuotePricing);
     root.querySelector('#quote-save-send-btn').addEventListener('click', onSaveAndSendQuotePricing);
+    const addScrapyardBtn = root.querySelector('#quote-add-scrapyard-btn');
+    if(addScrapyardBtn){
+      addScrapyardBtn.addEventListener('click', ()=>{
+        openQuickAddScrapyardSupplierModal((newSupplier)=>{
+          if(!Array.isArray(appData.suppliers)) appData.suppliers = [];
+          appData.suppliers.push({
+            id: newSupplier.id, name: newSupplier.name, phone: newSupplier.phone,
+            extraPhones: [], handlesNew: false, handlesUsed: true
+          });
+        });
+      });
+    }
     return;
   }
 
@@ -2910,7 +2944,7 @@ function cleanedQuoteParts(){
       qty: (p.qty===''||p.qty==null||Number(p.qty)<=0) ? 1 : Number(p.qty),
       costPrice: p.costPrice===''? 0 : Number(p.costPrice)||0,
       sellPrice: null,
-      used: !!p.used,
+      used: p.used===null ? null : !!p.used,
       included: true,
       supplierId: p.supplierId || null
     }));
@@ -2947,6 +2981,7 @@ async function onApproveQuote(){
   if(dup){ showToast('رقم التسعيرة تضارب مع طلبية أخرى، أعد فتح النافذة', 'error'); return; }
   const cleanedParts = cleanedQuoteParts();
   if(cleanedParts.length===0){ showToast('لازم تضيف وصف لقطعة وحدة على الأقل', 'error'); return; }
+  if(cleanedParts.some(p=>p.used===null)){ showToast('في قطعة لسه ما تحدد نوعها (جديد/مستعمل) — لازم تُحسم قبل الاعتماد', 'error'); return; }
 
   quoteDraft.parts = cleanedParts;
   quoteDraft.orderLabel = (quoteDraft.orderLabel||'').trim();
@@ -6518,7 +6553,7 @@ function renderScrapyardView(){
   bindScrapyardEvents();
 }
 
-function openQuickAddScrapyardSupplierModal(){
+function openQuickAddScrapyardSupplierModal(onSaved){
   const root = document.getElementById('confirm-root');
   root.innerHTML =
     '<div class="modal-backdrop" data-close-confirm>' +
@@ -6544,14 +6579,18 @@ function openQuickAddScrapyardSupplierModal(){
     if(!name && !phone){ showToast('اكتب اسم أو رقم جوال على الأقل', 'error'); return; }
     const newSupplier = { id: uid('sup'), name, phone, notes:'', extraPhones: [], handlesNew: false, handlesUsed: true };
     await persistSupplier(newSupplier);
-    if(!Array.isArray(scrapyardSharedState.suppliers)) scrapyardSharedState.suppliers = [];
-    scrapyardSharedState.suppliers.push({
-      id: newSupplier.id, name: newSupplier.name, phone: newSupplier.phone,
-      handles_new: false, handles_used: true, extra_phones: []
-    });
     close();
     showToast('تم إضافة التشليح', 'ok');
-    renderScrapyardView();
+    if(onSaved){
+      onSaved(newSupplier);
+    } else {
+      if(!Array.isArray(scrapyardSharedState.suppliers)) scrapyardSharedState.suppliers = [];
+      scrapyardSharedState.suppliers.push({
+        id: newSupplier.id, name: newSupplier.name, phone: newSupplier.phone,
+        handles_new: false, handles_used: true, extra_phones: []
+      });
+      renderScrapyardView();
+    }
   });
 }
 
