@@ -1870,6 +1870,7 @@ function modalHtml(d){
         (!d.isNew ? '<div class="modal-footer-docs"><button type="button" class="btn btn-ghost btn-sm" id="modal-quote-btn">🧾 عرض سعر</button><button type="button" class="btn btn-ghost btn-sm" id="modal-invoice-btn">🧾 فاتورة</button></div>' : '<span></span>') +
         '<div class="modal-footer-actions">' +
           '<button type="button" class="btn btn-ghost" id="modal-cancel-btn">إلغاء</button>' +
+          (!d.isNew ? '<button type="button" class="btn btn-ghost" id="modal-return-to-quote-btn">إرجاع للتسعير</button>' : '') +
           '<button type="button" class="btn '+(d.supplied?'btn-supplied-on':'btn-ghost')+'" id="modal-supplied-btn"'+(!d.confirmed?' disabled title="لازم تأكيد الطلبية أولًا"':'')+'>'+(d.supplied?'✅ تم التوريد':'🚚 تم التوريد')+'</button>' +
           '<button type="button" class="btn btn-primary" id="modal-save-btn">حفظ الطلبية</button>' +
         '</div>' +
@@ -2070,6 +2071,11 @@ function attachModalHandlers(){
   bindPartRowEvents();
 
   root.querySelector('#modal-save-btn').addEventListener('click', onSaveOrder);
+
+  const returnToQuoteBtn = root.querySelector('#modal-return-to-quote-btn');
+  if(returnToQuoteBtn){
+    returnToQuoteBtn.addEventListener('click', confirmReturnOrderToQuote);
+  }
 
   const delBtn = root.querySelector('#modal-delete-btn');
   if(delBtn){
@@ -2510,6 +2516,31 @@ async function onSaveOrder(){
   updateSuppliersBadge();
   showToast('تم حفظ الطلبية', 'ok');
   return true;
+}
+
+/* إرجاع طلبية موجودة لحالة "طلب تسعير" — نفس السجل (بدون نسخ أو رقم جديد)، تختفي فورًا من
+   "الطلبيات" وتظهر بـ"طلبات التسعير" عند عامر لإعادة تسعيرها (تصفر وتنتظر منه "حفظ و إرسال" من جديد). */
+function confirmReturnOrderToQuote(){
+  confirmAction({
+    title: 'إرجاع هذه الطلبية لطلب تسعير؟',
+    message: 'رح تختفي من قائمة الطلبيات وتظهر بطلبات التسعير عند عامر لإعادة تسعيرها.',
+    confirmLabel: 'تأكيد الإرجاع',
+    dangerous: true,
+    onConfirm: async ()=>{
+      const id = draft.id;
+      draft.isQuote = true;
+      draft.quoteReady = false;
+      draft.updatedAt = new Date().toISOString();
+      const idx = appData.orders.findIndex(o=>o.id===id);
+      if(idx>=0) appData.orders[idx] = draft;
+      await persistOrder(draft);
+      closeModal();
+      renderKPIs();
+      renderTable();
+      renderQuotesList();
+      showToast('تم إرجاع الطلبية لطلبات التسعير', 'ok');
+    }
+  });
 }
 
 /* ---------- طلبات التسعير: نسخة مصغّرة من نافذة الطلبية (بدون سعر بيع/دفعات/رسوم) —
