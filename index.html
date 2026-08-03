@@ -816,7 +816,8 @@
 
     /* cards */
     .order-card{padding:13px;}
-    .order-card-actions .icon-btn,.row-actions .icon-btn{flex:1;text-align:center;}
+    .order-card-actions .icon-btn,.row-actions .icon-btn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;text-align:center;}
+    .order-card-actions,.row-actions{flex-wrap:wrap;}
 
     /* modal */
     .modal-backdrop{padding:calc(4vh + env(safe-area-inset-top)) 10px calc(4vh + env(safe-area-inset-bottom));}
@@ -941,6 +942,7 @@
         <button id="btn-open-tasks" class="btn btn-ghost btn-with-badge">✅ TASKS<span id="tasks-badge" class="tasks-badge"></span></button>
         <button id="btn-open-suppliers" class="btn btn-ghost btn-with-badge">🏭 الموردين<span id="suppliers-receivables-badge" class="tasks-badge"></span></button>
         <button id="btn-open-customers" class="btn btn-ghost btn-with-badge">👤 العملاء<span id="customers-overdue-badge" class="tasks-badge"></span></button>
+        <button id="btn-open-archive" class="btn btn-ghost">🗄️ الأرشيف</button>
       </div>
     </header>
 
@@ -985,6 +987,7 @@
     <div id="tasks-view" style="display:none;"></div>
     <div id="suppliers-view" style="display:none;"></div>
     <div id="customers-view" style="display:none;"></div>
+    <div id="archive-view" style="display:none;"></div>
   </div>
 
   <div class="page" id="scrapyard-root" style="display:none;"></div>
@@ -1525,6 +1528,7 @@ function rowHtml(order){
     '<td>'+(order.confirmed ? customerPaymentCellHtml(t, true) : '<span class="muted">—</span>')+'</td>' +
     '<td class="row-actions">' +
       '<button class="icon-btn" data-open="'+order.id+'">فتح</button>' +
+      '<button class="icon-btn" data-archive="'+order.id+'">🗄️ أرشفة</button>' +
     '</td>' +
   '</tr>';
 }
@@ -1551,6 +1555,7 @@ function cardHtml(order){
     '</div>' +
     '<div class="order-card-actions">' +
       '<button class="icon-btn" data-open="'+order.id+'">فتح</button>' +
+      '<button class="icon-btn" data-archive="'+order.id+'">🗄️ أرشفة</button>' +
     '</div>' +
   '</div>';
 }
@@ -1563,7 +1568,7 @@ function orderNumberSortKey(order){
 function renderTable(){
   const el = document.getElementById('table-container');
   try{
-    const orders = appData.orders.filter(o=>!o.isQuote).filter(orderMatches).sort((a,b)=> orderNumberSortKey(b) - orderNumberSortKey(a));
+    const orders = appData.orders.filter(o=>!o.isQuote).filter(o=>!o.archived).filter(orderMatches).sort((a,b)=> orderNumberSortKey(b) - orderNumberSortKey(a));
 
     if(orders.length===0){
       el.innerHTML = '<div class="empty-state">' +
@@ -1593,6 +1598,12 @@ function renderTable(){
       btn.addEventListener('click', (e)=>{
         e.stopPropagation();
         confirmToggleConfirmation(btn.getAttribute('data-confirm-toggle'));
+      });
+    });
+    el.querySelectorAll('[data-archive]').forEach(btn=>{
+      btn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        archiveOrder(btn.getAttribute('data-archive'));
       });
     });
   }catch(e){
@@ -3303,6 +3314,42 @@ function confirmToggleConfirmation(orderId){
   });
 }
 
+/* ---------- أرشفة / استعادة الطلبية (تخفيها من قائمة الطلبيات العادية بدون التأثير على أي حساب مالي) ---------- */
+function refreshArchiveViewIfOpen(){
+  const view = document.getElementById('archive-view');
+  if(view && view.style.display !== 'none'){ refreshArchiveList(); }
+}
+
+function archiveOrder(orderId){
+  const order = appData.orders.find(o=>o.id===orderId);
+  if(!order) return;
+  confirmAction({
+    title: 'أرشفة الطلبية '+order.orderNumber+'؟',
+    message: 'بتختفي من قائمة الطلبيات العادية، وتقدر ترجّعها في أي وقت من "🗄️ الأرشيف".',
+    confirmLabel: 'أرشفة',
+    onConfirm: async ()=>{
+      order.archived = true;
+      order.updatedAt = new Date().toISOString();
+      await persistOrder(order);
+      renderTable();
+      refreshArchiveViewIfOpen();
+      showToast('تم أرشفة الطلبية', 'ok');
+    }
+  });
+}
+
+function restoreOrder(orderId){
+  const order = appData.orders.find(o=>o.id===orderId);
+  if(!order) return;
+  order.archived = false;
+  order.updatedAt = new Date().toISOString();
+  persistOrder(order).then(()=>{
+    renderTable();
+    refreshArchiveList();
+    showToast('تم استعادة الطلبية', 'ok');
+  });
+}
+
 /* ---------- invoice / quote documents ---------- */
 function todayNumeric(){
   const d = new Date();
@@ -3741,6 +3788,7 @@ function hideAllSecondaryViews(){
   document.getElementById('tasks-view').style.display = 'none';
   document.getElementById('suppliers-view').style.display = 'none';
   document.getElementById('customers-view').style.display = 'none';
+  document.getElementById('archive-view').style.display = 'none';
 }
 
 async function openTreasuryView(){
@@ -5018,6 +5066,7 @@ function bindToolbar(){
   document.getElementById('btn-open-tasks').addEventListener('click', openTasksView);
   document.getElementById('btn-open-suppliers').addEventListener('click', openSuppliersView);
   document.getElementById('btn-open-customers').addEventListener('click', openCustomersView);
+  document.getElementById('btn-open-archive').addEventListener('click', openArchiveView);
   document.getElementById('btn-who-online').addEventListener('click', showWhoIsOnline);
   document.getElementById('btn-theme-toggle').addEventListener('click', toggleTheme);
   document.getElementById('btn-logout').addEventListener('click', handleLogout);
@@ -5084,6 +5133,7 @@ function applyRemoteOrderChange(payload){
   if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
   if(document.getElementById('suppliers-view').style.display !== 'none'){ refreshSuppliersList(); }
   if(document.getElementById('customers-view').style.display !== 'none'){ refreshCustomersList(); }
+  refreshArchiveViewIfOpen();
   // صاحب الحساب لو فاتح شاشة سداد التشاليح/الجديد وقت وصول تعديل من مكان تاني — نحدّثها كمان
   const scrapRoot = document.getElementById('scrapyard-root');
   if(scrapRoot && scrapRoot.style.display !== 'none' && scrapyardSharedState.canManage && scrapyardCurrentScreen === 'settlement'){
@@ -6153,6 +6203,95 @@ function bindCustomerRowEvents(){
       });
     }
   });
+}
+
+/* ---------- شاشة أرشيف الطلبيات ---------- */
+function openArchiveView(){
+  hideAllSecondaryViews();
+  document.getElementById('archive-view').style.display = 'block';
+  renderArchiveView();
+}
+
+function closeArchiveView(){
+  document.getElementById('archive-view').style.display = 'none';
+  document.getElementById('orders-view').style.display = '';
+}
+
+function archivedOrdersList(){
+  return appData.orders.filter(o=>!o.isQuote && o.archived).sort((a,b)=> orderNumberSortKey(b) - orderNumberSortKey(a));
+}
+
+function archivedOrderRowHtml(order){
+  const t = orderTotals(order);
+  return '<tr>' +
+    '<td class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? '<span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+'</td>' +
+    '<td class="num">'+(t.hasSell? '<span class="text-green">'+fmtMoney(t.sellTotal)+'</span>' : '<span class="muted">'+(t.allPartsReturned?'مرتجعة':'لم يُسعّر بعد')+'</span>')+'</td>' +
+    '<td class="row-actions">' +
+      '<button class="icon-btn" data-open="'+order.id+'">فتح</button>' +
+      '<button class="icon-btn" data-restore="'+order.id+'">↩️ استعادة</button>' +
+    '</td>' +
+  '</tr>';
+}
+
+function archivedOrderCardHtml(order){
+  const t = orderTotals(order);
+  return '<div class="order-card">' +
+    '<div class="order-card-head">' +
+      '<span class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? ' <span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+'</span>' +
+    '</div>' +
+    '<div class="order-card-row"><span>إجمالي البيع</span><span class="num '+(t.hasSell?'text-green':'')+'">'+(t.hasSell?fmtMoney(t.sellTotal):(t.allPartsReturned?'مرتجعة':'لم يُسعّر بعد'))+'</span></div>' +
+    '<div class="order-card-actions">' +
+      '<button class="icon-btn" data-open="'+order.id+'">فتح</button>' +
+      '<button class="icon-btn" data-restore="'+order.id+'">↩️ استعادة</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function archiveListBodyHtml(){
+  const orders = archivedOrdersList();
+  if(orders.length===0){
+    return '<div class="empty-state">' +
+      '<div class="empty-title">ما فيه طلبيات مؤرشفة</div>' +
+      '<div class="empty-sub">الطلبيات اللي تؤرشفها من قائمة الطلبيات بتظهر هون.</div>' +
+    '</div>';
+  }
+  return '<table class="orders-table"><thead><tr><th>رقم الطلب</th><th>إجمالي البيع</th><th></th></tr></thead><tbody>' +
+      orders.map(archivedOrderRowHtml).join('') +
+    '</tbody></table>' +
+    '<div class="cards-list">' + orders.map(archivedOrderCardHtml).join('') + '</div>';
+}
+
+function bindArchiveRowEvents(){
+  const container = document.getElementById('archive-view');
+  if(!container) return;
+  container.querySelectorAll('[data-open]').forEach(b=>{
+    b.addEventListener('click', ()=> openModal('edit', b.getAttribute('data-open')));
+  });
+  container.querySelectorAll('[data-restore]').forEach(b=>{
+    b.addEventListener('click', ()=> restoreOrder(b.getAttribute('data-restore')));
+  });
+}
+
+function archiveViewHtml(){
+  return '<div class="tasks-header">' +
+      '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-archive">→ رجوع للطلبيات</button>' +
+      '<div class="tasks-title">🗄️ أرشيف الطلبيات</div>' +
+    '</div>' +
+    '<section id="archive-table-container" class="table-container">' + archiveListBodyHtml() + '</section>';
+}
+
+function renderArchiveView(){
+  const el = document.getElementById('archive-view');
+  el.innerHTML = archiveViewHtml();
+  document.getElementById('btn-back-to-orders-from-archive').addEventListener('click', closeArchiveView);
+  bindArchiveRowEvents();
+}
+
+function refreshArchiveList(){
+  const container = document.getElementById('archive-table-container');
+  if(!container) return;
+  container.innerHTML = archiveListBodyHtml();
+  bindArchiveRowEvents();
 }
 
 /* ---------- access gate (Supabase Auth — email magic link, restricted to an allowlist) ---------- */
