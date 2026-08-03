@@ -1052,6 +1052,7 @@ let currentSearch = '';
 let archiveFilter = 'all';
 let archiveSearch = '';
 let draft = null;
+let draftOpenedAtUpdatedAt = null; // updatedAt الطلبية وقت فتح المودال — لفحص التعارض عند الحفظ
 
 function uid(prefix){
   return (prefix||'id') + '-' + Math.random().toString(36).slice(2,9) + Date.now().toString(36).slice(-4);
@@ -1994,6 +1995,10 @@ function openModal(mode, orderId){
     draft = JSON.parse(JSON.stringify(found));
     draft.isNew = false;
   }
+  // نسخة updatedAt وقت الفتح — لو تغيّرت بقاعدة البيانات قبل ما نحفظ (مثلاً عامر تم قبول اقتراح
+  // تسعير له بهاي الطلبية بالمنتصف)، draft يضل نسخة منفصلة ما بتعرف بالتحديث، وحفظها بيلغي التحديث
+  // بصمت. draftOpenedAtUpdatedAt بيخلينا نكتشف هالتعارض وقت الحفظ بدل ما نتجاهله.
+  draftOpenedAtUpdatedAt = draft.updatedAt || null;
   const root = document.getElementById('modal-root');
   root.innerHTML = modalHtml(draft);
   root.classList.add('modal-open');
@@ -2539,6 +2544,25 @@ function orderCustomerRefundStatusHtml(order){
 }
 
 async function onSaveOrder(){
+  // فحص تعارض: هل حد غيّر هالطلبية بقاعدة البيانات بعد ما فتحنا هالنافذة (مثلاً قبول اقتراح
+  // تسعير من عامر)؟ لو نكمل نحفظ نسخة draft القديمة كأنه ما صار شي، بنلغي هداك التعديل بصمت.
+  if(!draft.isNew){
+    const liveOrder = appData.orders.find(o=>o.id===draft.id);
+    if(liveOrder && draftOpenedAtUpdatedAt && liveOrder.updatedAt && liveOrder.updatedAt !== draftOpenedAtUpdatedAt){
+      const proceedAnyway = await new Promise(resolve=>{
+        confirmAction({
+          title: 'الطلبية اتغيّرت من مكان تاني',
+          message: 'صار عليها تحديث (ممكن قبول اقتراح تسعير من عامر، أو تعديل من مستخدم تاني) بعد ما فتحت هالنافذة. لو كملت وحفظت، ممكن يضيع هداك التحديث. الأفضل تسكّر وتفتحها من جديد لتشوف آخر نسخة.',
+          confirmLabel: 'سكّر بدون حفظ (موصى به)',
+          cancelLabel: 'كمّل واحفظ نسختي',
+          dangerous: false,
+          onConfirm: ()=>{ closeModal(); resolve(false); },
+          onCancel: ()=> resolve(true)
+        });
+      });
+      if(!proceedAnyway) return false;
+    }
+  }
   if(!draft.orderNumber || !draft.orderNumber.trim()){
     showToast('لازم تكتب رقم الطلب', 'error'); return false;
   }
@@ -2588,6 +2612,7 @@ async function onSaveOrder(){
   draft.orderNumber = draft.orderNumber.trim();
   draft.orderLabel = (draft.orderLabel||'').trim();
   draft.updatedAt = new Date().toISOString();
+  draftOpenedAtUpdatedAt = draft.updatedAt; // المودال بيضل مفتوح بعد الحفظ — هاي صارت خط الأساس الجديد لأي حفظ لاحق بنفس الجلسة
   delete draft.isNew;
 
   const idx = appData.orders.findIndex(o=>o.id===draft.id);
@@ -5483,7 +5508,9 @@ function applyRemoteSupplierChange(payload){
     if(idx>=0) appData.suppliers[idx] = supplier; else appData.suppliers.push(supplier);
   }
   const view = document.getElementById('suppliers-view');
-  if(view && view.style.display !== 'none'){ refreshSuppliersList(); }
+  // لو حد فاتح صف تعديل بالقائمة حاليًا، ما نعيد بناء القائمة كاملة — كانت بتصفّر أي كتابة
+  // غير محفوظة بعد بذاك الصف (إعادة بناء innerHTML بتفقد قيمة أي input ما زال يتحرر فيه المستخدم).
+  if(view && view.style.display !== 'none' && Object.keys(editingSuppliers).length===0){ refreshSuppliersList(); }
 }
 
 function subscribeSuppliersRealtime(){
@@ -5534,7 +5561,8 @@ function applyRemoteCustomerChange(payload){
   }
   updateCustomersBadge();
   const view = document.getElementById('customers-view');
-  if(view && view.style.display !== 'none'){ refreshCustomersList(); }
+  // نفس ملاحظة applyRemoteSupplierChange — تجنّب تصفير أي تعديل مفتوح غير محفوظ بالقائمة
+  if(view && view.style.display !== 'none' && Object.keys(editingCustomers).length===0){ refreshCustomersList(); }
 }
 
 function subscribeCustomersRealtime(){
@@ -6757,6 +6785,9 @@ function scrapyardConfirmationForOrder(orderId){
 let scrapyardPriceDrafts = {};   // part_id -> السعر المقترح يلي عم يُكتب حاليًا
 let scrapyardAddDrafts = {};     // order_id -> {description, qty, price} لصف القطعة الجديدة المفتوح
 let scrapyardEditOpenFor = {};   // part_id -> true — خانة تعديل السعر مفتوحة (تظهر فقط بعد الضغط على "تعديل")
+/* حارس ضد إرسال مزدوج: نقرة زر + Enter بنفس اللحظة (أو نقرتين سريعتين) قبل ما أول طلب يخلص
+   كانا يبعتوا نفس الاقتراح مرتين. المفتاح partId لاقتراح السعر، orderId لاقتراح إضافة قطعة. */
+let scrapyardProposalSending = new Set();
 
 /* مجموع جديد للطلبية بعد اقتراح سعر جديد (سواء وهو عم يُكتب أو بعد إرساله) — null لو ما فيه أي تغيير مقترح */
 function scrapyardGroupProposedSubtotal(group){
@@ -7025,10 +7056,12 @@ function openQuickAddScrapyardSupplierModal(onSaved){
     if(e.target.hasAttribute('data-close-confirm')) close();
   });
   root.querySelector('#quick-scrapyard-cancel-btn').addEventListener('click', close);
-  root.querySelector('#quick-scrapyard-save-btn').addEventListener('click', async ()=>{
+  const scrapyardSaveBtn = root.querySelector('#quick-scrapyard-save-btn');
+  scrapyardSaveBtn.addEventListener('click', async ()=>{
     const name = document.getElementById('quick-scrapyard-name-input').value.trim();
     const phone = document.getElementById('quick-scrapyard-phone-input').value.trim();
     if(!name && !phone){ showToast('اكتب اسم أو رقم جوال على الأقل', 'error'); return; }
+    scrapyardSaveBtn.disabled = true; // يمنع نقرتين سريعتين من إنشاء تشليحين مكررين قبل ما أول طلب يخلص
     const newSupplier = { id: uid('sup'), name, phone, notes:'', extraPhones: [], handlesNew: false, handlesUsed: true };
     await persistSupplier(newSupplier);
     close();
@@ -7544,14 +7577,17 @@ function bindScrapyardEvents(){
 
 /* إرسال السعر المقترح المكتوب داخل صف القطعة — بدون أي نافذة خارجية */
 async function sendScrapyardPriceProposal(orderId, partId){
+  if(scrapyardProposalSending.has(partId)) return; // إرسال ثاني قيد التنفيذ أصلًا لنفس القطعة
   const raw = scrapyardPriceDrafts[partId];
   const val = Number(raw);
   if(raw===undefined || raw===null || raw==='' || !val || val<0){ showToast('اكتب السعر المقترح أولاً', 'error'); return; }
   const part = scrapyardSharedState.parts.find(p=>p.part_id===partId);
   if(part && Number(part.cost_price) === val){ showToast('السعر المقترح نفس السعر الحالي', 'error'); return; }
+  scrapyardProposalSending.add(partId);
   const { error } = await sb.from('scrapyard_proposals').insert({
     order_id: orderId, part_id: partId, action: 'edit', cost_price: val, submitted_by: scrapyardSharedState.email, kind: scrapyardSharedState.activeKind
   });
+  scrapyardProposalSending.delete(partId);
   if(error){ showToast('تعذر إرسال الاقتراح', 'error'); return; }
   delete scrapyardPriceDrafts[partId];
   delete scrapyardEditOpenFor[partId];
@@ -7562,6 +7598,7 @@ async function sendScrapyardPriceProposal(orderId, partId){
 
 /* إرسال اقتراح قطعة جديدة من صف الإدخال المباشر */
 async function sendScrapyardAddProposal(orderId){
+  if(scrapyardProposalSending.has(orderId)) return; // إرسال ثاني قيد التنفيذ أصلًا لنفس الطلبية
   const d = scrapyardAddDrafts[orderId];
   if(!d) return;
   const desc = (d.description||'').trim();
@@ -7569,9 +7606,11 @@ async function sendScrapyardAddProposal(orderId){
   const price = Number(d.price);
   if(!desc){ showToast('أدخل وصف القطعة', 'error'); return; }
   if(!price || price<0){ showToast('أدخل سعر صحيح', 'error'); return; }
+  scrapyardProposalSending.add(orderId);
   const { error } = await sb.from('scrapyard_proposals').insert({
     order_id: orderId, action: 'add', description: desc, qty, cost_price: price, submitted_by: scrapyardSharedState.email, kind: scrapyardSharedState.activeKind
   });
+  scrapyardProposalSending.delete(orderId);
   if(error){ showToast('تعذر إرسال الاقتراح', 'error'); return; }
   delete scrapyardAddDrafts[orderId];
   showToast('تم إرسال الاقتراح', 'ok');
