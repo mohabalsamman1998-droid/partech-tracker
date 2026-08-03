@@ -1275,8 +1275,8 @@ function orderTotals(order){
 function orderStatusFlags(order){
   const t = orderTotals(order);
   return Object.assign({}, t, {
-    waitingAmerPayment: t.costToScrapyard>0 && !order.paidToAmer,
-    waitingSupplierPayment: t.costToSupplier>0 && !order.paidToSupplier,
+    waitingAmerPayment: order.confirmed && t.costToScrapyard>0 && !order.paidToAmer,
+    waitingSupplierPayment: order.confirmed && t.costToSupplier>0 && !order.paidToSupplier,
     waitingSupply: order.confirmed && !order.supplied,
     waitingPricing: !t.hasSell && !t.allPartsReturned,
     waitingCustomerPayment: order.confirmed && order.supplied && t.hasSell && !t.customerFullyPaid,
@@ -1680,6 +1680,11 @@ function renderTable(){
 
 /* ---------- modal (create/edit) ---------- */
 let editingPayments = {}; // payment_id -> true — يُعاد تصفيره كل ما تُفتح نافذة الطلبية
+/* أجزاء تغيّر تصنيفها (مستعمل/جديد) خلال الجلسة الحالية — إلغاء اقتراح التسعير المعلّق لهم
+   يُؤجَّل لحد ما تُحفظ الطلبية فعليًا (onSaveOrder)، مش فور تأكيد التغيير بالمودال. لو المستخدم
+   سكّر المودال أو ضغط "إلغاء" بدون حفظ، هالمجموعة تُترك بدون تنفيذ — تصنيف القطعة فعليًا ما تغيّر
+   بقاعدة البيانات، فمالها داعي يتحذف اقتراح عامر المعلّق عليها. */
+let pendingScrapyardCancellations = new Set();
 
 function paymentRowHtml(p){
   const amountVal = (p.amount===''||p.amount==null) ? '' : p.amount;
@@ -1958,6 +1963,7 @@ function modalHtml(d){
 function openModal(mode, orderId){
   selectedPartType = null;
   editingPayments = {};
+  pendingScrapyardCancellations = new Set();
   if(mode==='create'){
     draft = {
       id: uid('ord'),
@@ -2003,6 +2009,7 @@ function closeModal(){
   root.innerHTML='';
   root.classList.remove('modal-open');
   draft=null;
+  pendingScrapyardCancellations.clear(); // إلغاء بدون حفظ = تصنيف القطع ما تغيّر فعليًا، ما فيه داعي نلغي أي اقتراح
   document.removeEventListener('keydown', escListener);
 }
 
@@ -2253,7 +2260,7 @@ function bindPartRowEvents(){
           onConfirm: async ()=>{
             part.used = willBeUsed;
             refreshPartsList();
-            await cancelPendingScrapyardProposalsForPart(part.id);
+            pendingScrapyardCancellations.add(part.id); // يُنفَّذ فعليًا بس عند حفظ الطلبية — انظر الملاحظة أعلى تعريف المجموعة
           }
         });
       });
@@ -2587,6 +2594,14 @@ async function onSaveOrder(){
   if(idx>=0) appData.orders[idx]=draft; else appData.orders.push(draft);
 
   await persistOrder(draft);
+
+  // الطلبية اتحفظت فعليًا هلق — نفّذ إلغاء أي اقتراح تسعير معلّق لقطع غيّرنا تصنيفها بهالجلسة
+  if(pendingScrapyardCancellations.size){
+    for(const partId of pendingScrapyardCancellations){
+      await cancelPendingScrapyardProposalsForPart(partId);
+    }
+    pendingScrapyardCancellations.clear();
+  }
 
   // حفظ الطلبية ما يطلعك منها — يبقى المودال مفتوح، بس يحدّث حالته (زي تحول "جديدة" لموجودة، إلخ)
   editingPayments = {};
@@ -3404,6 +3419,11 @@ function confirmToggleConfirmation(orderId){
     cancelLabel: 'تراجع',
     confirmLabel: willConfirm ? 'تأكيد الطلبية' : 'إلغاء التأكيد',
     onConfirm: async ()=>{
+      // إعادة الجلب هون (مو الاعتماد على order يلي جُلبت قبل فتح نافذة التأكيد) — لو وصل تعديل
+      // لحظي من مستخدم تاني أثناء انتظار ضغطة المستخدم، appData.orders[idx] بيصير عنصر جديد
+      // كليًا (applyRemoteOrderChange)، والمرجع القديم يضل معزول عنه، وحفظه بيرجّع تعديل التاني.
+      const order = appData.orders.find(o=>o.id===orderId);
+      if(!order) return;
       order.confirmed = willConfirm;
       if(willResetSupply){
         order.supplied = false;
@@ -3432,6 +3452,8 @@ function archiveOrder(orderId){
     message: 'بتختفي من قائمة الطلبيات العادية، وتقدر ترجّعها في أي وقت من "🗄️ الأرشيف".',
     confirmLabel: 'أرشفة',
     onConfirm: async ()=>{
+      const order = appData.orders.find(o=>o.id===orderId); // إعادة جلب — انظر ملاحظة confirmToggleConfirmation
+      if(!order) return;
       order.archived = true;
       order.updatedAt = new Date().toISOString();
       await persistOrder(order);
