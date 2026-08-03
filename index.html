@@ -580,6 +580,7 @@
   }
   .searchable-select-option:last-child{border-bottom:none;}
   .searchable-select-option:hover{background:var(--surface-2);}
+  .searchable-select-option.searchable-select-create{color:var(--green);font-weight:700;}
   .searchable-select-empty{padding:10px;font-size:12.5px;color:var(--text-faint);text-align:center;}
 
   .toggle-row{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13.5px;font-weight:600;cursor:pointer;}
@@ -1069,9 +1070,18 @@ function searchableSelectHtml(inputClass, options, selectedId, placeholder){
   '</div>';
 }
 
+/* رقم جوال أغلبه أرقام (7+ خانة) — نستخدمه لتخمين هل النص المكتوب/الملصوق رقم جوال ولا اسم،
+   عشان نعرف نحط القيمة بالحقل الصح (رقم/اسم) لما نفتح نافذة "إضافة عميل جديد". */
+function looksLikePhoneNumber(text){
+  return ((text||'').match(/\d/g)||[]).length >= 7;
+}
+
 /* getOptions: دالة ترجع [{id,label,sublabel?}] وقت الاستدعاء (مش مصفوفة ثابتة) عشان تعكس أي
-   إضافة حديثة (مثلا مورد جديد انضاف بينما المودال مفتوح). onSelect(id) يستدعى بعد أي اختيار. */
-function bindSearchableSelect(wrapEl, getOptions, onSelect){
+   إضافة حديثة (مثلا مورد جديد انضاف بينما المودال مفتوح). onSelect(id) يستدعى بعد أي اختيار.
+   onCreateNew (اختياري): لو محدّدة وما فيه أي خيار مطابق للنص المكتوب/الملصوق، تظهر بالقائمة
+   المنسدلة نتيجة "➕ إضافة ... كعميل جديد" بدل "ما فيه نتائج" — عشان رقم جوال ملصوق ما يضيع بصمت
+   لمجرد إنه ما يطابق عميل موجود أصلًا (لازم "إضافة عميل جديد" صريحة، مو مجرد كتابة بالحقل). */
+function bindSearchableSelect(wrapEl, getOptions, onSelect, onCreateNew){
   const input = wrapEl.querySelector('.searchable-select-input');
   const dropdown = wrapEl.querySelector('.searchable-select-dropdown');
   if(!input || !dropdown) return;
@@ -1079,10 +1089,14 @@ function bindSearchableSelect(wrapEl, getOptions, onSelect){
     const q = (filterText||'').trim().toLowerCase();
     const options = getOptions();
     const matches = q ? options.filter(o=> o.label.toLowerCase().includes(q) || (o.sublabel||'').toLowerCase().includes(q)) : options;
-    dropdown.innerHTML = matches.length
-      ? matches.map(o=>'<button type="button" class="searchable-select-option" data-id="'+o.id+'">'+escapeHtml(o.label)+(o.sublabel?' — '+escapeHtml(o.sublabel):'')+'</button>').join('')
-      : '<div class="searchable-select-empty">ما فيه نتائج</div>';
-    dropdown.querySelectorAll('.searchable-select-option').forEach(btn=>{
+    if(matches.length){
+      dropdown.innerHTML = matches.map(o=>'<button type="button" class="searchable-select-option" data-id="'+o.id+'">'+escapeHtml(o.label)+(o.sublabel?' — '+escapeHtml(o.sublabel):'')+'</button>').join('');
+    } else if(q && onCreateNew){
+      dropdown.innerHTML = '<button type="button" class="searchable-select-option searchable-select-create">➕ إضافة "'+escapeHtml(filterText.trim())+'" كعميل جديد</button>';
+    } else {
+      dropdown.innerHTML = '<div class="searchable-select-empty">ما فيه نتائج</div>';
+    }
+    dropdown.querySelectorAll('.searchable-select-option[data-id]').forEach(btn=>{
       btn.addEventListener('mousedown', e=>{
         e.preventDefault(); // قبل blur الـ input حتى ما يسكر القائمة قبل ما ياخذ الكلك
         const opt = options.find(o=>o.id===btn.getAttribute('data-id'));
@@ -1092,6 +1106,14 @@ function bindSearchableSelect(wrapEl, getOptions, onSelect){
         onSelect(opt ? opt.id : '');
       });
     });
+    const createBtn = dropdown.querySelector('.searchable-select-create');
+    if(createBtn){
+      createBtn.addEventListener('mousedown', e=>{
+        e.preventDefault();
+        dropdown.style.display = 'none';
+        onCreateNew(filterText.trim());
+      });
+    }
   };
   input.addEventListener('focus', ()=>{ input.select(); renderOptions(''); dropdown.style.display='block'; });
   input.addEventListener('input', ()=>{ renderOptions(input.value); dropdown.style.display='block'; });
@@ -1961,15 +1983,7 @@ function attachModalHandlers(){
   root.querySelector('#modal-cancel-btn').addEventListener('click', closeModal);
 
   root.querySelector('#order-label-input').addEventListener('input', e=>{ draft.orderLabel = e.target.value; });
-  bindSearchableSelect(root.querySelector('#order-customer-select .searchable-select'),
-    ()=> (appData.customers||[]).map(c=>({id:c.id, label:c.name||c.phone||'عميل', sublabel:c.phone})),
-    (id)=>{
-      draft.customerId = id || null;
-      const c = (appData.customers||[]).find(c=>c.id===draft.customerId);
-      draft.customerPhone = c ? (c.phone||'') : '';
-    }
-  );
-  root.querySelector('#order-add-customer-btn').addEventListener('click', ()=>{
+  const orderQuickAddCustomer = (prefill)=>{
     openQuickAddCustomerModal((newCustomer)=>{
       draft.customerId = newCustomer.id;
       draft.customerPhone = newCustomer.phone || '';
@@ -1979,8 +1993,18 @@ function attachModalHandlers(){
         const input = wrap.querySelector('.searchable-select-input');
         if(input) input.value = newCustomer.name || newCustomer.phone || 'عميل';
       }
-    });
-  });
+    }, prefill);
+  };
+  bindSearchableSelect(root.querySelector('#order-customer-select .searchable-select'),
+    ()=> (appData.customers||[]).map(c=>({id:c.id, label:c.name||c.phone||'عميل', sublabel:c.phone})),
+    (id)=>{
+      draft.customerId = id || null;
+      const c = (appData.customers||[]).find(c=>c.id===draft.customerId);
+      draft.customerPhone = c ? (c.phone||'') : '';
+    },
+    (typedText)=> orderQuickAddCustomer(looksLikePhoneNumber(typedText) ? {phone: typedText} : {name: typedText})
+  );
+  root.querySelector('#order-add-customer-btn').addEventListener('click', ()=> orderQuickAddCustomer());
   root.querySelector('#btn-toggle-part-selection').addEventListener('click', ()=>{
     draft.partsSelectionEnabled = !draft.partsSelectionEnabled;
     refreshPartsList();
@@ -2984,15 +3008,7 @@ function attachQuoteModalHandlers(){
 
   if(!isPurchasing){
     root.querySelector('#quote-label-input').addEventListener('input', e=>{ quoteDraft.orderLabel = e.target.value; });
-    bindSearchableSelect(root.querySelector('#quote-customer-select .searchable-select'),
-      ()=> (appData.customers||[]).map(c=>({id:c.id, label:c.name||c.phone||'عميل', sublabel:c.phone})),
-      (id)=>{
-        quoteDraft.customerId = id || null;
-        const c = (appData.customers||[]).find(c=>c.id===quoteDraft.customerId);
-        quoteDraft.customerPhone = c ? (c.phone||'') : '';
-      }
-    );
-    root.querySelector('#quote-add-customer-btn').addEventListener('click', ()=>{
+    const quoteQuickAddCustomer = (prefill)=>{
       openQuickAddCustomerModal((newCustomer)=>{
         quoteDraft.customerId = newCustomer.id;
         quoteDraft.customerPhone = newCustomer.phone || '';
@@ -3002,8 +3018,18 @@ function attachQuoteModalHandlers(){
           const input = wrap.querySelector('.searchable-select-input');
           if(input) input.value = newCustomer.name || newCustomer.phone || 'عميل';
         }
-      });
-    });
+      }, prefill);
+    };
+    bindSearchableSelect(root.querySelector('#quote-customer-select .searchable-select'),
+      ()=> (appData.customers||[]).map(c=>({id:c.id, label:c.name||c.phone||'عميل', sublabel:c.phone})),
+      (id)=>{
+        quoteDraft.customerId = id || null;
+        const c = (appData.customers||[]).find(c=>c.id===quoteDraft.customerId);
+        quoteDraft.customerPhone = c ? (c.phone||'') : '';
+      },
+      (typedText)=> quoteQuickAddCustomer(looksLikePhoneNumber(typedText) ? {phone: typedText} : {name: typedText})
+    );
+    root.querySelector('#quote-add-customer-btn').addEventListener('click', ()=> quoteQuickAddCustomer());
     bindQuotePartAddControls();
   }
 
@@ -3210,14 +3236,15 @@ function openContactModal(phone){
   root.querySelector('#contact-wa-link').addEventListener('click', close);
 }
 
-function openQuickAddCustomerModal(onSaved){
+function openQuickAddCustomerModal(onSaved, prefill){
+  prefill = prefill || {};
   const root = document.getElementById('confirm-root');
   root.innerHTML =
     '<div class="modal-backdrop" data-close-confirm>' +
       '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
         '<div class="modal-title">إضافة عميل جديد</div>' +
-        '<label class="field"><span class="field-label">الاسم</span><input type="text" id="quick-customer-name-input" placeholder="اسم العميل"></label>' +
-        '<label class="field"><span class="field-label">رقم الجوال</span><input type="tel" id="quick-customer-phone-input" placeholder="05XXXXXXXX"></label>' +
+        '<label class="field"><span class="field-label">الاسم</span><input type="text" id="quick-customer-name-input" placeholder="اسم العميل" value="'+escapeHtml(prefill.name||'')+'"></label>' +
+        '<label class="field"><span class="field-label">رقم الجوال</span><input type="tel" id="quick-customer-phone-input" placeholder="05XXXXXXXX" value="'+escapeHtml(prefill.phone||'')+'"></label>' +
         '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' +
           '<button type="button" class="btn btn-ghost" id="quick-customer-cancel-btn">إلغاء</button>' +
           '<button type="button" class="btn btn-primary" id="quick-customer-save-btn">💾 حفظ</button>' +
@@ -3230,6 +3257,8 @@ function openQuickAddCustomerModal(onSaved){
     if(e.target.hasAttribute('data-close-confirm')) close();
   });
   root.querySelector('#quick-customer-cancel-btn').addEventListener('click', close);
+  const focusTarget = root.querySelector(prefill.phone ? '#quick-customer-name-input' : '#quick-customer-phone-input');
+  if(focusTarget) focusTarget.focus();
   root.querySelector('#quick-customer-save-btn').addEventListener('click', async ()=>{
     const name = document.getElementById('quick-customer-name-input').value.trim();
     const phone = document.getElementById('quick-customer-phone-input').value.trim();
