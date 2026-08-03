@@ -2814,18 +2814,9 @@ function quotePartRowHtml(p, i){
   const ro = readOnly ? ' readonly' : '';
   const undetermined = p.used===null; // "جديد أو مستعمل" — لسه ما تحدد، عامر يحسمها
 
-  let usedBadgeHtml;
-  if(readOnly){
-    // عامر يقدر يبدّل نوع أي قطعة بأي وقت (مو بس القطع اللي لسه ما تحدد نوعها) — نفس زر
-    // data-resolve-used الموجود أصلًا، بس هلق يظهر دايمًا مع تحديد الفعّال حاليًا لو النوع محسوم
-    usedBadgeHtml = '<div class="part-type-pills">' +
-        '<button type="button" class="type-pill type-pill-new'+(p.used===false?' type-pill-active':'')+'" data-resolve-used="false">جديد</button>' +
-        '<button type="button" class="type-pill type-pill-used'+(p.used===true?' type-pill-active':'')+'" data-resolve-used="true">مستعمل</button>' +
-      '</div>';
-  } else {
-    const label = undetermined ? 'جديد أو مستعمل' : (p.used?'مستعمل':'غير مستعمل');
-    usedBadgeHtml = '<button type="button" class="used-badge'+(p.used?'':' used-badge-off')+'" data-toggle-used="'+p.id+'">'+label+' ✏️</button>';
-  }
+  // زر واحد يتبدّل بالضغط (نفس نمط زر المبيعات) — عامر يقدر يبدّل نوع أي قطعة بأي وقت
+  const usedLabel = undetermined ? 'جديد أو مستعمل' : (p.used ? 'مستعمل' : (readOnly ? 'جديد' : 'غير مستعمل'));
+  const usedBadgeHtml = '<button type="button" class="used-badge'+(p.used?'':' used-badge-off')+'" data-toggle-used="'+p.id+'">'+usedLabel+' ✏️</button>';
 
   // الموردين/التشاليح شغلة المشتريات (عامر) حصرًا — المبيعات ما بتشوفها أبدًا، تظهر بس بعد
   // الإرسال لعامر، وحتى عنده لازم يكون النوع محسوم الأول (جديد/مستعمل) قبل ما تظهر.
@@ -2882,6 +2873,13 @@ function bindQuotePartRowEvents(){
     if(descInput) descInput.addEventListener('input', e=>{ part.description = e.target.value; });
     const whatsappBtn = row.querySelector('[data-whatsapp-part]');
     if(whatsappBtn) whatsappBtn.addEventListener('click', ()=> openWhatsAppForPart(part));
+    const toggleUsedBtn = row.querySelector('[data-toggle-used]');
+    if(toggleUsedBtn){
+      toggleUsedBtn.addEventListener('click', ()=>{
+        part.used = part.used===null ? true : !part.used;
+        refreshQuotePartsList();
+      });
+    }
     if(!readOnly){
       const notesInput = row.querySelector('.part-notes-input');
       if(notesInput) notesInput.addEventListener('input', e=>{ part.notes = e.target.value; });
@@ -2890,13 +2888,6 @@ function bindQuotePartRowEvents(){
         qtyInput.addEventListener('input', e=>{
           part.qty = e.target.value===''? 1 : Number(e.target.value);
           updateQuoteModalTotals();
-        });
-      }
-      const toggleUsedBtn = row.querySelector('[data-toggle-used]');
-      if(toggleUsedBtn){
-        toggleUsedBtn.addEventListener('click', ()=>{
-          part.used = part.used===null ? true : !part.used;
-          refreshQuotePartsList();
         });
       }
       const removeBtn = row.querySelector('[data-remove-quote-part]');
@@ -2909,12 +2900,6 @@ function bindQuotePartRowEvents(){
     } else {
       const purchasingNotesInput = row.querySelector('.part-purchasing-notes-input');
       if(purchasingNotesInput) purchasingNotesInput.addEventListener('input', e=>{ part.purchasingNotes = e.target.value; });
-      row.querySelectorAll('[data-resolve-used]').forEach(btn=>{
-        btn.addEventListener('click', ()=>{
-          part.used = btn.getAttribute('data-resolve-used') === 'true';
-          refreshQuotePartsList();
-        });
-      });
     }
     const costInput = row.querySelector('.part-cost-input');
     if(costInput){
