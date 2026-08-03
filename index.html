@@ -2815,25 +2815,23 @@ function quotePartRowHtml(p, i){
   const undetermined = p.used===null; // "جديد أو مستعمل" — لسه ما تحدد، عامر يحسمها
 
   let usedBadgeHtml;
-  if(readOnly && undetermined){
-    // عامر يحسم النوع بنفسه هون (يظهر عنده فقط — المبيعات ما بتحتاج تقرر)
+  if(readOnly){
+    // عامر يقدر يبدّل نوع أي قطعة بأي وقت (مو بس القطع اللي لسه ما تحدد نوعها) — نفس زر
+    // data-resolve-used الموجود أصلًا، بس هلق يظهر دايمًا مع تحديد الفعّال حاليًا لو النوع محسوم
     usedBadgeHtml = '<div class="part-type-pills">' +
-        '<button type="button" class="type-pill type-pill-new" data-resolve-used="false">جديد</button>' +
-        '<button type="button" class="type-pill type-pill-used" data-resolve-used="true">مستعمل</button>' +
+        '<button type="button" class="type-pill type-pill-new'+(p.used===false?' type-pill-active':'')+'" data-resolve-used="false">جديد</button>' +
+        '<button type="button" class="type-pill type-pill-used'+(p.used===true?' type-pill-active':'')+'" data-resolve-used="true">مستعمل</button>' +
       '</div>';
-  } else if(readOnly){
-    usedBadgeHtml = '<span class="used-badge'+(p.used?'':' used-badge-off')+'">'+(p.used?'مستعمل':'غير مستعمل')+'</span>';
   } else {
     const label = undetermined ? 'جديد أو مستعمل' : (p.used?'مستعمل':'غير مستعمل');
     usedBadgeHtml = '<button type="button" class="used-badge'+(p.used?'':' used-badge-off')+'" data-toggle-used="'+p.id+'">'+label+' ✏️</button>';
   }
 
-  // p.used ثلاث حالات (true/false/null) — الفلتر لازم يفرّق null (لسه ما تحدد) عن false صراحة،
-  // وإلا الـ"?:" بيعامل null كـ false وبيخفي موردي التشليح بالغلط عن قطعة لسه ما تحدد نوعها
-  // (بالضبط سبب "قبل الإرسال ما تظهر خيارات الموردين" — القطع الجديدة تُنشأ undetermined دايمًا).
+  // الموردين/التشاليح شغلة المشتريات (عامر) حصرًا — المبيعات ما بتشوفها أبدًا، تظهر بس بعد
+  // الإرسال لعامر، وحتى عنده لازم يكون النوع محسوم الأول (جديد/مستعمل) قبل ما تظهر.
   const supplierListLabel = p.used===null ? 'المورد/التشليح' : (p.used?'التشليح':'المورد');
   const supplierPlaceholder = p.used===null ? '— بدون مورد/تشليح —' : (p.used?'— بدون تشليح —':'— بدون مورد —');
-  const supplierFieldHtml = (readOnly && undetermined) ? '' : (
+  const supplierFieldHtml = (!readOnly || undetermined) ? '' : (
     '<label class="mini-label mini-label-supplier">'+supplierListLabel+
       searchableSelectHtml('quote-part-supplier-select',
         (appData.suppliers||[]).filter(s=> p.used===null ? (s.handlesNew||s.handlesUsed) : (p.used ? s.handlesUsed : s.handlesNew)).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
@@ -2971,7 +2969,7 @@ function quoteModalHtml(d){
     ? '<label class="field"><span class="field-label">الطلبية</span><input type="text" value="'+escapeHtml(d.orderLabel||'')+'" readonly></label>'
     : '<div class="field"><span class="field-label">الطلبية</span><input type="text" id="quote-label-input" placeholder="مثال: اسم الزبون / نوع السيارة / أي وصف مختصر" value="'+escapeHtml(d.orderLabel||'')+'"></div>';
 
-  const partsControlsHtml = isPurchasing ? '' : '<div id="quote-part-type-gate-wrap">'+quotePartAddControlsHtml()+'</div>';
+  const partsControlsHtml = '<div id="quote-part-type-gate-wrap">'+quotePartAddControlsHtml()+'</div>';
 
   const footerUtilityHtml = (!isPurchasing && !d.isNew)
     ? '<button type="button" class="btn btn-sm btn-danger-ghost" id="quote-delete-btn">🗑️ حذف طلب التسعير</button>'
@@ -3126,9 +3124,9 @@ function attachQuoteModalHandlers(){
       (typedText)=> quoteQuickAddCustomer(looksLikePhoneNumber(typedText) ? {phone: typedText} : {name: typedText})
     );
     root.querySelector('#quote-add-customer-btn').addEventListener('click', ()=> quoteQuickAddCustomer());
-    bindQuotePartAddControls();
   }
 
+  bindQuotePartAddControls();
   bindQuotePartRowEvents();
 
   if(isPurchasing){
