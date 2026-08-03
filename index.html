@@ -573,6 +573,9 @@
     padding:8px 8px;border-radius:6px;font-size:12px;font-family:'Tajawal',sans-serif;width:100%;
   }
   .searchable-select-input:focus{outline:none;border-color:var(--green-line);}
+  /* عميل/مورد ما تم اختياره — نلوّن الخانة أحمر بس لجذب الانتباه، مو منع حفظ (الحقل يضل اختياري) */
+  .searchable-select-input.select-empty-warn{border-color:var(--rust-line);background:var(--rust-dim);}
+  .searchable-select-input.select-empty-warn:focus{border-color:var(--rust);}
   .searchable-select-dropdown{
     position:absolute;top:calc(100% + 4px);right:0;left:0;z-index:60;
     background:var(--surface);border:1px solid var(--border);border-radius:8px;
@@ -1072,7 +1075,7 @@ function escapeHtml(s){
 function searchableSelectHtml(inputClass, options, selectedId, placeholder){
   const selected = options.find(o=>o.id===selectedId);
   return '<div class="searchable-select" data-selected-id="'+(selectedId||'')+'">' +
-    '<input type="text" dir="auto" class="searchable-select-input '+inputClass+'" placeholder="'+escapeHtml(placeholder||'')+'" value="'+escapeHtml(selected?selected.label:'')+'" autocomplete="off">' +
+    '<input type="text" dir="auto" class="searchable-select-input'+(selectedId?'':' select-empty-warn')+' '+inputClass+'" placeholder="'+escapeHtml(placeholder||'')+'" value="'+escapeHtml(selected?selected.label:'')+'" autocomplete="off">' +
     '<div class="searchable-select-dropdown" style="display:none;"></div>' +
   '</div>';
 }
@@ -1108,6 +1111,7 @@ function bindSearchableSelect(wrapEl, getOptions, onSelect, onCreateNew){
         e.preventDefault(); // قبل blur الـ input حتى ما يسكر القائمة قبل ما ياخذ الكلك
         const opt = options.find(o=>o.id===btn.getAttribute('data-id'));
         input.value = opt ? opt.label : '';
+        input.classList.toggle('select-empty-warn', !opt);
         wrapEl.setAttribute('data-selected-id', opt ? opt.id : '');
         dropdown.style.display = 'none';
         onSelect(opt ? opt.id : '');
@@ -1132,6 +1136,7 @@ function bindSearchableSelect(wrapEl, getOptions, onSelect, onCreateNew){
       const selectedId = wrapEl.getAttribute('data-selected-id');
       const selected = selectedId ? getOptions().find(o=>o.id===selectedId) : null;
       input.value = selected ? selected.label : '';
+      input.classList.toggle('select-empty-warn', !selected);
     }, 150);
   });
 }
@@ -2017,7 +2022,10 @@ function attachModalHandlers(){
       if(wrap){
         wrap.setAttribute('data-selected-id', newCustomer.id);
         const input = wrap.querySelector('.searchable-select-input');
-        if(input) input.value = newCustomer.name || newCustomer.phone || 'عميل';
+        if(input){
+          input.value = newCustomer.name || newCustomer.phone || 'عميل';
+          input.classList.remove('select-empty-warn');
+        }
       }
     }, prefill);
   };
@@ -3042,7 +3050,10 @@ function attachQuoteModalHandlers(){
         if(wrap){
           wrap.setAttribute('data-selected-id', newCustomer.id);
           const input = wrap.querySelector('.searchable-select-input');
-          if(input) input.value = newCustomer.name || newCustomer.phone || 'عميل';
+          if(input){
+            input.value = newCustomer.name || newCustomer.phone || 'عميل';
+            input.classList.remove('select-empty-warn');
+          }
         }
       }, prefill);
     };
