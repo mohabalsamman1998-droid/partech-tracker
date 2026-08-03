@@ -2060,6 +2060,7 @@ function attachModalHandlers(){
   if(pasteBtn) pasteBtn.addEventListener('click', pastePartsFromClipboard);
 
   root.querySelector('#cost-split-amer-btn').addEventListener('click', ()=>{
+    if(!hasElevatedAccess()){ showToast('تغيير حالة السداد للتشليح متاح فقط لمهاب وهمام وبشار', 'error'); return; }
     const willPay = !draft.paidToAmer;
     confirmAction({
       title: willPay ? 'تحديد الطلبية كـ"مسدد للتشليح"؟' : 'إلغاء تحديد الطلبية كـ"مسدد للتشليح"؟',
@@ -2076,6 +2077,7 @@ function attachModalHandlers(){
     });
   });
   root.querySelector('#cost-split-supplier-btn').addEventListener('click', ()=>{
+    if(!hasElevatedAccess()){ showToast('تغيير حالة السداد للمورد متاح فقط لمهاب وهمام وبشار', 'error'); return; }
     const willPay = !draft.paidToSupplier;
     confirmAction({
       title: willPay ? 'تحديد الطلبية كـ"مسدد للمورد"؟' : 'إلغاء تحديد الطلبية كـ"مسدد للمورد"؟',
@@ -2110,6 +2112,7 @@ function attachModalHandlers(){
     });
   }
   root.querySelector('#add-payment-btn').addEventListener('click', ()=>{
+    if(!hasElevatedAccess()){ showToast('إضافة دفعة زبون متاحة فقط لمهاب وهمام وبشار', 'error'); return; }
     if(!Array.isArray(draft.customerPayments)) draft.customerPayments = [];
     const newPayment = {id:uid('pay'), amount:'', method:'', date:todayNumeric()};
     draft.customerPayments.push(newPayment);
@@ -2161,6 +2164,7 @@ function attachModalHandlers(){
   const delBtn = root.querySelector('#modal-delete-btn');
   if(delBtn){
     delBtn.addEventListener('click', ()=>{
+      if(!hasElevatedAccess()){ showToast('حذف الطلبية متاح فقط لمهاب وهمام وبشار', 'error'); return; }
       const id = draft.id;
       closeModal();
       confirmDelete(id);
@@ -3879,7 +3883,11 @@ function formatDateDMY(yyyyMmDd){
   if(!m) return '';
   return m[3]+'/'+m[2]+'/'+m[1];
 }
-const TREASURY_ALLOWED_EMAILS = ['mohabalsamman1998@gmail.com','homam.techno@gmail.com','sammaneng@gmail.com'];
+/* مهاب/همام/بشار — كانت مخصصة لزر الصندوق بس، هلق نفس القائمة بتتحكم كمان بحذف الطلبية/إضافة
+   دفعة زبون/تغيير حالة سداد المورد أو التشليح (كلها إجراءات مالية حساسة). فحص واجهة بس (زي باقي
+   فحوصات TREASURY سابقًا) — مو فحص فعلي بقاعدة البيانات، انظر [[feedback_partech_security_followups]]. */
+const ELEVATED_ACCESS_EMAILS = ['mohabalsamman1998@gmail.com','homam.techno@gmail.com','sammaneng@gmail.com'];
+function hasElevatedAccess(){ return ELEVATED_ACCESS_EMAILS.includes(presenceEmail); }
 
 /* الشاشات (طلبيات/صندوق/مهام/موردين/عملاء) كلها تشترك بنفس التوب بار — لازم نخفي البقية دايمًا عند فتح وحدة، غير كذا تظهر شاشتين فوق بعض */
 function hideAllSecondaryViews(){
@@ -3895,7 +3903,7 @@ async function openTreasuryView(){
   hideAllSecondaryViews();
   document.getElementById('treasury-view').style.display = 'block';
   document.getElementById('treasury-view').innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
-  if(TREASURY_ALLOWED_EMAILS.includes(presenceEmail)) await refreshScrapyardPendingCount();
+  if(ELEVATED_ACCESS_EMAILS.includes(presenceEmail)) await refreshScrapyardPendingCount();
   renderTreasuryView();
 }
 
@@ -3970,7 +3978,7 @@ function handleScrapyardProposalDecision(proposalId, accept){
 
 let scrapyardProposalsChannel = null;
 async function refreshScrapyardPendingCount(){
-  if(!TREASURY_ALLOWED_EMAILS.includes(presenceEmail)) return;
+  if(!ELEVATED_ACCESS_EMAILS.includes(presenceEmail)) return;
   try{
     const { data, error } = await sb.from('scrapyard_proposals').select('*').order('created_at', {ascending:false});
     if(error) throw error;
@@ -3996,7 +4004,7 @@ function subscribeScrapyardRealtime(){
   if(!sb || scrapyardProposalsChannel) return;
   scrapyardProposalsChannel = sb.channel('scrapyard-proposals-changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'scrapyard_proposals' }, ()=>{
-      if(TREASURY_ALLOWED_EMAILS.includes(presenceEmail)) refreshScrapyardPendingCount();
+      if(ELEVATED_ACCESS_EMAILS.includes(presenceEmail)) refreshScrapyardPendingCount();
       if(document.getElementById('scrapyard-root').style.display !== 'none' && scrapyardCurrentScreen === 'settlement'){
         loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
       }
@@ -6481,7 +6489,7 @@ async function showAppIfAllowed(session){
   document.getElementById('app-root').style.display = '';
   startPresenceHeartbeat(email);
   const treasuryBtn = document.getElementById('btn-open-treasury');
-  if(treasuryBtn) treasuryBtn.style.display = TREASURY_ALLOWED_EMAILS.includes(email) ? '' : 'none';
+  if(treasuryBtn) treasuryBtn.style.display = ELEVATED_ACCESS_EMAILS.includes(email) ? '' : 'none';
   if(!appInitDone){
     appInitDone = true;
     init();
@@ -6502,7 +6510,7 @@ let scrapyardCurrentScreen = null; // 'home' | 'settlement' — يحدّد هل 
 
 async function initScrapyardView(email){
   scrapyardSharedState.email = email;
-  scrapyardSharedState.canManage = TREASURY_ALLOWED_EMAILS.includes(email);
+  scrapyardSharedState.canManage = ELEVATED_ACCESS_EMAILS.includes(email);
   const root = document.getElementById('scrapyard-root');
   root.innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
   // دخول عامر المباشر ما بيمر بـ init()، فلازم نسجّل حضوره يدويًا حتى يظهر بقائمة "آخر ظهور" عند صاحب الحساب
@@ -6526,7 +6534,7 @@ async function openScrapyardSharedView(kind){
   document.getElementById('scrapyard-root').style.display = '';
   document.getElementById('scrapyard-root').innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
   scrapyardSharedState.email = presenceEmail;
-  scrapyardSharedState.canManage = TREASURY_ALLOWED_EMAILS.includes(presenceEmail);
+  scrapyardSharedState.canManage = ELEVATED_ACCESS_EMAILS.includes(presenceEmail);
   await loadScrapyardData(kind);
   renderScrapyardView();
 }
