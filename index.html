@@ -1124,7 +1124,16 @@ function bindSearchableSelect(wrapEl, getOptions, onSelect, onCreateNew){
   };
   input.addEventListener('focus', ()=>{ input.select(); renderOptions(''); dropdown.style.display='block'; });
   input.addEventListener('input', ()=>{ renderOptions(input.value); dropdown.style.display='block'; });
-  input.addEventListener('blur', ()=>{ setTimeout(()=>{ dropdown.style.display='none'; }, 150); });
+  // كتابة/لصق نص (مثلاً رقم جوال) بدون فعليًا اختيار عميل موجود أو إضافته كعميل جديد ما لازم يبقى
+  // شكله "مقبول" بالحقل — لو ما صار اختيار فعلي، نرجّع الحقل لآخر عميل محفوظ فعليًا (أو نفرّغه).
+  input.addEventListener('blur', ()=>{
+    setTimeout(()=>{
+      dropdown.style.display='none';
+      const selectedId = wrapEl.getAttribute('data-selected-id');
+      const selected = selectedId ? getOptions().find(o=>o.id===selectedId) : null;
+      input.value = selected ? selected.label : '';
+    }, 150);
+  });
 }
 
 function partDisplayName(p){
@@ -3227,6 +3236,18 @@ function normalizePhoneForWhatsapp(phone){
   return p;
 }
 
+/* يمنع تكرار العميل (نفس الاسم أو نفس رقم الجوال بعد توحيد صيغته) قبل إضافته —
+   يتجاهل حقول فاضية حتى ما يتصادم عملاء بدون اسم/رقم مع بعض. */
+function findDuplicateCustomer(name, phone){
+  const n = (name||'').trim().toLowerCase();
+  const p = (phone||'').trim() ? normalizePhoneForWhatsapp(phone) : '';
+  return (appData.customers||[]).find(c=>{
+    if(n && (c.name||'').trim().toLowerCase()===n) return true;
+    if(p && (c.phone||'').trim() && normalizePhoneForWhatsapp(c.phone)===p) return true;
+    return false;
+  });
+}
+
 function openContactModal(phone){
   if(!phone || !phone.trim()){ showToast('لا يوجد رقم جوال مسجّل لهذه الطلبية', 'error'); return; }
   const root = document.getElementById('confirm-root');
@@ -3280,6 +3301,8 @@ function openQuickAddCustomerModal(onSaved, prefill){
     const name = document.getElementById('quick-customer-name-input').value.trim();
     const phone = document.getElementById('quick-customer-phone-input').value.trim();
     if(!name && !phone){ showToast('اكتب اسم أو رقم جوال على الأقل', 'error'); return; }
+    const dup = findDuplicateCustomer(name, phone);
+    if(dup){ showToast('عميل موجود مسبقًا بنفس الاسم أو الرقم: '+(dup.name||dup.phone||'عميل'), 'error'); return; }
     const newCustomer = { id: uid('cust'), name, phone, notes: '' };
     if(!Array.isArray(appData.customers)) appData.customers = [];
     appData.customers.push(newCustomer);
@@ -6184,6 +6207,8 @@ function bindCustomersViewEvents(){
     const name = nameInput.value.trim();
     const phone = phoneInput.value.trim();
     if(!name && !phone){ showToast('اكتب اسم أو رقم جوال على الأقل', 'error'); return; }
+    const dup = findDuplicateCustomer(name, phone);
+    if(dup){ showToast('عميل موجود مسبقًا بنفس الاسم أو الرقم: '+(dup.name||dup.phone||'عميل'), 'error'); return; }
     const newCustomer = { id: uid('cust'), name, phone, notes:'' };
     if(!Array.isArray(appData.customers)) appData.customers = [];
     appData.customers.push(newCustomer);
