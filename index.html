@@ -1528,7 +1528,9 @@ function rowHtml(order){
     '<td>'+(order.confirmed ? customerPaymentCellHtml(t, true) : '<span class="muted">—</span>')+'</td>' +
     '<td class="row-actions">' +
       '<button class="icon-btn" data-open="'+order.id+'">فتح</button>' +
-      '<button class="icon-btn" data-archive="'+order.id+'">🗄️ أرشفة</button>' +
+      (order.archived
+        ? '<button class="icon-btn" data-restore="'+order.id+'">↩️ استعادة</button>'
+        : '<button class="icon-btn" data-archive="'+order.id+'">🗄️ أرشفة</button>') +
     '</td>' +
   '</tr>';
 }
@@ -1555,7 +1557,9 @@ function cardHtml(order){
     '</div>' +
     '<div class="order-card-actions">' +
       '<button class="icon-btn" data-open="'+order.id+'">فتح</button>' +
-      '<button class="icon-btn" data-archive="'+order.id+'">🗄️ أرشفة</button>' +
+      (order.archived
+        ? '<button class="icon-btn" data-restore="'+order.id+'">↩️ استعادة</button>'
+        : '<button class="icon-btn" data-archive="'+order.id+'">🗄️ أرشفة</button>') +
     '</div>' +
   '</div>';
 }
@@ -6221,32 +6225,8 @@ function archivedOrdersList(){
   return appData.orders.filter(o=>!o.isQuote && o.archived).sort((a,b)=> orderNumberSortKey(b) - orderNumberSortKey(a));
 }
 
-function archivedOrderRowHtml(order){
-  const t = orderTotals(order);
-  return '<tr>' +
-    '<td class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? '<span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+'</td>' +
-    '<td class="num">'+(t.hasSell? '<span class="text-green">'+fmtMoney(t.sellTotal)+'</span>' : '<span class="muted">'+(t.allPartsReturned?'مرتجعة':'لم يُسعّر بعد')+'</span>')+'</td>' +
-    '<td class="row-actions">' +
-      '<button class="icon-btn" data-open="'+order.id+'">فتح</button>' +
-      '<button class="icon-btn" data-restore="'+order.id+'">↩️ استعادة</button>' +
-    '</td>' +
-  '</tr>';
-}
-
-function archivedOrderCardHtml(order){
-  const t = orderTotals(order);
-  return '<div class="order-card">' +
-    '<div class="order-card-head">' +
-      '<span class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? ' <span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+'</span>' +
-    '</div>' +
-    '<div class="order-card-row"><span>إجمالي البيع</span><span class="num '+(t.hasSell?'text-green':'')+'">'+(t.hasSell?fmtMoney(t.sellTotal):(t.allPartsReturned?'مرتجعة':'لم يُسعّر بعد'))+'</span></div>' +
-    '<div class="order-card-actions">' +
-      '<button class="icon-btn" data-open="'+order.id+'">فتح</button>' +
-      '<button class="icon-btn" data-restore="'+order.id+'">↩️ استعادة</button>' +
-    '</div>' +
-  '</div>';
-}
-
+/* نفس صفوف/بطاقات قائمة الطلبيات العادية (rowHtml/cardHtml) — تبقى الطلبية بنفس شكلها
+   وألوانها وشاراتها (حالة السداد...) بعد الأرشفة، بس زر "أرشفة" يتبدّل تلقائيًا لـ"استعادة" (order.archived=true). */
 function archiveListBodyHtml(){
   const orders = archivedOrdersList();
   if(orders.length===0){
@@ -6255,10 +6235,10 @@ function archiveListBodyHtml(){
       '<div class="empty-sub">الطلبيات اللي تؤرشفها من قائمة الطلبيات بتظهر هون.</div>' +
     '</div>';
   }
-  return '<table class="orders-table"><thead><tr><th>رقم الطلب</th><th>إجمالي البيع</th><th></th></tr></thead><tbody>' +
-      orders.map(archivedOrderRowHtml).join('') +
-    '</tbody></table>' +
-    '<div class="cards-list">' + orders.map(archivedOrderCardHtml).join('') + '</div>';
+  return '<table class="orders-table"><thead><tr>' +
+      '<th>تأكيد</th><th>رقم الطلب</th><th>تواصل</th><th>إجمالي البيع</th><th>التشليح</th><th>المورد</th><th>الزبون</th><th></th>' +
+    '</tr></thead><tbody>' + orders.map(rowHtml).join('') + '</tbody></table>' +
+    '<div class="cards-list">' + orders.map(cardHtml).join('') + '</div>';
 }
 
 function bindArchiveRowEvents(){
@@ -6267,8 +6247,24 @@ function bindArchiveRowEvents(){
   container.querySelectorAll('[data-open]').forEach(b=>{
     b.addEventListener('click', ()=> openModal('edit', b.getAttribute('data-open')));
   });
-  container.querySelectorAll('[data-restore]').forEach(b=>{
-    b.addEventListener('click', ()=> restoreOrder(b.getAttribute('data-restore')));
+  container.querySelectorAll('[data-contact-open]').forEach(btn=>{
+    btn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const order = appData.orders.find(o=>o.id===btn.getAttribute('data-contact-open'));
+      openContactModal(order ? order.customerPhone : '');
+    });
+  });
+  container.querySelectorAll('[data-confirm-toggle]').forEach(btn=>{
+    btn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      confirmToggleConfirmation(btn.getAttribute('data-confirm-toggle'));
+    });
+  });
+  container.querySelectorAll('[data-restore]').forEach(btn=>{
+    btn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      restoreOrder(btn.getAttribute('data-restore'));
+    });
   });
 }
 
