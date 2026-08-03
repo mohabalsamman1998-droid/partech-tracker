@@ -1043,6 +1043,8 @@ const PARTECH_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAA+g
 let appData = { orders: [], treasury: defaultTreasury(), tasks: defaultTasks() };
 let currentFilter = 'all';
 let currentSearch = '';
+let archiveFilter = 'all';
+let archiveSearch = '';
 let draft = null;
 
 function uid(prefix){
@@ -1493,19 +1495,19 @@ function renderFilterButtons(){
   });
 }
 
-function orderMatches(order){
+function orderMatchesFilterAndSearch(order, filter, search){
   const f = orderStatusFlags(order);
-  if(currentFilter==='unconfirmed' && order.confirmed) return false;
-  if(currentFilter==='waitingSupply' && !f.waitingSupply) return false;
-  if(currentFilter==='waitingPricing' && !f.waitingPricing) return false;
-  if(currentFilter==='waitingAmer' && !f.waitingAmerPayment) return false;
-  if(currentFilter==='waitingSupplier' && !f.waitingSupplierPayment) return false;
-  if(currentFilter==='waitingCustomer' && !f.waitingCustomerPayment) return false;
-  if(currentFilter==='complete' && !f.complete) return false;
-  if(currentSearch){
+  if(filter==='unconfirmed' && order.confirmed) return false;
+  if(filter==='waitingSupply' && !f.waitingSupply) return false;
+  if(filter==='waitingPricing' && !f.waitingPricing) return false;
+  if(filter==='waitingAmer' && !f.waitingAmerPayment) return false;
+  if(filter==='waitingSupplier' && !f.waitingSupplierPayment) return false;
+  if(filter==='waitingCustomer' && !f.waitingCustomerPayment) return false;
+  if(filter==='complete' && !f.complete) return false;
+  if(search){
     // بحث ذكي: يشمل رقم الطلبية ووصفها (اسم الزبون/نوع السيارة) ورقم الجوال ووصف كل القطع.
     // بيقسّم البحث لكلمات، وأي طلبية تحوي كل الكلمات (بأي ترتيب وبأي حقل) تعتبر مطابقة.
-    const words = currentSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const words = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
     if(words.length){
       const haystack = [
         order.orderNumber||'',
@@ -1517,6 +1519,16 @@ function orderMatches(order){
     }
   }
   return true;
+}
+
+function orderMatches(order){
+  return orderMatchesFilterAndSearch(order, currentFilter, currentSearch);
+}
+
+/* نفس منطق فلتر/بحث قائمة الطلبيات العادية، بس بحالة مستقلة (archiveFilter/archiveSearch)
+   عشان فتح فلتر داخل الأرشيف ما يأثر على فلتر القائمة الرئيسية والعكس. */
+function archiveOrderMatches(order){
+  return orderMatchesFilterAndSearch(order, archiveFilter, archiveSearch);
 }
 
 /* ---------- table ---------- */
@@ -6262,17 +6274,39 @@ function archivedOrdersList(){
 /* نفس صفوف/بطاقات قائمة الطلبيات العادية (rowHtml/cardHtml) — تبقى الطلبية بنفس شكلها
    وألوانها وشاراتها (حالة السداد...) بعد الأرشفة، بس زر "أرشفة" يتبدّل تلقائيًا لـ"استعادة" (order.archived=true). */
 function archiveListBodyHtml(){
-  const orders = archivedOrdersList();
-  if(orders.length===0){
+  const allArchived = archivedOrdersList();
+  if(allArchived.length===0){
     return '<div class="empty-state">' +
       '<div class="empty-title">ما فيه طلبيات مؤرشفة</div>' +
       '<div class="empty-sub">الطلبيات اللي تؤرشفها من قائمة الطلبيات بتظهر هون.</div>' +
+    '</div>';
+  }
+  const orders = allArchived.filter(archiveOrderMatches);
+  if(orders.length===0){
+    return '<div class="empty-state">' +
+      '<div class="empty-title">لا توجد طلبيات مؤرشفة مطابقة</div>' +
+      '<div class="empty-sub">جرّب تغيير الفلتر أو كلمة البحث.</div>' +
     '</div>';
   }
   return '<table class="orders-table"><thead><tr>' +
       '<th>تأكيد</th><th>رقم الطلب</th><th>تواصل</th><th>إجمالي البيع</th><th>التشليح</th><th>المورد</th><th>الزبون</th><th></th>' +
     '</tr></thead><tbody>' + orders.map(rowHtml).join('') + '</tbody></table>' +
     '<div class="cards-list">' + orders.map(cardHtml).join('') + '</div>';
+}
+
+function renderArchiveFilterButtons(){
+  const el = document.getElementById('archive-filter-buttons');
+  if(!el) return;
+  el.innerHTML = FILTERS.map(f=>
+    '<button type="button" class="chip '+(archiveFilter===f.id?'chip-active':'')+'" data-filter="'+f.id+'">'+f.label+'</button>'
+  ).join('');
+  el.querySelectorAll('.chip').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      archiveFilter = btn.getAttribute('data-filter');
+      renderArchiveFilterButtons();
+      refreshArchiveList();
+    });
+  });
 }
 
 function bindArchiveRowEvents(){
@@ -6307,6 +6341,13 @@ function archiveViewHtml(){
       '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-archive">→ رجوع للطلبيات</button>' +
       '<div class="tasks-title">🗄️ أرشيف الطلبيات</div>' +
     '</div>' +
+    '<section class="toolbar">' +
+      '<div class="filter-toggle-wrap">' +
+        '<button type="button" id="archive-btn-toggle-filters" class="chip" aria-expanded="false">🔍 فلتر</button>' +
+        '<div class="filter-chips" id="archive-filter-buttons" style="display:none;"></div>' +
+      '</div>' +
+      '<input id="archive-search-input" class="search-input" type="text" placeholder="ابحث برقم الطلب أو وصف القطعة…" value="'+escapeHtml(archiveSearch)+'">' +
+    '</section>' +
     '<section id="archive-table-container" class="table-container">' + archiveListBodyHtml() + '</section>';
 }
 
@@ -6314,6 +6355,20 @@ function renderArchiveView(){
   const el = document.getElementById('archive-view');
   el.innerHTML = archiveViewHtml();
   document.getElementById('btn-back-to-orders-from-archive').addEventListener('click', closeArchiveView);
+  renderArchiveFilterButtons();
+  document.getElementById('archive-btn-toggle-filters').addEventListener('click', ()=>{
+    const chips = document.getElementById('archive-filter-buttons');
+    const opening = chips.style.display === 'none';
+    chips.style.display = opening ? 'flex' : 'none';
+    document.getElementById('archive-btn-toggle-filters').setAttribute('aria-expanded', opening ? 'true' : 'false');
+  });
+  const search = document.getElementById('archive-search-input');
+  let archiveDebounceTimer;
+  search.addEventListener('input', (e)=>{
+    clearTimeout(archiveDebounceTimer);
+    const val = e.target.value;
+    archiveDebounceTimer = setTimeout(()=>{ archiveSearch = val; refreshArchiveList(); }, 150);
+  });
   bindArchiveRowEvents();
 }
 
