@@ -2828,11 +2828,16 @@ function quotePartRowHtml(p, i){
     usedBadgeHtml = '<button type="button" class="used-badge'+(p.used?'':' used-badge-off')+'" data-toggle-used="'+p.id+'">'+label+' ✏️</button>';
   }
 
+  // p.used ثلاث حالات (true/false/null) — الفلتر لازم يفرّق null (لسه ما تحدد) عن false صراحة،
+  // وإلا الـ"?:" بيعامل null كـ false وبيخفي موردي التشليح بالغلط عن قطعة لسه ما تحدد نوعها
+  // (بالضبط سبب "قبل الإرسال ما تظهر خيارات الموردين" — القطع الجديدة تُنشأ undetermined دايمًا).
+  const supplierListLabel = p.used===null ? 'المورد/التشليح' : (p.used?'التشليح':'المورد');
+  const supplierPlaceholder = p.used===null ? '— بدون مورد/تشليح —' : (p.used?'— بدون تشليح —':'— بدون مورد —');
   const supplierFieldHtml = (readOnly && undetermined) ? '' : (
-    '<label class="mini-label mini-label-supplier">'+(p.used?'التشليح':'المورد')+
+    '<label class="mini-label mini-label-supplier">'+supplierListLabel+
       searchableSelectHtml('quote-part-supplier-select',
-        (appData.suppliers||[]).filter(s=> p.used ? s.handlesUsed : s.handlesNew).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
-        p.supplierId, p.used?'— بدون تشليح —':'— بدون مورد —') +
+        (appData.suppliers||[]).filter(s=> p.used===null ? (s.handlesNew||s.handlesUsed) : (p.used ? s.handlesUsed : s.handlesNew)).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
+        p.supplierId, supplierPlaceholder) +
     '</label>'
   );
 
@@ -2922,7 +2927,7 @@ function bindQuotePartRowEvents(){
     const supplierSelectWrap = supplierSelectEl ? supplierSelectEl.closest('.searchable-select') : null;
     if(supplierSelectWrap){
       bindSearchableSelect(supplierSelectWrap,
-        ()=> (appData.suppliers||[]).filter(s=> part.used ? s.handlesUsed : s.handlesNew).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
+        ()=> (appData.suppliers||[]).filter(s=> part.used===null ? (s.handlesNew||s.handlesUsed) : (part.used ? s.handlesUsed : s.handlesNew)).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
         (id)=>{ part.supplierId = id || null; }
       );
     }
