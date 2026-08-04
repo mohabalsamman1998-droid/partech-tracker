@@ -2613,12 +2613,13 @@ async function onSaveOrder(){
   draft.orderLabel = (draft.orderLabel||'').trim();
   draft.updatedAt = new Date().toISOString();
   draftOpenedAtUpdatedAt = draft.updatedAt; // المودال بيضل مفتوح بعد الحفظ — هاي صارت خط الأساس الجديد لأي حفظ لاحق بنفس الجلسة
+  const orderWasNew = !!draft.isNew;
   delete draft.isNew;
 
   const idx = appData.orders.findIndex(o=>o.id===draft.id);
   if(idx>=0) appData.orders[idx]=draft; else appData.orders.push(draft);
 
-  await persistOrder(draft);
+  await persistOrder(draft, orderWasNew);
 
   // الطلبية اتحفظت فعليًا هلق — نفّذ إلغاء أي اقتراح تسعير معلّق لقطع غيّرنا تصنيفها بهالجلسة
   if(pendingScrapyardCancellations.size){
@@ -3190,12 +3191,13 @@ async function saveQuoteDraft(markSent){
   if(markSent && wasEdited){
     quoteDraft.quoteReady = false;
   }
+  const quoteWasNew = !!quoteDraft.isNew;
   delete quoteDraft.isNew;
 
   const idx = appData.orders.findIndex(o=>o.id===quoteDraft.id);
   if(idx>=0) appData.orders[idx]=quoteDraft; else appData.orders.push(quoteDraft);
 
-  await persistOrder(quoteDraft);
+  await persistOrder(quoteDraft, quoteWasNew);
   quoteOriginalSnapshot = quoteContentSnapshot(quoteDraft);
 
   const root = document.getElementById('modal-root');
@@ -3226,6 +3228,7 @@ async function onApproveQuote(){
   quoteDraft.orderLabel = (quoteDraft.orderLabel||'').trim();
   quoteDraft.updatedAt = new Date().toISOString();
   quoteDraft.isQuote = false;
+  const quoteWasNew = !!quoteDraft.isNew;
   delete quoteDraft.isNew;
 
   const idx = appData.orders.findIndex(o=>o.id===quoteDraft.id);
@@ -3233,7 +3236,7 @@ async function onApproveQuote(){
 
   const approvedId = quoteDraft.id;
   const approvedNumber = quoteDraft.orderNumber;
-  await persistOrder(quoteDraft);
+  await persistOrder(quoteDraft, quoteWasNew);
   closeQuoteModal();
 
   renderKPIs();
@@ -5305,10 +5308,13 @@ function subscribeOrdersRealtime(){
     .subscribe();
 }
 
-async function persistOrder(order){
+async function persistOrder(order, isNew){
   try{
     if(!sb) throw new Error('NO_DB');
-    const { error } = await sb.from('orders').upsert(orderObjectToRow(order));
+    const row = orderObjectToRow(order);
+    const { error } = isNew
+      ? await sb.from('orders').insert(row)
+      : await sb.from('orders').update(row).eq('id', order.id);
     if(error) throw error;
   }catch(e){
     if(e && e.code === '23505'){
