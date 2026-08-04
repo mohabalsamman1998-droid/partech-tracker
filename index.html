@@ -889,9 +889,11 @@
     /* new-order CTA: full-width, easy to tap */
     .new-order-btn-row{flex-wrap:wrap;}
     .new-order-btn-row .btn{width:100%;}
-    /* الطلبيات/طلبات التسعير: بجانب بعض دايمًا، حتى على الشاشات الصغيرة */
+    /* الطلبيات/طلبات التسعير (وصف المشتريات: السداد/طلبات التسعير/المهام): بجانب بعض دايمًا،
+       حتى على الشاشات الصغيرة — نص "طلبات التسعير" أطول من يكفي بحجم الخط العادي على شاشة
+       ضيقة (~320-375px) لو الأزرار 3 بصف واحد، فنصغّر الخط والحشو هون بدل ما نخلي النص يطفح. */
     .top-toggle-row{flex-wrap:nowrap;}
-    .top-toggle-row .btn{width:auto;flex:1;}
+    .top-toggle-row .btn{width:auto;flex:1;min-width:0;padding:9px 6px;font-size:12.5px;}
 
     /* suppliers / customers rows: many inline pieces (name, phone, count, amount, buttons) —
        wrap instead of overflowing horizontally, and let name/phone inputs take a full row each */
@@ -1225,14 +1227,17 @@ function orderTotals(order){
   const fullyPriced = sellEligibleCount>0 && pricedCount===sellEligibleCount;
   // كل القطع النشطة رجعت (مافيه ولا وحدة تنتظر تسعير) — الحالة "مرتجعة" مو "لم تُسعّر بعد"
   const allPartsReturned = activeParts.length>0 && sellEligibleCount===0;
+  // "🎯 تحديد القطع" مفعّلة والمستخدم ألغى تحديد كل القطع — ما ضل شي يستاهل تسعير أصلًا،
+  // فهاي مش "بانتظار تسعير" (كانت عالقة بهالحالة للأبد بدون هالفحص).
+  const noActiveParts = activeParts.length===0 && (order.parts||[]).length>0;
   const feeEnabled = !!order.feeEnabled;
-  const feePercent = Number(order.feePercent)||0;
+  const feePercent = Math.max(0, Number(order.feePercent)||0);
   const feeAmount = (hasSell && feeEnabled) ? round2(partsSellTotal * feePercent / 100) : 0;
   const serviceFeeEnabled = !!order.serviceFeeEnabled;
-  const serviceFeePercent = Number(order.serviceFeePercent)||0;
+  const serviceFeePercent = Math.max(0, Number(order.serviceFeePercent)||0);
   const serviceFeeAmount = (hasSell && serviceFeeEnabled) ? round2(partsSellTotal * serviceFeePercent / 100) : 0;
   const deliveryFeeEnabled = !!order.deliveryFeeEnabled;
-  const deliveryFeeAmount = (hasSell && deliveryFeeEnabled) ? round2(Number(order.deliveryFeeAmount)||0) : 0;
+  const deliveryFeeAmount = (hasSell && deliveryFeeEnabled) ? round2(Math.max(0, Number(order.deliveryFeeAmount)||0)) : 0;
   const sellTotal = partsSellTotal + feeAmount + serviceFeeAmount + deliveryFeeAmount; // المبلغ الكامل المستحق من الزبون (شامل نسبة الخدمة، نسبة الخدمات، وأجور التوصيل)
   const customerPaidAmount = round2(computeCustomerPaidAmount(order));
   const customerPaidAmountForBox = round2(computeCustomerPaidAmountForBox(order));
@@ -1267,6 +1272,7 @@ function orderTotals(order){
     hasSell,
     fullyPriced,
     allPartsReturned,
+    noActiveParts,
     profit,
     collectedProfit,
     uncollectedProfit
@@ -1279,9 +1285,9 @@ function orderStatusFlags(order){
     waitingAmerPayment: order.confirmed && t.costToScrapyard>0 && !order.paidToAmer,
     waitingSupplierPayment: order.confirmed && t.costToSupplier>0 && !order.paidToSupplier,
     waitingSupply: order.confirmed && !order.supplied,
-    waitingPricing: !t.hasSell && !t.allPartsReturned,
+    waitingPricing: !t.hasSell && !t.allPartsReturned && !t.noActiveParts,
     waitingCustomerPayment: order.confirmed && order.supplied && t.hasSell && !t.customerFullyPaid,
-    complete: order.confirmed && (t.costToScrapyard===0 || order.paidToAmer) && (t.costToSupplier===0 || order.paidToSupplier) && t.customerFullyPaid && t.fullyPriced
+    complete: order.confirmed && order.supplied && (t.costToScrapyard===0 || order.paidToAmer) && (t.costToSupplier===0 || order.paidToSupplier) && t.customerFullyPaid && t.fullyPriced
   });
 }
 
@@ -1579,7 +1585,7 @@ function rowHtml(order){
     )+'</td>' +
     '<td class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? '<span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+'</td>' +
     '<td>'+((order.customerPhone||'').trim() ? '<button type="button" class="icon-btn" data-contact-open="'+order.id+'" aria-label="تواصل">📞</button>' : '<span class="muted">—</span>')+'</td>' +
-    '<td class="num">'+(t.hasSell? '<span class="text-green">'+fmtMoney(t.sellTotal)+'</span>' : '<span class="muted">'+(t.allPartsReturned?'مرتجعة':'لم يُسعّر بعد')+'</span>')+'</td>' +
+    '<td class="num">'+(t.hasSell? '<span class="'+profitColorClass(t)+'">'+fmtMoney(t.sellTotal)+'</span>' : '<span class="muted">'+(t.allPartsReturned?'مرتجعة':(t.noActiveParts?'بدون قطع محددة':'لم يُسعّر بعد'))+'</span>')+'</td>' +
     '<td>'+(order.confirmed && t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد '+fmtMoney(t.costToScrapyard),'غير مسدد '+fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>')+'</td>' +
     '<td>'+(order.confirmed && t.costToSupplier>0 ? stampBadge(order.paidToSupplier,'مسدد '+fmtMoney(t.costToSupplier),'غير مسدد '+fmtMoney(t.costToSupplier)) : '<span class="muted">—</span>')+'</td>' +
     '<td>'+(order.confirmed ? customerPaymentCellHtml(t, true) : '<span class="muted">—</span>')+'</td>' +
@@ -1606,7 +1612,7 @@ function cardHtml(order){
         ((order.customerPhone||'').trim() ? '<button type="button" class="icon-btn" data-contact-open="'+order.id+'" aria-label="تواصل">📞</button>' : '') +
       '</div>' +
     '</div>' +
-    '<div class="order-card-row"><span>إجمالي البيع</span><span class="num '+(t.hasSell?'text-green':'')+'">'+(t.hasSell?fmtMoney(t.sellTotal):(t.allPartsReturned?'مرتجعة':'لم يُسعّر بعد'))+'</span></div>' +
+    '<div class="order-card-row"><span>إجمالي البيع</span><span class="num '+(t.hasSell?profitColorClass(t):'')+'">'+(t.hasSell?fmtMoney(t.sellTotal):(t.allPartsReturned?'مرتجعة':(t.noActiveParts?'بدون قطع محددة':'لم يُسعّر بعد')))+'</span></div>' +
     '<div class="order-card-badges">' +
       (order.confirmed && t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد للتشليح '+fmtMoney(t.costToScrapyard),'غير مسدد للتشليح '+fmtMoney(t.costToScrapyard)) : '') +
       (order.confirmed && t.costToSupplier>0 ? stampBadge(order.paidToSupplier,'مسدد للمورد '+fmtMoney(t.costToSupplier),'غير مسدد للمورد '+fmtMoney(t.costToSupplier)) : '') +
@@ -1861,9 +1867,9 @@ function partRowHtml(p, i){
       '<button type="button" class="used-badge'+(p.used?'':' used-badge-off')+'" data-toggle-used="'+p.id+'">'+(p.used?'مستعمل':'غير مستعمل')+' ✏️</button>' +
     '</div>' +
     '<div class="part-price-group">' +
-      '<label class="mini-label">العدد<input type="number" min="1" step="1" class="part-qty-input num" value="'+qtyVal+'"></label>' +
-      '<label class="mini-label mini-label-cost">سعر الشراء<input type="number" min="0" step="0.01" class="part-cost-input num" value="'+costVal+'"></label>' +
-      '<label class="mini-label mini-label-sell">سعر البيع<input type="number" min="0" step="0.01" class="part-sell-input num" placeholder="—" value="'+sellVal+'"></label>' +
+      '<label class="mini-label">العدد<input type="number" min="1" step="1" class="part-qty-input num" value="'+escapeHtml(qtyVal)+'"></label>' +
+      '<label class="mini-label mini-label-cost">سعر الشراء<input type="number" min="0" step="0.01" class="part-cost-input num" value="'+escapeHtml(costVal)+'"></label>' +
+      '<label class="mini-label mini-label-sell">سعر البيع<input type="number" min="0" step="0.01" class="part-sell-input num" placeholder="—" value="'+escapeHtml(sellVal)+'"></label>' +
       '<label class="mini-label mini-label-supplier">'+(p.used?'التشليح':'المورد')+
         searchableSelectHtml('part-supplier-select',
           (appData.suppliers||[]).filter(s=> p.used ? s.handlesUsed : s.handlesNew).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
@@ -2140,7 +2146,7 @@ function attachModalHandlers(){
     updateModalTotals();
   });
   root.querySelector('#order-fee-percent-input').addEventListener('input', (e)=>{
-    draft.feePercent = e.target.value===''? 0 : Number(e.target.value);
+    draft.feePercent = e.target.value===''? 0 : Math.max(0, Number(e.target.value)||0);
     updateModalTotals();
   });
   root.querySelector('#order-service-fee-toggle').addEventListener('change', (e)=>{
@@ -2150,7 +2156,7 @@ function attachModalHandlers(){
     updateModalTotals();
   });
   root.querySelector('#order-service-fee-percent-input').addEventListener('input', (e)=>{
-    draft.serviceFeePercent = e.target.value===''? 0 : Number(e.target.value);
+    draft.serviceFeePercent = e.target.value===''? 0 : Math.max(0, Number(e.target.value)||0);
     updateModalTotals();
   });
   root.querySelector('#order-delivery-fee-toggle').addEventListener('change', (e)=>{
@@ -2160,7 +2166,7 @@ function attachModalHandlers(){
     updateModalTotals();
   });
   root.querySelector('#order-delivery-fee-input').addEventListener('input', (e)=>{
-    draft.deliveryFeeAmount = e.target.value===''? 0 : Number(e.target.value);
+    draft.deliveryFeeAmount = e.target.value===''? 0 : Math.max(0, Number(e.target.value)||0);
     updateModalTotals();
   });
 
@@ -2231,14 +2237,14 @@ function bindPartRowEvents(){
     const costInput = row.querySelector('.part-cost-input');
     if(costInput){
       costInput.addEventListener('input', e=>{
-        part.costPrice = e.target.value===''? '' : Number(e.target.value);
+        part.costPrice = e.target.value===''? '' : Math.max(0, Number(e.target.value)||0);
         updateModalTotals();
       });
     }
     const sellInput = row.querySelector('.part-sell-input');
     if(sellInput){
       sellInput.addEventListener('input', e=>{
-        part.sellPrice = e.target.value===''? null : Number(e.target.value);
+        part.sellPrice = e.target.value===''? null : Math.max(0, Number(e.target.value)||0);
         updateModalTotals();
       });
     }
@@ -2264,6 +2270,7 @@ function bindPartRowEvents(){
           confirmLabel: 'تأكيد التغيير',
           onConfirm: async ()=>{
             part.used = willBeUsed;
+            part.supplierId = null; // المورد المرتبط كان لتصنيف مختلف (مستعمل/جديد) — لازم يُختار مورد جديد يطابق التصنيف الجديد
             refreshPartsList();
             pendingScrapyardCancellations.add(part.id); // يُنفَّذ فعليًا بس عند حفظ الطلبية — انظر الملاحظة أعلى تعريف المجموعة
           }
@@ -2481,7 +2488,7 @@ function refreshPaymentsList(){
 function updateModalTotals(){
   const t = orderTotals(draft);
   document.getElementById('total-cost-display').textContent = fmtMoney(t.costTotal);
-  document.getElementById('total-sell-display').textContent = t.hasSell? fmtMoney(t.sellTotal) : (t.allPartsReturned?'مرتجعة':'لم يُسعّر بعد');
+  document.getElementById('total-sell-display').textContent = t.hasSell? fmtMoney(t.sellTotal) : (t.allPartsReturned?'مرتجعة':(t.noActiveParts?'بدون قطع محددة':'لم يُسعّر بعد'));
   const costSupplierEl = document.getElementById('cost-supplier-display');
   if(costSupplierEl) costSupplierEl.textContent = fmtMoney(t.costToSupplier);
   const costAmerEl = document.getElementById('cost-amer-display');
@@ -2515,7 +2522,7 @@ function updateModalTotals(){
   if(remainEl){
     const isExcess = t.hasSell && t.customerRemaining < -0.01;
     if(remainLabelEl) remainLabelEl.textContent = isExcess ? 'زيادة' : 'المتبقي عليه';
-    remainEl.textContent = t.hasSell ? fmtMoney(isExcess ? Math.abs(t.customerRemaining) : Math.max(t.customerRemaining,0)) : (t.allPartsReturned?'مرتجعة':'لم يُسعّر بعد');
+    remainEl.textContent = t.hasSell ? fmtMoney(isExcess ? Math.abs(t.customerRemaining) : Math.max(t.customerRemaining,0)) : (t.allPartsReturned?'مرتجعة':(t.noActiveParts?'بدون قطع محددة':'لم يُسعّر بعد'));
     remainEl.classList.remove('text-green','text-amber');
     remainEl.classList.toggle('text-green', t.hasSell && t.customerRemaining<=0.01 && !isExcess);
     remainEl.classList.toggle('text-amber', t.hasSell && (t.customerRemaining>0.01 || isExcess));
@@ -2575,8 +2582,8 @@ async function onSaveOrder(){
       id:p.id,
       description:p.description.trim(),
       qty: (p.qty===''||p.qty==null||Number(p.qty)<=0) ? 1 : Number(p.qty),
-      costPrice: p.costPrice===''? 0 : Number(p.costPrice)||0,
-      sellPrice: (p.sellPrice===''||p.sellPrice===null||p.sellPrice===undefined)? null : Number(p.sellPrice),
+      costPrice: p.costPrice===''? 0 : Math.max(0, Number(p.costPrice)||0),
+      sellPrice: (p.sellPrice===''||p.sellPrice===null||p.sellPrice===undefined)? null : Math.max(0, Number(p.sellPrice)||0),
       used: !!p.used,
       included: p.included!==false,
       supplierId: p.supplierId || null,
@@ -2677,6 +2684,7 @@ function confirmReturnOrderToQuote(){
 let quoteDraft = null;
 let selectedQuotePartType = null;
 let quoteModalRole = 'sales'; // 'sales' (المبيعات — يملأ الطلب، يعتمد، يحذف) | 'purchasing' (عامر — يسعّر فقط)
+let quoteOpenedAtUpdatedAt = null; // updatedAt التسعيرة وقت فتح المودال — لفحص التعارض عند الحفظ (نفس فكرة draftOpenedAtUpdatedAt)
 
 /* واتساب ما يوفر رابط يفتح كاميرا/جروب مع كابشن تلقائي على مرفق — أقصى شي ممكن: فتح رابط
    دعوة الجروب (يفتح الجروب مباشرة لو عامر عضو فيه أصلاً) + نسخ نص "رقم الطلبية — اسم القطعة"
@@ -2854,8 +2862,8 @@ function quotePartRowHtml(p, i){
       usedBadgeHtml +
     '</div>' +
     '<div class="part-price-group">' +
-      '<label class="mini-label">العدد<input type="number" min="1" step="1" class="part-qty-input num" value="'+qtyVal+'"'+ro+'></label>' +
-      '<label class="mini-label mini-label-cost">سعر الشراء<input type="number" min="0" step="0.01" class="part-cost-input num" value="'+costVal+'"></label>' +
+      '<label class="mini-label">العدد<input type="number" min="1" step="1" class="part-qty-input num" value="'+escapeHtml(qtyVal)+'"'+ro+'></label>' +
+      '<label class="mini-label mini-label-cost">سعر الشراء<input type="number" min="0" step="0.01" class="part-cost-input num" value="'+escapeHtml(costVal)+'"></label>' +
       supplierFieldHtml +
     '</div>' +
     '<button type="button" class="btn btn-sm part-whatsapp-btn" data-whatsapp-part="'+p.id+'" aria-label="إرسال صورة القطعة بجروب العمليات">📷 صورة</button>' +
@@ -2878,6 +2886,7 @@ function bindQuotePartRowEvents(){
     if(toggleUsedBtn){
       toggleUsedBtn.addEventListener('click', ()=>{
         part.used = part.used===null ? true : !part.used;
+        part.supplierId = null; // المورد المرتبط كان لتصنيف مختلف (مستعمل/جديد) — لازم يُختار مورد جديد يطابق التصنيف الجديد
         refreshQuotePartsList();
       });
     }
@@ -2905,7 +2914,7 @@ function bindQuotePartRowEvents(){
     const costInput = row.querySelector('.part-cost-input');
     if(costInput){
       costInput.addEventListener('input', e=>{
-        part.costPrice = e.target.value===''? '' : Number(e.target.value);
+        part.costPrice = e.target.value===''? '' : Math.max(0, Number(e.target.value)||0);
         updateQuoteModalTotals();
       });
     }
@@ -3013,7 +3022,7 @@ function quoteContentSnapshot(d){
       description: (p.description||'').trim(),
       notes: (p.notes||'').trim(),
       qty: (p.qty===''||p.qty==null||Number(p.qty)<=0) ? 1 : Number(p.qty),
-      costPrice: p.costPrice===''? 0 : Number(p.costPrice)||0,
+      costPrice: p.costPrice===''? 0 : Math.max(0, Number(p.costPrice)||0),
       used: p.used===null ? null : !!p.used,
       supplierId: p.supplierId||null
     }))
@@ -3056,6 +3065,7 @@ function openQuoteModal(mode, orderId, role){
     quoteDraft.isNew = false;
   }
   quoteOriginalSnapshot = quoteContentSnapshot(quoteDraft);
+  quoteOpenedAtUpdatedAt = quoteDraft.updatedAt || null;
   const root = document.getElementById('modal-root');
   root.innerHTML = quoteModalHtml(quoteDraft);
   root.classList.add('modal-open');
@@ -3167,7 +3177,7 @@ function cleanedQuoteParts(){
       notes: (p.notes||'').trim(),
       purchasingNotes: (p.purchasingNotes||'').trim(),
       qty: (p.qty===''||p.qty==null||Number(p.qty)<=0) ? 1 : Number(p.qty),
-      costPrice: p.costPrice===''? 0 : Number(p.costPrice)||0,
+      costPrice: p.costPrice===''? 0 : Math.max(0, Number(p.costPrice)||0),
       sellPrice: null,
       used: p.used===null ? null : !!p.used,
       included: true,
@@ -3177,7 +3187,28 @@ function cleanedQuoteParts(){
 
 /* حفظ (بدون إرسال) وحفظ و إرسال يشتركان بنفس منطق التحقق والحفظ — يختلفان فقط إذا صار تعديل
    فعلي (مقارنة ببصمة وقت الفتح) وقت "حفظ و إرسال" فقط: عندها ترجع الطلبية معلّقة (صفراء) عند عامر. */
+/* فحص تعارض: هل حد غيّر هالتسعيرة بقاعدة البيانات بعد ما فتحنا هالنافذة (مثلاً عامر حفظ تسعيره
+   بمنتصف تعديل المبيعات لنفس التسعيرة، أو العكس)؟ لو نكمل نحفظ نسخة quoteDraft القديمة، بنلغي
+   هداك التعديل بصمت — نفس فكرة الفحص الموجود بـ onSaveOrder لكن لنافذة التسعير. */
+async function checkQuoteSaveConflict(){
+  if(quoteDraft.isNew) return true;
+  const liveOrder = appData.orders.find(o=>o.id===quoteDraft.id);
+  if(!liveOrder || !quoteOpenedAtUpdatedAt || !liveOrder.updatedAt || liveOrder.updatedAt===quoteOpenedAtUpdatedAt) return true;
+  return await new Promise(resolve=>{
+    confirmAction({
+      title: 'التسعيرة اتغيّرت من مكان تاني',
+      message: 'صار عليها تحديث (ممكن حفظ من عامر أو من المبيعات) بعد ما فتحت هالنافذة. لو كملت وحفظت، ممكن يضيع هداك التحديث. الأفضل تسكّر وتفتحها من جديد لتشوف آخر نسخة.',
+      confirmLabel: 'سكّر بدون حفظ (موصى به)',
+      cancelLabel: 'كمّل واحفظ نسختي',
+      dangerous: false,
+      onConfirm: ()=>{ closeQuoteModal(); resolve(false); },
+      onCancel: ()=> resolve(true)
+    });
+  });
+}
+
 async function saveQuoteDraft(markSent){
+  if(!(await checkQuoteSaveConflict())) return false;
   const dup = appData.orders.find(o=>o.orderNumber.trim()===quoteDraft.orderNumber.trim() && o.id!==quoteDraft.id);
   if(dup){ showToast('رقم التسعيرة تضارب مع طلبية أخرى، أعد فتح النافذة', 'error'); return false; }
   const cleanedParts = cleanedQuoteParts();
@@ -3188,6 +3219,7 @@ async function saveQuoteDraft(markSent){
   quoteDraft.parts = cleanedParts;
   quoteDraft.orderLabel = (quoteDraft.orderLabel||'').trim();
   quoteDraft.updatedAt = new Date().toISOString();
+  quoteOpenedAtUpdatedAt = quoteDraft.updatedAt;
   if(markSent && wasEdited){
     quoteDraft.quoteReady = false;
   }
@@ -3218,6 +3250,7 @@ async function onSaveQuote(){ return saveQuoteDraft(false); }
 async function onSendQuote(){ return saveQuoteDraft(true); }
 
 async function onApproveQuote(){
+  if(!(await checkQuoteSaveConflict())) return;
   const dup = appData.orders.find(o=>o.orderNumber.trim()===quoteDraft.orderNumber.trim() && o.id!==quoteDraft.id);
   if(dup){ showToast('رقم التسعيرة تضارب مع طلبية أخرى، أعد فتح النافذة', 'error'); return; }
   const cleanedParts = cleanedQuoteParts();
@@ -3227,6 +3260,7 @@ async function onApproveQuote(){
   quoteDraft.parts = cleanedParts;
   quoteDraft.orderLabel = (quoteDraft.orderLabel||'').trim();
   quoteDraft.updatedAt = new Date().toISOString();
+  quoteOpenedAtUpdatedAt = quoteDraft.updatedAt;
   quoteDraft.isQuote = false;
   const quoteWasNew = !!quoteDraft.isNew;
   delete quoteDraft.isNew;
@@ -3249,11 +3283,13 @@ async function onApproveQuote(){
 /* عامر بس بيسعّر — "حفظ" يحفظ التقدّم بدون ما يعلّمها جاهزة (تبقى صفراء)،
    و"حفظ و إرسال" يعلّمها جاهزة (quoteReady) فترجع خضراء عند المبيعات لمراجعتها/اعتمادها. */
 async function onSaveQuotePricing(){
+  if(!(await checkQuoteSaveConflict())) return;
   const cleanedParts = cleanedQuoteParts();
   if(cleanedParts.length===0){ showToast('لازم تضيف وصف لقطعة وحدة على الأقل', 'error'); return; }
 
   quoteDraft.parts = cleanedParts;
   quoteDraft.updatedAt = new Date().toISOString();
+  quoteOpenedAtUpdatedAt = quoteDraft.updatedAt;
 
   const idx = appData.orders.findIndex(o=>o.id===quoteDraft.id);
   if(idx>=0) appData.orders[idx]=quoteDraft;
@@ -3274,11 +3310,13 @@ async function onSaveQuotePricing(){
 }
 
 async function onSaveAndSendQuotePricing(){
+  if(!(await checkQuoteSaveConflict())) return;
   const cleanedParts = cleanedQuoteParts();
   if(cleanedParts.length===0){ showToast('لازم تضيف وصف لقطعة وحدة على الأقل', 'error'); return; }
 
   quoteDraft.parts = cleanedParts;
   quoteDraft.updatedAt = new Date().toISOString();
+  quoteOpenedAtUpdatedAt = quoteDraft.updatedAt;
   quoteDraft.quoteReady = true;
 
   const idx = appData.orders.findIndex(o=>o.id===quoteDraft.id);
@@ -3308,6 +3346,16 @@ function findDuplicateCustomer(name, phone){
   return (appData.customers||[]).find(c=>{
     if(n && (c.name||'').trim().toLowerCase()===n) return true;
     if(p && (c.phone||'').trim() && normalizePhoneForWhatsapp(c.phone)===p) return true;
+    return false;
+  });
+}
+
+function findDuplicateSupplier(name, phone){
+  const n = (name||'').trim().toLowerCase();
+  const p = (phone||'').trim() ? normalizePhoneForWhatsapp(phone) : '';
+  return (appData.suppliers||[]).find(s=>{
+    if(n && (s.name||'').trim().toLowerCase()===n) return true;
+    if(p && (s.phone||'').trim() && normalizePhoneForWhatsapp(s.phone)===p) return true;
     return false;
   });
 }
@@ -3841,12 +3889,11 @@ async function shareDoc(){
   const setBusy = (b)=>{ if(btn){ btn.disabled=b; btn.textContent = b ? 'جاري التجهيز…' : '📤 مشاركة'; } };
   setBusy(true);
   try{
-    await persistDocMeta(false);
+    // markEmptyDocFields لازم يصير قبل أي انتظار (لأنه بيأثر على شكل الورقة قبل ما تُلتقط
+    // كصورة/PDF)، وfileShareSupported فحص متزامن رخيص — نخليهم أول شي بدل ما نأخرهم بعد
+    // await، حتى نقلّل الوقت قبل استدعاء navigator.share() (نافذة تفعيل المستخدم بالمتصفح
+    // محدودة بثواني، ومتصفحات زي سفاري بالآيفون صارمة معها).
     markEmptyDocFields();
-    const isInvoice = docState.type==='invoice';
-    const shareTitle = 'PARTECH — ' + (isInvoice?'فاتورة نقدية':'عرض أسعار') + ' ' + docState.data.number;
-    const fullText = buildDocWhatsAppText(order, docState.type, docState.data);
-
     let fileShareSupported = false;
     if(navigator.share && navigator.canShare){
       try{
@@ -3855,9 +3902,21 @@ async function shareDoc(){
       }catch(e){ fileShareSupported = false; }
     }
 
+    // persistDocMeta (حفظ عبر الشبكة) وbuildDocPdfBlob (توليد PDF) ما بيعتمدان على بعض —
+    // نشغّلهما بالتوازي بدل التسلسل حتى يقصر إجمالي وقت الانتظار قبل navigator.share().
+    const [, blob] = await Promise.all([
+      persistDocMeta(false),
+      fileShareSupported ? buildDocPdfBlob() : Promise.resolve(null)
+    ]);
+    // إعادة جلب الطلبية بعد الانتظار (await) — ممكن يكون وصل تعديل من جلسة تانية بهالفترة
+    // القصيرة، ونص المشاركة لازم يعكس آخر نسخة مش النسخة يلي كانت وقت فتح شاشة المستند.
+    const liveOrder = appData.orders.find(o=>o.id===docState.orderId) || order;
+    const isInvoice = docState.type==='invoice';
+    const shareTitle = 'PARTECH — ' + (isInvoice?'فاتورة نقدية':'عرض أسعار') + ' ' + docState.data.number;
+    const fullText = buildDocWhatsAppText(liveOrder, docState.type, docState.data);
+
     if(fileShareSupported){
       try{
-        const blob = await buildDocPdfBlob();
         const file = new File([blob], docPdfFilename(), {type:'application/pdf'});
         await navigator.share({files:[file], title:shareTitle, text:shareTitle});
         return;
@@ -3925,9 +3984,26 @@ function formatDateDMY(yyyyMmDd){
 }
 /* مهاب/همام/بشار — كانت مخصصة لزر الصندوق بس، هلق نفس القائمة بتتحكم كمان بحذف الطلبية/إضافة
    دفعة زبون/تغيير حالة سداد المورد أو التشليح (كلها إجراءات مالية حساسة). فحص واجهة بس (زي باقي
-   فحوصات TREASURY سابقًا) — مو فحص فعلي بقاعدة البيانات، انظر [[feedback_partech_security_followups]]. */
-const ELEVATED_ACCESS_EMAILS = ['mohabalsamman1998@gmail.com','homam.techno@gmail.com','sammaneng@gmail.com'];
-function hasElevatedAccess(){ return ELEVATED_ACCESS_EMAILS.includes(presenceEmail); }
+   فحوصات TREASURY سابقًا) — مو فحص فعلي بقاعدة البيانات، انظر [[feedback_partech_security_followups]].
+   القائمة الثابتة هون خط دفاع أخير بس (لو تعذّر الاتصال بقاعدة البيانات) — المصدر الحقيقي هو
+   عمود allowed_emails.is_elevated لصف المستخدم الحالي نفسه (RLS "read own row only" ما بيسمح
+   بقراءة صفوف مستخدمين تانيين، فما نقدر نجيب قائمة كاملة — بس كل استخدامات هالفحص بالكود أصلًا
+   عن المستخدم الحالي نفسه، فيكفي نجيب صفه هو بس). يُحدَّث فعليًا بـ refreshElevatedAccessEmails()
+   عند الدخول (انظر showAppIfAllowed)، حتى ما تنفصل الواجهة عن صلاحية قاعدة البيانات الفعلية. */
+const ELEVATED_ACCESS_EMAILS_FALLBACK = ['mohabalsamman1998@gmail.com','homam.techno@gmail.com','sammaneng@gmail.com'];
+let currentUserIsElevated = false;
+async function refreshElevatedAccessEmails(email){
+  try{
+    if(!sb || !email) return;
+    const { data, error } = await sb.from('allowed_emails').select('is_elevated').eq('email', email).maybeSingle();
+    if(error) throw error;
+    currentUserIsElevated = !!(data && data.is_elevated);
+  }catch(e){
+    console.error('refreshElevatedAccessEmails:', e);
+    currentUserIsElevated = ELEVATED_ACCESS_EMAILS_FALLBACK.includes(email); // خط دفاع أخير لو تعذّر الجلب
+  }
+}
+function hasElevatedAccess(){ return currentUserIsElevated; }
 
 /* الشاشات (طلبيات/صندوق/مهام/موردين/عملاء) كلها تشترك بنفس التوب بار — لازم نخفي البقية دايمًا عند فتح وحدة، غير كذا تظهر شاشتين فوق بعض */
 function hideAllSecondaryViews(){
@@ -3943,7 +4019,7 @@ async function openTreasuryView(){
   hideAllSecondaryViews();
   document.getElementById('treasury-view').style.display = 'block';
   document.getElementById('treasury-view').innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
-  if(ELEVATED_ACCESS_EMAILS.includes(presenceEmail)) await refreshScrapyardPendingCount();
+  if(currentUserIsElevated) await refreshScrapyardPendingCount();
   renderTreasuryView();
 }
 
@@ -3973,12 +4049,12 @@ function applyScrapyardProposal(pr){
   if(pr.action === 'edit'){
     const part = (order.parts||[]).find(p=>p.id===pr.part_id);
     if(!part) return false;
-    part.costPrice = Number(pr.cost_price)||0;
+    part.costPrice = Math.max(0, Number(pr.cost_price)||0);
   } else if(pr.action === 'delete'){
     order.parts = (order.parts||[]).filter(p=>p.id!==pr.part_id);
   } else if(pr.action === 'add'){
     order.parts = order.parts || [];
-    order.parts.push({ id: uid('p'), description: pr.description||'', qty: Number(pr.qty)||1, costPrice: Number(pr.cost_price)||0, sellPrice: null, used: pr.kind === 'used', supplierId: null });
+    order.parts.push({ id: uid('p'), description: pr.description||'', qty: Math.max(1, Number(pr.qty)||1), costPrice: Math.max(0, Number(pr.cost_price)||0), sellPrice: null, used: pr.kind === 'used', supplierId: null });
   } else {
     return false;
   }
@@ -3995,6 +4071,18 @@ function handleScrapyardProposalDecision(proposalId, accept){
     confirmLabel: accept ? 'قبول وتطبيق' : 'تأكيد الرفض',
     dangerous: !accept,
     onConfirm: async ()=>{
+      // الحذف هو "المطالبة" الفعلية بالاقتراح — لو مسؤول تاني قبله/رفضه بنفس اللحظة (مربع
+      // التأكيد فاضل مفتوح بالانتظار)، الحذف هون بيتصفّر (0 صفوف)، فنوقف قبل أي تطبيق مزدوج
+      // بدل ما نعتمد بس على نسخة pr المحفوظة بالذاكرة وقت فتح المربع (ممكن تكون قديمة).
+      const { data: deletedRows, error: delError } = await sb.from('scrapyard_proposals').delete().eq('id', pr.id).select();
+      if(delError){ showToast('تعذر تحديث حالة الاقتراح', 'error'); return; }
+      if(!deletedRows || !deletedRows.length){
+        showToast('هذا الاقتراح انعالج فعلًا من مكان تاني', 'error');
+        await loadScrapyardData(scrapyardSharedState.activeKind);
+        renderScrapyardView();
+        refreshScrapyardPendingCount();
+        return;
+      }
       if(accept){
         const applied = applyScrapyardProposal(pr);
         if(!applied){
@@ -4006,8 +4094,6 @@ function handleScrapyardProposalDecision(proposalId, accept){
         renderKPIs();
         renderTable();
       }
-      const { error } = await sb.from('scrapyard_proposals').delete().eq('id', pr.id);
-      if(error){ showToast('تعذر تحديث حالة الاقتراح', 'error'); return; }
       showToast(accept ? 'تم القبول والتطبيق' : 'تم رفض الاقتراح', 'ok');
       await loadScrapyardData(scrapyardSharedState.activeKind);
       renderScrapyardView();
@@ -4018,7 +4104,7 @@ function handleScrapyardProposalDecision(proposalId, accept){
 
 let scrapyardProposalsChannel = null;
 async function refreshScrapyardPendingCount(){
-  if(!ELEVATED_ACCESS_EMAILS.includes(presenceEmail)) return;
+  if(!currentUserIsElevated) return;
   try{
     const { data, error } = await sb.from('scrapyard_proposals').select('*').order('created_at', {ascending:false});
     if(error) throw error;
@@ -4044,7 +4130,7 @@ function subscribeScrapyardRealtime(){
   if(!sb || scrapyardProposalsChannel) return;
   scrapyardProposalsChannel = sb.channel('scrapyard-proposals-changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'scrapyard_proposals' }, ()=>{
-      if(ELEVATED_ACCESS_EMAILS.includes(presenceEmail)) refreshScrapyardPendingCount();
+      if(currentUserIsElevated) refreshScrapyardPendingCount();
       if(document.getElementById('scrapyard-root').style.display !== 'none' && scrapyardCurrentScreen === 'settlement'){
         loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
       }
@@ -4649,7 +4735,9 @@ function bindExpenseEntryEvents(key){
     if(saveBtn){
       saveBtn.addEventListener('click', async ()=>{
         const amt = Number(entry.amount);
-        if(entry.amount==='' || isNaN(amt) || amt<=0){ showToast('أدخل مبلغًا صحيحًا', 'error'); return; }
+        // amt<=0 كان يرفض أي تعديل (حتى تصحيح تاريخ/ملاحظة بس) على حركات "عهدة عامر"/الدعم
+        // الخارجي، يلي بالتصميم بتتخزن كمبلغ سالب (سحب/خصم) — المرفوض فعليًا هو الفاضي أو صفر بس.
+        if(entry.amount==='' || isNaN(amt) || amt===0){ showToast('أدخل مبلغًا صحيحًا', 'error'); return; }
         // نعيد جلب العنصر الحي من appData الحالي وقت الحفظ (لا نعتمد على المرجع القديم)
         // لأن appData ممكن يكون انستبدل بالكامل بتحديث لحظي من مستخدم ثاني أثناء ما كنا نعدّل.
         const liveEntry = (appData.treasury[key]||[]).find(e=>e.id===entryId);
@@ -5081,8 +5169,21 @@ function exportAllDataToExcel(){
   });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(taskRows), 'المهام');
 
+  const supplierRows = (appData.suppliers||[]).map(s=>({
+    'الاسم': s.name || '', 'الجوال': s.phone || '',
+    'أرقام إضافية': (Array.isArray(s.extraPhones)?s.extraPhones:[]).join(' / '),
+    'قطع جديدة': s.handlesNew ? 'نعم' : 'لا', 'قطع مستعملة': s.handlesUsed ? 'نعم' : 'لا',
+    'ملاحظات': s.notes || ''
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(supplierRows), 'الموردين');
+
+  const customerRows = (appData.customers||[]).map(c=>({
+    'الاسم': c.name || '', 'الجوال': c.phone || '', 'ملاحظات': c.notes || ''
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(customerRows), 'العملاء');
+
   // نسخة احتياطية خام (JSON) لضمان استعادة دقيقة ١٠٠٪ عند الاستيراد لاحقًا — لا تُعدَّل يدويًا
-  const rawJson = JSON.stringify({ schemaVersion: DATA_SCHEMA_VERSION, exportedAt: new Date().toISOString(), orders: appData.orders, treasury: appData.treasury, tasks: appData.tasks });
+  const rawJson = JSON.stringify({ schemaVersion: DATA_SCHEMA_VERSION, exportedAt: new Date().toISOString(), orders: appData.orders, treasury: appData.treasury, tasks: appData.tasks, suppliers: appData.suppliers||[], customers: appData.customers||[] });
   const CHUNK = 30000; // أقل من الحد الأقصى لطول الخلية في إكسل (32767 حرف)
   const chunks = [];
   for(let i=0; i<rawJson.length; i+=CHUNK){ chunks.push([rawJson.slice(i, i+CHUNK)]); }
@@ -5151,16 +5252,22 @@ function normalizeImportedOrder(o){
 
 function confirmImportOverwrite(parsedData){
   const orderCount = Array.isArray(parsedData.orders) ? parsedData.orders.length : 0;
+  // نسخ قديمة (قبل هذا الإصلاح) ما بتشمل suppliers/customers بالملف — نحافظ على القيم
+  // الحالية بالذاكرة بدل ما نفرّغها لو الملف المستورد أقدم من هالإصلاح.
+  const hasSuppliersInFile = Array.isArray(parsedData.suppliers);
+  const hasCustomersInFile = Array.isArray(parsedData.customers);
   confirmAction({
     title: 'استيراد البيانات؟',
-    message: 'الملف يحتوي '+orderCount+' طلبية. سيتم استبدال كل البيانات الحالية (الطلبيات، الصندوق، المهام) بمحتوى هذا الملف — إجراء نهائي ولا يمكن التراجع عنه.',
+    message: 'الملف يحتوي '+orderCount+' طلبية. سيتم استبدال كل البيانات الحالية (الطلبيات، الصندوق، المهام، الموردين، العملاء) بمحتوى هذا الملف — إجراء نهائي ولا يمكن التراجع عنه.',
     confirmLabel: 'استبدال البيانات',
     dangerous: true,
     onConfirm: async ()=>{
       appData = {
         orders: (Array.isArray(parsedData.orders) ? parsedData.orders : []).map(normalizeImportedOrder),
         treasury: Object.assign(defaultTreasury(), parsedData.treasury || {}),
-        tasks: Object.assign(defaultTasks(), parsedData.tasks || {})
+        tasks: Object.assign(defaultTasks(), parsedData.tasks || {}),
+        suppliers: hasSuppliersInFile ? parsedData.suppliers : (appData.suppliers || []),
+        customers: hasCustomersInFile ? parsedData.customers : (appData.customers || [])
       };
       migrateLegacyCustomerPayment();
       migrateLegacyOrderLabel();
@@ -5170,6 +5277,8 @@ function confirmImportOverwrite(parsedData){
         await replaceAllOrders(appData.orders);
         await replaceAllTreasuryEntries(appData.treasury);
         await replaceAllTaskItems(appData.tasks);
+        if(hasSuppliersInFile) await replaceAllSuppliers(appData.suppliers);
+        if(hasCustomersInFile) await replaceAllCustomers(appData.customers);
       }catch(e){
         showToast('تعذر استبدال البيانات: ' + (e && e.message ? e.message : ''), 'error');
         return;
@@ -5291,8 +5400,11 @@ function applyRemoteOrderChange(payload){
   updateCustomersBadge();
   updateSuppliersBadge();
   if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
-  if(document.getElementById('suppliers-view').style.display !== 'none'){ refreshSuppliersList(); }
-  if(document.getElementById('customers-view').style.display !== 'none'){ refreshCustomersList(); }
+  // زي applyRemoteSupplierChange/applyRemoteCustomerChange بالضبط — ما نعيد بناء القائمة لو
+  // في صف تعديل مفتوح حاليًا (editingSuppliers/editingCustomers)، حتى ما نمسح كتابة لسه ما
+  // انحفظت (الحقول بتتحفظ عند blur بس، مش أول ما تتغيّر).
+  if(document.getElementById('suppliers-view').style.display !== 'none' && Object.keys(editingSuppliers).length===0){ refreshSuppliersList(); }
+  if(document.getElementById('customers-view').style.display !== 'none' && Object.keys(editingCustomers).length===0){ refreshCustomersList(); }
   refreshArchiveViewIfOpen();
   // صاحب الحساب لو فاتح شاشة سداد التشاليح/الجديد وقت وصول تعديل من مكان تاني — نحدّثها كمان
   const scrapRoot = document.getElementById('scrapyard-root');
@@ -5335,15 +5447,25 @@ async function deleteOrder(id){
   }
 }
 
+async function replaceAllRowsSafely(table, rows){
+  // نحفظ (upsert) الصفوف الجديدة أولًا، وبعدين نحذف أي صف قديم مش موجود بالمجموعة الجديدة —
+  // مش العكس (حذف الكل ثم إضافة). لو صار خطأ بمنتصف العملية (انقطاع نت مثلًا)، أسوأ سيناريو
+  // إنه يضل عندنا صفوف قديمة زيادة بالقاعدة، مش إنه الجدول كله يفضى بلا رجعة.
+  if(rows.length){
+    const { error: upError } = await sb.from(table).upsert(rows);
+    if(upError) throw upError;
+  }
+  const keepIds = rows.map(r=>r.id);
+  const { error: delError } = keepIds.length
+    ? await sb.from(table).delete().not('id', 'in', '(' + keepIds.map(id=>'"'+id+'"').join(',') + ')')
+    : await sb.from(table).delete().not('id', 'is', null);
+  if(delError) throw delError;
+}
+
 async function replaceAllOrders(ordersArray){
   if(!sb) return;
   const rows = (ordersArray||[]).map(orderObjectToRow);
-  const { error: delError } = await sb.from('orders').delete().not('id', 'is', null);
-  if(delError) throw delError;
-  if(rows.length){
-    const { error: insError } = await sb.from('orders').insert(rows);
-    if(insError) throw insError;
-  }
+  await replaceAllRowsSafely('orders', rows);
 }
 
 /* ---------- treasury_entries: own table + own realtime channel (migrated off the app_data blob) ---------- */
@@ -5365,6 +5487,7 @@ function applyRemoteTreasuryChange(payload){
   }
   const view = document.getElementById('treasury-view');
   if(view && view.style.display !== 'none'){ renderTreasuryView(); }
+  renderKPIs(); // مؤشر "مستحق للتشليح" بالرئيسية (dueToScrapyard - amerCustodyBalance) لازم يتحدّث حتى لو شاشة الصندوق مقفولة
 }
 
 function subscribeTreasuryRealtime(){
@@ -5404,12 +5527,7 @@ async function replaceAllTreasuryEntries(treasuryObj){
       rows.push({ id: entry.id, category, amount: Number(entry.amount)||0, date: entry.date||'', note: entry.note||'' });
     });
   });
-  const { error: delError } = await sb.from('treasury_entries').delete().not('id', 'is', null);
-  if(delError) throw delError;
-  if(rows.length){
-    const { error: insError } = await sb.from('treasury_entries').insert(rows);
-    if(insError) throw insError;
-  }
+  await replaceAllRowsSafely('treasury_entries', rows);
 }
 
 /* ---------- tasks: own table + own realtime channel (migrated off the app_data blob) ---------- */
@@ -5479,12 +5597,7 @@ async function replaceAllTaskItems(tasksObj){
       rows.push({ id: item.id, category, text: item.text||'', done: !!item.done, created_at: item.createdAt || new Date().toISOString() });
     });
   });
-  const { error: delError } = await sb.from('tasks').delete().not('id', 'is', null);
-  if(delError) throw delError;
-  if(rows.length){
-    const { error: insError } = await sb.from('tasks').insert(rows);
-    if(insError) throw insError;
-  }
+  await replaceAllRowsSafely('tasks', rows);
 }
 
 /* ---------- suppliers: own table + own realtime channel ---------- */
@@ -5541,6 +5654,16 @@ async function deleteSupplier(id){
   }
 }
 
+async function replaceAllSuppliers(suppliersArray){
+  if(!sb) return;
+  const rows = (suppliersArray||[]).map(s=>({
+    id: s.id, name: s.name||'', phone: s.phone||'', notes: s.notes||'',
+    extra_phones: Array.isArray(s.extraPhones) ? s.extraPhones : [],
+    handles_new: s.handlesNew !== false, handles_used: s.handlesUsed !== false
+  }));
+  await replaceAllRowsSafely('suppliers', rows);
+}
+
 /* ---------- customers: own table + own realtime channel ---------- */
 function applyRemoteCustomerChange(payload){
   if(!Array.isArray(appData.customers)) appData.customers = [];
@@ -5586,6 +5709,12 @@ async function deleteCustomer(id){
   }catch(e){
     showToast('تعذر حذف العميل: ' + (e && e.message ? e.message : ''), 'error');
   }
+}
+
+async function replaceAllCustomers(customersArray){
+  if(!sb) return;
+  const rows = (customersArray||[]).map(c=>({ id: c.id, name: c.name||'', phone: c.phone||'', notes: c.notes||'' }));
+  await replaceAllRowsSafely('customers', rows);
 }
 
 /* ---------- شاشة الموردين ---------- */
@@ -5926,6 +6055,8 @@ function bindSuppliersViewEvents(){
       showToast('لازم تحدد نوع واحد على الأقل (قطع جديدة/مستعملة)', 'error');
       return;
     }
+    const dup = findDuplicateSupplier(name, phone);
+    if(dup){ showToast('مورد موجود مسبقًا بنفس الاسم أو الرقم: '+(dup.name||dup.phone||'مورد'), 'error'); return; }
     const newSupplier = {
       id: uid('sup'), name, phone, notes:'', extraPhones: [],
       handlesNew: handlesNewCheck.checked, handlesUsed: handlesUsedCheck.checked
@@ -5957,9 +6088,12 @@ function bindSupplierRowEvents(){
     const removeBtn = row.querySelector('.task-item-remove-btn');
     if(removeBtn){
       removeBtn.addEventListener('click', ()=>{
+        const pendingReceivable = supplierReturnReceivableTotal(sid);
         confirmAction({
           title: 'حذف هذا المورد؟',
-          message: 'الطلبيات القديمة المرتبطة به بتبقى، بس بدون اسم مورد محدد.',
+          message: (pendingReceivable>0
+            ? '⚠️ عنده مسترجع بانتظار التحصيل بقيمة '+fmtMoney(pendingReceivable)+' — بيختفي فورًا من قائمة الموردين ومؤشرات الرئيسية/الصندوق لو حذفته. '
+            : '') + 'الطلبيات القديمة المرتبطة به بتبقى، بس بدون اسم مورد محدد.',
           confirmLabel: 'تأكيد الحذف',
           dangerous: true,
           onConfirm: async ()=>{
@@ -5988,62 +6122,72 @@ function bindSupplierRowEvents(){
       });
     }
 
+    // نجيب أحدث نسخة من appData.suppliers لحظة كل تعديل فعلي (مش نعتمد على مرجع `supplier`
+    // الملتقط وقت الربط) — لو وصل تعديل تزامني من جلسة تانية بمنتصف التحرير، applyRemoteSupplierChange
+    // بيستبدل appData.suppliers[idx] بكائن جديد كليًا، والمرجع القديم يضل معزول عنه فيكتب حفظه فوق التعديل التاني.
+    const freshSupplier = ()=> (appData.suppliers||[]).find(x=>x.id===sid) || supplier;
+
     const nameInput = row.querySelector('.supplier-name-input');
     if(nameInput){
       nameInput.addEventListener('change', async e=>{
-        supplier.name = e.target.value; await persistSupplier(supplier);
+        const s = freshSupplier(); s.name = e.target.value; await persistSupplier(s);
       });
     }
     const phoneInput = row.querySelector('.supplier-phone-input');
     if(phoneInput){
       phoneInput.addEventListener('change', async e=>{
-        supplier.phone = e.target.value; await persistSupplier(supplier);
+        const s = freshSupplier(); s.phone = e.target.value; await persistSupplier(s);
       });
     }
     const addPhoneBtn = row.querySelector('.supplier-add-phone-btn');
     if(addPhoneBtn){
       addPhoneBtn.addEventListener('click', async ()=>{
-        if(!Array.isArray(supplier.extraPhones)) supplier.extraPhones = [];
-        supplier.extraPhones.push('');
+        const s = freshSupplier();
+        if(!Array.isArray(s.extraPhones)) s.extraPhones = [];
+        s.extraPhones.push('');
         refreshSuppliersList();
-        await persistSupplier(supplier);
+        await persistSupplier(s);
       });
     }
     const handlesNewCheck = row.querySelector('.supplier-handles-new-check');
     if(handlesNewCheck){
       handlesNewCheck.addEventListener('change', async e=>{
-        if(!e.target.checked && !supplier.handlesUsed){
+        const s = freshSupplier();
+        if(!e.target.checked && !s.handlesUsed){
           e.target.checked = true;
           showToast('لازم تحدد نوع واحد على الأقل', 'error');
           return;
         }
-        supplier.handlesNew = e.target.checked; await persistSupplier(supplier);
+        s.handlesNew = e.target.checked; await persistSupplier(s);
       });
     }
     const handlesUsedCheck = row.querySelector('.supplier-handles-used-check');
     if(handlesUsedCheck){
       handlesUsedCheck.addEventListener('change', async e=>{
-        if(!e.target.checked && !supplier.handlesNew){
+        const s = freshSupplier();
+        if(!e.target.checked && !s.handlesNew){
           e.target.checked = true;
           showToast('لازم تحدد نوع واحد على الأقل', 'error');
           return;
         }
-        supplier.handlesUsed = e.target.checked; await persistSupplier(supplier);
+        s.handlesUsed = e.target.checked; await persistSupplier(s);
       });
     }
     row.querySelectorAll('.supplier-extra-phone-input').forEach(inp=>{
       inp.addEventListener('change', async e=>{
         const idx = Number(inp.getAttribute('data-phone-index'));
-        supplier.extraPhones[idx] = e.target.value;
-        await persistSupplier(supplier);
+        const s = freshSupplier();
+        s.extraPhones[idx] = e.target.value;
+        await persistSupplier(s);
       });
     });
     row.querySelectorAll('.supplier-remove-phone-btn').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
         const idx = Number(btn.getAttribute('data-phone-index'));
-        supplier.extraPhones.splice(idx, 1);
+        const s = freshSupplier();
+        s.extraPhones.splice(idx, 1);
         refreshSuppliersList();
-        await persistSupplier(supplier);
+        await persistSupplier(s);
       });
     });
   });
@@ -6153,9 +6297,12 @@ function customerOrderHistory(customerId){
     const row = {
       orderId: o.id, orderNumber: o.orderNumber, orderLabel: o.orderLabel,
       total: t.hasSell ? t.sellTotal : 0, remaining: t.hasSell ? t.customerRemaining : 0,
+      hasSell: t.hasSell,
       date: o.updatedAt || o.createdAt || ''
     };
-    (t.hasSell && t.customerRemaining>0 ? ongoing : past).push(row);
+    // طلبية توردت بس لسه ما تسعّرت للبيع (!hasSell) لسه محتاجة متابعة — تُحسب "جارية"،
+    // مش "سابقة (مسددة)" — كانت تختفي عن متابعة العميل النشطة غلط.
+    (!t.hasSell || t.customerRemaining>0 ? ongoing : past).push(row);
   });
   const byDateDesc = (a,b)=> new Date(b.date||0) - new Date(a.date||0);
   ongoing.sort(byDateDesc); past.sort(byDateDesc);
@@ -6163,10 +6310,13 @@ function customerOrderHistory(customerId){
 }
 
 function orderHistoryRowHtml(row){
+  const amountHtml = row.hasSell===false
+    ? '<span class="num text-amber">بانتظار تسعير</span>'
+    : '<span class="num '+(row.remaining>0?'text-rust':'text-green')+'">'+fmtMoney(row.remaining>0?row.remaining:row.total)+'</span>';
   return '<button type="button" class="purchase-history-row" data-open-order="'+row.orderId+'">' +
     '<div class="purchase-history-row-main">' +
       '<span class="purchase-history-desc">'+escapeHtml(row.orderNumber||'')+(row.orderLabel?' — '+escapeHtml(row.orderLabel):'')+'</span>' +
-      '<span class="num '+(row.remaining>0?'text-rust':'text-green')+'">'+fmtMoney(row.remaining>0?row.remaining:row.total)+'</span>' +
+      amountHtml +
     '</div>' +
     '<div class="purchase-history-row-sub"><span>'+isoToDisplayDate(row.date)+'</span></div>' +
   '</button>';
@@ -6323,16 +6473,20 @@ function bindCustomerRowEvents(){
     const customer = (appData.customers||[]).find(c=>c.id===cid);
     if(!customer) return;
 
+    // نفس ملاحظة bindSupplierRowEvents — نجيب أحدث نسخة من appData.customers لحظة كل تعديل
+    // فعلي، مش نعتمد على مرجع `customer` الملتقط وقت الربط.
+    const freshCustomer = ()=> (appData.customers||[]).find(x=>x.id===cid) || customer;
+
     const nameInput = row.querySelector('.customer-name-input');
     if(nameInput){
       nameInput.addEventListener('change', async e=>{
-        customer.name = e.target.value; await persistCustomer(customer);
+        const c = freshCustomer(); c.name = e.target.value; await persistCustomer(c);
       });
     }
     const phoneInput = row.querySelector('.customer-phone-input');
     if(phoneInput){
       phoneInput.addEventListener('change', async e=>{
-        customer.phone = e.target.value; await persistCustomer(customer);
+        const c = freshCustomer(); c.phone = e.target.value; await persistCustomer(c);
       });
     }
     const historyBtn = row.querySelector('.customer-history-btn');
@@ -6524,6 +6678,7 @@ async function showAppIfAllowed(session){
     showAuthGate('تعذر التحقق من صلاحية الدخول، حاول مرة أخرى.', 'error');
     return;
   }
+  await refreshElevatedAccessEmails(email);
   document.getElementById('auth-gate').classList.add('hidden');
 
   if(role === 'scrapyard'){
@@ -6535,7 +6690,7 @@ async function showAppIfAllowed(session){
   document.getElementById('app-root').style.display = '';
   startPresenceHeartbeat(email);
   const treasuryBtn = document.getElementById('btn-open-treasury');
-  if(treasuryBtn) treasuryBtn.style.display = ELEVATED_ACCESS_EMAILS.includes(email) ? '' : 'none';
+  if(treasuryBtn) treasuryBtn.style.display = currentUserIsElevated ? '' : 'none';
   if(!appInitDone){
     appInitDone = true;
     init();
@@ -6556,7 +6711,7 @@ let scrapyardCurrentScreen = null; // 'home' | 'settlement' — يحدّد هل 
 
 async function initScrapyardView(email){
   scrapyardSharedState.email = email;
-  scrapyardSharedState.canManage = ELEVATED_ACCESS_EMAILS.includes(email);
+  scrapyardSharedState.canManage = currentUserIsElevated;
   const root = document.getElementById('scrapyard-root');
   root.innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
   // دخول عامر المباشر ما بيمر بـ init()، فلازم نسجّل حضوره يدويًا حتى يظهر بقائمة "آخر ظهور" عند صاحب الحساب
@@ -6580,7 +6735,7 @@ async function openScrapyardSharedView(kind){
   document.getElementById('scrapyard-root').style.display = '';
   document.getElementById('scrapyard-root').innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
   scrapyardSharedState.email = presenceEmail;
-  scrapyardSharedState.canManage = ELEVATED_ACCESS_EMAILS.includes(presenceEmail);
+  scrapyardSharedState.canManage = currentUserIsElevated;
   await loadScrapyardData(kind);
   renderScrapyardView();
 }
@@ -6640,12 +6795,17 @@ function goToScrapyardHome(){
    وكمان بيانات طلبات التسعير (orders/customers/suppliers) حتى تصير جاهزة لقسم "طلبات التسعير"
    المطوي بنفس الصفحة بدون أي طلب إضافي، ولمؤشر عددها المعلّق. */
 async function loadScrapyardHomeTotals(){
+  // شاشة عامر الرئيسية بتستخدم appData.orders بس لقائمة طلبات التسعير (isQuote=true) — أي
+  // طلبيات فعلية مسددة/غير مسددة ثانية ما بتنعرض هون أبدًا. لهيك بنجيبها عبر RPC مخصص
+  // (get_scrapyard_home_quotes) بيرجّع طلبات التسعير بس وبيصفّر sellPrice من كل قطعة، بدل
+  // sb.from('orders').select('*') يلي كان يجيب كل الطلبيات المسموح لعامر يشوفها بكل أعمدتها —
+  // بما فيها سعر البيع وهامش الربح لطلبيات حقيقية — لجهازه مباشرة رغم إن الواجهة ما بتعرضهم له.
   const [usedRes, newRes, tasksRes, suppliersRes, ordersRes, customersRes, custodyRes] = await Promise.all([
     sb.rpc('get_scrapyard_used_parts'),
     sb.rpc('get_new_parts_supplier'),
     sb.rpc('get_purchases_tasks'),
     sb.from('suppliers').select('*'),
-    sb.from('orders').select('*'),
+    sb.rpc('get_scrapyard_home_quotes'),
     sb.from('customers').select('*'),
     sb.from('treasury_entries').select('id').eq('category','amerCustody')
   ]);
@@ -6653,7 +6813,7 @@ async function loadScrapyardHomeTotals(){
   if(newRes.error) console.error('get_new_parts_supplier:', newRes.error);
   if(tasksRes.error) console.error('get_purchases_tasks:', tasksRes.error);
   if(suppliersRes.error) console.error('suppliers:', suppliersRes.error);
-  if(ordersRes.error) console.error('orders:', ordersRes.error);
+  if(ordersRes.error) console.error('get_scrapyard_home_quotes:', ordersRes.error);
   if(customersRes.error) console.error('customers:', customersRes.error);
   if(custodyRes.error) console.error('treasury_entries (amerCustody):', custodyRes.error);
   scrapyardSharedState.partsByKind.used = usedRes.error ? [] : (usedRes.data || []);
@@ -7347,10 +7507,10 @@ function scrapyardAddDraftRowHtml(orderId, d){
     '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="'+escapeHtml(d.description||'')+'" data-add-desc="'+orderId+'">' +
     '<div class="scrapyard-price-group">' +
       '<div class="scrapyard-price-cell"><span>العدد</span>' +
-        '<input type="number" min="1" step="1" class="part-qty-input num" value="'+(d.qty||1)+'" data-add-qty="'+orderId+'">' +
+        '<input type="number" min="1" step="1" class="part-qty-input num" value="'+escapeHtml(d.qty||1)+'" data-add-qty="'+orderId+'">' +
       '</div>' +
       '<div class="scrapyard-price-cell scrapyard-price-cell-proposed"><span>السعر المقترح</span>' +
-        '<input type="number" min="0" step="0.01" class="scrapyard-price-input num" placeholder="—" value="'+(d.price==null?'':d.price)+'" data-add-price="'+orderId+'">' +
+        '<input type="number" min="0" step="0.01" class="scrapyard-price-input num" placeholder="—" value="'+escapeHtml(d.price==null?'':d.price)+'" data-add-price="'+orderId+'">' +
       '</div>' +
     '</div>' +
     '<div class="scrapyard-part-actions">' +
@@ -7601,6 +7761,7 @@ async function sendScrapyardAddProposal(orderId){
   const qty = Number(d.qty)||1;
   const price = Number(d.price);
   if(!desc){ showToast('أدخل وصف القطعة', 'error'); return; }
+  if(!qty || qty<=0){ showToast('أدخل عدد صحيح', 'error'); return; }
   if(!price || price<0){ showToast('أدخل سعر صحيح', 'error'); return; }
   scrapyardProposalSending.add(orderId);
   const { error } = await sb.from('scrapyard_proposals').insert({
@@ -7944,7 +8105,14 @@ async function bootstrapAuth(){
   const urlError = getAuthErrorFromUrl();
   const noSessionMsg = urlError ? 'تعذر تسجيل الدخول: الرابط منتهي الصلاحية أو تم استخدامه من قبل. اطلب رابط دخول جديد من هذه الصفحة.' : undefined;
   sb.auth.onAuthStateChange((event, session)=>{
-    if(session){ showAppIfAllowed(session); }
+    if(session){
+      // نتجاهل INITIAL_SESSION (مكرر مع نداء getSession() تحت مباشرة — بيسبب تشغيل مزدوج
+      // لـ initScrapyardView وقت التحميل) وTOKEN_REFRESHED (تجديد صامت دوري بالخلفية بدون أي
+      // فعل من المستخدم) — إعادة تشغيل showAppIfAllowed لهالأحداث كانت بترجّع شاشة عامر لـ
+      // "الرئيسية" فجأة وتفقده مكانه بأي شاشة تانية كان فيها (مثلًا وسط شاشة التسوية).
+      if(event !== 'SIGNED_IN') return;
+      showAppIfAllowed(session);
+    }
     else { showAuthGate(noSessionMsg, noSessionMsg ? 'error' : undefined); }
   });
   const { data: { session } } = await sb.auth.getSession();
