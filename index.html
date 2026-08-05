@@ -1482,7 +1482,10 @@ function computeAggregateFinancials(matchPeriodFn){
     // قبل وصول القطعة) — تقييده كان بيخفي كاش حقيقي مدفوع عن net.
     if(!o.paidToAmer){ if(o.supplied) dueToScrapyard += t.costToScrapyard; } else paidToScrapyardTotal += t.costToScrapyard;
     if(!o.paidToSupplier){ if(o.supplied) dueToSuppliers += t.costToSupplier; } else paidToSuppliersTotal += t.costToSupplier;
-    if(t.hasSell && t.customerRemaining>0) dueFromCustomers += t.customerRemaining;
+    // نفس مبدأ dueToScrapyard/dueToSuppliers فوق — ونفس شرط waitingCustomerPayment الأصلي
+    // بـorderStatusFlags (كان already يشترط order.supplied، بعكس هالمجموع اللي كان يزيد فور
+    // التأكيد بس): قبل التوريد المتبقي على الزبون لسه مو "مستحق تحصيله" فعليًا بنفس منطق الدين.
+    if(o.supplied && t.hasSell && t.customerRemaining>0) dueFromCustomers += t.customerRemaining;
     customerReceiptsTotal += t.customerPaidAmountForBox;
     if(t.hasSell){
       collectedProfit += t.collectedProfit;
@@ -8699,17 +8702,12 @@ function handleLogout(){
 
 function scrapyardThemeToggleHtml(){
   const emoji = document.documentElement.getAttribute('data-theme') === 'light' ? '🌙' : '🌞';
-  // زر الخروج الأصلي موجود جوا #app-root يلي بيضل مخفي كليًا عن دور المشتريات — يعني عامر
-  // كان ما عنده أي طريقة يسجّل خروج. منضيفه هون جنب زر الوضع الليلي بشاشته.
-  return '<button type="button" id="btn-theme-toggle-scrapyard" class="corner-mini-btn" title="تبديل الوضع الليلي/النهاري">'+emoji+'</button>' +
-    '<button type="button" id="btn-logout-scrapyard" class="corner-mini-btn" title="تسجيل خروج">🚪</button>';
+  return '<button type="button" id="btn-theme-toggle-scrapyard" class="corner-mini-btn" title="تبديل الوضع الليلي/النهاري">'+emoji+'</button>';
 }
 
 function bindScrapyardThemeToggle(){
   const btn = document.getElementById('btn-theme-toggle-scrapyard');
   if(btn) btn.addEventListener('click', toggleTheme);
-  const out = document.getElementById('btn-logout-scrapyard');
-  if(out) out.addEventListener('click', handleLogout);
 }
 
 function initTheme(){
