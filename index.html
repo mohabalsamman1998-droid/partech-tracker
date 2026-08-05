@@ -1015,10 +1015,10 @@
   <div class="page" id="app-root" style="display:none;">
     <div class="app-top-utility-row">
       <div class="corner-mini-bar">
+        <button id="btn-push-toggle" class="corner-mini-btn" title="تفعيل إشعارات الجوال">🔕</button>
         <button id="btn-theme-toggle" class="corner-mini-btn" title="تبديل الوضع الليلي/النهاري">🌞</button>
         <button id="btn-who-online" class="corner-mini-btn">👥</button>
         <button id="btn-activity-log" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge" class="tasks-badge"></span></button>
-        <button id="btn-push-toggle" class="corner-mini-btn" title="تفعيل إشعارات الجوال">🔕</button>
       </div>
       <img class="app-corner-logo" src="" id="app-corner-logo-img" alt="PARTECH" title="الصفحة الرئيسية">
     </div>
@@ -7572,6 +7572,31 @@ function bindToolbar(){
    للشاشة الرئيسية) ومفتوح من هناك، مو من تبويب Safari عادي — قيد من آبل نفسها، مو من التطبيق. */
 const PUSH_VAPID_PUBLIC_KEY = 'BB9zm8sK51bFS0x1IpndeGgINd0evXox9pm6B7x6Rt6QgNSkijw3JhFw6eysQ87veIqDl8OGgSVpxkKydyeijkg';
 
+/* الضغط على إشعار push (بالجوال، حتى لو الموقع مسكّر) لازم ياخذ المستخدم لسجل الإشعارات 🛎️ نفسه،
+   مو بس يفتح الموقع عالفاضي. sw.js بيبعت postMessage لأي تبويب مفتوح أصلًا (يفتح السجل فورًا بدون
+   إعادة تحميل)، أو بيفتح تبويب جديد بـ?notif=1 لو ما في تبويب مفتوح. التسجيل هون مبكر (قبل تسجيل
+   الدخول حتى) عشان الرسالة توصل حتى لو التبويب كان لسا واقف عند بوابة الدخول. */
+let pendingOpenActivityLogFromPush = false;
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.addEventListener('message', (event)=>{
+    if(event.data && event.data.type === 'open-activity-log') requestOpenActivityLogFromPush();
+  });
+}
+function requestOpenActivityLogFromPush(){
+  const scrapyardRoot = document.getElementById('scrapyard-root');
+  const scrapyardVisible = scrapyardRoot && scrapyardRoot.style.display !== 'none';
+  if(appInitDone || scrapyardVisible) openActivityLog();
+  else pendingOpenActivityLogFromPush = true;
+}
+function consumeNotifUrlParam(){
+  const params = new URLSearchParams(location.search);
+  if(params.get('notif') !== '1') return false;
+  params.delete('notif');
+  const qs = params.toString();
+  history.replaceState(null, '', location.pathname + (qs ? ('?'+qs) : ''));
+  return true;
+}
+
 function urlBase64ToUint8Array(base64String){
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -7696,6 +7721,8 @@ async function init(){
   refreshPushButtonState();
   refreshActivityEvents();
   subscribeActivityEventsRealtime();
+  const openedFromUrl = consumeNotifUrlParam();
+  if(pendingOpenActivityLogFromPush || openedFromUrl){ pendingOpenActivityLogFromPush = false; openActivityLog(); }
 }
 
 /* ---------- live sync of shared app data across all open sessions, via Supabase Realtime ---------- */
@@ -9265,6 +9292,8 @@ async function initScrapyardView(email){
     await loadScrapyardHomeTotals();
     renderScrapyardHomeView();
   }
+  const openedFromUrl = consumeNotifUrlParam();
+  if(pendingOpenActivityLogFromPush || openedFromUrl){ pendingOpenActivityLogFromPush = false; openActivityLog(); }
 }
 
 async function openScrapyardSharedView(kind){
