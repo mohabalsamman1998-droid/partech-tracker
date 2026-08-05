@@ -994,7 +994,7 @@
         <button id="btn-open-tasks" class="btn btn-ghost btn-with-badge">✅ TASKS<span id="tasks-badge" class="tasks-badge"></span></button>
         <button id="btn-open-suppliers" class="btn btn-ghost btn-with-badge">🏭 الموردين<span id="suppliers-receivables-badge" class="tasks-badge"></span></button>
         <button id="btn-open-customers" class="btn btn-ghost btn-with-badge">👤 العملاء<span id="customers-overdue-badge" class="tasks-badge"></span></button>
-        <button id="btn-open-archive" class="btn btn-ghost">🗄️ الأرشيف</button>
+        <button id="btn-open-archive" class="btn btn-ghost btn-with-badge">🗄️ الأرشيف<span id="archive-pending-badge" class="tasks-badge"></span></button>
       </div>
     </header>
 
@@ -1664,15 +1664,24 @@ function profitColorClass(t){
   return t.customerFullyPaid ? 'text-green' : 'text-amber';
 }
 
+/* عدد طلبات التعديل المعلّقة لطلبية معيّنة — يظهر كبادج صغير جنب رقمها بأي قائمة (الرئيسية أو
+   الأرشيف، لأن rowHtml/cardHtml مشتركتين بين الاثنتين) عشان المخوّل ما يفوته طلب معلّق على
+   طلبية مؤرشفة أو مو ظاهرة قدامه حاليًا */
+function orderPendingProposalsCount(orderId){
+  if(!hasElevatedAccess()) return 0;
+  return (editProposals||[]).filter(pr=>pr.order_id===orderId).length;
+}
+
 function rowHtml(order){
   const t = orderTotals(order);
   const highlightClass = order.confirmed ? (order.supplied ? 'row-supplied' : 'row-not-supplied') : 'row-unconfirmed';
+  const pendingCount = orderPendingProposalsCount(order.id);
   return '<tr class="'+highlightClass+'">' +
     '<td class="confirm-cell">'+(order.confirmed
       ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="'+escapeHtml(order.id)+'">✓ مؤكدة</button>'
       : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="'+escapeHtml(order.id)+'">تأكيد</button>'
     )+'</td>' +
-    '<td class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? '<span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+'</td>' +
+    '<td class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? '<span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+(pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">'+pendingCount+'</span>' : '')+'</td>' +
     '<td>'+((order.customerPhone||'').trim() ? '<button type="button" class="icon-btn" data-contact-open="'+escapeHtml(order.id)+'" aria-label="تواصل">📞</button>' : '<span class="muted">—</span>')+'</td>' +
     '<td class="num">'+(t.hasSell? '<span class="'+profitColorClass(t)+'">'+fmtMoney(t.sellTotal)+'</span>' : '<span class="muted">'+(t.allPartsReturned?'مرتجعة':(t.noActiveParts?'بدون قطع محددة':'لم يُسعّر بعد'))+'</span>')+'</td>' +
     '<td>'+(order.confirmed && t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد '+fmtMoney(t.costToScrapyard),'غير مسدد '+fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>')+'</td>' +
@@ -1690,9 +1699,10 @@ function rowHtml(order){
 function cardHtml(order){
   const t = orderTotals(order);
   const highlightClass = order.confirmed ? (order.supplied ? 'card-supplied' : 'card-not-supplied') : 'card-unconfirmed';
+  const pendingCount = orderPendingProposalsCount(order.id);
   return '<div class="order-card '+highlightClass+'">' +
     '<div class="order-card-head">' +
-      '<span class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? ' <span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+'</span>' +
+      '<span class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? ' <span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+(pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">'+pendingCount+'</span>' : '')+'</span>' +
       '<div class="order-card-head-actions">' +
         (order.confirmed
           ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="'+escapeHtml(order.id)+'">✓ مؤكدة</button>'
@@ -4130,6 +4140,7 @@ function archiveOrder(orderId){
       if(!saved){ order.archived = false; order.updatedAt = prevUpdatedAt; return; }
       renderTable();
       refreshArchiveViewIfOpen();
+      updateArchivePendingBadge();
       showToast('تم أرشفة الطلبية', 'ok');
     }
   });
@@ -4145,6 +4156,7 @@ async function restoreOrder(orderId){
   if(!saved){ order.archived = true; order.updatedAt = prevUpdatedAt; return; }
   renderTable();
   refreshArchiveList();
+  updateArchivePendingBadge();
   showToast('تم استعادة الطلبية', 'ok');
 }
 
@@ -5344,12 +5356,28 @@ async function refreshEditProposals(){
     renderTreasuryView();
   }
   if(editProposalsModalOpen) refreshEditProposalsModal();
+  // بادج كل طلبية بقائمتها (الرئيسية والأرشيف) — لازم يتحدّث لحظيًا لو وصل طلب جديد بالريل-تايم
+  renderTable();
+  refreshArchiveViewIfOpen();
 }
 
 function updateEditProposalsBadge(){
   const count = (editProposals||[]).length;
   const badge = document.getElementById('edit-proposals-badge');
   if(badge){ badge.textContent = count>0 ? count : ''; badge.style.display = count>0 ? 'flex' : 'none'; }
+  updateArchivePendingBadge();
+}
+
+/* بادج على زر "🗄️ الأرشيف" نفسه — عشان طلب معلّق على طلبية مؤرشفة (مو ظاهرة أصلًا بالقائمة
+   الرئيسية) ما يفوت المخوّل، لازم إشارة على مدخل الأرشيف قبل حتى ما يفتحه */
+function updateArchivePendingBadge(){
+  const badge = document.getElementById('archive-pending-badge');
+  if(!badge) return;
+  if(!hasElevatedAccess()){ badge.style.display = 'none'; return; }
+  const archivedIds = new Set((appData.orders||[]).filter(o=>o.archived).map(o=>o.id));
+  const count = (editProposals||[]).filter(pr=>archivedIds.has(pr.order_id)).length;
+  badge.textContent = count>0 ? count : '';
+  badge.style.display = count>0 ? 'flex' : 'none';
 }
 
 function subscribeEditProposalsRealtime(){
