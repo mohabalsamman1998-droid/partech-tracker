@@ -345,6 +345,8 @@
   .quote-row-label{font-size:19px;font-weight:800;color:var(--amber);}
   .quote-row-ready{border-inline-start-color:var(--green-line);}
   .quote-row-ready .quote-row-label{color:var(--green);}
+  .activity-log-row{cursor:pointer;}
+  .activity-log-row:hover{border-color:var(--text-faint);}
   .task-item-check{width:20px;height:20px;accent-color:var(--green);cursor:pointer;flex-shrink:0;}
   .task-item-text{flex:1;min-width:0;overflow-wrap:break-word;font-size:14px;}
   .task-item-done{opacity:.55;}
@@ -5755,7 +5757,8 @@ function activityLogListHtml(){
   if(!activityEvents.length) return '<p class="add-part-locked-hint">ما فيه إشعارات حتى الآن</p>';
   return '<div class="task-items-list">' + activityEvents.map(ev=>{
     const ms = new Date(ev.created_at).getTime();
-    return '<div class="task-item-row"><span class="task-item-text">'+escapeHtml(ev.message)+'</span><span class="muted" style="white-space:nowrap;">'+arabicRelativeTime(ms)+'</span></div>';
+    const clickable = !!ev.order_id;
+    return '<div class="task-item-row'+(clickable?' activity-log-row':'')+'"'+(clickable?' data-open-order-id="'+escapeHtml(ev.order_id)+'"':'')+'><span class="task-item-text">'+escapeHtml(ev.message)+'</span><span class="muted" style="white-space:nowrap;">'+arabicRelativeTime(ms)+'</span></div>';
   }).join('') + '</div>';
 }
 
@@ -5791,6 +5794,18 @@ async function openActivityLog(){
     if(e.target.hasAttribute('data-close-confirm')) close();
   });
   root.querySelector('#close-activity-log-btn').addEventListener('click', close);
+  // تفويض على الحاوية الثابتة #activity-log-list مش على كل صف — renderActivityLogList() (لو
+  // وصل تحديث لحظي والنافذة مفتوحة) بيستبدل محتواها بالكامل، فربط مباشر على الصفوف كان رح يفقد
+  // مستمعاته بأول تحديث (نفس درس [[feedback_partech_rebind_and_persist_result]])
+  root.querySelector('#activity-log-list').addEventListener('click', e=>{
+    const row = e.target.closest('.activity-log-row');
+    if(!row) return;
+    const orderId = row.getAttribute('data-open-order-id');
+    if(!orderId) return;
+    close();
+    if(currentUserRole==='scrapyard') openQuoteModal('edit', orderId, 'purchasing');
+    else openModal('edit', orderId);
+  });
   activityLogEscListener = (e)=>{ if(e.key==='Escape') close(); };
   document.addEventListener('keydown', activityLogEscListener);
   markActivityEventsSeen();
