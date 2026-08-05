@@ -3578,14 +3578,14 @@ function findDuplicateSupplier(name, phone){
   });
 }
 
-function openContactModal(phone){
-  if(!phone || !phone.trim()){ showToast('لا يوجد رقم جوال مسجّل لهذه الطلبية', 'error'); return; }
+function openContactModal(phone, label){
+  if(!phone || !phone.trim()){ showToast('لا يوجد رقم جوال مسجّل', 'error'); return; }
   const root = document.getElementById('confirm-root');
   const waNumber = normalizePhoneForWhatsapp(phone);
   root.innerHTML =
     '<div class="modal-backdrop" data-close-confirm>' +
       '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
-        '<div class="modal-title">التواصل مع الزبون</div>' +
+        '<div class="modal-title">التواصل مع '+escapeHtml(label||'الزبون')+'</div>' +
         '<p class="modal-sub">'+escapeHtml(phone)+'</p>' +
         '<div class="contact-options-col">' +
           '<a class="btn btn-primary" href="tel:'+escapeHtml(phone)+'" id="contact-call-link">📞 اتصال</a>' +
@@ -6498,6 +6498,7 @@ function supplierRowHtml(s){
         '<span class="purchase-history-desc">'+escapeHtml(s.name||'بدون اسم')+'</span>' +
         '<span class="expense-entry-view-date">'+escapeHtml(phones||'—')+'</span>' +
         '<span class="num text-rust">'+fmtMoney(supplierOwedAmount(s.id))+'</span>' +
+        ((s.phone||'').trim() ? '<button type="button" class="icon-btn supplier-contact-btn" title="اتصال" aria-label="اتصال">📞</button>' : '') +
         '<button type="button" class="icon-btn supplier-history-btn" title="سجل المشتريات" aria-label="سجل المشتريات">📋</button>' +
         '<button type="button" class="icon-btn supplier-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' +
       '</div>' +
@@ -6662,6 +6663,9 @@ function bindSupplierRowEvents(){
 
     const historyBtn = row.querySelector('.supplier-history-btn');
     if(historyBtn) historyBtn.addEventListener('click', ()=> openSupplierHistoryModal(sid));
+
+    const contactBtn = row.querySelector('.supplier-contact-btn');
+    if(contactBtn) contactBtn.addEventListener('click', ()=> openContactModal(supplier.phone, 'المورد'));
 
     const removeBtn = row.querySelector('.task-item-remove-btn');
     if(removeBtn){
@@ -6849,6 +6853,7 @@ function customerRowHtml(c){
         '<span class="expense-entry-view-date">'+escapeHtml(c.phone||'—')+'</span>' +
         '<span class="expense-entry-view-date">'+stats.count+' طلبية</span>' +
         '<span class="num '+(stats.remaining>0?'text-rust':'text-green')+'">'+fmtMoney(stats.remaining)+'</span>' +
+        ((c.phone||'').trim() ? '<button type="button" class="icon-btn customer-contact-btn" title="اتصال" aria-label="اتصال">📞</button>' : '') +
         '<button type="button" class="icon-btn customer-history-btn" title="سجل الطلبيات" aria-label="سجل الطلبيات">📋</button>' +
         '<button type="button" class="icon-btn customer-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' +
       '</div>' +
@@ -7079,6 +7084,9 @@ function bindCustomerRowEvents(){
     }
     const historyBtn = row.querySelector('.customer-history-btn');
     if(historyBtn) historyBtn.addEventListener('click', ()=> openCustomerHistoryModal(cid));
+
+    const contactBtn = row.querySelector('.customer-contact-btn');
+    if(contactBtn) contactBtn.addEventListener('click', ()=> openContactModal(customer.phone, 'الزبون'));
 
     const editBtn = row.querySelector('.customer-edit-btn');
     if(editBtn){
