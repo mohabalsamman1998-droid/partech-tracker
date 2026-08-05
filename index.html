@@ -1695,7 +1695,8 @@ function profitColorClass(t){
    الأرشيف، لأن rowHtml/cardHtml مشتركتين بين الاثنتين) عشان المخوّل ما يفوته طلب معلّق على
    طلبية مؤرشفة أو مو ظاهرة قدامه حاليًا */
 function orderPendingProposalsCount(orderId){
-  if(!hasElevatedAccess()) return 0;
+  // للجميع، مو بس المخوّلين — مهاب طلب صراحة إنه أي شيء يحتاج انتباه يظهر إشعار عند الكل، حتى لو
+  // القبول/الرفض يضل حصرًا لمهاب وهمام وبشار (نفس تفويض RLS: أي مستخدم مسموح يشوف الطلبات المعلّقة)
   return (editProposals||[]).filter(pr=>pr.order_id===orderId).length;
 }
 
@@ -4873,7 +4874,7 @@ async function openTreasuryView(){
   hideAllSecondaryViews();
   document.getElementById('treasury-view').style.display = 'block';
   document.getElementById('treasury-view').innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
-  if(currentUserIsElevated) await refreshScrapyardPendingCount();
+  await refreshScrapyardPendingCount();
   renderTreasuryView();
 }
 
@@ -4986,7 +4987,9 @@ function handleScrapyardProposalDecision(proposalId, accept){
 
 let scrapyardProposalsChannel = null;
 async function refreshScrapyardPendingCount(){
-  if(!currentUserIsElevated) return;
+  // كانت مقصورة على المخوّلين — بس مهاب طلب صراحة إشعار "أي شيء يحتاج انتباه" يظهر عند الجميع.
+  // القبول/الرفض الفعلي بشاشة التسوية يضل مقصور على المخوّلين لحاله (RLS دور 'full' أصلًا بيسمح
+  // لأي موظف كامل يشوف الاقتراحات المعلّقة، مو بس المخوّلين الثلاثة)
   try{
     const { data, error } = await sb.from('scrapyard_proposals').select('*').order('created_at', {ascending:false});
     if(error) throw error;
@@ -5014,7 +5017,7 @@ function subscribeScrapyardRealtime(){
   if(!sb || scrapyardProposalsChannel) return;
   scrapyardProposalsChannel = sb.channel('scrapyard-proposals-changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'scrapyard_proposals' }, ()=>{
-      if(currentUserIsElevated) refreshScrapyardPendingCount();
+      refreshScrapyardPendingCount();
       if(document.getElementById('scrapyard-root').style.display !== 'none' && scrapyardCurrentScreen === 'settlement'){
         if(!scrapyardHasOpenEdit()) loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
       }
@@ -5632,7 +5635,6 @@ function updateEditProposalsBadge(){
 function updateArchivePendingBadge(){
   const badge = document.getElementById('archive-pending-badge');
   if(!badge) return;
-  if(!hasElevatedAccess()){ badge.style.display = 'none'; return; }
   const archivedIds = new Set((appData.orders||[]).filter(o=>o.archived).map(o=>o.id));
   const count = (editProposals||[]).filter(pr=>archivedIds.has(pr.order_id)).length;
   badge.textContent = count>0 ? count : '';
@@ -6343,7 +6345,7 @@ function renderTreasuryView(){
       '<button type="button" id="btn-toggle-expenses-block" class="chip" aria-expanded="'+(expensesBlockOpen?'true':'false')+'">💰 المصاريف</button>' +
       '<button type="button" id="btn-toggle-suppliers-settlement" class="chip" aria-expanded="'+(suppliersSettlementMenuOpen?'true':'false')+'">🧾 سداد الموردون'+(scrapyardMgmtState.proposals.length ? '<span class="inline-count-badge">'+scrapyardMgmtState.proposals.length+'</span>' : '')+'</button>' +
       '<button type="button" id="btn-open-accounts-activity" class="chip">📜 حركة الحسابات</button>' +
-      (hasElevatedAccess() ? '<button type="button" id="btn-open-edit-proposals" class="chip">📋 طلبات التعديل<span id="edit-proposals-badge" class="tasks-badge" style="'+(editProposals.length?'':'display:none;')+'">'+(editProposals.length||'')+'</span></button>' : '') +
+      '<button type="button" id="btn-open-edit-proposals" class="chip">📋 طلبات التعديل<span id="edit-proposals-badge" class="tasks-badge" style="'+(editProposals.length?'':'display:none;')+'">'+(editProposals.length||'')+'</span></button>' +
     '</div>' +
     '<div id="suppliers-settlement-wrap" class="treasury-chip-row" style="'+(suppliersSettlementMenuOpen?'':'display:none;')+' margin-bottom:10px;">' +
       scrapyardEntryBlockHtml('used') +
