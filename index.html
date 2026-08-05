@@ -4787,12 +4787,15 @@ function treasuryTotals(){
   });
   allTimeExpenses = round2(allTimeExpenses);
 
-  // مؤشرات "📊 مؤشرات إضافية" (حجم الشراء/البيع/الأرباح/صافي الأرباح الشهرية) هي الوحيدة
-  // المفروض تتبع فلتر الفترة — موسمية بطبيعتها. extraIndicatorsExpenses هون تُستخدم بس
-  // لحساب netProfitVolume تحت، مش لأي مؤشر لقطة حالية.
+  // مؤشرات "📊 مؤشرات إضافية" (حجم الشراء/البيع/المصاريف/الأرباح/صافي الأرباح الشهرية) هي
+  // الوحيدة المفروض تتبع فلتر الفترة — موسمية بطبيعتها.
   let extraIndicatorsExpenses = 0;
+  const extraIndicatorsExpensesByCategory = [];
   EXPENSE_CATEGORIES.forEach(c=>{
-    (appData.treasury[c.key]||[]).filter(entryMatchesExtraIndicatorsPeriod).forEach(entry=>{ extraIndicatorsExpenses += Number(entry.amount)||0; });
+    let categoryTotal = 0;
+    (appData.treasury[c.key]||[]).filter(entryMatchesExtraIndicatorsPeriod).forEach(entry=>{ categoryTotal += Number(entry.amount)||0; });
+    extraIndicatorsExpenses += categoryTotal;
+    if(categoryTotal>0) extraIndicatorsExpensesByCategory.push({ label: c.label, amount: categoryTotal });
   });
   const custodyDeficit = amerCustodyDeficit();
   const custodyBalance = amerCustodyBalance();
@@ -4863,6 +4866,9 @@ function treasuryTotals(){
       term('المدفوع للتشليح (بالفترة)', volumes.paidToScrapyardVolume)
     ],
     salesVolume: { note: 'إجمالي ما دفعه الزبائن على طلبيات هذه الفترة' },
+    expensesVolume: extraIndicatorsExpensesByCategory.length
+      ? extraIndicatorsExpensesByCategory.map(c=> term(c.label, c.amount))
+      : { note: 'ما فيه مصاريف مسجّلة بهذه الفترة' },
     profitVolume: { note: 'إجمالي الربح المحصّل فعليًا (بعد استرداد التكلفة) من طلبيات هذه الفترة' },
     netProfitVolume: [
       term('حجم الأرباح (المحصّل)', volumes.profitVolume),
@@ -4877,6 +4883,7 @@ function treasuryTotals(){
   return {
     totalExpenses, totalSupport, net, netAfterSettlement, debtsToSuppliers, dueFromCustomers: fSnapshot.dueFromCustomers, uncollectedProfit: fSnapshot.uncollectedProfit,
     purchaseVolume: volumes.purchaseVolume, salesVolume: volumes.salesVolume, profitVolume: volumes.profitVolume,
+    expensesVolume: round2(extraIndicatorsExpenses),
     netProfitVolume: netProfitVolume, netProfitVolumeAfterSettlement: netProfitVolumeAfterSettlement,
     amerCustodyBalance: custodyBalance, amerCustodyDeficit: custodyDeficit,
     breakdowns
@@ -5115,6 +5122,8 @@ function renderTreasuryView(){
           '<span class="treasury-profit-value">'+fmtMoney(t.salesVolume)+'</span>', null, t.breakdowns.salesVolume) +
         treasuryCardHtml('profitVolume', 'حجم الأرباح',
           '<span class="treasury-profit-value">'+fmtMoney(t.profitVolume)+'</span>', null, t.breakdowns.profitVolume) +
+        treasuryCardHtml('expensesVolume', 'حجم المصاريف',
+          '<span class="treasury-profit-value text-rust">'+fmtMoney(t.expensesVolume)+'</span>', null, t.breakdowns.expensesVolume) +
         treasuryCardHtml('netProfitVolume', 'صافي الأرباح الشهرية الفعلي',
           '<span class="treasury-profit-value '+(t.netProfitVolume<0?'text-rust':'text-green')+'">'+fmtMoney(t.netProfitVolume)+'</span>', null, t.breakdowns.netProfitVolume) +
         treasuryCardHtml('netProfitVolumeAfterSettlement', 'صافي الأرباح الشهرية بافتراض السداد والتحصيل',
