@@ -1015,6 +1015,7 @@
       <div class="corner-mini-bar">
         <button id="btn-theme-toggle" class="corner-mini-btn" title="تبديل الوضع الليلي/النهاري">🌞</button>
         <button id="btn-who-online" class="corner-mini-btn">👥</button>
+        <button id="btn-activity-log" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge" class="tasks-badge"></span></button>
         <button id="btn-push-toggle" class="corner-mini-btn" title="تفعيل إشعارات الجوال">🔕</button>
       </div>
       <img class="app-corner-logo" src="" id="app-corner-logo-img" alt="PARTECH" title="الصفحة الرئيسية">
@@ -4854,6 +4855,7 @@ function formatDateDMY(yyyyMmDd){
    عند الدخول (انظر showAppIfAllowed)، حتى ما تنفصل الواجهة عن صلاحية قاعدة البيانات الفعلية. */
 const ELEVATED_ACCESS_EMAILS_FALLBACK = ['mohabalsamman1998@gmail.com','homam.techno@gmail.com','sammaneng@gmail.com'];
 let currentUserIsElevated = false;
+let currentUserRole = 'full'; // 'full' | 'scrapyard' — يُحدَّث بـ showAppIfAllowed عند الدخول، يُستخدم لتصفية سجل الإشعارات حسب الدور
 async function refreshElevatedAccessEmails(email){
   try{
     if(!sb || !email) return;
@@ -5509,6 +5511,12 @@ function applyEditProposal(pr, orderOverride){
 function handleEditProposalDecision(proposalId, accept){
   const pr = (editProposals||[]).find(p=>p.id===proposalId);
   if(!pr) return;
+  // نص مرجعي للطلبية يُلتقط الآن (نفس صيغة #الرقم — الاسم المستخدمة بكل مكان بهالمودال) — بعد
+  // فرع الحذف الطلبية ما بتضل موجودة بـ appData.orders فما نقدر نجيبه وقتها
+  const orderRefForLog = (()=>{
+    const o = appData.orders.find(o=>o.id===pr.order_id);
+    return o ? ('#'+o.orderNumber+(o.orderLabel?' — '+o.orderLabel:'')) : ('طلبية #'+pr.order_id);
+  })();
   confirmAction({
     title: accept ? 'قبول هذا الطلب؟' : 'رفض هذا الطلب؟',
     message: accept ? 'بيتطبّق التعديل مباشرة على الطلبية.' : 'الطلب بيُحذف بدون أي تغيير.',
@@ -5594,6 +5602,16 @@ function handleEditProposalDecision(proposalId, accept){
           renderTable();
         }
       }
+      try{
+        await sb.from('activity_events').insert({
+          kind: 'edit_proposal_decided',
+          order_id: pr.order_id,
+          order_ref: orderRefForLog,
+          actor_email: presenceEmail,
+          target_email: deletedRows[0].submitted_by,
+          message: (accept ? 'تم قبول طلب التعديل على الطلبية: ' : 'تم رفض طلب التعديل على الطلبية: ') + orderRefForLog
+        });
+      }catch(e){ console.error('logEditProposalDecided:', e); }
       showToast(accept ? 'تم القبول والتطبيق' : 'تم رفض الطلب', 'ok');
       await refreshEditProposals();
     }
@@ -5656,6 +5674,128 @@ function subscribeEditProposalsRealtime(){
     })
     .subscribe();
 }
+
+/* ---------- سجل الإشعارات (activity_events) — أحداث غير مالية (طلبية تحتاج تسعير/اكتمل تسعيرها/
+   توردت، طلب تعديل وصل/تم قبوله أو رفضه) تُبنى تلقائيًا من DB triggers على orders/edit_proposals،
+   عدا edit_proposal_decided يلي يُسجَّل مباشرة من handleEditProposalDecision (القرار مأخوذ بالعميل).
+   كل مستخدم يشوف بس أحداثه: audience_role يطابق دوره، أو elevated_only ومعه صلاحية مخوّل، أو
+   target_email يطابق بريده — القراءة من القاعدة مفتوحة للجميع، التصفية تصير هون بالعميل. */
+let activityEvents = [];
+let activityEventsLastSeenAt = '1970-01-01T00:00:00Z';
+let activityEventsChannel = null;
+let activityLogModalOpen = false;
+
+function activityEventMatchesAudience(ev){
+  if(ev.target_email) return ev.target_email === presenceEmail;
+  if(ev.elevated_only) return currentUserIsElevated;
+  if(ev.audience_role) return ev.audience_role === currentUserRole;
+  return true;
+}
+
+/* التصفية بحسب الجمهور تصير أولًا بالاستعلام نفسه (شرط .or حسب دور/بريد المستخدم الحالي) قبل
+   حد الـ200 صف — لو صارت بعد الحد كان ممكن حدث يهم دور هادئ (متل عامر) يتزحزح خارج النافذة
+   المجلوبة بسبب زخم أحداث دور تاني. activityEventMatchesAudience تبقى فلترة دفاعية إضافية بعد
+   الجلب (احتياط لو .or ما غطّى حالة ما كنا متوقعينها). */
+async function refreshActivityEvents(){
+  try{
+    if(!sb || !presenceEmail) return;
+    await loadActivityEventsSeenMark();
+    const audienceOr = 'target_email.eq.'+presenceEmail+',audience_role.eq.'+currentUserRole+(currentUserIsElevated?',elevated_only.eq.true':'');
+    const { data, error } = await sb.from('activity_events').select('*').or(audienceOr).order('created_at', {ascending:false}).limit(200);
+    if(error) throw error;
+    activityEvents = (data||[]).filter(activityEventMatchesAudience);
+  }catch(e){ console.error('refreshActivityEvents:', e); return; }
+  updateActivityLogBadge();
+  if(activityLogModalOpen) renderActivityLogList();
+}
+
+async function loadActivityEventsSeenMark(){
+  try{
+    if(!sb || !presenceEmail) return;
+    const { data, error } = await sb.from('activity_events_seen').select('last_seen_at').eq('email', presenceEmail).maybeSingle();
+    if(error) throw error;
+    activityEventsLastSeenAt = (data && data.last_seen_at) || '1970-01-01T00:00:00Z';
+  }catch(e){ console.error('loadActivityEventsSeenMark:', e); }
+}
+
+function updateActivityLogBadge(){
+  const seenMs = new Date(activityEventsLastSeenAt).getTime();
+  const count = activityEvents.filter(ev=> new Date(ev.created_at).getTime() > seenMs).length;
+  ['activity-log-badge','activity-log-badge-scrapyard'].forEach(id=>{
+    const badge = document.getElementById(id);
+    if(!badge) return;
+    badge.textContent = count>0 ? count : '';
+    badge.style.display = count>0 ? 'flex' : 'none';
+  });
+}
+
+/* الوقت المستخدم كـ"آخر قراءة" هو created_at (وقت السيرفر) لأحدث حدث ظاهر فعليًا حاليًا —
+   مو وقت الجهاز (Date.now()) يلي ممكن ينحرف عن وقت السيرفر ويخلي أحداث جديدة توصل "قبل" وقت
+   القراءة المسجّل فتبقى مخفية عن البادج للأبد. activityEvents مرتبة created_at تنازليًا فأول
+   عنصر هو الأحدث. */
+async function markActivityEventsSeen(){
+  if(activityEvents.length) activityEventsLastSeenAt = activityEvents[0].created_at;
+  updateActivityLogBadge();
+  try{
+    if(!sb || !presenceEmail) return;
+    await sb.from('activity_events_seen').upsert({ email: presenceEmail, last_seen_at: activityEventsLastSeenAt }, { onConflict: 'email' });
+  }catch(e){ console.error('markActivityEventsSeen:', e); }
+}
+
+function subscribeActivityEventsRealtime(){
+  if(!sb || activityEventsChannel) return;
+  activityEventsChannel = sb.channel('activity-events-changes')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'activity_events' }, ()=>{
+      refreshActivityEvents();
+    })
+    .subscribe();
+}
+
+function activityLogListHtml(){
+  if(!activityEvents.length) return '<p class="add-part-locked-hint">ما فيه إشعارات حتى الآن</p>';
+  return '<div class="task-items-list">' + activityEvents.map(ev=>{
+    const ms = new Date(ev.created_at).getTime();
+    return '<div class="task-item-row"><span class="task-item-text">'+escapeHtml(ev.message)+'</span><span class="muted" style="white-space:nowrap;">'+arabicRelativeTime(ms)+'</span></div>';
+  }).join('') + '</div>';
+}
+
+function renderActivityLogList(){
+  const listEl = document.getElementById('activity-log-list');
+  if(listEl) listEl.innerHTML = activityLogListHtml();
+}
+
+async function openActivityLog(){
+  // نجيب أحدث حالة قبل ما نعرض/نعلّم كمقروء — غير هيك فجوة ريل-تايم عابرة (شبكة انقطعت لحظة/
+  // الجهاز كان نايم) بتخلي حدث وصل فعلًا يبقى غير مقروء للأبد لأنه ما انعلّم unseen أصلًا
+  await refreshActivityEvents();
+  const root = document.getElementById('modal-root');
+  root.innerHTML =
+    '<div class="modal-backdrop" data-close-confirm>' +
+      '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
+        '<div class="modal-title">🛎️ سجل الإشعارات</div>' +
+        '<div id="activity-log-list" style="margin-top:14px;max-height:60vh;overflow-y:auto;">'+activityLogListHtml()+'</div>' +
+        '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' +
+          '<button type="button" class="btn btn-ghost" id="close-activity-log-btn">إغلاق</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  activityLogModalOpen = true;
+  const close = ()=>{
+    root.innerHTML='';
+    root.classList.remove('modal-open');
+    activityLogModalOpen = false;
+    document.removeEventListener('keydown', activityLogEscListener);
+  };
+  root.querySelector('[data-close-confirm]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-confirm')) close();
+  });
+  root.querySelector('#close-activity-log-btn').addEventListener('click', close);
+  activityLogEscListener = (e)=>{ if(e.key==='Escape') close(); };
+  document.addEventListener('keydown', activityLogEscListener);
+  markActivityEventsSeen();
+}
+let activityLogEscListener = null;
 
 /* تفويض واحد على مستوى #modal-root، يُربط مرة وحدة طول عمر الصفحة (مو داخل attachModalHandlers —
    هاي بتنعاد كل ما تُفتح الطلبية أو تُحفظ وهي مفتوحة، وroot نفسه ثابت DOM node طول عمر الصفحة
@@ -7394,6 +7534,8 @@ function bindToolbar(){
   document.getElementById('btn-theme-toggle').addEventListener('click', toggleTheme);
   const pushBtn = document.getElementById('btn-push-toggle');
   if(pushBtn) pushBtn.addEventListener('click', togglePushSubscription);
+  const activityLogBtn = document.getElementById('btn-activity-log');
+  if(activityLogBtn) activityLogBtn.addEventListener('click', openActivityLog);
   document.getElementById('btn-logout').addEventListener('click', handleLogout);
   document.getElementById('btn-toggle-filters').addEventListener('click', ()=>{
     const el = document.getElementById('filter-buttons');
@@ -7537,6 +7679,8 @@ async function init(){
   subscribeEditProposalsRealtime();
   bindEditProposalGlobalDelegation();
   refreshPushButtonState();
+  refreshActivityEvents();
+  subscribeActivityEventsRealtime();
 }
 
 /* ---------- live sync of shared app data across all open sessions, via Supabase Realtime ---------- */
@@ -9039,6 +9183,7 @@ async function showAppIfAllowed(session){
         return;
       }
       role = data.role || 'full';
+      currentUserRole = role;
     }catch(e){
       // فشل مؤقت (انقطاع نت) كان يترك المستخدم عالق ببوابة الدخول وجلسته صالحة وبدون أي
       // طريقة يعيد المحاولة — منعطيه زر إعادة محاولة يستخدم نفس الجلسة.
@@ -9094,6 +9239,8 @@ async function initScrapyardView(email){
   // ونشترك بالتحديث اللحظي هون كمان (الدالتين محميتين من التكرار)
   subscribeScrapyardRealtime();
   subscribeScrapyardAppDataRealtime();
+  refreshActivityEvents();
+  subscribeActivityEventsRealtime();
   // دخول عامر المباشر (دوره "scrapyard") يوديه للصفحة الرئيسية لقسم المشتريات؛
   // دخول صاحب الحساب من داخل التطبيق (زر الصندوق) يوديه لشاشة السداد مباشرة كالمعتاد
   if(scrapyardSharedState.canManage){
@@ -9455,7 +9602,7 @@ function renderScrapyardHomeView(){
 
   root.innerHTML =
     '<div class="app-top-utility-row">' +
-      '<div class="corner-mini-bar">'+scrapyardThemeToggleHtml()+'</div>' +
+      '<div class="corner-mini-bar">'+scrapyardThemeToggleHtml()+'<button id="btn-activity-log-scrapyard" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge-scrapyard" class="tasks-badge"></span></button></div>' +
       '<img class="app-corner-logo" src="'+PARTECH_LOGO_DATA_URI+'" id="scrapyard-home-logo-img" alt="PARTECH" title="الصفحة الرئيسية">' +
     '</div>' +
     '<header class="topbar"><div class="brand">قسم المشتريات</div></header>' +
@@ -9486,6 +9633,8 @@ function renderScrapyardHomeView(){
   const logo = document.getElementById('scrapyard-home-logo-img');
   if(logo) logo.addEventListener('click', goToScrapyardHome);
   bindScrapyardThemeToggle();
+  const activityLogBtnScrapyard = document.getElementById('btn-activity-log-scrapyard');
+  if(activityLogBtnScrapyard) activityLogBtnScrapyard.addEventListener('click', openActivityLog);
 
   const sections = ['settlement','quotes','tasks'];
   sections.forEach(key=>{
