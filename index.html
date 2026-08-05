@@ -1479,6 +1479,7 @@ function computeAggregateFinancials(matchPeriodFn){
   const realOrders = appData.orders.filter(o=>!o.isQuote);
   const confirmedOrders = realOrders.filter(o=>o.confirmed).filter(o=> matchPeriodFn ? matchPeriodFn(o) : true);
   let dueToScrapyard = 0, dueToSuppliers = 0, dueFromCustomers = 0, dueFromCustomersCount = 0, collectedProfit = 0, uncollectedProfit = 0;
+  let dueToScrapyardCount = 0, dueToSuppliersCount = 0;
   let paidToScrapyardTotal = 0, paidToSuppliersTotal = 0, customerReceiptsTotal = 0;
   confirmedOrders.forEach(o=>{
     const t = orderTotals(o);
@@ -1489,8 +1490,8 @@ function computeAggregateFinancials(matchPeriodFn){
     // "لسه ما انسدد" (dueTo*) — فرع "انسدد فعليًا" (paidTo*Total) لازم يضل بدون قيد التوريد،
     // لأنه بيمثّل كاش خرج فعليًا من الصندوق بغض النظر عن حالة التوريد (مثلاً دفعة مقدّمة لمورد
     // قبل وصول القطعة) — تقييده كان بيخفي كاش حقيقي مدفوع عن net.
-    if(!o.paidToAmer){ if(o.supplied) dueToScrapyard += t.costToScrapyard; } else paidToScrapyardTotal += t.costToScrapyard;
-    if(!o.paidToSupplier){ if(o.supplied) dueToSuppliers += t.costToSupplier; } else paidToSuppliersTotal += t.costToSupplier;
+    if(!o.paidToAmer){ if(o.supplied && t.costToScrapyard>0){ dueToScrapyard += t.costToScrapyard; dueToScrapyardCount++; } } else paidToScrapyardTotal += t.costToScrapyard;
+    if(!o.paidToSupplier){ if(o.supplied && t.costToSupplier>0){ dueToSuppliers += t.costToSupplier; dueToSuppliersCount++; } } else paidToSuppliersTotal += t.costToSupplier;
     // نفس مبدأ dueToScrapyard/dueToSuppliers فوق — ونفس شرط waitingCustomerPayment الأصلي
     // بـorderStatusFlags (كان already يشترط order.supplied، بعكس هالمجموع اللي كان يزيد فور
     // التأكيد بس): قبل التوريد المتبقي على الزبون لسه مو "مستحق تحصيله" فعليًا بنفس منطق الدين.
@@ -1504,7 +1505,7 @@ function computeAggregateFinancials(matchPeriodFn){
   return {
     confirmedCount: confirmedOrders.length,
     unconfirmedCount: realOrders.length - confirmedOrders.length,
-    dueToScrapyard, dueToSuppliers, dueFromCustomers, dueFromCustomersCount, collectedProfit, uncollectedProfit,
+    dueToScrapyard, dueToScrapyardCount, dueToSuppliers, dueToSuppliersCount, dueFromCustomers, dueFromCustomersCount, collectedProfit, uncollectedProfit,
     paidToScrapyardTotal, paidToSuppliersTotal, customerReceiptsTotal
   };
 }
@@ -1513,12 +1514,48 @@ function renderKPIs(){
   const el = document.getElementById('kpi-row');
   const f = computeAggregateFinancials();
   const returnsOwedToUs = totalSupplierReturnReceivables();
+  const custodyBalance = amerCustodyBalance();
+  const dueToScrapyardNet = round2(f.dueToScrapyard - custodyBalance);
+  const dueToScrapyardShown = Math.max(0, dueToScrapyardNet);
+  const suppliersWithReceivables = (appData.suppliers||[]).filter(s=>supplierReturnReceivableTotal(s.id)>0).length;
+
+  const term = (label, amount)=> ({ label, amount: Math.abs(round2(amount)), negative: amount<0 });
+  const confirmedBreakdown = { note: (f.unconfirmedCount>0
+    ? f.confirmedCount+' مؤكدة + '+f.unconfirmedCount+' بانتظار التأكيد'
+    : 'كل الطلبيات الغير مؤرشفة ('+f.confirmedCount+') مؤكدة') };
+  const dueToScrapyardBreakdown = {
+    terms: [
+      term('مستحق للتشليح (قبل خصم رصيد المشتريات)', f.dueToScrapyard),
+      term('رصيد المشتريات', -custodyBalance)
+    ],
+    note: dueToScrapyardNet<0 ? 'رصيد المشتريات يغطي كل المستحق حاليًا' : null
+  };
+  const dueToSuppliersBreakdown = { note: f.dueToSuppliersCount>0
+    ? 'مجموع المستحق على '+f.dueToSuppliersCount+' طلبية موردة لسه ما سُددت للمورد'
+    : 'ما فيه طلبيات موردة عليها مبلغ مستحق للموردين حاليًا' };
+  const dueFromCustomersBreakdown = { note: f.dueFromCustomersCount>0
+    ? 'مجموع المتبقي على '+f.dueFromCustomersCount+' طلبية مسلّمة لسه ما سُددت بالكامل'
+    : 'ما فيه طلبيات مسلّمة عليها مبلغ متبقي حاليًا' };
+  const returnReceivablesBreakdown = { note: 'مرتجعات مستحقة من '+suppliersWithReceivables+' مورد/تشليح' };
+
   el.innerHTML =
-    '<div class="kpi-card"><div class="kpi-label">الطلبيات المؤكدة</div><div class="kpi-value num">'+f.confirmedCount+'</div>'+(f.unconfirmedCount>0?'<div class="kpi-sub">+ '+f.unconfirmedCount+' بانتظار التأكيد</div>':'')+'</div>' +
-    '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للتشليح</div><div class="kpi-value num">'+fmtMoney(Math.max(0, round2(f.dueToScrapyard - amerCustodyBalance())))+'</div></div>' +
-    '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للموردين</div><div class="kpi-value num">'+fmtMoney(f.dueToSuppliers)+'</div></div>' +
-    '<div class="kpi-card kpi-amber"><div class="kpi-label">مستحق من الزبائن</div><div class="kpi-value num">'+fmtMoney(f.dueFromCustomers)+'</div></div>' +
-    (returnsOwedToUs>0 ? '<div class="kpi-card kpi-green"><div class="kpi-label">لنا من التشاليح/الموردين (مرتجعات)</div><div class="kpi-value num">'+fmtMoney(returnsOwedToUs)+'</div></div>' : '');
+    treasuryCardHtml('kpiConfirmed', 'الطلبيات المؤكدة',
+      '<div class="kpi-value num">'+f.confirmedCount+'</div>',
+      (f.unconfirmedCount>0?'<div class="kpi-sub">+ '+f.unconfirmedCount+' بانتظار التأكيد</div>':null),
+      confirmedBreakdown, null, 'kpi-card') +
+    treasuryCardHtml('kpiDueToScrapyard', 'مستحق للتشليح',
+      '<div class="kpi-value num">'+fmtMoney(dueToScrapyardShown)+'</div>',
+      null, dueToScrapyardBreakdown, 'kpi-rust', 'kpi-card') +
+    treasuryCardHtml('kpiDueToSuppliers', 'مستحق للموردين',
+      '<div class="kpi-value num">'+fmtMoney(f.dueToSuppliers)+'</div>',
+      null, dueToSuppliersBreakdown, 'kpi-rust', 'kpi-card') +
+    treasuryCardHtml('kpiDueFromCustomers', 'مستحق من الزبائن',
+      '<div class="kpi-value num">'+fmtMoney(f.dueFromCustomers)+'</div>',
+      null, dueFromCustomersBreakdown, 'kpi-amber', 'kpi-card') +
+    (returnsOwedToUs>0 ? treasuryCardHtml('kpiReturnReceivables', 'لنا من التشاليح/الموردين (مرتجعات)',
+      '<div class="kpi-value num">'+fmtMoney(returnsOwedToUs)+'</div>',
+      null, returnReceivablesBreakdown, 'kpi-green', 'kpi-card') : '');
+  bindTreasuryCardToggles(el);
 }
 
 /* ---------- filters ---------- */
@@ -4275,16 +4312,19 @@ let treasuryExpandedCards = {};
 
 function treasuryCardBreakdownHtml(entry){
   if(!entry) return '';
-  if(!Array.isArray(entry)) return '<div class="card-breakdown-note">'+escapeHtml(entry.note)+'</div>';
-  return entry.map(t=>
-    '<div class="card-breakdown-row"><span>'+escapeHtml(t.label)+'</span><span class="num '+(t.negative?'text-rust':'text-green')+'">'+(t.negative?'-':'+')+fmtMoney(t.amount)+'</span></div>'
-  ).join('');
+  const termRowHtml = t=> '<div class="card-breakdown-row"><span>'+escapeHtml(t.label)+'</span><span class="num '+(t.negative?'text-rust':'text-green')+'">'+(t.negative?'-':'+')+fmtMoney(t.amount)+'</span></div>';
+  if(Array.isArray(entry)) return entry.map(termRowHtml).join('');
+  // شكل كائن: { terms?: [...], note?: '...' } — يسمح بصفوف أرقام + ملاحظة توضيحية تحتهم سوا
+  // (بخلاف صيغة { note } لحالها المستخدمة لمؤشرات بدون تفكيك رقمي أصلًا)
+  const termsHtml = Array.isArray(entry.terms) ? entry.terms.map(termRowHtml).join('') : '';
+  const noteHtml = entry.note ? '<div class="card-breakdown-note">'+escapeHtml(entry.note)+'</div>' : '';
+  return termsHtml + noteHtml;
 }
 
-function treasuryCardHtml(key, label, valueHtml, subHtml, breakdown, extraClass){
+function treasuryCardHtml(key, label, valueHtml, subHtml, breakdown, extraClass, baseClass){
   const expanded = !!treasuryExpandedCards[key];
-  return '<div class="treasury-profit-card treasury-card-clickable'+(extraClass?' '+extraClass:'')+'" data-card-key="'+escapeHtml(key)+'" role="button" tabindex="0" aria-expanded="'+(expanded?'true':'false')+'">' +
-    '<span class="treasury-profit-label">'+label+'</span>' +
+  return '<div class="'+(baseClass||'treasury-profit-card')+' treasury-card-clickable'+(extraClass?' '+extraClass:'')+'" data-card-key="'+escapeHtml(key)+'" role="button" tabindex="0" aria-expanded="'+(expanded?'true':'false')+'">' +
+    '<span class="'+(baseClass==='kpi-card'?'kpi-label':'treasury-profit-label')+'">'+label+'</span>' +
     valueHtml +
     (subHtml||'') +
     '<div class="card-breakdown" id="card-breakdown-'+escapeHtml(key)+'" style="'+(expanded?'':'display:none;')+'">' +
