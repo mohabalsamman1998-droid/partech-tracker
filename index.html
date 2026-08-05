@@ -4769,16 +4769,48 @@ function renderTreasuryView(){
       scrapyardEntryBlockHtml('used') +
       scrapyardEntryBlockHtml('new') +
     '</div>' +
-    '<button type="button" id="btn-toggle-extra-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر'+(
-      extraIndicatorsPeriod==='customMonth' ? ' ('+arabicMonthLabel(extraIndicatorsCustomMonth)+')' :
-      extraIndicatorsPeriod==='customRange' ? ' ('+formatDateDMY(extraIndicatorsRangeFrom)+' → '+formatDateDMY(extraIndicatorsRangeTo)+')' :
-      (extraIndicatorsPeriod!=='all' ? ' ('+(TREASURY_PERIODS.find(p=>p.key===extraIndicatorsPeriod)||{}).label+')' : '')
-    )+'</button>' +
-    '<div class="treasury-period-filter" id="extra-indicators-period-filter" style="'+(extraIndicatorsFilterOpen?'':'display:none;')+' margin-bottom:14px;">' +
-      TREASURY_PERIODS.map(p=> '<button type="button" class="chip '+(extraIndicatorsPeriod===p.key?'chip-active':'')+'" data-extra-period="'+escapeHtml(p.key)+'">'+p.label+'</button>').join('') +
-      '<input type="month" id="extra-indicators-month-input" class="extra-indicators-month-input" value="'+(extraIndicatorsPeriod==='customMonth'?extraIndicatorsCustomMonth:'')+'">' +
-      '<label class="mini-label" style="margin:0;">من<input type="date" id="extra-indicators-range-from" class="extra-indicators-month-input" value="'+escapeHtml(extraIndicatorsRangeFrom||'')+'"></label>' +
-      '<label class="mini-label" style="margin:0;">إلى<input type="date" id="extra-indicators-range-to" class="extra-indicators-month-input" value="'+escapeHtml(extraIndicatorsRangeTo||'')+'"></label>' +
+    // "مؤشرات إضافية" و"المصاريف" لازم تظهر مباشرة تحت صف الأزرار (مو بعد كروت المؤشرات
+    // الستة تحت) — نقلتهم هون فوق، جنب suppliers-settlement-wrap يلي أصلًا بنفس المكان الصح
+    '<div id="extra-indicators-wrap" style="'+(extraIndicatorsOpen?'':'display:none;')+' margin-bottom:10px;">' +
+      // زر الفلتر بقى جوا كتلة "مؤشرات إضافية" نفسها (بدل ما يبقى ظاهر لحاله برّا) — ما فيه
+      // داعي يظهر فلتر لمؤشرات مطوية أصلًا وغير ظاهرة
+      '<button type="button" id="btn-toggle-extra-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر'+(
+        extraIndicatorsPeriod==='customMonth' ? ' ('+arabicMonthLabel(extraIndicatorsCustomMonth)+')' :
+        extraIndicatorsPeriod==='customRange' ? ' ('+formatDateDMY(extraIndicatorsRangeFrom)+' → '+formatDateDMY(extraIndicatorsRangeTo)+')' :
+        (extraIndicatorsPeriod!=='all' ? ' ('+(TREASURY_PERIODS.find(p=>p.key===extraIndicatorsPeriod)||{}).label+')' : '')
+      )+'</button>' +
+      '<div class="treasury-period-filter" id="extra-indicators-period-filter" style="'+(extraIndicatorsFilterOpen?'':'display:none;')+' margin-bottom:14px;">' +
+        TREASURY_PERIODS.map(p=> '<button type="button" class="chip '+(extraIndicatorsPeriod===p.key?'chip-active':'')+'" data-extra-period="'+escapeHtml(p.key)+'">'+p.label+'</button>').join('') +
+        '<input type="month" id="extra-indicators-month-input" class="extra-indicators-month-input" value="'+(extraIndicatorsPeriod==='customMonth'?extraIndicatorsCustomMonth:'')+'">' +
+        '<label class="mini-label" style="margin:0;">من<input type="date" id="extra-indicators-range-from" class="extra-indicators-month-input" value="'+escapeHtml(extraIndicatorsRangeFrom||'')+'"></label>' +
+        '<label class="mini-label" style="margin:0;">إلى<input type="date" id="extra-indicators-range-to" class="extra-indicators-month-input" value="'+escapeHtml(extraIndicatorsRangeTo||'')+'"></label>' +
+      '</div>' +
+      '<div class="extra-indicators-row" id="extra-indicators-row">' +
+        '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم الشراء</span><span class="treasury-profit-value">'+fmtMoney(t.purchaseVolume)+'</span></div>' +
+        '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم عمليات البيع</span><span class="treasury-profit-value">'+fmtMoney(t.salesVolume)+'</span></div>' +
+        '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم الأرباح</span><span class="treasury-profit-value">'+fmtMoney(t.profitVolume)+'</span></div>' +
+        '<div class="treasury-profit-card"><span class="treasury-profit-label">صافي الأرباح الشهرية</span><span class="treasury-profit-value '+(t.netProfitVolume<0?'text-rust':'text-green')+'">'+fmtMoney(t.netProfitVolume)+'</span></div>' +
+      '</div>' +
+    '</div>' +
+    '<div id="expenses-block-wrap" style="'+(expensesBlockOpen?'':'display:none;')+' margin-bottom:10px;">' +
+      '<div class="treasury-block">' +
+        '<div class="treasury-block-head">' +
+          '<div class="treasury-block-title">المصاريف — كل مبلغ بتاريخه على حدة</div>' +
+          '<button type="button" id="btn-open-add-expense" class="btn btn-primary btn-sm">➕ إضافة مصاريف</button>' +
+        '</div>' +
+        '<button type="button" id="btn-toggle-treasury-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر'+(treasuryPeriodFilter!=='all' ? ' ('+(TREASURY_PERIODS.find(p=>p.key===treasuryPeriodFilter)||{}).label+')' : '')+'</button>' +
+        '<div class="treasury-period-filter" id="treasury-period-filter" style="'+(treasuryFilterOpen?'':'display:none;')+'">' +
+          TREASURY_PERIODS.map(p=> '<button type="button" class="chip '+(treasuryPeriodFilter===p.key?'chip-active':'')+'" data-period="'+escapeHtml(p.key)+'">'+p.label+'</button>').join('') +
+        '</div>' +
+        '<div class="expense-categories">' +
+          EXPENSE_CATEGORIES.map(expenseCategoryRowHtml).join('') +
+          treasurySupportRowHtml() +
+        '</div>' +
+        '<div class="treasury-summary">' +
+          '<div class="treasury-summary-row"><span>إجمالي المصاريف</span><span class="num text-rust" id="treasury-total-expenses">'+fmtMoney(t.totalExpenses)+'</span></div>' +
+          '<div class="treasury-summary-row"><span>إجمالي الدعم الخارجي</span><span class="num text-green" id="treasury-total-support">+'+fmtMoney(t.totalSupport)+'</span></div>' +
+        '</div>' +
+      '</div>' +
     '</div>' +
     '<div class="treasury-profit-card treasury-profit-card-primary">' +
       '<span class="treasury-profit-label">الصندوق حاليًا</span>' +
@@ -4804,34 +4836,6 @@ function renderTreasuryView(){
     '<div class="treasury-profit-card">' +
       '<span class="treasury-profit-label">مستحق من الزبائن</span>' +
       '<span class="treasury-profit-value">'+fmtMoney(t.dueFromCustomers)+'</span>' +
-    '</div>' +
-    '<div id="extra-indicators-wrap" style="'+(extraIndicatorsOpen?'':'display:none;')+'">' +
-      '<div class="extra-indicators-row" id="extra-indicators-row">' +
-        '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم الشراء</span><span class="treasury-profit-value">'+fmtMoney(t.purchaseVolume)+'</span></div>' +
-        '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم عمليات البيع</span><span class="treasury-profit-value">'+fmtMoney(t.salesVolume)+'</span></div>' +
-        '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم الأرباح</span><span class="treasury-profit-value">'+fmtMoney(t.profitVolume)+'</span></div>' +
-        '<div class="treasury-profit-card"><span class="treasury-profit-label">صافي الأرباح الشهرية</span><span class="treasury-profit-value '+(t.netProfitVolume<0?'text-rust':'text-green')+'">'+fmtMoney(t.netProfitVolume)+'</span></div>' +
-      '</div>' +
-    '</div>' +
-    '<div id="expenses-block-wrap" style="'+(expensesBlockOpen?'':'display:none;')+'">' +
-      '<div class="treasury-block">' +
-        '<div class="treasury-block-head">' +
-          '<div class="treasury-block-title">المصاريف — كل مبلغ بتاريخه على حدة</div>' +
-          '<button type="button" id="btn-open-add-expense" class="btn btn-primary btn-sm">➕ إضافة مصاريف</button>' +
-        '</div>' +
-        '<button type="button" id="btn-toggle-treasury-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر'+(treasuryPeriodFilter!=='all' ? ' ('+(TREASURY_PERIODS.find(p=>p.key===treasuryPeriodFilter)||{}).label+')' : '')+'</button>' +
-        '<div class="treasury-period-filter" id="treasury-period-filter" style="'+(treasuryFilterOpen?'':'display:none;')+'">' +
-          TREASURY_PERIODS.map(p=> '<button type="button" class="chip '+(treasuryPeriodFilter===p.key?'chip-active':'')+'" data-period="'+escapeHtml(p.key)+'">'+p.label+'</button>').join('') +
-        '</div>' +
-        '<div class="expense-categories">' +
-          EXPENSE_CATEGORIES.map(expenseCategoryRowHtml).join('') +
-          treasurySupportRowHtml() +
-        '</div>' +
-        '<div class="treasury-summary">' +
-          '<div class="treasury-summary-row"><span>إجمالي المصاريف</span><span class="num text-rust" id="treasury-total-expenses">'+fmtMoney(t.totalExpenses)+'</span></div>' +
-          '<div class="treasury-summary-row"><span>إجمالي الدعم الخارجي</span><span class="num text-green" id="treasury-total-support">+'+fmtMoney(t.totalSupport)+'</span></div>' +
-        '</div>' +
-      '</div>' +
     '</div>' +
     '<div class="data-mgmt-row">' +
       '<span class="data-mgmt-label">إدارة البيانات</span>' +
