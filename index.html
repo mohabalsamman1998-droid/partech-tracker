@@ -4618,18 +4618,33 @@ function treasuryTotals(){
   totalExpenses = round2(totalExpenses);
   const totalSupport = treasurySupportTotal();
 
-  // المؤشرات بالأعلى + مؤشرات إضافية كلها تتبع نفس فلتر "مؤشرات إضافية" (extraIndicatorsPeriod)
-  const f = computeAggregateFinancials(orderMatchesExtraIndicatorsPeriod);
+  // "الصندوق حاليًا"/"بافتراض انتهاء التحصيل والسداد"/"مستحق من الزبائن"/"الديون للموردين"/
+  // "الربح غير المحصّل" هي لقطة حالة حالية (زي كشف حساب) — لازم تكون all-time دايمًا، بغض النظر
+  // عن فلتر "مؤشرات إضافية" (extraIndicatorsPeriod). قبل هذا الإصلاح كانت هذي المؤشرات تُفلتر
+  // بنفس فلتر الفترة، فديون/مستحقات من طلبيات قديمة خارج الفترة المختارة (مثلاً فتحت الفلتر
+  // بس عشان تشوف حجم مبيعات الشهر) كانت تختفي بصمت من "الصندوق بافتراض انتهاء التحصيل والسداد"
+  // — وبالأخص كانت تختلط بمجاميع تانية (amerCustodyBalance، مرتجعات الموردين، مرتجعات
+  // العملاء المعلّقة) ما كانت أصلًا تتفلتر بالفترة أبدًا، فالخليط ما كان يمثّل ولا حالة منطقية
+  // (لا لقطة حالية ولا حصر لفترة). نفس مبدأ renderKPIs() بالصفحة الرئيسية (all-time دايمًا)
+  // وcomputeAllTimeTreasurySummary() (كانت أصلًا حل مؤقت لهاي بالضبط، بس لتصدير Excel فقط).
+  const fSnapshot = computeAggregateFinancials();
+  let allTimeExpenses = 0;
+  EXPENSE_CATEGORIES.forEach(c=>{
+    (appData.treasury[c.key]||[]).forEach(entry=>{ allTimeExpenses += Number(entry.amount)||0; });
+  });
+  allTimeExpenses = round2(allTimeExpenses);
+
+  // مؤشرات "📊 مؤشرات إضافية" (حجم الشراء/البيع/الأرباح/صافي الأرباح الشهرية) هي الوحيدة
+  // المفروض تتبع فلتر الفترة — موسمية بطبيعتها. extraIndicatorsExpenses هون تُستخدم بس
+  // لحساب netProfitVolume تحت، مش لأي مؤشر لقطة حالية.
   let extraIndicatorsExpenses = 0;
   EXPENSE_CATEGORIES.forEach(c=>{
     (appData.treasury[c.key]||[]).filter(entryMatchesExtraIndicatorsPeriod).forEach(entry=>{ extraIndicatorsExpenses += Number(entry.amount)||0; });
   });
-  const extraIndicatorsSupport = treasurySupportTotal(entryMatchesExtraIndicatorsPeriod);
-  const extraIndicatorsAmerCustody = amerCustodyTopupsTotal(entryMatchesExtraIndicatorsPeriod);
   const custodyDeficit = amerCustodyDeficit();
-  // صافي الصندوق = نقدي حقيقي: كل ما دفعه الزبائن + دعم خارجي، ناقص كل ما دُفع فعليًا للموردين + كل ما سُدد لعهدة عامر، ناقص مصاريف الصندوق
+  // صافي الصندوق = نقدي حقيقي: كل ما دفعه الزبائن + دعم خارجي، ناقص كل ما دُفع فعليًا للموردين + كل ما سُدد لعهدة عامر، ناقص مصاريف الصندوق (all-time)
   // (سداد طلبية "تم سداد التشليح" ما يأثر على الصندوق مباشرة — يُخصم من عهدة عامر بس، لحد ما تسدد لعهدة عامر فعليًا)
-  const net = round2(f.customerReceiptsTotal + extraIndicatorsSupport - f.paidToSuppliersTotal - extraIndicatorsAmerCustody - extraIndicatorsExpenses);
+  const net = round2(fSnapshot.customerReceiptsTotal + treasurySupportTotal(()=>true) - fSnapshot.paidToSuppliersTotal - amerCustodyTopupsTotalAll() - allTimeExpenses);
   // الصندوق بافتراض انتهاء التحصيل والسداد = لو تحصّلت كل ديون الزبائن، ودُفعت كل مستحقات الموردين،
   // وسدّدت عجز عهدة عامر (اللي دفعه فعليًا للتشاليح ولسه ما رجّعتله) + كل الطلبيات يلي لسه ما تسدد للتشليح،
   // وكمان لو تحصّلت كل مرتجعات الموردين المعلّقة ورجعت كل مبالغ العملاء المعلّقة
@@ -4637,14 +4652,14 @@ function treasuryTotals(){
   // الطرح القديم بالضبط، بس لو عامر ماسك فلوس ما صرفها بعد (رصيد موجب) فهاي كاش خرج من
   // الصندوق (انطرح ضمن net) ولسه قابل للاسترجاع ورح يغطي جزء من "مستحق للتشليح" — كان
   // بينخصم مرتين وبيطلّع الرقم أقل من الواقع.
-  const netAfterSettlement = round2(net + f.dueFromCustomers + amerCustodyBalance() - f.dueToScrapyard - f.dueToSuppliers + totalSupplierReturnReceivables() - totalCustomerRefundsPending());
+  const netAfterSettlement = round2(net + fSnapshot.dueFromCustomers + amerCustodyBalance() - fSnapshot.dueToScrapyard - fSnapshot.dueToSuppliers + totalSupplierReturnReceivables() - totalCustomerRefundsPending());
   // الديون للموردين = عجز عهدة عامر (تشاليح مدفوعة فعليًا ولسه ما رجّعتلها) + الطلبيات يلي لسه ما تسدد للتشليح + المستحق للموردين
-  const debtsToSuppliers = round2(custodyDeficit + f.dueToScrapyard + f.dueToSuppliers);
+  const debtsToSuppliers = round2(custodyDeficit + fSnapshot.dueToScrapyard + fSnapshot.dueToSuppliers);
   const volumes = computeTreasuryVolumes();
   // صافي الأرباح الشهرية = أرباح الطلبيات المحصّلة بالشهر المحدد ناقص مصاريف نفس الشهر (بنفس فلتر مؤشرات إضافية)
   const netProfitVolume = round2(volumes.profitVolume - extraIndicatorsExpenses);
   return {
-    totalExpenses, totalSupport, net, netAfterSettlement, debtsToSuppliers, dueFromCustomers: f.dueFromCustomers, uncollectedProfit: f.uncollectedProfit,
+    totalExpenses, totalSupport, net, netAfterSettlement, debtsToSuppliers, dueFromCustomers: fSnapshot.dueFromCustomers, uncollectedProfit: fSnapshot.uncollectedProfit,
     purchaseVolume: volumes.purchaseVolume, salesVolume: volumes.salesVolume, profitVolume: volumes.profitVolume, netProfitVolume: netProfitVolume,
     amerCustodyBalance: amerCustodyBalance(), amerCustodyDeficit: custodyDeficit
   };
