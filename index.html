@@ -1978,7 +1978,9 @@ function modalHtml(d){
       '<div class="modal-footer">' +
         '<div class="modal-footer-utility">' +
           (!d.isNew ? '<button type="button" class="btn btn-sm btn-danger-ghost" id="modal-delete-btn">حذف الطلبية</button>' : '') +
-          (!d.isNew ? '<button type="button" class="btn btn-sm btn-ghost" id="modal-return-order-btn">↩️ إرجاع الطلبية</button>' : '') +
+          // الإرجاع معناه "قطعة استُلمت من المورد/التشليح ثم رجعت" — قبل "تم التوريد" أصلًا
+          // ما فيه شي استُلم بعد، فما يصير كلامه إرجاع
+          (!d.isNew && d.supplied ? '<button type="button" class="btn btn-sm btn-ghost" id="modal-return-order-btn">↩️ إرجاع الطلبية</button>' : '') +
           '<div class="parts-clipboard-mini">' +
             '<button type="button" class="btn-clip-mini" id="copy-parts-btn">📋 نسخ</button>' +
             '<button type="button" class="btn-clip-mini" id="paste-parts-btn">📥 لصق</button>' +
@@ -2386,6 +2388,9 @@ function confirmReturnWholeOrder(){
 /* زر "⋯" بجانب كل قطعة — يعرض خيار حذف القطعة أو إرجاعها لوحدها */
 function openPartActionChoice(part){
   const root = document.getElementById('confirm-root');
+  // نفس ملاحظة زر "↩️ إرجاع الطلبية" — إرجاع قطعة معناه استُلمت (من مورد/تشليح) وبعدين رجعت،
+  // قبل "تم التوريد" ما فيه شي استُلم بعد
+  const canReturn = !!(draft && draft.supplied);
   root.innerHTML =
     '<div class="modal-backdrop" data-close-confirm>' +
       '<div class="modal-card modal-card-sm" role="alertdialog" aria-modal="true">' +
@@ -2393,7 +2398,7 @@ function openPartActionChoice(part){
         '<p class="modal-sub">اختر الإجراء المطلوب لهذه القطعة</p>' +
         '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;flex-wrap:wrap;">' +
           '<button type="button" class="btn btn-ghost" id="part-action-cancel-btn">إلغاء</button>' +
-          '<button type="button" class="btn btn-ghost" id="part-action-return-btn">🔄 إرجاع</button>' +
+          (canReturn ? '<button type="button" class="btn btn-ghost" id="part-action-return-btn">🔄 إرجاع</button>' : '') +
           '<button type="button" class="btn btn-danger" id="part-action-delete-btn">🗑️ حذف</button>' +
         '</div>' +
       '</div>' +
@@ -2417,10 +2422,13 @@ function openPartActionChoice(part){
       }
     });
   });
-  root.querySelector('#part-action-return-btn').addEventListener('click', ()=>{
-    close();
-    confirmSinglePartReturn(part);
-  });
+  const returnBtn = root.querySelector('#part-action-return-btn');
+  if(returnBtn){
+    returnBtn.addEventListener('click', ()=>{
+      close();
+      confirmSinglePartReturn(part);
+    });
+  }
 }
 
 function confirmSinglePartReturn(part){
