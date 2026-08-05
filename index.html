@@ -4262,6 +4262,7 @@ let treasuryFilterOpen = false;
 let extraIndicatorsOpen = false;
 let expensesBlockOpen = false;
 let extraIndicatorsFilterOpen = false;
+let suppliersSettlementMenuOpen = false;
 let extraIndicatorsPeriod = 'all';
 let extraIndicatorsCustomMonth = '';
 let extraIndicatorsRangeFrom = '';
@@ -4342,7 +4343,14 @@ function scrapyardEntryBlockHtml(kind){
 function bindScrapyardEntryEvents(){
   ['used','new'].forEach(kind=>{
     const btn = document.getElementById('btn-open-'+kind+'-settlement-shared');
-    if(btn) btn.addEventListener('click', ()=> openScrapyardSharedView(kind));
+    if(btn) btn.addEventListener('click', ()=>{
+      // فتح/طي: لو نفس النوع مفتوح أصلًا (شاشة السداد الكاملة ظاهرة)، الضغطة تسكّرها بدل ما تعيد فتحها من الصفر
+      const scrapRoot = document.getElementById('scrapyard-root');
+      const alreadyOpenOnThisKind = scrapRoot && scrapRoot.style.display !== 'none'
+        && scrapyardSharedState.canManage && scrapyardCurrentScreen === 'settlement' && scrapyardSharedState.activeKind === kind;
+      if(alreadyOpenOnThisKind) closeScrapyardSharedView();
+      else openScrapyardSharedView(kind);
+    });
   });
 }
 
@@ -4441,6 +4449,8 @@ function updateScrapyardBadges(){
   const count = scrapyardMgmtState.proposals.length;
   const badge = document.getElementById('treasury-scrapyard-badge');
   if(badge){ badge.textContent = count>0 ? count : ''; badge.style.display = count>0 ? 'flex' : 'none'; }
+  const menuBtn = document.getElementById('btn-toggle-suppliers-settlement');
+  if(menuBtn) menuBtn.innerHTML = '🧾 سداد الموردون' + (count ? '<span class="inline-count-badge">'+count+'</span>' : '');
   ['used','new'].forEach(kind=>{
     const entryEl = document.getElementById('btn-open-'+kind+'-settlement-shared');
     if(entryEl) entryEl.outerHTML = scrapyardEntryBlockHtml(kind);
@@ -4750,6 +4760,15 @@ function renderTreasuryView(){
       '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders">→ رجوع للطلبيات</button>' +
       '<div class="treasury-title">📦 الصندوق</div>' +
     '</div>' +
+    '<div class="treasury-chip-row" style="margin-bottom:10px;">' +
+      '<button type="button" id="btn-toggle-extra-indicators" class="chip" aria-expanded="'+(extraIndicatorsOpen?'true':'false')+'">📊 مؤشرات إضافية</button>' +
+      '<button type="button" id="btn-toggle-expenses-block" class="chip" aria-expanded="'+(expensesBlockOpen?'true':'false')+'">💰 المصاريف</button>' +
+      '<button type="button" id="btn-toggle-suppliers-settlement" class="chip" aria-expanded="'+(suppliersSettlementMenuOpen?'true':'false')+'">🧾 سداد الموردون'+(scrapyardMgmtState.proposals.length ? '<span class="inline-count-badge">'+scrapyardMgmtState.proposals.length+'</span>' : '')+'</button>' +
+    '</div>' +
+    '<div id="suppliers-settlement-wrap" class="treasury-chip-row" style="'+(suppliersSettlementMenuOpen?'':'display:none;')+' margin-bottom:10px;">' +
+      scrapyardEntryBlockHtml('used') +
+      scrapyardEntryBlockHtml('new') +
+    '</div>' +
     '<button type="button" id="btn-toggle-extra-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر'+(
       extraIndicatorsPeriod==='customMonth' ? ' ('+arabicMonthLabel(extraIndicatorsCustomMonth)+')' :
       extraIndicatorsPeriod==='customRange' ? ' ('+formatDateDMY(extraIndicatorsRangeFrom)+' → '+formatDateDMY(extraIndicatorsRangeTo)+')' :
@@ -4785,12 +4804,6 @@ function renderTreasuryView(){
     '<div class="treasury-profit-card">' +
       '<span class="treasury-profit-label">مستحق من الزبائن</span>' +
       '<span class="treasury-profit-value">'+fmtMoney(t.dueFromCustomers)+'</span>' +
-    '</div>' +
-    '<div class="treasury-chip-row">' +
-      '<button type="button" id="btn-toggle-extra-indicators" class="chip">📊 مؤشرات إضافية</button>' +
-      '<button type="button" id="btn-toggle-expenses-block" class="chip">💰 المصاريف</button>' +
-      scrapyardEntryBlockHtml('used') +
-      scrapyardEntryBlockHtml('new') +
     '</div>' +
     '<div id="extra-indicators-wrap" style="'+(extraIndicatorsOpen?'':'display:none;')+'">' +
       '<div class="extra-indicators-row" id="extra-indicators-row">' +
@@ -4842,15 +4855,26 @@ function renderTreasuryView(){
   bindTreasuryHistoryButtons();
   bindTreasuryPeriodFilter();
   bindExtraIndicatorsFilter();
-  document.getElementById('btn-toggle-extra-indicators').addEventListener('click', ()=>{
+  const extraIndicatorsBtn = document.getElementById('btn-toggle-extra-indicators');
+  extraIndicatorsBtn.addEventListener('click', ()=>{
     extraIndicatorsOpen = !extraIndicatorsOpen;
     const el2 = document.getElementById('extra-indicators-wrap');
     if(el2) el2.style.display = extraIndicatorsOpen ? '' : 'none';
+    extraIndicatorsBtn.setAttribute('aria-expanded', extraIndicatorsOpen ? 'true' : 'false');
   });
-  document.getElementById('btn-toggle-expenses-block').addEventListener('click', ()=>{
+  const expensesBlockBtn = document.getElementById('btn-toggle-expenses-block');
+  expensesBlockBtn.addEventListener('click', ()=>{
     expensesBlockOpen = !expensesBlockOpen;
     const el3 = document.getElementById('expenses-block-wrap');
     if(el3) el3.style.display = expensesBlockOpen ? '' : 'none';
+    expensesBlockBtn.setAttribute('aria-expanded', expensesBlockOpen ? 'true' : 'false');
+  });
+  const suppliersSettlementBtn = document.getElementById('btn-toggle-suppliers-settlement');
+  suppliersSettlementBtn.addEventListener('click', ()=>{
+    suppliersSettlementMenuOpen = !suppliersSettlementMenuOpen;
+    const wrap = document.getElementById('suppliers-settlement-wrap');
+    if(wrap) wrap.style.display = suppliersSettlementMenuOpen ? '' : 'none';
+    suppliersSettlementBtn.setAttribute('aria-expanded', suppliersSettlementMenuOpen ? 'true' : 'false');
   });
   // ما منربط أحداث صفوف المصاريف هون: العنصر [data-entries-key] موجود بس جوا نافذة السجل،
   // ونافذة السجل بتربط أحداثها لحالها (openExpenseHistoryModal/refreshExpenseEntries) — فالربط
