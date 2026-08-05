@@ -2120,6 +2120,9 @@ function attachModalHandlers(){
       cancelLabel: 'لا',
       onConfirm: ()=>{
         draft.paidToAmer = willPay;
+        // تاريخ لحظة التسديد نفسها — بدونه تقرير "حركة الحسابات" اليومي ما يقدر يعرف متى صار
+        // هذا التسديد فعليًا (updatedAt بتتحرك مع أي تعديل تاني على الطلبية، مو التسديد بالذات)
+        draft.paidToAmerAt = willPay ? new Date().toISOString() : null;
         const btn = document.getElementById('cost-split-amer-btn');
         if(btn){
           btn.classList.toggle('cost-split-paid', willPay);
@@ -2137,6 +2140,8 @@ function attachModalHandlers(){
       cancelLabel: 'لا',
       onConfirm: ()=>{
         draft.paidToSupplier = willPay;
+        // نفس ملاحظة paidToAmerAt فوق
+        draft.paidToSupplierAt = willPay ? new Date().toISOString() : null;
         const btn = document.getElementById('cost-split-supplier-btn');
         if(btn){
           btn.classList.toggle('cost-split-paid', willPay);
@@ -4584,6 +4589,72 @@ function entryMatchesPeriod(entry){
   return dateMatchesPeriod(parseDMY(entry.date), treasuryPeriodFilter);
 }
 
+/* ---------- تقرير "حركة الحسابات" اليومي ---------- */
+/* دفعات الزبائن ومصاريف/دعم/عهدة الصندوق عندها تاريخ حقيقي لكل حركة (entry.date / payment.date)
+   فيها نعتمد عليه مباشرة. سداد المورد/التشليح (paidToSupplier/paidToAmer) كانت مجرد علامة صح
+   بدون تاريخ لحظة السداد نفسها — أضفنا paidToSupplierAt/paidToAmerAt (بالتوازي مع الحقلين
+   القديمين، انظر أزرار المجموع للمورد/للتشليح بنافذة الطلبية) فمن تاريخ إضافتها فصاعدًا بيظهروا
+   هون؛ الطلبيات المسدّدة قبل هالتاريخ ما إلها تاريخ سداد مسجّل، فما تظهر بأي يوم محدد. */
+function isoDateMatches(d, isoDate){
+  if(!d || isNaN(d.getTime())) return false;
+  return dateMatchesPeriod(d, 'customRange', '', isoDate, isoDate);
+}
+
+function accountsActivityForDate(isoDate){
+  const matchDmy = (dateStr)=> isoDateMatches(parseDMY(dateStr), isoDate);
+  const matchIso = (isoStr)=>{
+    if(!isoStr) return false;
+    const dt = new Date(isoStr);
+    if(isNaN(dt.getTime())) return false;
+    return isoDateMatches(new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()), isoDate);
+  };
+
+  const customerPayments = [], customerRefunds = [], supplierPayments = [], expenses = [], support = [], custody = [];
+
+  (appData.orders||[]).forEach(o=>{
+    if(o.isQuote) return;
+    (o.customerPayments||[]).forEach(p=>{
+      if(!matchDmy(p.date)) return;
+      const row = { orderNumber: o.orderNumber, orderLabel: o.orderLabel, amount: Number(p.amount)||0, method: p.method||'' };
+      if(p.returnAdjustment) customerRefunds.push(row); else customerPayments.push(row);
+    });
+    if(matchIso(o.paidToSupplierAt)){
+      supplierPayments.push({ orderNumber: o.orderNumber, orderLabel: o.orderLabel, amount: orderTotals(o).costToSupplier, kind: 'مورد' });
+    }
+    if(matchIso(o.paidToAmerAt)){
+      supplierPayments.push({ orderNumber: o.orderNumber, orderLabel: o.orderLabel, amount: orderTotals(o).costToScrapyard, kind: 'تشليح' });
+    }
+  });
+
+  EXPENSE_CATEGORIES.forEach(c=>{
+    (appData.treasury[c.key]||[]).forEach(entry=>{
+      if(!matchDmy(entry.date)) return;
+      expenses.push({ label: c.label, amount: Number(entry.amount)||0, note: entry.note||'' });
+    });
+  });
+  (appData.treasury.support||[]).forEach(entry=>{
+    if(!matchDmy(entry.date)) return;
+    support.push({ amount: Number(entry.amount)||0, note: entry.note||'' });
+  });
+  (appData.treasury.amerCustody||[]).forEach(entry=>{
+    if(!matchDmy(entry.date)) return;
+    custody.push({ amount: Number(entry.amount)||0, note: entry.note||'' });
+  });
+
+  const sum = arr => round2(arr.reduce((s,r)=> s + (Number(r.amount)||0), 0));
+  return {
+    customerPayments, customerRefunds, supplierPayments, expenses, support, custody,
+    totals: {
+      customerPayments: sum(customerPayments),
+      customerRefunds: sum(customerRefunds),
+      supplierPayments: sum(supplierPayments),
+      expenses: sum(expenses),
+      support: sum(support),
+      custody: sum(custody)
+    }
+  };
+}
+
 function orderDateMatchesPeriod(order){
   if(treasuryPeriodFilter === 'all') return true;
   if(!order.updatedAt) return false;
@@ -4753,6 +4824,133 @@ function expenseCategoryRowHtml(c, i){
   '</div>';
 }
 
+/* ---------- تقرير "حركة الحسابات" اليومي — نافذة ---------- */
+let accountsActivityDate = ''; // ISO yyyy-mm-dd — تتصفّر لتاريخ اليوم كل ما تُفتح النافذة من جديد
+
+function accountsActivityRowHtml(mainText, subText, amount, colorClass){
+  return '<div class="purchase-history-row-main">' +
+      '<span class="purchase-history-desc">'+escapeHtml(mainText)+'</span>' +
+      '<span class="num '+colorClass+'">'+fmtMoney(Math.abs(amount))+'</span>' +
+    '</div>' +
+    (subText ? '<div class="purchase-history-row-sub"><span>'+escapeHtml(subText)+'</span></div>' : '');
+}
+
+function accountsActivitySectionHtml(title, rows, total, colorClass, rowsHtml){
+  if(!rows.length) return '';
+  return '<div class="purchase-history-section">' +
+    '<div class="purchase-history-section-title"><span>'+title+'</span><span class="num '+colorClass+'">'+(total>=0?'':'-')+fmtMoney(Math.abs(total))+'</span></div>' +
+    rowsHtml +
+  '</div>';
+}
+
+function accountsActivityModalHtml(){
+  const iso = accountsActivityDate || dmyToIso(todayNumeric());
+  const todayIso = dmyToIso(todayNumeric());
+  const yesterdayIso = (()=>{ const d = new Date(); d.setDate(d.getDate()-1); return dmyToIso(String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear()); })();
+  const a = accountsActivityForDate(iso);
+
+  const paymentsRowsHtml = a.customerPayments.map(r=>
+    '<div class="purchase-history-row">' + accountsActivityRowHtml(
+      r.orderNumber+(r.orderLabel?' — '+r.orderLabel:''),
+      r.method==='cash'?'كاش':(r.method==='card'?'شبكة':''),
+      r.amount, 'text-green'
+    ) + '</div>'
+  ).join('');
+  const refundsRowsHtml = a.customerRefunds.map(r=>
+    '<div class="purchase-history-row">' + accountsActivityRowHtml(
+      r.orderNumber+(r.orderLabel?' — '+r.orderLabel:''), 'مرتجع', r.amount, 'text-amber'
+    ) + '</div>'
+  ).join('');
+  const supplierRowsHtml = a.supplierPayments.map(r=>
+    '<div class="purchase-history-row">' + accountsActivityRowHtml(
+      r.orderNumber+(r.orderLabel?' — '+r.orderLabel:''), 'تسديد '+r.kind, r.amount, 'text-rust'
+    ) + '</div>'
+  ).join('');
+  const expensesRowsHtml = a.expenses.map(r=>
+    '<div class="purchase-history-row">' + accountsActivityRowHtml(r.label, r.note, r.amount, 'text-rust') + '</div>'
+  ).join('');
+  const supportRowsHtml = a.support.map(r=>
+    '<div class="purchase-history-row">' + accountsActivityRowHtml('دعم الصندوق من الخارج', r.note, r.amount, 'text-green') + '</div>'
+  ).join('');
+  const custodyRowsHtml = a.custody.map(r=>
+    '<div class="purchase-history-row">' + accountsActivityRowHtml(
+      (r.amount<0?'سحب من عهدة المشتريات':'سداد لعهدة المشتريات'), r.note, r.amount, (r.amount<0?'text-green':'text-rust')
+    ) + '</div>'
+  ).join('');
+
+  // مرتجعات الزبائن (دفعة returnAdjustment) مو خروج كاش فعلي بتاريخها — القطعة رجعت وصار فيه
+  // التزام برد المبلغ، بس الكاش ما يطلع من الصندوق فعليًا إلا لحظة "تم رد المبلغ للزبون"
+  // (customerRefundConfirmed)، وهاي كمان بلا تاريخ مسجّل حاليًا (نفس فجوة سداد المورد/التشليح).
+  // فنعرض القسم للمعلومة بس ما ندخله بصافي حركة اليوم حتى ما نوهم إنه كاش طلع فعليًا.
+  const netTotal = round2(a.totals.customerPayments - a.totals.supplierPayments - a.totals.expenses + a.totals.support - a.totals.custody);
+  const hasAnything = a.customerPayments.length || a.customerRefunds.length || a.supplierPayments.length || a.expenses.length || a.support.length || a.custody.length;
+
+  return '<div class="modal-backdrop" data-close-backdrop>' +
+    '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
+      '<div class="modal-header"><div class="modal-title">📜 حركة الحسابات</div>' +
+        '<button type="button" class="icon-btn" id="accounts-activity-close-btn" aria-label="إغلاق">✕</button></div>' +
+      '<div class="treasury-chip-row" style="margin-bottom:10px;">' +
+        '<button type="button" class="chip '+(iso===todayIso?'chip-active':'')+'" data-activity-date="'+todayIso+'">اليوم</button>' +
+        '<button type="button" class="chip '+(iso===yesterdayIso?'chip-active':'')+'" data-activity-date="'+yesterdayIso+'">أمس</button>' +
+        '<input type="date" id="accounts-activity-date-input" class="expense-entry-date-input" value="'+iso+'">' +
+      '</div>' +
+      '<div class="treasury-summary" style="margin-bottom:6px;">' +
+        '<div class="treasury-summary-row"><span>صافي حركة اليوم</span><span class="num '+(netTotal<0?'text-rust':'text-green')+'">'+fmtSigned(netTotal)+'</span></div>' +
+      '</div>' +
+      (hasAnything ? '' : '<div class="expense-empty-hint">ما فيه حركات مسجّلة بهذا التاريخ</div>') +
+      accountsActivitySectionHtml('📥 دفعات الزبائن', a.customerPayments, a.totals.customerPayments, 'text-green', paymentsRowsHtml) +
+      accountsActivitySectionHtml('🔄 مرتجعات الزبائن (رجعت قطعتها اليوم — بانتظار رد المبلغ)', a.customerRefunds, a.totals.customerRefunds, 'text-amber', refundsRowsHtml) +
+      accountsActivitySectionHtml('📤 تسديد للموردين/التشاليح', a.supplierPayments, a.totals.supplierPayments, 'text-rust', supplierRowsHtml) +
+      accountsActivitySectionHtml('💸 المصاريف', a.expenses, a.totals.expenses, 'text-rust', expensesRowsHtml) +
+      accountsActivitySectionHtml('🤝 دعم الصندوق الخارجي', a.support, a.totals.support, 'text-green', supportRowsHtml) +
+      accountsActivitySectionHtml('🔧 عهدة المشتريات', a.custody, a.totals.custody, 'text-rust', custodyRowsHtml) +
+      '<p class="modal-sub" style="margin-top:14px;">تسديد المورد/التشليح يظهر هون بس من تاريخ إضافة هذا التقرير فصاعدًا — الطلبيات المسدّدة قبله ما إلها تاريخ سداد مسجّل. مرتجعات الزبائن هون مو خارجة من صافي حركة اليوم — الكاش ما يطلع فعليًا إلا لحظة تأكيد الرد من شاشة الطلبية/العميل.</p>' +
+    '</div>' +
+  '</div>';
+}
+
+function openAccountsActivityModal(){
+  accountsActivityDate = dmyToIso(todayNumeric());
+  const root = document.getElementById('modal-root');
+  root.innerHTML = accountsActivityModalHtml();
+  root.classList.add('modal-open');
+  bindAccountsActivityModalEvents();
+}
+
+function refreshAccountsActivityModal(){
+  const root = document.getElementById('modal-root');
+  root.innerHTML = accountsActivityModalHtml();
+  bindAccountsActivityModalEvents();
+}
+
+function closeAccountsActivityModal(){
+  const root = document.getElementById('modal-root');
+  root.innerHTML = '';
+  root.classList.remove('modal-open');
+}
+
+function bindAccountsActivityModalEvents(){
+  const root = document.getElementById('modal-root');
+  root.querySelector('[data-close-backdrop]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-backdrop')) closeAccountsActivityModal();
+  });
+  root.querySelector('#accounts-activity-close-btn').addEventListener('click', closeAccountsActivityModal);
+  root.querySelectorAll('[data-activity-date]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      accountsActivityDate = btn.getAttribute('data-activity-date');
+      refreshAccountsActivityModal();
+    });
+  });
+  const dateInput = root.querySelector('#accounts-activity-date-input');
+  if(dateInput){
+    dateInput.addEventListener('change', ()=>{
+      if(!dateInput.value) return;
+      accountsActivityDate = dateInput.value;
+      refreshAccountsActivityModal();
+    });
+  }
+}
+
 function renderTreasuryView(){
   const el = document.getElementById('treasury-view');
   const t = treasuryTotals();
@@ -4765,6 +4963,7 @@ function renderTreasuryView(){
       '<button type="button" id="btn-toggle-extra-indicators" class="chip" aria-expanded="'+(extraIndicatorsOpen?'true':'false')+'">📊 مؤشرات إضافية</button>' +
       '<button type="button" id="btn-toggle-expenses-block" class="chip" aria-expanded="'+(expensesBlockOpen?'true':'false')+'">💰 المصاريف</button>' +
       '<button type="button" id="btn-toggle-suppliers-settlement" class="chip" aria-expanded="'+(suppliersSettlementMenuOpen?'true':'false')+'">🧾 سداد الموردون'+(scrapyardMgmtState.proposals.length ? '<span class="inline-count-badge">'+scrapyardMgmtState.proposals.length+'</span>' : '')+'</button>' +
+      '<button type="button" id="btn-open-accounts-activity" class="chip">📜 حركة الحسابات</button>' +
     '</div>' +
     '<div id="suppliers-settlement-wrap" class="treasury-chip-row" style="'+(suppliersSettlementMenuOpen?'':'display:none;')+' margin-bottom:10px;">' +
       scrapyardEntryBlockHtml('used') +
@@ -4881,6 +5080,7 @@ function renderTreasuryView(){
     if(wrap) wrap.style.display = suppliersSettlementMenuOpen ? '' : 'none';
     suppliersSettlementBtn.setAttribute('aria-expanded', suppliersSettlementMenuOpen ? 'true' : 'false');
   });
+  document.getElementById('btn-open-accounts-activity').addEventListener('click', openAccountsActivityModal);
   // ما منربط أحداث صفوف المصاريف هون: العنصر [data-entries-key] موجود بس جوا نافذة السجل،
   // ونافذة السجل بتربط أحداثها لحالها (openExpenseHistoryModal/refreshExpenseEntries) — فالربط
   // من هون كان بيضاعف المستمعات على النافذة المفتوحة (ضغطة وحدة = تنفيذ مرتين).
