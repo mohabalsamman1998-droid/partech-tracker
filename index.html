@@ -1288,8 +1288,11 @@ function orderTotals(order){
 function orderStatusFlags(order){
   const t = orderTotals(order);
   return Object.assign({}, t, {
-    waitingAmerPayment: order.confirmed && t.costToScrapyard>0 && !order.paidToAmer,
-    waitingSupplierPayment: order.confirmed && t.costToSupplier>0 && !order.paidToSupplier,
+    // "بانتظار السداد" لازم يتبع نفس منطق computeAggregateFinancials — قبل "تم التوريد" ما
+    // في دين حقيقي بعد (انظر ملاحظة computeAggregateFinancials)، فما ينفع الفلتر/التلوين يقول
+    // "بانتظار السداد" على طلبية ما صارت مستحقة أصلًا بمؤشرات الصندوق
+    waitingAmerPayment: order.confirmed && order.supplied && t.costToScrapyard>0 && !order.paidToAmer,
+    waitingSupplierPayment: order.confirmed && order.supplied && t.costToSupplier>0 && !order.paidToSupplier,
     waitingSupply: order.confirmed && !order.supplied,
     waitingPricing: !t.hasSell && !t.allPartsReturned && !t.noActiveParts,
     waitingCustomerPayment: order.confirmed && order.supplied && t.hasSell && !t.customerFullyPaid,
@@ -1470,8 +1473,15 @@ function computeAggregateFinancials(matchPeriodFn){
   let paidToScrapyardTotal = 0, paidToSuppliersTotal = 0, customerReceiptsTotal = 0;
   confirmedOrders.forEach(o=>{
     const t = orderTotals(o);
-    if(!o.paidToAmer) dueToScrapyard += t.costToScrapyard; else paidToScrapyardTotal += t.costToScrapyard;
-    if(!o.paidToSupplier) dueToSuppliers += t.costToSupplier; else paidToSuppliersTotal += t.costToSupplier;
+    // قبل "تم التوريد" القطعة لسه ما استُلمت فعليًا — مش دين حقيقي على التشليح/المورد بعد
+    // (ممكن يتغيّر/يتلغى قبل التسليم)، وأصلًا الطلبية ما بتظهر لعامر بشاشة السداد قبل هالخطوة،
+    // فكانت "مستحق للتشليح/الموردين" تزيد فور التأكيد بينما عامر ما يقدر يشوف ولا يتصرف بالطلبية
+    // أصلًا — يعطي انطباع بدين "معلّق بالهوا" لحد ما حدا يعلّم "تم التوريد". هذا القيد يخص بس
+    // "لسه ما انسدد" (dueTo*) — فرع "انسدد فعليًا" (paidTo*Total) لازم يضل بدون قيد التوريد،
+    // لأنه بيمثّل كاش خرج فعليًا من الصندوق بغض النظر عن حالة التوريد (مثلاً دفعة مقدّمة لمورد
+    // قبل وصول القطعة) — تقييده كان بيخفي كاش حقيقي مدفوع عن net.
+    if(!o.paidToAmer){ if(o.supplied) dueToScrapyard += t.costToScrapyard; } else paidToScrapyardTotal += t.costToScrapyard;
+    if(!o.paidToSupplier){ if(o.supplied) dueToSuppliers += t.costToSupplier; } else paidToSuppliersTotal += t.costToSupplier;
     if(t.hasSell && t.customerRemaining>0) dueFromCustomers += t.customerRemaining;
     customerReceiptsTotal += t.customerPaidAmountForBox;
     if(t.hasSell){
