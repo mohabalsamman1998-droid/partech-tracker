@@ -5803,8 +5803,13 @@ async function openActivityLog(){
     const orderId = row.getAttribute('data-open-order-id');
     if(!orderId) return;
     close();
-    if(currentUserRole==='scrapyard') openQuoteModal('edit', orderId, 'purchasing');
-    else openModal('edit', orderId);
+    if(currentUserRole==='scrapyard'){ openQuoteModal('edit', orderId, 'purchasing'); return; }
+    // طلبية لسا بحالة "طلب تسعير" (ما اعتمدها المبيعات بعد) لازم تفتح بنافذة مراجعة التسعير
+    // (فيها زر "اعتماد" الصريح) مش بنافذة تعديل الطلبية العادية — فتحها بالعادية كانت تسحبها من
+    // قائمة "طلبات التسعير" لقائمة "الطلبيات" بصمت بدون ما حد يضغط اعتماد فعليًا
+    const order = appData.orders.find(o=>o.id===orderId);
+    if(order && order.isQuote){ openQuoteModal('edit', orderId); return; }
+    openModal('edit', orderId);
   });
   activityLogEscListener = (e)=>{ if(e.key==='Escape') close(); };
   document.addEventListener('keydown', activityLogEscListener);
