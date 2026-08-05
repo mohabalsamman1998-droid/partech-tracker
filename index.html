@@ -176,6 +176,14 @@
   .treasury-profit-card-primary .treasury-profit-value{font-size:32px;}
   .treasury-profit-label{color:var(--text-dim);font-size:13px;font-weight:700;}
   .treasury-profit-value{font-family:'Cairo',sans-serif;font-size:28px;font-weight:800;color:var(--green);}
+  /* أي كارت مؤشر بالصندوق قابل للضغط ليفتح توضيح بسيط تحته — flex-basis:100% تحطّ التوضيح
+     بسطر لحاله تحت العنوان/الرقم (الكارت أصلًا flex-wrap) بدل ما يزاحمهم بنفس السطر */
+  .treasury-card-clickable{cursor:pointer;}
+  .treasury-card-clickable:hover{border-color:var(--green);}
+  .card-breakdown{flex-basis:100%;display:flex;flex-direction:column;gap:4px;margin-top:4px;padding-top:10px;border-top:1px dashed var(--border-soft);}
+  .card-breakdown-row{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:12.5px;color:var(--text-dim);}
+  .card-breakdown-row .num{font-weight:700;font-size:12.5px;}
+  .card-breakdown-note{font-size:12.5px;color:var(--text-dim);}
   .treasury-block{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin-bottom:14px;}
   .treasury-block-title{font-size:13px;font-weight:800;color:var(--text-dim);}
   .treasury-block-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
@@ -1470,7 +1478,7 @@ function showToast(msg, type){
 function computeAggregateFinancials(matchPeriodFn){
   const realOrders = appData.orders.filter(o=>!o.isQuote);
   const confirmedOrders = realOrders.filter(o=>o.confirmed).filter(o=> matchPeriodFn ? matchPeriodFn(o) : true);
-  let dueToScrapyard = 0, dueToSuppliers = 0, dueFromCustomers = 0, collectedProfit = 0, uncollectedProfit = 0;
+  let dueToScrapyard = 0, dueToSuppliers = 0, dueFromCustomers = 0, dueFromCustomersCount = 0, collectedProfit = 0, uncollectedProfit = 0;
   let paidToScrapyardTotal = 0, paidToSuppliersTotal = 0, customerReceiptsTotal = 0;
   confirmedOrders.forEach(o=>{
     const t = orderTotals(o);
@@ -1486,7 +1494,7 @@ function computeAggregateFinancials(matchPeriodFn){
     // نفس مبدأ dueToScrapyard/dueToSuppliers فوق — ونفس شرط waitingCustomerPayment الأصلي
     // بـorderStatusFlags (كان already يشترط order.supplied، بعكس هالمجموع اللي كان يزيد فور
     // التأكيد بس): قبل التوريد المتبقي على الزبون لسه مو "مستحق تحصيله" فعليًا بنفس منطق الدين.
-    if(o.supplied && t.hasSell && t.customerRemaining>0) dueFromCustomers += t.customerRemaining;
+    if(o.supplied && t.hasSell && t.customerRemaining>0){ dueFromCustomers += t.customerRemaining; dueFromCustomersCount++; }
     customerReceiptsTotal += t.customerPaidAmountForBox;
     if(t.hasSell){
       collectedProfit += t.collectedProfit;
@@ -1496,7 +1504,7 @@ function computeAggregateFinancials(matchPeriodFn){
   return {
     confirmedCount: confirmedOrders.length,
     unconfirmedCount: realOrders.length - confirmedOrders.length,
-    dueToScrapyard, dueToSuppliers, dueFromCustomers, collectedProfit, uncollectedProfit,
+    dueToScrapyard, dueToSuppliers, dueFromCustomers, dueFromCustomersCount, collectedProfit, uncollectedProfit,
     paidToScrapyardTotal, paidToSuppliersTotal, customerReceiptsTotal
   };
 }
@@ -4262,6 +4270,43 @@ async function shareDoc(){
 }
 
 /* ---------- treasury (الصندوق) ---------- */
+/* توضيح مبسّط تحت أي كارت مؤشر — يفضل مفتوح عبر إعادات الرسم (فلتر فترة، إلخ) لحد ما المستخدم يطويه يدويًا */
+let treasuryExpandedCards = {};
+
+function treasuryCardBreakdownHtml(entry){
+  if(!entry) return '';
+  if(!Array.isArray(entry)) return '<div class="card-breakdown-note">'+escapeHtml(entry.note)+'</div>';
+  return entry.map(t=>
+    '<div class="card-breakdown-row"><span>'+escapeHtml(t.label)+'</span><span class="num '+(t.negative?'text-rust':'text-green')+'">'+(t.negative?'-':'+')+fmtMoney(t.amount)+'</span></div>'
+  ).join('');
+}
+
+function treasuryCardHtml(key, label, valueHtml, subHtml, breakdown, extraClass){
+  const expanded = !!treasuryExpandedCards[key];
+  return '<div class="treasury-profit-card treasury-card-clickable'+(extraClass?' '+extraClass:'')+'" data-card-key="'+escapeHtml(key)+'" role="button" tabindex="0" aria-expanded="'+(expanded?'true':'false')+'">' +
+    '<span class="treasury-profit-label">'+label+'</span>' +
+    valueHtml +
+    (subHtml||'') +
+    '<div class="card-breakdown" id="card-breakdown-'+escapeHtml(key)+'" style="'+(expanded?'':'display:none;')+'">' +
+      treasuryCardBreakdownHtml(breakdown) +
+    '</div>' +
+  '</div>';
+}
+
+function bindTreasuryCardToggles(root){
+  root.querySelectorAll('[data-card-key]').forEach(card=>{
+    const key = card.getAttribute('data-card-key');
+    const toggle = ()=>{
+      treasuryExpandedCards[key] = !treasuryExpandedCards[key];
+      const panel = document.getElementById('card-breakdown-'+key);
+      if(panel) panel.style.display = treasuryExpandedCards[key] ? '' : 'none';
+      card.setAttribute('aria-expanded', treasuryExpandedCards[key] ? 'true' : 'false');
+    };
+    card.addEventListener('click', toggle);
+    card.addEventListener('keydown', e=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); toggle(); } });
+  });
+}
+
 const EXPENSE_CATEGORIES = [
   {key:'delivery', label:'التوصيل'},
   {key:'transport', label:'مواصلات'},
@@ -4704,6 +4749,8 @@ function computeTreasuryVolumes(){
   });
   return {
     purchaseVolume: round2(paidToSuppliersTotal + paidToScrapyardTotal),
+    paidToSuppliersVolume: round2(paidToSuppliersTotal),
+    paidToScrapyardVolume: round2(paidToScrapyardTotal),
     salesVolume: round2(customerReceiptsTotal),
     profitVolume: round2(collectedProfit),
     fullProfitVolume: round2(fullProfit)
@@ -4748,9 +4795,15 @@ function treasuryTotals(){
     (appData.treasury[c.key]||[]).filter(entryMatchesExtraIndicatorsPeriod).forEach(entry=>{ extraIndicatorsExpenses += Number(entry.amount)||0; });
   });
   const custodyDeficit = amerCustodyDeficit();
+  const custodyBalance = amerCustodyBalance();
+  const supportAllTime = treasurySupportTotal(()=>true);
+  const custodyTopupsAllTime = amerCustodyTopupsTotalAll();
+  const paidToScrapyardForCustody = paidToScrapyardTotalForCustody();
+  const supplierReturnReceivables = totalSupplierReturnReceivables();
+  const customerRefundsPending = totalCustomerRefundsPending();
   // صافي الصندوق = نقدي حقيقي: كل ما دفعه الزبائن + دعم خارجي، ناقص كل ما دُفع فعليًا للموردين + كل ما سُدد لعهدة عامر، ناقص مصاريف الصندوق (all-time)
   // (سداد طلبية "تم سداد التشليح" ما يأثر على الصندوق مباشرة — يُخصم من عهدة عامر بس، لحد ما تسدد لعهدة عامر فعليًا)
-  const net = round2(fSnapshot.customerReceiptsTotal + treasurySupportTotal(()=>true) - fSnapshot.paidToSuppliersTotal - amerCustodyTopupsTotalAll() - allTimeExpenses);
+  const net = round2(fSnapshot.customerReceiptsTotal + supportAllTime - fSnapshot.paidToSuppliersTotal - custodyTopupsAllTime - allTimeExpenses);
   // الصندوق بافتراض انتهاء التحصيل والسداد = لو تحصّلت كل ديون الزبائن، ودُفعت كل مستحقات الموردين،
   // وسدّدت عجز عهدة عامر (اللي دفعه فعليًا للتشاليح ولسه ما رجّعتله) + كل الطلبيات يلي لسه ما تسدد للتشليح،
   // وكمان لو تحصّلت كل مرتجعات الموردين المعلّقة ورجعت كل مبالغ العملاء المعلّقة
@@ -4758,7 +4811,7 @@ function treasuryTotals(){
   // الطرح القديم بالضبط، بس لو عامر ماسك فلوس ما صرفها بعد (رصيد موجب) فهاي كاش خرج من
   // الصندوق (انطرح ضمن net) ولسه قابل للاسترجاع ورح يغطي جزء من "مستحق للتشليح" — كان
   // بينخصم مرتين وبيطلّع الرقم أقل من الواقع.
-  const netAfterSettlement = round2(net + fSnapshot.dueFromCustomers + amerCustodyBalance() - fSnapshot.dueToScrapyard - fSnapshot.dueToSuppliers + totalSupplierReturnReceivables() - totalCustomerRefundsPending());
+  const netAfterSettlement = round2(net + fSnapshot.dueFromCustomers + custodyBalance - fSnapshot.dueToScrapyard - fSnapshot.dueToSuppliers + supplierReturnReceivables - customerRefundsPending);
   // الديون للموردين = عجز عهدة عامر (تشاليح مدفوعة فعليًا ولسه ما رجّعتلها) + الطلبيات يلي لسه ما تسدد للتشليح + المستحق للموردين
   const debtsToSuppliers = round2(custodyDeficit + fSnapshot.dueToScrapyard + fSnapshot.dueToSuppliers);
   const volumes = computeTreasuryVolumes();
@@ -4769,11 +4822,64 @@ function treasuryTotals(){
   // عن سداد المورد/التشليح من عدمه (الربح محاسبيًا مبني على الالتزام لا الدفع الفعلي)، فالسداد
   // (تجاه المورد) ما يغيّر رقم الربح — بس خلّينا الاسم مطابق لمؤشر الصندوق المماثل للاتساق.
   const netProfitVolumeAfterSettlement = round2(volumes.fullProfitVolume - extraIndicatorsExpenses);
+
+  // تفاصيل كل مؤشر — لعرضها كتوضيح بسيط لما المستخدم يضغط على الكارت بالواجهة
+  const term = (label, amount)=> ({ label, amount: Math.abs(round2(amount)), negative: amount<0 });
+  const breakdowns = {
+    net: [
+      term('دفعات الزبائن (صافي)', fSnapshot.customerReceiptsTotal),
+      term('الدعم الخارجي', supportAllTime),
+      term('المدفوع للموردين', -fSnapshot.paidToSuppliersTotal),
+      term('سداد عهدة المشتريات', -custodyTopupsAllTime),
+      term('المصاريف', -allTimeExpenses)
+    ],
+    netAfterSettlement: [
+      term('الصندوق حاليًا', net),
+      term('مستحق من الزبائن', fSnapshot.dueFromCustomers),
+      term('رصيد المشتريات', custodyBalance),
+      term('مستحق للتشليح', -fSnapshot.dueToScrapyard),
+      term('مستحق للموردين', -fSnapshot.dueToSuppliers),
+      term('مرتجعات مستحقة لنا', supplierReturnReceivables),
+      term('مرتجعات مستحقة للعملاء', -customerRefundsPending)
+    ],
+    uncollectedProfit: [
+      term('الربح المحصّل (كل الطلبيات)', fSnapshot.collectedProfit),
+      term('الربح غير المحصّل', fSnapshot.uncollectedProfit)
+    ],
+    debtsToSuppliers: [
+      term('عجز عهدة المشتريات', custodyDeficit),
+      term('مستحق للتشليح', fSnapshot.dueToScrapyard),
+      term('مستحق للموردين', fSnapshot.dueToSuppliers)
+    ],
+    amerCustodyBalance: [
+      term('إجمالي المسدد للعهدة (بالإشارة)', custodyTopupsAllTime),
+      term('المدفوع فعليًا للتشليح من العهدة', -paidToScrapyardForCustody)
+    ],
+    dueFromCustomers: { note: fSnapshot.dueFromCustomersCount>0
+      ? 'مجموع المتبقي على '+fSnapshot.dueFromCustomersCount+' طلبية مسلّمة لسه ما سُددت بالكامل'
+      : 'ما فيه طلبيات مسلّمة عليها مبلغ متبقي حاليًا' },
+    purchaseVolume: [
+      term('المدفوع للموردين (بالفترة)', volumes.paidToSuppliersVolume),
+      term('المدفوع للتشليح (بالفترة)', volumes.paidToScrapyardVolume)
+    ],
+    salesVolume: { note: 'إجمالي ما دفعه الزبائن على طلبيات هذه الفترة' },
+    profitVolume: { note: 'إجمالي الربح المحصّل فعليًا (بعد استرداد التكلفة) من طلبيات هذه الفترة' },
+    netProfitVolume: [
+      term('حجم الأرباح (المحصّل)', volumes.profitVolume),
+      term('المصاريف (الفترة)', -extraIndicatorsExpenses)
+    ],
+    netProfitVolumeAfterSettlement: [
+      term('الربح الكامل (بافتراض التحصيل)', volumes.fullProfitVolume),
+      term('المصاريف (الفترة)', -extraIndicatorsExpenses)
+    ]
+  };
+
   return {
     totalExpenses, totalSupport, net, netAfterSettlement, debtsToSuppliers, dueFromCustomers: fSnapshot.dueFromCustomers, uncollectedProfit: fSnapshot.uncollectedProfit,
     purchaseVolume: volumes.purchaseVolume, salesVolume: volumes.salesVolume, profitVolume: volumes.profitVolume,
     netProfitVolume: netProfitVolume, netProfitVolumeAfterSettlement: netProfitVolumeAfterSettlement,
-    amerCustodyBalance: amerCustodyBalance(), amerCustodyDeficit: custodyDeficit
+    amerCustodyBalance: custodyBalance, amerCustodyDeficit: custodyDeficit,
+    breakdowns
   };
 }
 
@@ -5003,11 +5109,16 @@ function renderTreasuryView(){
         '<label class="mini-label" style="margin:0;">إلى<input type="date" id="extra-indicators-range-to" class="extra-indicators-month-input" value="'+escapeHtml(extraIndicatorsRangeTo||'')+'"></label>' +
       '</div>' +
       '<div class="extra-indicators-row" id="extra-indicators-row">' +
-        '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم الشراء</span><span class="treasury-profit-value">'+fmtMoney(t.purchaseVolume)+'</span></div>' +
-        '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم عمليات البيع</span><span class="treasury-profit-value">'+fmtMoney(t.salesVolume)+'</span></div>' +
-        '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم الأرباح</span><span class="treasury-profit-value">'+fmtMoney(t.profitVolume)+'</span></div>' +
-        '<div class="treasury-profit-card"><span class="treasury-profit-label">صافي الأرباح الشهرية الفعلي</span><span class="treasury-profit-value '+(t.netProfitVolume<0?'text-rust':'text-green')+'">'+fmtMoney(t.netProfitVolume)+'</span></div>' +
-        '<div class="treasury-profit-card"><span class="treasury-profit-label">صافي الأرباح الشهرية بافتراض السداد والتحصيل</span><span class="treasury-profit-value '+(t.netProfitVolumeAfterSettlement<0?'text-rust':'text-green')+'">'+fmtMoney(t.netProfitVolumeAfterSettlement)+'</span></div>' +
+        treasuryCardHtml('purchaseVolume', 'حجم الشراء',
+          '<span class="treasury-profit-value">'+fmtMoney(t.purchaseVolume)+'</span>', null, t.breakdowns.purchaseVolume) +
+        treasuryCardHtml('salesVolume', 'حجم عمليات البيع',
+          '<span class="treasury-profit-value">'+fmtMoney(t.salesVolume)+'</span>', null, t.breakdowns.salesVolume) +
+        treasuryCardHtml('profitVolume', 'حجم الأرباح',
+          '<span class="treasury-profit-value">'+fmtMoney(t.profitVolume)+'</span>', null, t.breakdowns.profitVolume) +
+        treasuryCardHtml('netProfitVolume', 'صافي الأرباح الشهرية الفعلي',
+          '<span class="treasury-profit-value '+(t.netProfitVolume<0?'text-rust':'text-green')+'">'+fmtMoney(t.netProfitVolume)+'</span>', null, t.breakdowns.netProfitVolume) +
+        treasuryCardHtml('netProfitVolumeAfterSettlement', 'صافي الأرباح الشهرية بافتراض السداد والتحصيل',
+          '<span class="treasury-profit-value '+(t.netProfitVolumeAfterSettlement<0?'text-rust':'text-green')+'">'+fmtMoney(t.netProfitVolumeAfterSettlement)+'</span>', null, t.breakdowns.netProfitVolumeAfterSettlement) +
       '</div>' +
     '</div>' +
     '<div id="expenses-block-wrap" style="'+(expensesBlockOpen?'':'display:none;')+' margin-bottom:10px;">' +
@@ -5030,31 +5141,25 @@ function renderTreasuryView(){
         '</div>' +
       '</div>' +
     '</div>' +
-    '<div class="treasury-profit-card treasury-profit-card-primary">' +
-      '<span class="treasury-profit-label">الصندوق حاليًا</span>' +
-      '<span class="treasury-profit-value '+(t.net<0?'text-rust':'')+'" id="treasury-net">'+fmtMoney(t.net)+'</span>' +
-    '</div>' +
-    '<div class="treasury-profit-card">' +
-      '<span class="treasury-profit-label">الصندوق بافتراض انتهاء التحصيل والسداد</span>' +
-      '<span class="treasury-profit-value '+(t.netAfterSettlement<0?'text-rust':'')+'">'+fmtMoney(t.netAfterSettlement)+'</span>' +
-    '</div>' +
-    '<div class="treasury-profit-card">' +
-      '<span class="treasury-profit-label">الربح غير المحصّل</span>' +
-      '<span class="treasury-profit-value">'+fmtMoney(t.uncollectedProfit)+'</span>' +
-    '</div>' +
-    '<div class="treasury-profit-card">' +
-      '<span class="treasury-profit-label">الديون للموردين</span>' +
-      '<span class="treasury-profit-value text-rust">'+fmtMoney(t.debtsToSuppliers)+'</span>' +
-    '</div>' +
-    '<div class="treasury-profit-card">' +
-      '<span class="treasury-profit-label">رصيد المشتريات</span>' +
-      '<span class="treasury-profit-value '+(t.amerCustodyBalance<0?'text-rust':'text-green')+'">'+fmtMoney(t.amerCustodyBalance)+'</span>' +
-      (t.amerCustodyDeficit>0 ? '<div class="kpi-sub" style="color:var(--rust);">عليك سداد '+fmtMoney(t.amerCustodyDeficit)+' لعامر</div>' : '') +
-    '</div>' +
-    '<div class="treasury-profit-card">' +
-      '<span class="treasury-profit-label">مستحق من الزبائن</span>' +
-      '<span class="treasury-profit-value">'+fmtMoney(t.dueFromCustomers)+'</span>' +
-    '</div>' +
+    treasuryCardHtml('net', 'الصندوق حاليًا',
+      '<span class="treasury-profit-value '+(t.net<0?'text-rust':'')+'" id="treasury-net">'+fmtMoney(t.net)+'</span>',
+      null, t.breakdowns.net, 'treasury-profit-card-primary') +
+    treasuryCardHtml('netAfterSettlement', 'الصندوق بافتراض انتهاء التحصيل والسداد',
+      '<span class="treasury-profit-value '+(t.netAfterSettlement<0?'text-rust':'')+'">'+fmtMoney(t.netAfterSettlement)+'</span>',
+      null, t.breakdowns.netAfterSettlement) +
+    treasuryCardHtml('uncollectedProfit', 'الربح غير المحصّل',
+      '<span class="treasury-profit-value">'+fmtMoney(t.uncollectedProfit)+'</span>',
+      null, t.breakdowns.uncollectedProfit) +
+    treasuryCardHtml('debtsToSuppliers', 'الديون للموردين',
+      '<span class="treasury-profit-value text-rust">'+fmtMoney(t.debtsToSuppliers)+'</span>',
+      null, t.breakdowns.debtsToSuppliers) +
+    treasuryCardHtml('amerCustodyBalance', 'رصيد المشتريات',
+      '<span class="treasury-profit-value '+(t.amerCustodyBalance<0?'text-rust':'text-green')+'">'+fmtMoney(t.amerCustodyBalance)+'</span>',
+      (t.amerCustodyDeficit>0 ? '<div class="kpi-sub" style="color:var(--rust);">عليك سداد '+fmtMoney(t.amerCustodyDeficit)+' لعامر</div>' : null),
+      t.breakdowns.amerCustodyBalance) +
+    treasuryCardHtml('dueFromCustomers', 'مستحق من الزبائن',
+      '<span class="treasury-profit-value">'+fmtMoney(t.dueFromCustomers)+'</span>',
+      null, t.breakdowns.dueFromCustomers) +
     '<div class="data-mgmt-row">' +
       '<span class="data-mgmt-label">إدارة البيانات</span>' +
       '<button type="button" class="btn btn-ghost btn-sm" id="btn-export-excel">⬇️ تصدير Excel</button>' +
@@ -5105,6 +5210,7 @@ function renderTreasuryView(){
   bindScrapyardEntryEvents();
   updateScrapyardBadges();
   updateTreasurySummary();
+  bindTreasuryCardToggles(el);
 }
 
 function bindTreasuryPeriodFilter(){
