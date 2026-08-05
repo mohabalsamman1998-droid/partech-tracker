@@ -2199,27 +2199,7 @@ function attachModalHandlers(){
     returnToQuoteBtn.addEventListener('click', confirmReturnOrderToQuote);
   }
 
-  const confirmRefundBtn = root.querySelector('#order-confirm-refund-btn');
-  if(confirmRefundBtn){
-    confirmRefundBtn.addEventListener('click', ()=>{
-      confirmAction({
-        title: 'تأكيد رد المبلغ للزبون؟',
-        message: 'رح يُخصم المبلغ من صافي الصندوق. احفظ الطلبية بعدها حتى يتثبّت.',
-        confirmLabel: 'تم الرد',
-        dangerous: true,
-        onConfirm: ()=>{
-          (draft.parts||[]).forEach(p=>{
-            if(!p.returned || p.customerRefundConfirmed) return;
-            const adj = (draft.customerPayments||[]).find(pay=>pay.returnAdjustment && pay.linkedPartId===p.id);
-            if(adj) p.customerRefundConfirmed = true;
-          });
-          refreshPartsList();
-          updateModalTotals();
-          showToast('تم التعليم — اضغط "حفظ الطلبية" لتثبيته', 'ok');
-        }
-      });
-    });
-  }
+  bindOrderRefundConfirmButton();
 
   const delBtn = root.querySelector('#modal-delete-btn');
   if(delBtn){
@@ -2581,7 +2561,41 @@ function updateModalTotals(){
   const paidEl = document.getElementById('total-paid-display');
   if(paidEl) paidEl.textContent = fmtMoney(t.customerPaidAmount);
   const refundStatusWrap = document.getElementById('customer-refund-status-wrap');
-  if(refundStatusWrap) refundStatusWrap.innerHTML = orderCustomerRefundStatusHtml(draft);
+  if(refundStatusWrap){
+    refundStatusWrap.innerHTML = orderCustomerRefundStatusHtml(draft);
+    // إعادة الربط بعد كل إعادة رسم: الزر كان يتربط مرة وحدة بس داخل attachModalHandlers، وهاي
+    // السطر بيستبدل العنصر بعنصر جديد بلا مستمع مع كل تحديث للمجاميع — يعني بالحالة الطبيعية
+    // (إرجاع قطعة والنافذة مفتوحة) الزر كان يظهر لأول مرة *بعد* الربط، فيطلع ميت ما بيسوي إشي.
+    bindOrderRefundConfirmButton();
+  }
+}
+
+/* زر "تم رد المبلغ للزبون" داخل نافذة الطلبية — دالة مستقلة لأنها تُستدعى بعد كل إعادة رسم
+   لكتلة حالة الاسترداد، مش مرة وحدة وقت فتح النافذة. */
+function bindOrderRefundConfirmButton(){
+  const root = document.getElementById('modal-root');
+  if(!root) return;
+  const confirmRefundBtn = root.querySelector('#order-confirm-refund-btn');
+  if(!confirmRefundBtn) return;
+  confirmRefundBtn.addEventListener('click', ()=>{
+    confirmAction({
+      title: 'تأكيد رد المبلغ للزبون؟',
+      message: 'رح يُخصم المبلغ من صافي الصندوق. احفظ الطلبية بعدها حتى يتثبّت.',
+      confirmLabel: 'تم الرد',
+      dangerous: true,
+      onConfirm: ()=>{
+        if(!draft) return; // النافذة انسكّرت والمستخدم لسه ماسك مربع التأكيد
+        (draft.parts||[]).forEach(p=>{
+          if(!p.returned || p.customerRefundConfirmed) return;
+          const adj = (draft.customerPayments||[]).find(pay=>pay.returnAdjustment && pay.linkedPartId===p.id);
+          if(adj) p.customerRefundConfirmed = true;
+        });
+        refreshPartsList();
+        updateModalTotals();
+        showToast('تم التعليم — اضغط "حفظ الطلبية" لتثبيته', 'ok');
+      }
+    });
+  });
 }
 
 /* حالة إرجاع مبلغ الزبون لهذه الطلبية — قطعة رجعت وكان مدفوع ثمنها: "يجب إرجاع X للزبون"
@@ -3607,8 +3621,14 @@ function openQuickAddCustomerModal(onSaved, prefill){
     if(dup){ showToast('عميل موجود مسبقًا بنفس الاسم أو الرقم: '+(dup.name||dup.phone||'عميل'), 'error'); return; }
     const newCustomer = { id: uid('cust'), name, phone, notes: '' };
     if(!Array.isArray(appData.customers)) appData.customers = [];
+    // الحفظ بالقاعدة أولًا: الكتابة بجدول العملاء محصورة بدور "full"، وبدون هالفحص كان الفشل
+    // يطلّع "تم إضافة العميل" ويربط الطلبية بمعرّف عميل مش موجود أصلًا بالقاعدة.
+    const saveBtn = root.querySelector('#quick-customer-save-btn');
+    if(saveBtn) saveBtn.disabled = true;
+    const saved = await persistCustomer(newCustomer);
+    if(saveBtn) saveBtn.disabled = false;
+    if(!saved) return;
     appData.customers.push(newCustomer);
-    await persistCustomer(newCustomer);
     close();
     showToast('تم إضافة العميل', 'ok');
     if(onSaved) onSaved(newCustomer);
@@ -3657,8 +3677,10 @@ function openQuickAddSupplierModal(onSaved){
     saveBtn.disabled = true; // يمنع نقرتين سريعتين من إنشاء موردين مكررين قبل ما أول طلب يخلص
     const newSupplier = { id: uid('sup'), name, phone, notes:'', extraPhones: [], handlesNew, handlesUsed };
     if(!Array.isArray(appData.suppliers)) appData.suppliers = [];
+    // الحفظ بالقاعدة أولًا — انظر ملاحظة openQuickAddCustomerModal
+    const saved = await persistSupplier(newSupplier);
+    if(!saved){ saveBtn.disabled = false; return; }
     appData.suppliers.push(newSupplier);
-    await persistSupplier(newSupplier);
     close();
     showToast('تم إضافة المورد', 'ok');
     if(typeof onSaved === 'function') onSaved(newSupplier);
@@ -4662,7 +4684,9 @@ function expenseEntryRowHtml(entry, categoryKey){
   }
   const amountVal = (entry.amount===''||entry.amount==null) ? '' : entry.amount;
   return '<div class="expense-entry-row" data-expense-key="'+escapeHtml(categoryKey)+'" data-entry-id="'+escapeHtml(entry.id)+'">' +
-    '<input type="number" min="0" step="0.01" class="expense-entry-amount-input num'+(isSupport?' support-amount':'')+'" placeholder="المبلغ" value="'+amountVal+'">' +
+    // بدون min="0" لفئات الدعم/عهدة عامر: قيودها ممكن تكون سالبة بالتصميم (سحب/خصم)، والحفظ
+    // نفسه بيقبل السالب — بس الحقل كان يعتبر القيمة غير صالحة ويمنع أسهم التنقيص من النزول تحت الصفر
+    '<input type="number"'+(isSupport?'':' min="0"')+' step="0.01" class="expense-entry-amount-input num'+(isSupport?' support-amount':'')+'" placeholder="المبلغ" value="'+escapeHtml(amountVal)+'">' +
     '<input type="date" class="expense-entry-date-input" value="'+dmyToIso(entry.date)+'">' +
     '<input type="text" class="expense-entry-note-input" placeholder="تفاصيل (مثلا: من أين / لمن)" value="'+escapeHtml(entry.note||'')+'">' +
     '<button type="button" class="btn btn-sm expense-add-entry-btn expense-entry-save-btn">💾 حفظ</button>' +
@@ -4942,10 +4966,16 @@ function openWithdrawCustodyModal(onSaved){
     if(!amountInput.value || isNaN(amount) || amount<=0){ showToast('أدخل مبلغًا صحيحًا', 'error'); return; }
     if(!Array.isArray(appData.treasury.amerCustody)) appData.treasury.amerCustody = [];
     const newEntry = { id: uid('exp'), amount: -amount, date: isoToDmy(dateInput.value), note: (noteInput.value||'').trim() || 'سحب من عهدة عامر' };
+    // الحفظ بالقاعدة أولًا: الكتابة بجدول الصندوق محصورة بدور "full"، فكان أي دور تاني يشوف
+    // "تم السحب" والقيد بالذاكرة بس — يختفي مع أول إعادة تحميل.
+    const saveBtn = root.querySelector('#withdraw-custody-save-btn');
+    if(saveBtn) saveBtn.disabled = true;
+    const saved = await persistTreasuryEntry(newEntry, 'amerCustody');
+    if(saveBtn) saveBtn.disabled = false;
+    if(!saved) return;
     appData.treasury.amerCustody.push(newEntry);
     close();
     (onSaved||renderTreasuryView)();
-    await persistTreasuryEntry(newEntry, 'amerCustody');
     showToast('تم السحب من العهدة وإضافة المبلغ للصندوق', 'ok');
   });
 }
@@ -5017,10 +5047,16 @@ function openAddExpenseModal(){
     if(!amountInput.value || isNaN(amount) || amount<=0){ showToast('أدخل مبلغًا صحيحًا', 'error'); return; }
     if(!Array.isArray(appData.treasury[addExpenseSelectedType])) appData.treasury[addExpenseSelectedType] = [];
     const newEntry = { id: uid('exp'), amount, date: isoToDmy(dateInput.value), note: (noteInput.value||'').trim() };
-    appData.treasury[addExpenseSelectedType].push(newEntry);
+    // الحفظ بالقاعدة أولًا — انظر ملاحظة openWithdrawCustodyModal
+    const category = addExpenseSelectedType;
+    const saveBtn = root.querySelector('#expense-add-save-btn');
+    if(saveBtn) saveBtn.disabled = true;
+    const saved = await persistTreasuryEntry(newEntry, category);
+    if(saveBtn) saveBtn.disabled = false;
+    if(!saved) return;
+    appData.treasury[category].push(newEntry);
     close();
     renderTreasuryView();
-    await persistTreasuryEntry(newEntry, addExpenseSelectedType);
     showToast('تم إضافة المصروف', 'ok');
   });
 }
@@ -5055,12 +5091,16 @@ function bindExpenseEntryEvents(key){
           refreshExpenseEntries(key);
           return;
         }
+        const prev = { amount: liveEntry.amount, date: liveEntry.date, note: liveEntry.note };
         liveEntry.amount = amt;
         liveEntry.date = entry.date;
         liveEntry.note = entry.note;
+        const saved = await persistTreasuryEntry(liveEntry, key);
+        // فشل الحفظ (RLS بتحصر الكتابة بدور "full") كان يخلّي القيمة الجديدة بالذاكرة مع رسالة
+        // "تم حفظ المبلغ" — نرجّع القيم القديمة ونبقي الصف بوضع التعديل لإعادة المحاولة.
+        if(!saved){ Object.assign(liveEntry, prev); refreshExpenseEntries(key); return; }
         delete editingExpenseEntries[entryId];
         refreshExpenseEntries(key);
-        await persistTreasuryEntry(liveEntry, key);
         showToast('تم حفظ المبلغ', 'ok');
       });
     }
@@ -5093,10 +5133,15 @@ function confirmDeleteExpenseEntry(key, entryId){
     confirmLabel: 'تأكيد الحذف',
     dangerous: true,
     onConfirm: async ()=>{
-      appData.treasury[key] = appData.treasury[key].filter(e=>e.id!==entryId);
+      // الحذف من القاعدة أولًا: لو RLS منعته (دور غير "full")، شيله من الذاكرة كان بيوهم إنه انحذف
+      // فعليًا لحد ما يرجع يظهر مع أول تحديث/إعادة تحميل.
+      const deleted = await deleteTreasuryEntry(entryId);
+      if(!deleted) return;
+      appData.treasury[key] = (appData.treasury[key]||[]).filter(e=>e.id!==entryId);
       delete editingExpenseEntries[entryId];
       refreshExpenseEntries(key);
-      await deleteTreasuryEntry(entryId);
+      updateExpenseCategorySubtotal(key);
+      updateTreasurySummary();
     }
   });
 }
@@ -5338,10 +5383,15 @@ function bindTaskCategoryEvents(key){
     if(!text) return;
     if(!Array.isArray(appData.tasks[key])) appData.tasks[key] = [];
     const newItem = {id: uid('task'), text, done:false, createdAt: new Date().toISOString()};
+    // الحفظ بالقاعدة أولًا — بدون هيك، فشل الحفظ (دور غير "full") كان يترك المهمة ظاهرة
+    // بالقائمة وبالعدّاد وهي مش محفوظة، وتختفي مع أول إعادة تحميل بدون أي إشعار.
+    addBtn.disabled = true;
+    const saved = await persistTaskItem(newItem, key);
+    addBtn.disabled = false;
+    if(!saved) return;
     appData.tasks[key].push(newItem);
     input.value = '';
     updateTasksBadge();
-    await persistTaskItem(newItem, key);
     refreshTaskItemsList(key);
   };
   addBtn.addEventListener('click', addTask);
@@ -5361,15 +5411,25 @@ function bindTaskItemEvents(key){
       // لنفس سبب حماية تعديل المصاريف — appData.tasks ممكن يكون تحدّث لحظيًا من مستخدم ثاني.
       const liveItem = (appData.tasks[key]||[]).find(t=>t.id===tid);
       if(!liveItem) return;
+      const prevDone = liveItem.done;
       liveItem.done = e.target.checked;
       row.classList.toggle('task-item-done', liveItem.done);
       updateTasksBadge();
-      await persistTaskItem(liveItem, key);
+      const saved = await persistTaskItem(liveItem, key);
+      // فشل الحفظ (الكتابة بجدول المهام محصورة بدور "full") كان يترك المربّع محدّد بالواجهة فقط
+      if(!saved){
+        liveItem.done = prevDone;
+        e.target.checked = prevDone;
+        row.classList.toggle('task-item-done', prevDone);
+        updateTasksBadge();
+      }
     });
     row.querySelector('.task-item-remove-btn').addEventListener('click', async ()=>{
-      appData.tasks[key] = appData.tasks[key].filter(t=>t.id!==tid);
+      // الحذف من القاعدة أولًا — انظر ملاحظة confirmDeleteExpenseEntry
+      const deleted = await deleteTaskItem(tid);
+      if(!deleted) return;
+      appData.tasks[key] = (appData.tasks[key]||[]).filter(t=>t.id!==tid);
       updateTasksBadge();
-      await deleteTaskItem(tid);
       refreshTaskItemsList(key);
     });
   });
@@ -5881,6 +5941,7 @@ function subscribeTreasuryRealtime(){
     .subscribe();
 }
 
+/* نفس مبدأ persistOrder: بترجع true/false حتى المُستدعي ما يقول "تم الحفظ" وهو فشل فعليًا */
 async function persistTreasuryEntry(entry, category){
   try{
     if(!sb) throw new Error('NO_DB');
@@ -5888,18 +5949,29 @@ async function persistTreasuryEntry(entry, category){
       id: entry.id, category, amount: entry.amount, date: entry.date||'', note: entry.note||''
     });
     if(error) throw error;
+    return true;
   }catch(e){
     showToast('تعذر حفظ المصروف: ' + (e && e.message ? e.message : ''), 'error');
+    return false;
   }
 }
 
+/* نفس مبدأ deleteOrder — .delete() بترجع بلا خطأ حتى لو RLS منعت الحذف (صفر صفوف): الكتابة
+   بجدول الصندوق محصورة بدور "full"، فحذف موظف مبيعات/مشتريات كان بينجح شكليًا بالواجهة
+   والصف باقي بالقاعدة ويرجع يظهر مع أول تحديث. .select() بتخلينا نميّز الحالتين. */
 async function deleteTreasuryEntry(id){
   try{
     if(!sb) throw new Error('NO_DB');
-    const { error } = await sb.from('treasury_entries').delete().eq('id', id);
+    const { data, error } = await sb.from('treasury_entries').delete().eq('id', id).select('id');
     if(error) throw error;
+    if(!data || !data.length){
+      showToast('تعذر حذف المبلغ — ما عندك صلاحية حذف، أو انحذف من مكان تاني', 'error');
+      return false;
+    }
+    return true;
   }catch(e){
     showToast('تعذر حذف المصروف: ' + (e && e.message ? e.message : ''), 'error');
+    return false;
   }
 }
 
@@ -5958,18 +6030,27 @@ async function persistTaskItem(item, category){
       created_at: item.createdAt || new Date().toISOString()
     });
     if(error) throw error;
+    return true;
   }catch(e){
     showToast('تعذر حفظ المهمة: ' + (e && e.message ? e.message : ''), 'error');
+    return false;
   }
 }
 
+/* نفس ملاحظة deleteTreasuryEntry — الكتابة بجدول المهام محصورة بدور "full" */
 async function deleteTaskItem(id){
   try{
     if(!sb) throw new Error('NO_DB');
-    const { error } = await sb.from('tasks').delete().eq('id', id);
+    const { data, error } = await sb.from('tasks').delete().eq('id', id).select('id');
     if(error) throw error;
+    if(!data || !data.length){
+      showToast('تعذر حذف المهمة — ما عندك صلاحية حذف، أو انحذفت من مكان تاني', 'error');
+      return false;
+    }
+    return true;
   }catch(e){
     showToast('تعذر حذف المهمة: ' + (e && e.message ? e.message : ''), 'error');
+    return false;
   }
 }
 
@@ -6024,18 +6105,27 @@ async function persistSupplier(supplier){
       handles_used: supplier.handlesUsed !== false
     });
     if(error) throw error;
+    return true;
   }catch(e){
     showToast('تعذر حفظ المورد: ' + (e && e.message ? e.message : ''), 'error');
+    return false;
   }
 }
 
+/* نفس ملاحظة deleteTreasuryEntry — حذف الموردين محصور بدور "full" (الإضافة/التعديل متاحة للكل) */
 async function deleteSupplier(id){
   try{
     if(!sb) throw new Error('NO_DB');
-    const { error } = await sb.from('suppliers').delete().eq('id', id);
+    const { data, error } = await sb.from('suppliers').delete().eq('id', id).select('id');
     if(error) throw error;
+    if(!data || !data.length){
+      showToast('تعذر حذف المورد — ما عندك صلاحية حذف، أو انحذف من مكان تاني', 'error');
+      return false;
+    }
+    return true;
   }catch(e){
     showToast('تعذر حذف المورد: ' + (e && e.message ? e.message : ''), 'error');
+    return false;
   }
 }
 
@@ -6081,18 +6171,27 @@ async function persistCustomer(customer){
     if(!sb) throw new Error('NO_DB');
     const { error } = await sb.from('customers').upsert({ id: customer.id, name: customer.name||'', phone: customer.phone||'', notes: customer.notes||'' });
     if(error) throw error;
+    return true;
   }catch(e){
     showToast('تعذر حفظ العميل: ' + (e && e.message ? e.message : ''), 'error');
+    return false;
   }
 }
 
+/* نفس ملاحظة deleteTreasuryEntry — كل الكتابة بجدول العملاء محصورة بدور "full" */
 async function deleteCustomer(id){
   try{
     if(!sb) throw new Error('NO_DB');
-    const { error } = await sb.from('customers').delete().eq('id', id);
+    const { data, error } = await sb.from('customers').delete().eq('id', id).select('id');
     if(error) throw error;
+    if(!data || !data.length){
+      showToast('تعذر حذف العميل — ما عندك صلاحية حذف، أو انحذف من مكان تاني', 'error');
+      return false;
+    }
+    return true;
   }catch(e){
     showToast('تعذر حذف العميل: ' + (e && e.message ? e.message : ''), 'error');
+    return false;
   }
 }
 
@@ -6452,11 +6551,14 @@ function bindSuppliersViewEvents(){
       handlesNew: handlesNewCheck.checked, handlesUsed: handlesUsedCheck.checked
     };
     if(!Array.isArray(appData.suppliers)) appData.suppliers = [];
+    // الحفظ بالقاعدة أولًا — لو فشل، ما نضيفه للقائمة ولا نفرّغ الحقول حتى يقدر يعيد المحاولة
+    const saved = await persistSupplier(newSupplier);
+    if(!saved) return;
     appData.suppliers.push(newSupplier);
     nameInput.value = ''; phoneInput.value = '';
     handlesNewCheck.checked = false; handlesUsedCheck.checked = false;
     refreshSuppliersList();
-    await persistSupplier(newSupplier);
+    updateSuppliersBadge();
   });
   const searchInput = document.getElementById('suppliers-search-input');
   searchInput.addEventListener('input', e=>{
@@ -6487,10 +6589,13 @@ function bindSupplierRowEvents(){
           confirmLabel: 'تأكيد الحذف',
           dangerous: true,
           onConfirm: async ()=>{
-            appData.suppliers = appData.suppliers.filter(s=>s.id!==sid);
+            // الحذف من القاعدة أولًا — انظر ملاحظة confirmDeleteExpenseEntry
+            const deleted = await deleteSupplier(sid);
+            if(!deleted) return;
+            appData.suppliers = (appData.suppliers||[]).filter(s=>s.id!==sid);
             delete editingSuppliers[sid];
             refreshSuppliersList();
-            await deleteSupplier(sid);
+            updateSuppliersBadge();
           }
         });
       });
@@ -6847,10 +6952,13 @@ function bindCustomersViewEvents(){
     if(dup){ showToast('عميل موجود مسبقًا بنفس الاسم أو الرقم: '+(dup.name||dup.phone||'عميل'), 'error'); return; }
     const newCustomer = { id: uid('cust'), name, phone, notes:'' };
     if(!Array.isArray(appData.customers)) appData.customers = [];
+    // الحفظ بالقاعدة أولًا — انظر ملاحظة إضافة المورد بشاشة الموردين
+    const saved = await persistCustomer(newCustomer);
+    if(!saved) return;
     appData.customers.push(newCustomer);
     nameInput.value = ''; phoneInput.value = '';
     refreshCustomersList();
-    await persistCustomer(newCustomer);
+    updateCustomersBadge();
   });
   const searchInput = document.getElementById('customers-search-input');
   searchInput.addEventListener('input', e=>{
@@ -6909,10 +7017,13 @@ function bindCustomerRowEvents(){
           confirmLabel: 'تأكيد الحذف',
           dangerous: true,
           onConfirm: async ()=>{
-            appData.customers = appData.customers.filter(c=>c.id!==cid);
+            // الحذف من القاعدة أولًا — انظر ملاحظة confirmDeleteExpenseEntry
+            const deleted = await deleteCustomer(cid);
+            if(!deleted) return;
+            appData.customers = (appData.customers||[]).filter(c=>c.id!==cid);
             delete editingCustomers[cid];
             refreshCustomersList();
-            await deleteCustomer(cid);
+            updateCustomersBadge();
           }
         });
       });
@@ -7704,7 +7815,8 @@ function openQuickAddScrapyardSupplierModal(onSaved){
     if(!name && !phone){ showToast('اكتب اسم أو رقم جوال على الأقل', 'error'); return; }
     scrapyardSaveBtn.disabled = true; // يمنع نقرتين سريعتين من إنشاء تشليحين مكررين قبل ما أول طلب يخلص
     const newSupplier = { id: uid('sup'), name, phone, notes:'', extraPhones: [], handlesNew: false, handlesUsed: true };
-    await persistSupplier(newSupplier);
+    const saved = await persistSupplier(newSupplier);
+    if(!saved){ scrapyardSaveBtn.disabled = false; return; } // فشل الحفظ كان يطلّع "تم إضافة التشليح" ويضيفه للقائمة محليًا بس
     close();
     showToast('تم إضافة التشليح', 'ok');
     if(typeof onSaved === 'function'){
@@ -7831,13 +7943,15 @@ function bindScrapyardSupplierManageEvents(){
     const saveBtn = row.querySelector('.scrapyard-supplier-save-btn');
     if(saveBtn){
       saveBtn.addEventListener('click', async ()=>{
-        delete editingScrapyardSuppliers[sid];
-        refreshScrapyardSupplierManageList();
-        await persistSupplier({
+        const saved = await persistSupplier({
           id: supplier.id, name: supplier.name, phone: supplier.phone,
           extraPhones: Array.isArray(supplier.extra_phones) ? supplier.extra_phones.filter(Boolean) : [],
           handlesNew: supplier.handles_new !== false, handlesUsed: supplier.handles_used !== false
         });
+        // فشل الحفظ كان يقفل وضع التعديل ويقول "تم حفظ المورد" — نبقي الصف مفتوح لإعادة المحاولة
+        if(!saved) return;
+        delete editingScrapyardSuppliers[sid];
+        refreshScrapyardSupplierManageList();
         showToast('تم حفظ المورد', 'ok');
         renderScrapyardView();
       });
