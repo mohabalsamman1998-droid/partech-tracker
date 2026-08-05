@@ -1376,7 +1376,8 @@ function groupSupplierOrCustomerRows(rows){
     id: r.id, name: r.name||'', phone: r.phone||'', notes: r.notes||'',
     extraPhones: Array.isArray(r.extra_phones) ? r.extra_phones : [],
     handlesNew: r.handles_new !== false,
-    handlesUsed: r.handles_used !== false
+    handlesUsed: r.handles_used !== false,
+    createdAt: r.created_at || ''
   }));
 }
 
@@ -3242,7 +3243,7 @@ function attachQuoteModalHandlers(){
           if(!Array.isArray(appData.suppliers)) appData.suppliers = [];
           appData.suppliers.push({
             id: newSupplier.id, name: newSupplier.name, phone: newSupplier.phone,
-            extraPhones: [], handlesNew: false, handlesUsed: true
+            extraPhones: [], handlesNew: false, handlesUsed: true, createdAt: new Date().toISOString()
           });
         });
       });
@@ -3632,7 +3633,7 @@ function openQuickAddCustomerModal(onSaved, prefill){
     if(!name && !phone){ showToast('اكتب اسم أو رقم جوال على الأقل', 'error'); return; }
     const dup = findDuplicateCustomer(name, phone);
     if(dup){ showToast('عميل موجود مسبقًا بنفس الاسم أو الرقم: '+(dup.name||dup.phone||'عميل'), 'error'); return; }
-    const newCustomer = { id: uid('cust'), name, phone, notes: '' };
+    const newCustomer = { id: uid('cust'), name, phone, notes: '', createdAt: new Date().toISOString() };
     if(!Array.isArray(appData.customers)) appData.customers = [];
     // الحفظ بالقاعدة أولًا: الكتابة بجدول العملاء محصورة بدور "full"، وبدون هالفحص كان الفشل
     // يطلّع "تم إضافة العميل" ويربط الطلبية بمعرّف عميل مش موجود أصلًا بالقاعدة.
@@ -3688,7 +3689,7 @@ function openQuickAddSupplierModal(onSaved){
     const dup = findDuplicateSupplier(name, phone);
     if(dup){ showToast('مورد موجود مسبقًا بنفس الاسم أو الرقم: '+(dup.name||dup.phone||'مورد'), 'error'); return; }
     saveBtn.disabled = true; // يمنع نقرتين سريعتين من إنشاء موردين مكررين قبل ما أول طلب يخلص
-    const newSupplier = { id: uid('sup'), name, phone, notes:'', extraPhones: [], handlesNew, handlesUsed };
+    const newSupplier = { id: uid('sup'), name, phone, notes:'', extraPhones: [], handlesNew, handlesUsed, createdAt: new Date().toISOString() };
     if(!Array.isArray(appData.suppliers)) appData.suppliers = [];
     // الحفظ بالقاعدة أولًا — انظر ملاحظة openQuickAddCustomerModal
     const saved = await persistSupplier(newSupplier);
@@ -6133,7 +6134,8 @@ function applyRemoteSupplierChange(payload){
     if(!row || !row.id) return;
     const supplier = { id: row.id, name: row.name||'', phone: row.phone||'', notes: row.notes||'',
       extraPhones: Array.isArray(row.extra_phones) ? row.extra_phones : [],
-      handlesNew: row.handles_new !== false, handlesUsed: row.handles_used !== false };
+      handlesNew: row.handles_new !== false, handlesUsed: row.handles_used !== false,
+      createdAt: row.created_at || '' };
     const idx = appData.suppliers.findIndex(s=>s.id===supplier.id);
     if(idx>=0) appData.suppliers[idx] = supplier; else appData.suppliers.push(supplier);
   }
@@ -6205,7 +6207,7 @@ function applyRemoteCustomerChange(payload){
   } else {
     const row = payload.new;
     if(!row || !row.id) return;
-    const customer = { id: row.id, name: row.name||'', phone: row.phone||'', notes: row.notes||'' };
+    const customer = { id: row.id, name: row.name||'', phone: row.phone||'', notes: row.notes||'', createdAt: row.created_at || '' };
     const idx = appData.customers.findIndex(c=>c.id===customer.id);
     if(idx>=0) appData.customers[idx] = customer; else appData.customers.push(customer);
   }
@@ -6530,20 +6532,45 @@ function supplierRowHtml(s){
 }
 
 let suppliersSearchQuery = '';
+let suppliersKindFilter = 'all'; // 'all' | 'new' | 'used' — فلتر موردين/تشاليح، منفصل عن suppliersSearchQuery
+const SUPPLIER_KIND_FILTERS = [
+  {id:'all', label:'الكل'},
+  {id:'new', label:'موردين'},
+  {id:'used', label:'تشاليح'}
+];
+
+function renderSuppliersKindFilterButtons(){
+  const el = document.getElementById('suppliers-kind-filter-buttons');
+  if(!el) return;
+  el.innerHTML = SUPPLIER_KIND_FILTERS.map(f=>
+    '<button type="button" class="chip '+(suppliersKindFilter===f.id?'chip-active':'')+'" data-kind-filter="'+escapeHtml(f.id)+'">'+f.label+'</button>'
+  ).join('');
+  el.querySelectorAll('.chip').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      suppliersKindFilter = btn.getAttribute('data-kind-filter');
+      renderSuppliersKindFilterButtons();
+      refreshSuppliersList();
+    });
+  });
+}
+
 function suppliersMatchingSearch(){
   const q = suppliersSearchQuery.trim().toLowerCase();
   let rows = appData.suppliers||[];
+  if(suppliersKindFilter==='new') rows = rows.filter(s=>s.handlesNew);
+  else if(suppliersKindFilter==='used') rows = rows.filter(s=>s.handlesUsed);
   if(q){
     rows = rows.filter(s=>{
       const hay = [s.name, s.phone].concat(Array.isArray(s.extraPhones)?s.extraPhones:[]).join(' ').toLowerCase();
       return hay.includes(q);
     });
   }
-  // اللي عندهم مسترجع بانتظار التحصيل يطلعوا فوق
+  // اللي عندهم مسترجع بانتظار التحصيل يطلعوا فوق، وبعدها الأحدث إضافة فوق
   return [...rows].sort((a,b)=>{
     const ap = supplierReturnReceivableTotal(a.id)>0 ? 1 : 0;
     const bp = supplierReturnReceivableTotal(b.id)>0 ? 1 : 0;
-    return bp-ap;
+    if(bp-ap) return bp-ap;
+    return new Date(b.createdAt||0) - new Date(a.createdAt||0);
   });
 }
 
@@ -6568,6 +6595,7 @@ function suppliersViewHtml(){
         '<label class="supplier-kind-toggle"><input type="checkbox" id="new-supplier-handles-new-check"><span>قطع جديدة</span></label>' +
         '<label class="supplier-kind-toggle"><input type="checkbox" id="new-supplier-handles-used-check"><span>قطع مستعملة (تشليح)</span></label>' +
       '</div>' +
+      '<div class="filter-chips" id="suppliers-kind-filter-buttons" style="margin-bottom:12px;"></div>' +
       '<input type="text" id="suppliers-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث بالاسم أو رقم الجوال..." value="'+escapeHtml(suppliersSearchQuery)+'">' +
       '<div class="task-items-list" id="suppliers-items-list">' + suppliersItemsListHtml() + '</div>' +
     '</div>';
@@ -6588,6 +6616,7 @@ function renderSuppliersView(){
 
 function bindSuppliersViewEvents(){
   document.getElementById('btn-back-to-orders-from-suppliers').addEventListener('click', closeSuppliersView);
+  renderSuppliersKindFilterButtons();
   document.getElementById('add-supplier-btn').addEventListener('click', async ()=>{
     const nameInput = document.getElementById('new-supplier-name-input');
     const phoneInput = document.getElementById('new-supplier-phone-input');
@@ -6604,7 +6633,8 @@ function bindSuppliersViewEvents(){
     if(dup){ showToast('مورد موجود مسبقًا بنفس الاسم أو الرقم: '+(dup.name||dup.phone||'مورد'), 'error'); return; }
     const newSupplier = {
       id: uid('sup'), name, phone, notes:'', extraPhones: [],
-      handlesNew: handlesNewCheck.checked, handlesUsed: handlesUsedCheck.checked
+      handlesNew: handlesNewCheck.checked, handlesUsed: handlesUsedCheck.checked,
+      createdAt: new Date().toISOString()
     };
     if(!Array.isArray(appData.suppliers)) appData.suppliers = [];
     // الحفظ بالقاعدة أولًا — لو فشل، ما نضيفه للقائمة ولا نفرّغ الحقول حتى يقدر يعيد المحاولة
@@ -6953,11 +6983,12 @@ function customersMatchingSearch(){
       return hay.includes(q);
     });
   }
-  // اللي لازم يرجعلهم مبلغ (بانتظار التحويل) يطلعوا فوق
+  // اللي لازم يرجعلهم مبلغ (بانتظار التحويل) يطلعوا فوق، وبعدها الأحدث إضافة فوق
   return [...rows].sort((a,b)=>{
     const ap = customerRefundTotal(a.id)>0 ? 1 : 0;
     const bp = customerRefundTotal(b.id)>0 ? 1 : 0;
-    return bp-ap;
+    if(bp-ap) return bp-ap;
+    return new Date(b.createdAt||0) - new Date(a.createdAt||0);
   });
 }
 
@@ -7006,7 +7037,7 @@ function bindCustomersViewEvents(){
     if(!name && !phone){ showToast('اكتب اسم أو رقم جوال على الأقل', 'error'); return; }
     const dup = findDuplicateCustomer(name, phone);
     if(dup){ showToast('عميل موجود مسبقًا بنفس الاسم أو الرقم: '+(dup.name||dup.phone||'عميل'), 'error'); return; }
-    const newCustomer = { id: uid('cust'), name, phone, notes:'' };
+    const newCustomer = { id: uid('cust'), name, phone, notes:'', createdAt: new Date().toISOString() };
     if(!Array.isArray(appData.customers)) appData.customers = [];
     // الحفظ بالقاعدة أولًا — انظر ملاحظة إضافة المورد بشاشة الموردين
     const saved = await persistCustomer(newCustomer);
