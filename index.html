@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>تتبع القطع · بارتك</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="بارتك">
+<meta name="theme-color" content="#22D07A">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@500;600;700;800&family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
@@ -1009,6 +1015,7 @@
       <div class="corner-mini-bar">
         <button id="btn-theme-toggle" class="corner-mini-btn" title="تبديل الوضع الليلي/النهاري">🌞</button>
         <button id="btn-who-online" class="corner-mini-btn">👥</button>
+        <button id="btn-push-toggle" class="corner-mini-btn" title="تفعيل إشعارات الجوال">🔕</button>
       </div>
       <img class="app-corner-logo" src="" id="app-corner-logo-img" alt="PARTECH" title="الصفحة الرئيسية">
     </div>
@@ -7385,6 +7392,8 @@ function bindToolbar(){
   });
   document.getElementById('btn-who-online').addEventListener('click', showWhoIsOnline);
   document.getElementById('btn-theme-toggle').addEventListener('click', toggleTheme);
+  const pushBtn = document.getElementById('btn-push-toggle');
+  if(pushBtn) pushBtn.addEventListener('click', togglePushSubscription);
   document.getElementById('btn-logout').addEventListener('click', handleLogout);
   document.getElementById('btn-toggle-filters').addEventListener('click', ()=>{
     const el = document.getElementById('filter-buttons');
@@ -7399,6 +7408,111 @@ function bindToolbar(){
     const val = e.target.value;
     debounceTimer = setTimeout(()=>{ currentSearch = val; renderTable(); }, 150);
   });
+}
+
+/* ---------- إشعارات push على الجوال — تطلع حتى لو المتصفح مسكّر بالكامل ----------
+   ملاحظة آبل: آيفون/سفاري ما يقبل push إلا لو الموقع مضاف لشاشة الرئيسية (زر مشاركة ← إضافة
+   للشاشة الرئيسية) ومفتوح من هناك، مو من تبويب Safari عادي — قيد من آبل نفسها، مو من التطبيق. */
+const PUSH_VAPID_PUBLIC_KEY = 'BB9zm8sK51bFS0x1IpndeGgINd0evXox9pm6B7x6Rt6QgNSkijw3JhFw6eysQ87veIqDl8OGgSVpxkKydyeijkg';
+
+function urlBase64ToUint8Array(base64String){
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for(let i=0; i<rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+
+function isIosNonStandalone(){
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isStandalone = window.navigator.standalone === true || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  return isIos && !isStandalone;
+}
+
+function pushSupported(){
+  return ('serviceWorker' in navigator) && ('PushManager' in window);
+}
+
+async function getExistingPushSubscription(){
+  if(!pushSupported()) return null;
+  try{
+    const reg = await navigator.serviceWorker.getRegistration();
+    if(!reg) return null;
+    return await reg.pushManager.getSubscription();
+  }catch(e){ return null; }
+}
+
+function updatePushButtonUi(subscribed){
+  const btn = document.getElementById('btn-push-toggle');
+  if(!btn) return;
+  btn.textContent = subscribed ? '🔔' : '🔕';
+  btn.title = subscribed ? 'إشعارات الجوال مفعّلة (اضغط للإيقاف)' : 'تفعيل إشعارات الجوال';
+}
+
+async function refreshPushButtonState(){
+  const btn = document.getElementById('btn-push-toggle');
+  if(!btn) return;
+  if(!pushSupported()){ btn.style.display = 'none'; return; }
+  const sub = await getExistingPushSubscription();
+  updatePushButtonUi(!!sub);
+}
+
+async function subscribeToPush(){
+  if(isIosNonStandalone()){
+    showToast('لازم تضيف الموقع لشاشتك الرئيسية أولًا (زر المشاركة ← إضافة للشاشة الرئيسية بالآيفون) وتفتحه من هناك', 'error');
+    return;
+  }
+  if(!pushSupported()){ showToast('متصفحك ما يدعم إشعارات push', 'error'); return; }
+  try{
+    const permission = await Notification.requestPermission();
+    if(permission !== 'granted'){
+      showToast('ما وافقت على الإشعارات من إعدادات المتصفح', 'error');
+      return;
+    }
+    const reg = await navigator.serviceWorker.register('sw.js');
+    await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if(!sub){
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(PUSH_VAPID_PUBLIC_KEY)
+      });
+    }
+    const subJson = sub.toJSON();
+    const { error } = await sb.from('push_subscriptions').upsert({
+      email: presenceEmail,
+      endpoint: subJson.endpoint,
+      p256dh: subJson.keys.p256dh,
+      auth: subJson.keys.auth
+    }, { onConflict: 'endpoint' });
+    if(error){ showToast('تعذر حفظ الاشتراك: ' + error.message, 'error'); return; }
+    updatePushButtonUi(true);
+    showToast('تفعّلت الإشعارات على هذا الجهاز', 'ok');
+  }catch(e){
+    showToast('تعذر تفعيل الإشعارات: ' + (e && e.message ? e.message : ''), 'error');
+  }
+}
+
+async function unsubscribeFromPush(){
+  try{
+    const sub = await getExistingPushSubscription();
+    if(sub){
+      const endpoint = sub.endpoint;
+      await sub.unsubscribe();
+      if(sb) await sb.from('push_subscriptions').delete().eq('endpoint', endpoint);
+    }
+    updatePushButtonUi(false);
+    showToast('تم إيقاف الإشعارات على هذا الجهاز', 'ok');
+  }catch(e){
+    showToast('تعذر إيقاف الإشعارات', 'error');
+  }
+}
+
+async function togglePushSubscription(){
+  const sub = await getExistingPushSubscription();
+  if(sub) await unsubscribeFromPush();
+  else await subscribeToPush();
 }
 
 async function init(){
@@ -7422,6 +7536,7 @@ async function init(){
   refreshEditProposals();
   subscribeEditProposalsRealtime();
   bindEditProposalGlobalDelegation();
+  refreshPushButtonState();
 }
 
 /* ---------- live sync of shared app data across all open sessions, via Supabase Realtime ---------- */
