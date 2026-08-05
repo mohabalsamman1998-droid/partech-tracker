@@ -1760,6 +1760,23 @@ let editingPayments = {}; // payment_id -> true — يُعاد تصفيره كل
    بقاعدة البيانات، فمالها داعي يتحذف اقتراح عامر المعلّق عليها. */
 let pendingScrapyardCancellations = new Set();
 
+/* ---------- طلبات تعديل سعر البيع بعد التوريد (نفس مبدأ اقتراحات التشليح عند عامر، بس لسعر
+   البيع من طرف المبيعات/صاحب الحساب — نظام موازٍ منفصل تمامًا عن scrapyard_proposals) ---------- */
+let sellPriceProposalDrafts = {};        // part_id -> السعر المقترح يلي عم يُكتب حاليًا
+let sellPriceEditOpenFor = {};           // part_id -> true — خانة الطلب مفتوحة (بعد الضغط على "طلب تعديل")
+let sellPriceProposalSending = new Set(); // حارس ضد إرسال مزدوج، نفس فكرة scrapyardProposalSending
+let sellPriceProposalsForOpenOrder = {}; // part_id -> صف الطلب المعلّق، للطلبية المفتوحة حاليًا بالمودال فقط
+
+async function loadSellPriceProposalsForOpenOrder(orderId){
+  if(!sb) return;
+  const { data, error } = await sb.from('sell_price_proposals').select('*').eq('order_id', orderId);
+  if(error){ console.error('loadSellPriceProposalsForOpenOrder:', error); return; }
+  sellPriceProposalsForOpenOrder = {};
+  (data||[]).forEach(pr=>{ sellPriceProposalsForOpenOrder[pr.part_id] = pr; });
+  // لو المودال اتسكّر أو انفتح على طلبية تانية قبل ما يوصل الرد، ما لازم نرسم فوق شاشة غلط
+  if(draft && draft.id === orderId) refreshPartsList();
+}
+
 function paymentRowHtml(p){
   const amountVal = (p.amount===''||p.amount==null) ? '' : p.amount;
   if(p.returnAdjustment){
@@ -1903,9 +1920,59 @@ function bindPartAddControls(){
   });
 }
 
+/* طلب معلّق (بانتظار قرار المخوّل) — يظهر لصاحب الطلب (زر تراجع) وللمخوّل (زر قبول/رفض) سوا،
+   ممكن الاثنين يظهروا لنفس الشخص لو كان مخوّل وهو يلي قدّم الطلب */
+function sellPriceProposalPendingHtml(pr){
+  const own = pr.submitted_by === presenceEmail;
+  const elevated = hasElevatedAccess();
+  const actionsHtml = (own || elevated) ?
+    '<div class="scrapyard-mgmt-actions">' +
+      (own ? '<button type="button" class="icon-btn" data-withdraw-sell-proposal="'+escapeHtml(pr.id)+'" title="تراجع عن الطلب" aria-label="تراجع">↩️ تراجع</button>' : '') +
+      (elevated ? '<button type="button" class="icon-btn icon-btn-accept" data-accept-sell-proposal="'+escapeHtml(pr.id)+'" title="قبول" aria-label="قبول">✅</button>' +
+        '<button type="button" class="icon-btn icon-btn-reject" data-reject-sell-proposal="'+escapeHtml(pr.id)+'" title="رفض" aria-label="رفض">❌</button>' : '') +
+    '</div>' : '';
+  return '<div class="scrapyard-price-cell scrapyard-price-cell-proposed">' +
+      '<span>سعر البيع</span>' +
+      '<span class="scrapyard-price-static scrapyard-price-static-proposed num">⏳ '+fmtMoney(pr.current_sell_price)+' ← '+fmtMoney(pr.proposed_sell_price)+'</span>' +
+    '</div>' + actionsHtml;
+}
+
+/* بعد "تم التوريد"، تعديل سعر البيع لغير المخوّلين بيصير طلب (نفس مبدأ اقتراحات التشليح عند
+   عامر) بدل تعديل مباشر — قبل التوريد أو للمخوّلين يضل التعديل المباشر زي ما كان دايمًا */
+function sellPriceCellHtml(p){
+  const sellVal = (p.sellPrice===''||p.sellPrice==null) ? '' : p.sellPrice;
+  const proposal = sellPriceProposalsForOpenOrder[p.id] || null;
+  const gated = !!(draft && draft.supplied) && !hasElevatedAccess();
+
+  if(!gated){
+    // مخوّل عم يشوف نفس الطلبية يلي فيها طلب معلّق من طرف تاني — نعرضله خيار الحسم هون مباشرة
+    // بدل ما يضطر يروح لنافذة المراجعة المنفصلة، مع بقاء خانة السعر قابلة للتعديل المباشر زي دايمًا
+    const bannerHtml = (hasElevatedAccess() && proposal) ? sellPriceProposalPendingHtml(proposal) : '';
+    return bannerHtml +
+      '<label class="mini-label mini-label-sell">سعر البيع<input type="number" min="0" step="0.01" class="part-sell-input num" placeholder="—" value="'+escapeHtml(sellVal)+'"></label>';
+  }
+
+  if(proposal) return sellPriceProposalPendingHtml(proposal);
+
+  if(sellPriceEditOpenFor[p.id]){
+    const draftVal = sellPriceProposalDrafts[p.id];
+    const inputVal = (draftVal===undefined || draftVal===null) ? sellVal : draftVal;
+    return '<div class="scrapyard-price-cell scrapyard-price-cell-proposed">' +
+        '<span>سعر البيع — مقترح</span>' +
+        '<input type="number" min="0" step="0.01" class="scrapyard-price-input num" placeholder="—" value="'+escapeHtml(inputVal)+'" data-sell-price-draft="'+escapeHtml(p.id)+'" autofocus>' +
+      '</div>' +
+      '<div class="scrapyard-part-actions">' +
+        '<button type="button" class="icon-btn icon-btn-accept" data-send-sell-proposal="'+escapeHtml(p.id)+'" title="إرسال الطلب" aria-label="إرسال الطلب">✓</button>' +
+        '<button type="button" class="icon-btn" data-cancel-sell-edit="'+escapeHtml(p.id)+'" title="إلغاء" aria-label="إلغاء">✕</button>' +
+      '</div>';
+  }
+
+  return '<div class="scrapyard-price-cell"><span>سعر البيع</span><span class="scrapyard-price-static num">'+(sellVal===''?'—':fmtMoney(Number(sellVal)||0))+'</span></div>' +
+    '<div class="scrapyard-part-actions"><button type="button" class="icon-btn" data-open-sell-edit="'+escapeHtml(p.id)+'" title="طلب تعديل السعر" aria-label="طلب تعديل السعر">✏️ طلب تعديل</button></div>';
+}
+
 function partRowHtml(p, i){
   const costVal = (p.costPrice===''||p.costPrice==null) ? '' : p.costPrice;
-  const sellVal = (p.sellPrice===''||p.sellPrice==null) ? '' : p.sellPrice;
   const qtyVal = (p.qty===''||p.qty==null) ? 1 : p.qty;
   const selectionOn = !!(typeof draft !== 'undefined' && draft && draft.partsSelectionEnabled);
   const included = p.included !== false;
@@ -1942,7 +2009,7 @@ function partRowHtml(p, i){
     '<div class="part-price-group">' +
       '<label class="mini-label">العدد<input type="number" min="1" step="1" class="part-qty-input num" value="'+escapeHtml(qtyVal)+'"></label>' +
       '<label class="mini-label mini-label-cost">سعر الشراء<input type="number" min="0" step="0.01" class="part-cost-input num" value="'+escapeHtml(costVal)+'"></label>' +
-      '<label class="mini-label mini-label-sell">سعر البيع<input type="number" min="0" step="0.01" class="part-sell-input num" placeholder="—" value="'+escapeHtml(sellVal)+'"></label>' +
+      sellPriceCellHtml(p) +
       '<label class="mini-label mini-label-supplier">'+(p.used?'التشليح':'المورد')+
         searchableSelectHtml('part-supplier-select',
           (appData.suppliers||[]).filter(s=> p.used ? s.handlesUsed : s.handlesNew).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
@@ -2047,6 +2114,9 @@ function openModal(mode, orderId){
   selectedPartType = null;
   editingPayments = {};
   pendingScrapyardCancellations = new Set();
+  sellPriceProposalDrafts = {};
+  sellPriceEditOpenFor = {};
+  sellPriceProposalsForOpenOrder = {};
   if(mode==='create'){
     draft = {
       id: uid('ord'),
@@ -2086,6 +2156,9 @@ function openModal(mode, orderId){
   root.classList.add('modal-open');
   attachModalHandlers();
   updateModalTotals();
+  // بس للطلبيات الموجودة فعليًا — طلبية جديدة (isNew) ما عندها id بقاعدة البيانات بعد فما
+  // فيه طلبات معلّقة أصلًا ممكن تكون عليها. رد لاحق بيحدّث القائمة بإعادة رسم (refreshPartsList).
+  if(!draft.isNew) loadSellPriceProposalsForOpenOrder(draft.id);
   document.addEventListener('keydown', escListener);
   const firstInput = root.querySelector('.order-number-input');
   if(firstInput) firstInput.focus();
@@ -2336,6 +2409,45 @@ function bindPartRowEvents(){
         updateModalTotals();
       });
     }
+    // طلب تعديل سعر البيع (بعد التوريد، لغير المخوّلين) — انظر sellPriceCellHtml
+    const openSellEditBtn = row.querySelector('[data-open-sell-edit]');
+    if(openSellEditBtn){
+      openSellEditBtn.addEventListener('click', ()=>{
+        sellPriceEditOpenFor[pid] = true;
+        refreshPartsList();
+      });
+    }
+    const cancelSellEditBtn = row.querySelector('[data-cancel-sell-edit]');
+    if(cancelSellEditBtn){
+      cancelSellEditBtn.addEventListener('click', ()=>{
+        delete sellPriceEditOpenFor[pid];
+        delete sellPriceProposalDrafts[pid];
+        refreshPartsList();
+      });
+    }
+    const sellProposalInput = row.querySelector('[data-sell-price-draft]');
+    if(sellProposalInput){
+      sellProposalInput.addEventListener('input', e=>{ sellPriceProposalDrafts[pid] = e.target.value; });
+      sellProposalInput.addEventListener('keydown', e=>{
+        if(e.key === 'Enter'){ e.preventDefault(); sendSellPriceProposal(draft.id, pid); }
+      });
+    }
+    const sendSellProposalBtn = row.querySelector('[data-send-sell-proposal]');
+    if(sendSellProposalBtn){
+      sendSellProposalBtn.addEventListener('click', ()=> sendSellPriceProposal(draft.id, pid));
+    }
+    const withdrawSellProposalBtn = row.querySelector('[data-withdraw-sell-proposal]');
+    if(withdrawSellProposalBtn){
+      withdrawSellProposalBtn.addEventListener('click', ()=> withdrawSellPriceProposal(withdrawSellProposalBtn.getAttribute('data-withdraw-sell-proposal')));
+    }
+    const acceptSellProposalBtn = row.querySelector('[data-accept-sell-proposal]');
+    if(acceptSellProposalBtn){
+      acceptSellProposalBtn.addEventListener('click', ()=> handleSellPriceProposalDecision(acceptSellProposalBtn.getAttribute('data-accept-sell-proposal'), true));
+    }
+    const rejectSellProposalBtn = row.querySelector('[data-reject-sell-proposal]');
+    if(rejectSellProposalBtn){
+      rejectSellProposalBtn.addEventListener('click', ()=> handleSellPriceProposalDecision(rejectSellProposalBtn.getAttribute('data-reject-sell-proposal'), false));
+    }
     const supplierSelectEl = row.querySelector('.part-supplier-select');
     const supplierSelectWrap = supplierSelectEl ? supplierSelectEl.closest('.searchable-select') : null;
     if(supplierSelectWrap){
@@ -2397,6 +2509,48 @@ function refreshPartsList(){
   bindPartRowEvents();
   refreshPartAddControls();
   updateModalTotals();
+}
+
+/* إرسال طلب تعديل السعر المكتوب داخل صف القطعة — بنفس أسلوب sendScrapyardPriceProposal */
+async function sendSellPriceProposal(orderId, partId){
+  if(sellPriceProposalSending.has(partId)) return; // إرسال ثاني قيد التنفيذ أصلًا لنفس القطعة
+  const raw = sellPriceProposalDrafts[partId];
+  const val = Number(raw);
+  if(raw===undefined || raw===null || raw==='' || isNaN(val) || val<0){ showToast('اكتب السعر المقترح أولاً', 'error'); return; }
+  const part = draft ? (draft.parts||[]).find(p=>p.id===partId) : null;
+  const currentSell = (part && part.sellPrice!=null) ? Number(part.sellPrice) : 0;
+  if(part && currentSell === val){ showToast('السعر المقترح نفس السعر الحالي', 'error'); return; }
+  sellPriceProposalSending.add(partId);
+  const { data: insertedRows, error } = await sb.from('sell_price_proposals').insert({
+    order_id: orderId, part_id: partId, current_sell_price: currentSell, proposed_sell_price: val, submitted_by: presenceEmail
+  }).select();
+  sellPriceProposalSending.delete(partId);
+  if(error){ showToast('تعذر إرسال الطلب', 'error'); return; }
+  if(!insertedRows || !insertedRows.length){ showToast('تعذر إرسال الطلب — تأكد من صلاحيتك', 'error'); return; }
+  delete sellPriceProposalDrafts[partId];
+  delete sellPriceEditOpenFor[partId];
+  showToast('تم إرسال طلب التعديل', 'ok');
+  await loadSellPriceProposalsForOpenOrder(orderId);
+  await refreshSellPriceProposalsPendingCount();
+}
+
+/* تراجع صاحب الطلب عن طلبه المعلّق — بنفس أسلوب withdrawScrapyardProposal، بس مع فحص عدد
+   الصفوف المتأثرة بالحذف (0 صف = RLS منعت أو حد تاني عالج الطلب أصلًا قبلنا) */
+function withdrawSellPriceProposal(proposalId){
+  confirmAction({
+    title: 'تراجع عن طلب التعديل؟',
+    message: 'رح يُحذف الطلب ولن يوصل لصاحب الحساب.',
+    confirmLabel: 'تراجع',
+    dangerous: true,
+    onConfirm: async ()=>{
+      const { data, error } = await sb.from('sell_price_proposals').delete().eq('id', proposalId).select();
+      if(error){ showToast('تعذر التراجع عن الطلب', 'error'); return; }
+      if(!data || !data.length) showToast('هذا الطلب انعالج فعلًا من مكان تاني', 'error');
+      else showToast('تم التراجع عن الطلب', 'ok');
+      if(draft && !draft.isNew) await loadSellPriceProposalsForOpenOrder(draft.id);
+      await refreshSellPriceProposalsPendingCount();
+    }
+  });
 }
 
 /* زر "إرجاع الطلبية" جنب "حذف الطلبية" — يرجع كل القطع النشطة بالطلبية دفعة وحدة */
@@ -4423,6 +4577,7 @@ async function openTreasuryView(){
   document.getElementById('treasury-view').style.display = 'block';
   document.getElementById('treasury-view').innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
   if(currentUserIsElevated) await refreshScrapyardPendingCount();
+  if(currentUserIsElevated) await refreshSellPriceProposalsPendingCount();
   renderTreasuryView();
 }
 
@@ -4574,6 +4729,116 @@ function subscribeScrapyardRealtime(){
       }
     })
     .subscribe();
+}
+
+/* ---------- طلبات تعديل سعر البيع بعد التوريد — مراجعة المخوّلين (sell_price_proposals، منفصل
+   تمامًا عن scrapyard_proposals — نفس المبدأ بس لسعر البيع من طرف المبيعات/صاحب الحساب) ---------- */
+let sellPriceProposalsMgmtState = { proposals: [] };
+let sellPriceProposalsChannel = null;
+
+async function refreshSellPriceProposalsPendingCount(){
+  if(!currentUserIsElevated) return;
+  try{
+    const { data, error } = await sb.from('sell_price_proposals').select('*').order('created_at', {ascending:false});
+    if(error) throw error;
+    sellPriceProposalsMgmtState.proposals = data || [];
+  }catch(e){ /* البادج بيتخطى دورة التحديث هاي بس، ما فيه داعي لرسالة خطأ للمستخدم */ }
+  updateSellPriceProposalsBadge();
+  refreshSellPriceProposalsModalIfOpen();
+}
+
+function updateSellPriceProposalsBadge(){
+  const count = sellPriceProposalsMgmtState.proposals.length;
+  const btn = document.getElementById('btn-open-sell-price-proposals');
+  if(btn) btn.innerHTML = '💲 طلبات تعديل السعر' + (count ? '<span class="inline-count-badge">'+count+'</span>' : '');
+}
+
+function subscribeSellPriceProposalsRealtime(){
+  if(!sb || sellPriceProposalsChannel) return;
+  sellPriceProposalsChannel = sb.channel('sell-price-proposals-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'sell_price_proposals' }, ()=>{
+      if(currentUserIsElevated) refreshSellPriceProposalsPendingCount();
+      if(draft && !draft.isNew) loadSellPriceProposalsForOpenOrder(draft.id);
+    })
+    .subscribe();
+}
+
+function findSellPriceProposalById(id){
+  return sellPriceProposalsMgmtState.proposals.find(p=>p.id===id) ||
+    Object.values(sellPriceProposalsForOpenOrder).find(p=>p.id===id) || null;
+}
+
+function applySellPriceProposal(pr){
+  const order = appData.orders.find(o=>o.id===pr.order_id);
+  if(!order) return false;
+  const part = (order.parts||[]).find(p=>p.id===pr.part_id);
+  if(!part) return false;
+  part.sellPrice = Math.max(0, Number(pr.proposed_sell_price)||0);
+  order.updatedAt = new Date().toISOString();
+  return true;
+}
+
+async function refreshSellPriceProposalsAfterDecision(orderId){
+  if(draft && !draft.isNew && draft.id === orderId) await loadSellPriceProposalsForOpenOrder(orderId);
+  await refreshSellPriceProposalsPendingCount();
+}
+
+/* قبول/رفض طلب تعديل سعر البيع — نفس خواص الأمان بالضبط يلي بـ handleScrapyardProposalDecision:
+   الحذف هو "المطالبة" الفعلية (تمنع تطبيق مزدوج لو مخوّلين ضغطوا بنفس اللحظة)، ورجّع الطلب لمكانه
+   لو فشل التطبيق أو الحفظ بعد الحذف، واستخدام الصف الراجع من الحذف مش نسخة pr المخزّنة بالذاكرة. */
+function handleSellPriceProposalDecision(proposalId, accept){
+  const pr = findSellPriceProposalById(proposalId);
+  if(!pr) return;
+  confirmAction({
+    title: accept ? 'قبول طلب تعديل السعر؟' : 'رفض طلب تعديل السعر؟',
+    message: accept ? 'بيتطبّق سعر البيع الجديد مباشرة على الطلبية.' : 'الطلب بيُحذف بدون أي تغيير على الطلبية.',
+    confirmLabel: accept ? 'قبول وتطبيق' : 'تأكيد الرفض',
+    dangerous: !accept,
+    onConfirm: async ()=>{
+      const { data: deletedRows, error: delError } = await sb.from('sell_price_proposals').delete().eq('id', pr.id).select();
+      if(delError){ showToast('تعذر تحديث حالة الطلب', 'error'); return; }
+      if(!deletedRows || !deletedRows.length){
+        showToast('هذا الطلب انعالج فعلًا من مكان تاني', 'error');
+        await refreshSellPriceProposalsAfterDecision(pr.order_id);
+        return;
+      }
+      const restoreProposal = async ()=>{
+        const { error } = await sb.from('sell_price_proposals').insert(deletedRows[0]);
+        if(error) console.error('restoreSellPriceProposal:', error);
+        await refreshSellPriceProposalsAfterDecision(pr.order_id);
+      };
+      if(accept){
+        const claimed = deletedRows[0];
+        const order = appData.orders.find(o=>o.id===claimed.order_id);
+        const partsSnapshot = order ? JSON.parse(JSON.stringify(order.parts||[])) : null;
+        const prevUpdatedAt = order ? order.updatedAt : null;
+        const applied = applySellPriceProposal(claimed);
+        if(!applied){
+          showToast('تعذر تطبيق الطلب — الطلبية أو القطعة غير موجودة. رجّعنا الطلب مكانه', 'error');
+          await restoreProposal();
+          return;
+        }
+        const saved = await persistOrder(order);
+        if(!saved){
+          if(partsSnapshot){ order.parts = partsSnapshot; order.updatedAt = prevUpdatedAt; }
+          showToast('تعذر حفظ التعديل على الطلبية — رجّعنا الطلب مكانه، جرّب مرة تانية', 'error');
+          await restoreProposal();
+          return;
+        }
+        renderKPIs();
+        renderTable();
+        // لو نفس الطلبية مفتوحة بالمودال هلق، لازم تعكس السعر الجديد فورًا وتاخذ baseline
+        // التعارض الجديد — غير هيك أول حفظ لاحق بالجلسة بيشوف updatedAt تغيّر ويسأل "الطلبية
+        // اتغيّرت من مكان تاني" رغم إن هو نفسه سبب التغيير بقبوله الطلب هلق.
+        if(draft && draft.id === order.id){
+          draft.parts = JSON.parse(JSON.stringify(order.parts));
+          draftOpenedAtUpdatedAt = order.updatedAt;
+        }
+      }
+      showToast(accept ? 'تم القبول والتطبيق' : 'تم رفض الطلب', 'ok');
+      await refreshSellPriceProposalsAfterDecision(pr.order_id);
+    }
+  });
 }
 
 let scrapyardAppDataChannel = null;
@@ -5121,6 +5386,79 @@ function bindAccountsActivityModalEvents(){
   }
 }
 
+/* ---------- نافذة مراجعة طلبات تعديل سعر البيع — نفس نمط accountsActivityModalHtml (شريحة
+   بأعلى الصندوق تفتح مودال #modal-root)، بس بتسرد كل الطلبات المعلّقة عبر كل الطلبيات ---------- */
+function sellPriceProposalRowHtml(pr){
+  const order = appData.orders.find(o=>o.id===pr.order_id);
+  const part = order ? (order.parts||[]).find(p=>p.id===pr.part_id) : null;
+  const applicable = !!(order && part);
+  const orderLabel = order ? (order.orderNumber+(order.orderLabel?' — '+order.orderLabel:'')) : 'طلبية محذوفة';
+  const partDesc = applicable ? part.description : (order ? 'قطعة محذوفة من الطلبية' : '');
+  return '<div class="purchase-history-row">' +
+    '<div class="purchase-history-row-main">' +
+      '<span class="purchase-history-desc">'+escapeHtml(orderLabel)+(partDesc?' — '+escapeHtml(partDesc):'')+'</span>' +
+      '<span class="num text-amber">'+fmtMoney(pr.current_sell_price)+' ← '+fmtMoney(pr.proposed_sell_price)+'</span>' +
+    '</div>' +
+    '<div class="purchase-history-row-sub">' +
+      '<span>'+escapeHtml(pr.submitted_by||'')+'</span>' +
+      '<div class="scrapyard-mgmt-actions">' +
+        (applicable ? '<button type="button" class="icon-btn icon-btn-accept" data-accept-sell-proposal="'+escapeHtml(pr.id)+'" title="قبول" aria-label="قبول">✅</button>' : '') +
+        '<button type="button" class="icon-btn icon-btn-reject" data-reject-sell-proposal="'+escapeHtml(pr.id)+'" title="رفض" aria-label="رفض">❌</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+function sellPriceProposalsModalHtml(){
+  const rows = sellPriceProposalsMgmtState.proposals;
+  return '<div class="modal-backdrop" data-close-backdrop>' +
+    '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
+      '<div class="modal-header"><div class="modal-title">💲 طلبات تعديل السعر</div>' +
+        '<button type="button" class="icon-btn" id="sell-price-proposals-close-btn" aria-label="إغلاق">✕</button></div>' +
+      (rows.length
+        ? '<div class="purchase-history-section">' + rows.map(sellPriceProposalRowHtml).join('') + '</div>'
+        : '<div class="expense-empty-hint">ما فيه طلبات تعديل سعر معلّقة حاليًا</div>') +
+    '</div>' +
+  '</div>';
+}
+
+async function openSellPriceProposalsModal(){
+  await refreshSellPriceProposalsPendingCount();
+  const root = document.getElementById('modal-root');
+  root.innerHTML = sellPriceProposalsModalHtml();
+  root.classList.add('modal-open');
+  bindSellPriceProposalsModalEvents();
+}
+
+/* بتتصفّى تلقائيًا (بدون رسم فوق مودال تاني) لو هاي النافذة مو المفتوحة حاليًا — بتنستدعى من
+   refreshSellPriceProposalsPendingCount بعد أي تحديث لحظي أو قرار قبول/رفض/إرسال/تراجع */
+function refreshSellPriceProposalsModalIfOpen(){
+  const root = document.getElementById('modal-root');
+  if(!root || !root.querySelector('#sell-price-proposals-close-btn')) return;
+  root.innerHTML = sellPriceProposalsModalHtml();
+  bindSellPriceProposalsModalEvents();
+}
+
+function closeSellPriceProposalsModal(){
+  const root = document.getElementById('modal-root');
+  root.innerHTML = '';
+  root.classList.remove('modal-open');
+}
+
+function bindSellPriceProposalsModalEvents(){
+  const root = document.getElementById('modal-root');
+  root.querySelector('[data-close-backdrop]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-backdrop')) closeSellPriceProposalsModal();
+  });
+  root.querySelector('#sell-price-proposals-close-btn').addEventListener('click', closeSellPriceProposalsModal);
+  root.querySelectorAll('[data-accept-sell-proposal]').forEach(btn=>{
+    btn.addEventListener('click', ()=> handleSellPriceProposalDecision(btn.getAttribute('data-accept-sell-proposal'), true));
+  });
+  root.querySelectorAll('[data-reject-sell-proposal]').forEach(btn=>{
+    btn.addEventListener('click', ()=> handleSellPriceProposalDecision(btn.getAttribute('data-reject-sell-proposal'), false));
+  });
+}
+
 function renderTreasuryView(){
   const el = document.getElementById('treasury-view');
   const t = treasuryTotals();
@@ -5133,6 +5471,7 @@ function renderTreasuryView(){
       '<button type="button" id="btn-toggle-extra-indicators" class="chip" aria-expanded="'+(extraIndicatorsOpen?'true':'false')+'">📊 مؤشرات إضافية</button>' +
       '<button type="button" id="btn-toggle-expenses-block" class="chip" aria-expanded="'+(expensesBlockOpen?'true':'false')+'">💰 المصاريف</button>' +
       '<button type="button" id="btn-toggle-suppliers-settlement" class="chip" aria-expanded="'+(suppliersSettlementMenuOpen?'true':'false')+'">🧾 سداد الموردون'+(scrapyardMgmtState.proposals.length ? '<span class="inline-count-badge">'+scrapyardMgmtState.proposals.length+'</span>' : '')+'</button>' +
+      '<button type="button" id="btn-open-sell-price-proposals" class="chip">💲 طلبات تعديل السعر'+(sellPriceProposalsMgmtState.proposals.length ? '<span class="inline-count-badge">'+sellPriceProposalsMgmtState.proposals.length+'</span>' : '')+'</button>' +
       '<button type="button" id="btn-open-accounts-activity" class="chip">📜 حركة الحسابات</button>' +
     '</div>' +
     '<div id="suppliers-settlement-wrap" class="treasury-chip-row" style="'+(suppliersSettlementMenuOpen?'':'display:none;')+' margin-bottom:10px;">' +
@@ -5253,6 +5592,7 @@ function renderTreasuryView(){
     suppliersSettlementBtn.setAttribute('aria-expanded', suppliersSettlementMenuOpen ? 'true' : 'false');
   });
   document.getElementById('btn-open-accounts-activity').addEventListener('click', openAccountsActivityModal);
+  document.getElementById('btn-open-sell-price-proposals').addEventListener('click', openSellPriceProposalsModal);
   // ما منربط أحداث صفوف المصاريف هون: العنصر [data-entries-key] موجود بس جوا نافذة السجل،
   // ونافذة السجل بتربط أحداثها لحالها (openExpenseHistoryModal/refreshExpenseEntries) — فالربط
   // من هون كان بيضاعف المستمعات على النافذة المفتوحة (ضغطة وحدة = تنفيذ مرتين).
@@ -6205,6 +6545,8 @@ async function init(){
   subscribeCustomersRealtime();
   refreshScrapyardPendingCount();
   subscribeScrapyardRealtime();
+  refreshSellPriceProposalsPendingCount();
+  subscribeSellPriceProposalsRealtime();
 }
 
 /* ---------- live sync of shared app data across all open sessions, via Supabase Realtime ---------- */
