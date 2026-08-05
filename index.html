@@ -4692,18 +4692,21 @@ function computeTreasuryVolumes(){
   // !o.isQuote زي computeAggregateFinancials — طلبية رجعت لحالة تسعيرة كانت تضل تضخّم
   // حجم الشراء/المبيعات/الأرباح مع إنها خارج الحسابات المالية بكل مكان تاني
   const orders = appData.orders.filter(o=>o.confirmed && !o.isQuote).filter(orderMatchesExtraIndicatorsPeriod);
-  let paidToSuppliersTotal = 0, paidToScrapyardTotal = 0, customerReceiptsTotal = 0, collectedProfit = 0;
+  let paidToSuppliersTotal = 0, paidToScrapyardTotal = 0, customerReceiptsTotal = 0, collectedProfit = 0, fullProfit = 0;
   orders.forEach(o=>{
     const t = orderTotals(o);
     if(o.paidToSupplier) paidToSuppliersTotal += t.costToSupplier;
     if(o.paidToAmer) paidToScrapyardTotal += t.costToScrapyard;
     customerReceiptsTotal += t.customerPaidAmount;
-    if(t.hasSell) collectedProfit += t.collectedProfit;
+    // fullProfit = الربح الكامل (سعر البيع - التكلفة) بغض النظر عن قد ايش الزبون دفع فعليًا —
+    // للمؤشر الافتراضي "بافتراض السداد والتحصيل". collectedProfit يبقى للمؤشر الفعلي.
+    if(t.hasSell){ collectedProfit += t.collectedProfit; fullProfit += t.profit; }
   });
   return {
     purchaseVolume: round2(paidToSuppliersTotal + paidToScrapyardTotal),
     salesVolume: round2(customerReceiptsTotal),
-    profitVolume: round2(collectedProfit)
+    profitVolume: round2(collectedProfit),
+    fullProfitVolume: round2(fullProfit)
   };
 }
 
@@ -4759,11 +4762,17 @@ function treasuryTotals(){
   // الديون للموردين = عجز عهدة عامر (تشاليح مدفوعة فعليًا ولسه ما رجّعتلها) + الطلبيات يلي لسه ما تسدد للتشليح + المستحق للموردين
   const debtsToSuppliers = round2(custodyDeficit + fSnapshot.dueToScrapyard + fSnapshot.dueToSuppliers);
   const volumes = computeTreasuryVolumes();
-  // صافي الأرباح الشهرية = أرباح الطلبيات المحصّلة بالشهر المحدد ناقص مصاريف نفس الشهر (بنفس فلتر مؤشرات إضافية)
+  // صافي الأرباح الشهرية الفعلي = أرباح الطلبيات المحصّلة فعليًا بالشهر المحدد ناقص مصاريف نفس الشهر
   const netProfitVolume = round2(volumes.profitVolume - extraIndicatorsExpenses);
+  // بافتراض السداد والتحصيل = نفس الشي بس بافتراض إنه كل زبون بطلبيات الشهر دفع المستحق عليه
+  // بالكامل — الربح الكامل (سعر البيع - التكلفة) بدل المحصّل بس. التكلفة نفسها ثابتة بغض النظر
+  // عن سداد المورد/التشليح من عدمه (الربح محاسبيًا مبني على الالتزام لا الدفع الفعلي)، فالسداد
+  // (تجاه المورد) ما يغيّر رقم الربح — بس خلّينا الاسم مطابق لمؤشر الصندوق المماثل للاتساق.
+  const netProfitVolumeAfterSettlement = round2(volumes.fullProfitVolume - extraIndicatorsExpenses);
   return {
     totalExpenses, totalSupport, net, netAfterSettlement, debtsToSuppliers, dueFromCustomers: fSnapshot.dueFromCustomers, uncollectedProfit: fSnapshot.uncollectedProfit,
-    purchaseVolume: volumes.purchaseVolume, salesVolume: volumes.salesVolume, profitVolume: volumes.profitVolume, netProfitVolume: netProfitVolume,
+    purchaseVolume: volumes.purchaseVolume, salesVolume: volumes.salesVolume, profitVolume: volumes.profitVolume,
+    netProfitVolume: netProfitVolume, netProfitVolumeAfterSettlement: netProfitVolumeAfterSettlement,
     amerCustodyBalance: amerCustodyBalance(), amerCustodyDeficit: custodyDeficit
   };
 }
@@ -4997,7 +5006,8 @@ function renderTreasuryView(){
         '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم الشراء</span><span class="treasury-profit-value">'+fmtMoney(t.purchaseVolume)+'</span></div>' +
         '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم عمليات البيع</span><span class="treasury-profit-value">'+fmtMoney(t.salesVolume)+'</span></div>' +
         '<div class="treasury-profit-card"><span class="treasury-profit-label">حجم الأرباح</span><span class="treasury-profit-value">'+fmtMoney(t.profitVolume)+'</span></div>' +
-        '<div class="treasury-profit-card"><span class="treasury-profit-label">صافي الأرباح الشهرية</span><span class="treasury-profit-value '+(t.netProfitVolume<0?'text-rust':'text-green')+'">'+fmtMoney(t.netProfitVolume)+'</span></div>' +
+        '<div class="treasury-profit-card"><span class="treasury-profit-label">صافي الأرباح الشهرية الفعلي</span><span class="treasury-profit-value '+(t.netProfitVolume<0?'text-rust':'text-green')+'">'+fmtMoney(t.netProfitVolume)+'</span></div>' +
+        '<div class="treasury-profit-card"><span class="treasury-profit-label">صافي الأرباح الشهرية بافتراض السداد والتحصيل</span><span class="treasury-profit-value '+(t.netProfitVolumeAfterSettlement<0?'text-rust':'text-green')+'">'+fmtMoney(t.netProfitVolumeAfterSettlement)+'</span></div>' +
       '</div>' +
     '</div>' +
     '<div id="expenses-block-wrap" style="'+(expensesBlockOpen?'':'display:none;')+' margin-bottom:10px;">' +
