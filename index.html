@@ -525,6 +525,7 @@
   .type-pill-used.type-pill-active{background:var(--amber-dim);border-color:var(--amber-line);color:var(--amber);}
   .add-part-action{margin-bottom:4px;}
   .add-part-hint{font-size:12px;color:var(--text-faint);}
+  .add-part-locked-hint{font-size:12px;color:var(--text-faint);margin:6px 0 0;}
   .add-part-btns{display:flex;gap:8px;flex-wrap:wrap;}
   .btn-add-part{color:var(--green);border-color:var(--green-line);background:var(--green-dim);}
   .btn-add-part:hover{background:rgba(34,208,122,.22);border-color:var(--green);}
@@ -1818,6 +1819,10 @@ let pendingScrapyardCancellations = new Set();
    معلّق (part_field/order_field) صار بلا معنى (شرط القفل نفسه ارتفع)، فنلغيه — بس بعد الحفظ الفعلي
    مش فور الضغط، غير هيك إلغاء بدون حفظ (تراجع/إغلاق المودال) بيكون ألغى طلبات لسا سارية فعليًا */
 let pendingEditProposalsCancellation = false;
+/* نفس المبدأ — قطع اتحذفت أو ارتجعت مباشرة (من مخوّل، أو قبل "تحديد القطع") جوا الجلسة الحالية،
+   بيصير أي طلب تعديل/حذف/إرجاع معلّق عليها بالذات ميت. بنجمعها هون ونصفّي طلباتها بس بعد نجاح
+   الحفظ الفعلي — إلغاء بدون حفظ يعني الحذف/الإرجاع نفسه ما صار فعليًا بقاعدة البيانات */
+let pendingPartProposalPurges = new Set();
 
 function paymentRowHtml(p){
   const amountVal = (p.amount===''||p.amount==null) ? '' : p.amount;
@@ -1927,6 +1932,7 @@ function copyPartsToClipboard(){
 }
 
 function pastePartsFromClipboard(){
+  if(fieldGated()){ showToast('غير متاح', 'error'); return; }
   if(!copiedPartsClipboard || copiedPartsClipboard.length===0){
     showToast('ما فيه قطع منسوخة بعد — افتح الطلبية المصدر واضغط نسخ أولاً', 'error');
     return;
@@ -1980,6 +1986,13 @@ function bindPartTypeGate(){
 }
 
 function partAddControlsHtml(){
+  // إضافة قطعة جديدة لطلبية موردة تعني قيمة إضافية على الحساب بلا موافقة — نفس مبدأ باقي
+  // الحقول المالية بعد التوريد، بس ما فيها منطق "طلب" (قطعة كاملة لسا فاضية، مو قيمة وحدة
+  // تُقترح)، فبنقفلها كاملة على غير المخوّل بدل ما نسيبها بطريق مسدود (كانت تُضاف بدون
+  // مشكلة بالواجهة بس تفشل لاحقًا بصمت — انظر تدقيق الجلسة)
+  if(fieldGated()){
+    return '<p class="add-part-locked-hint">غير متاح</p>';
+  }
   if(!draft.parts || draft.parts.length===0){
     // أول قطعة بالطلبية — لازم تحديد النوع أولاً قبل ظهور زر الإضافة
     return partTypeGateHtml();
@@ -2071,12 +2084,19 @@ function feeFieldRowHtml(d){
   const deliveryFeeUi = fieldRequestUiHtml('deliveryFeeAmount', null, d.deliveryFeeAmount, '<span class="field-readonly-value num">'+fmtMoney(Number(d.deliveryFeeAmount)||0)+'</span>');
   const deliveryFeeInputHtml = deliveryFeeUi!=null ? deliveryFeeUi : '<input type="number" min="0" step="0.5" id="order-delivery-fee-input" class="num" value="'+escapeHtml(d.deliveryFeeAmount?d.deliveryFeeAmount:'')+'" placeholder="0">';
 
+  const feeEnabledUi = fieldRequestUiHtml('feeEnabled', null, d.feeEnabled, '<span class="field-readonly-value">'+(d.feeEnabled?'✓ مفعّلة':'غير مفعّلة')+'</span>');
+  const feeToggleHtml = feeEnabledUi!=null ? feeEnabledUi : '<input type="checkbox" id="order-fee-toggle" '+(d.feeEnabled?'checked':'')+'>';
+  const serviceFeeEnabledUi = fieldRequestUiHtml('serviceFeeEnabled', null, d.serviceFeeEnabled, '<span class="field-readonly-value">'+(d.serviceFeeEnabled?'✓ مفعّلة':'غير مفعّلة')+'</span>');
+  const serviceFeeToggleHtml = serviceFeeEnabledUi!=null ? serviceFeeEnabledUi : '<input type="checkbox" id="order-service-fee-toggle" '+(d.serviceFeeEnabled?'checked':'')+'>';
+  const deliveryFeeEnabledUi = fieldRequestUiHtml('deliveryFeeEnabled', null, d.deliveryFeeEnabled, '<span class="field-readonly-value">'+(d.deliveryFeeEnabled?'✓ مفعّلة':'غير مفعّلة')+'</span>');
+  const deliveryFeeToggleHtml = deliveryFeeEnabledUi!=null ? deliveryFeeEnabledUi : '<input type="checkbox" id="order-delivery-fee-toggle" '+(d.deliveryFeeEnabled?'checked':'')+'>';
+
   return '<div id="order-fee-fields-wrap">' +
-    '<label class="toggle-row"><input type="checkbox" id="order-fee-toggle" '+(d.feeEnabled?'checked':'')+'><span>احتساب نسبة رسوم خدمة وتوصيل</span></label>' +
+    '<label class="toggle-row">'+feeToggleHtml+'<span>احتساب نسبة رسوم خدمة وتوصيل</span></label>' +
     '<div class="fee-percent-row" id="order-fee-percent-row" style="'+(d.feeEnabled?'':'display:none;')+'"><span>النسبة</span>'+feePercentInputHtml+'<span>%</span><span class="fee-amount-preview" id="fee-amount-preview"></span></div>' +
-    '<label class="toggle-row"><input type="checkbox" id="order-service-fee-toggle" '+(d.serviceFeeEnabled?'checked':'')+'><span>احتساب نسبة رسوم خدمات</span></label>' +
+    '<label class="toggle-row">'+serviceFeeToggleHtml+'<span>احتساب نسبة رسوم خدمات</span></label>' +
     '<div class="fee-percent-row" id="order-service-fee-percent-row" style="'+(d.serviceFeeEnabled?'':'display:none;')+'"><span>النسبة</span>'+serviceFeePercentInputHtml+'<span>%</span><span class="service-fee-amount-preview" id="service-fee-amount-preview"></span></div>' +
-    '<label class="toggle-row"><input type="checkbox" id="order-delivery-fee-toggle" '+(d.deliveryFeeEnabled?'checked':'')+'><span>احتساب أجور التوصيل</span></label>' +
+    '<label class="toggle-row">'+deliveryFeeToggleHtml+'<span>احتساب أجور التوصيل</span></label>' +
     '<div class="fee-percent-row" id="order-delivery-fee-row" style="'+(d.deliveryFeeEnabled?'':'display:none;')+'"><span>المبلغ</span>'+deliveryFeeInputHtml+'<span>ر.س</span></div>' +
   '</div>';
 }
@@ -2162,6 +2182,10 @@ function partRowHtml(p, i){
   const costHtml = costFieldUi!=null ? costFieldUi : '<input type="number" min="0" step="0.01" class="part-cost-input num" value="'+escapeHtml(costVal)+'">';
   const sellFieldUi = fieldRequestUiHtml('sellPrice', p.id, sellVal, '<span class="field-readonly-value num">'+(sellVal===''?'—':fmtMoney(Number(sellVal)||0))+'</span>');
   const sellHtml = sellFieldUi!=null ? sellFieldUi : '<input type="number" min="0" step="0.01" class="part-sell-input num" placeholder="—" value="'+escapeHtml(sellVal)+'">';
+  const qtyFieldUi = fieldRequestUiHtml('qty', p.id, qtyVal, '<span class="field-readonly-value num">'+escapeHtml(qtyVal)+'</span>');
+  const qtyHtml = qtyFieldUi!=null ? qtyFieldUi : '<input type="number" min="1" step="1" class="part-qty-input num" value="'+escapeHtml(qtyVal)+'">';
+  const usedFieldUi = fieldRequestUiHtml('used', p.id, p.used, '<span class="field-readonly-value">'+(p.used?'مستعمل':'غير مستعمل')+'</span>');
+  const usedBadgeHtml = usedFieldUi!=null ? usedFieldUi : '<button type="button" class="used-badge'+(p.used?'':' used-badge-off')+'" data-toggle-used="'+escapeHtml(p.id)+'">'+(p.used?'مستعمل':'غير مستعمل')+' ✏️</button>';
 
   const excludeProposal = pendingPartActionProposal('part_exclude', p.id);
   const includeCheckHtml = !selectionOn ? '' : (
@@ -2177,10 +2201,10 @@ function partRowHtml(p, i){
         '<span class="part-index-badge">'+((i!=null?i:0)+1)+'</span>' +
         descHtml +
       '</div>' +
-      '<button type="button" class="used-badge'+(p.used?'':' used-badge-off')+'" data-toggle-used="'+escapeHtml(p.id)+'">'+(p.used?'مستعمل':'غير مستعمل')+' ✏️</button>' +
+      usedBadgeHtml +
     '</div>' +
     '<div class="part-price-group">' +
-      '<label class="mini-label">العدد<input type="number" min="1" step="1" class="part-qty-input num" value="'+escapeHtml(qtyVal)+'"></label>' +
+      '<label class="mini-label">العدد'+qtyHtml+'</label>' +
       '<label class="mini-label mini-label-cost">سعر الشراء'+costHtml+'</label>' +
       '<label class="mini-label mini-label-sell">سعر البيع'+sellHtml+'</label>' +
       '<label class="mini-label mini-label-supplier">'+(p.used?'التشليح':'المورد')+
@@ -2198,7 +2222,7 @@ function modalHtml(d){
     '<div class="modal-card" role="dialog" aria-modal="true">' +
       '<div class="modal-header"><div><div class="modal-title">'+(d.isNew?'طلبية جديدة':'تعديل الطلبية')+'</div><div class="modal-sub">البيانات تُحفظ تلقائيًا عند الضغط على حفظ</div></div>' +
         '<div style="display:flex;gap:8px;align-items:flex-start;">' +
-          (!d.isNew && d.supplied && !hasElevatedAccess() ? '<button type="button" class="chip" id="modal-edit-request-toggle-btn">✏️ تعديل</button>' : '') +
+          '<span id="modal-edit-toggle-wrap">'+editModeToggleButtonHtml(d)+'</span>' +
           '<button class="icon-btn" id="modal-close-btn" aria-label="إغلاق">✕</button>' +
         '</div></div>' +
       '<div class="modal-body">' +
@@ -2283,6 +2307,7 @@ function openModal(mode, orderId){
   editingPayments = {};
   pendingScrapyardCancellations = new Set();
   pendingEditProposalsCancellation = false;
+  pendingPartProposalPurges = new Set();
   editRequestMode = false;
   composingProposalFields = new Set();
   pendingPaymentAddDrafts = {};
@@ -2337,6 +2362,7 @@ function closeModal(){
   draft=null;
   pendingScrapyardCancellations.clear(); // إلغاء بدون حفظ = تصنيف القطع ما تغيّر فعليًا، ما فيه داعي نلغي أي اقتراح
   pendingEditProposalsCancellation = false;
+  pendingPartProposalPurges.clear(); // نفس المبدأ — الحذف/الإرجاع المباشر ما صار فعليًا بدون حفظ
   document.removeEventListener('keydown', escListener);
 }
 
@@ -2459,6 +2485,8 @@ function attachModalHandlers(){
           // المعلّقة (إن وُجدت) — بتُنفَّذ فعليًا بس عند نجاح الحفظ، انظر تعريف المتغيّر فوق
           if(!willSupply) pendingEditProposalsCancellation = true;
           refreshGatedFieldViews();
+          refreshOrderActionButtons();
+          refreshEditModeToggleButton();
         }
       });
     });
@@ -2510,16 +2538,32 @@ function attachModalHandlers(){
     });
   }
 
+  bindEditModeToggleButton();
+}
+
+function editModeToggleButtonHtml(d){
+  if(d.isNew || !d.supplied || hasElevatedAccess()) return '';
+  return '<button type="button" class="chip'+(editRequestMode?' chip-active':'')+'" id="modal-edit-request-toggle-btn">✏️ تعديل'+(editRequestMode?' (مفعّل)':'')+'</button>';
+}
+
+function bindEditModeToggleButton(){
+  const root = document.getElementById('modal-root');
   const editModeBtn = root.querySelector('#modal-edit-request-toggle-btn');
   if(editModeBtn){
     editModeBtn.addEventListener('click', ()=>{
       editRequestMode = !editRequestMode;
-      editModeBtn.classList.toggle('chip-active', editRequestMode);
-      editModeBtn.textContent = editRequestMode ? '✏️ تعديل (مفعّل)' : '✏️ تعديل';
+      refreshEditModeToggleButton();
       refreshGatedFieldViews();
       refreshPaymentsList();
     });
   }
+}
+
+function refreshEditModeToggleButton(){
+  const wrap = document.getElementById('modal-edit-toggle-wrap');
+  if(!wrap || !draft) return;
+  wrap.innerHTML = editModeToggleButtonHtml(draft);
+  bindEditModeToggleButton();
 }
 
 function refreshGatedFieldViews(){
@@ -2657,7 +2701,7 @@ function confirmReturnWholeOrder(){
     confirmLabel: 'تأكيد إرجاع الطلبية',
     dangerous: true,
     onConfirm: ()=>{
-      activeParts.forEach(p=> applyPartReturn(p));
+      activeParts.forEach(p=>{ applyPartReturn(p); pendingPartProposalPurges.add(p.id); });
       refreshPartsList();
       refreshPaymentsList();
     }
@@ -2673,16 +2717,18 @@ function openPartActionChoice(part){
   const gated = fieldGated();
   const pendingDelete = pendingPartActionProposal('part_delete', part.id);
   const pendingReturn = pendingPartActionProposal('part_return', part.id);
+  const pendingExclude = pendingPartActionProposal('part_exclude', part.id);
+  const anyPending = pendingDelete || pendingReturn || pendingExclude;
   root.innerHTML =
     '<div class="modal-backdrop" data-close-confirm>' +
       '<div class="modal-card modal-card-sm" role="alertdialog" aria-modal="true">' +
         '<div class="modal-title">'+escapeHtml(part.description||'القطعة')+'</div>' +
         '<p class="modal-sub">اختر الإجراء المطلوب لهذه القطعة</p>' +
-        (pendingDelete || pendingReturn ? '<div class="part-action-pending-wrap">'+editProposalPendingHtml(pendingDelete||pendingReturn)+'</div>' : '') +
+        (anyPending ? '<div class="part-action-pending-wrap">'+editProposalPendingHtml(anyPending)+'</div>' : '') +
         '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;flex-wrap:wrap;">' +
           '<button type="button" class="btn btn-ghost" id="part-action-cancel-btn">إلغاء</button>' +
-          (canReturn && !pendingReturn && !pendingDelete ? '<button type="button" class="btn btn-ghost" id="part-action-return-btn">🔄 '+(gated?'طلب إرجاع':'إرجاع')+'</button>' : '') +
-          (!pendingDelete && !pendingReturn ? '<button type="button" class="btn btn-danger" id="part-action-delete-btn">🗑️ '+(gated?'طلب حذف':'حذف')+'</button>' : '') +
+          (canReturn && !anyPending ? '<button type="button" class="btn btn-ghost" id="part-action-return-btn">🔄 '+(gated?'طلب إرجاع':'إرجاع')+'</button>' : '') +
+          (!anyPending ? '<button type="button" class="btn btn-danger" id="part-action-delete-btn">🗑️ '+(gated?'طلب حذف':'حذف')+'</button>' : '') +
         '</div>' +
       '</div>' +
     '</div>';
@@ -2712,6 +2758,7 @@ function openPartActionChoice(part){
         dangerous: true,
         onConfirm: ()=>{
           draft.parts = draft.parts.filter(p=>p.id!==part.id);
+          pendingPartProposalPurges.add(part.id);
           refreshPartsList();
         }
       });
@@ -2742,6 +2789,7 @@ function confirmSinglePartReturn(part){
     dangerous: true,
     onConfirm: ()=>{
       applyPartReturn(part);
+      pendingPartProposalPurges.add(part.id);
       refreshPartsList();
       refreshPaymentsList();
     }
@@ -3089,6 +3137,12 @@ async function onSaveOrder(){
   if(pendingEditProposalsCancellation){
     await cancelPendingSuppliedGatedProposalsForOrder(draft.id);
     pendingEditProposalsCancellation = false;
+  }
+  if(pendingPartProposalPurges.size){
+    for(const partId of pendingPartProposalPurges){
+      await purgeEditProposalsForPart(draft.id, partId);
+    }
+    pendingPartProposalPurges.clear();
   }
 
   // حفظ الطلبية ما يطلعك منها — يبقى المودال مفتوح، بس يحدّث حالته (زي تحول "جديدة" لموجودة، إلخ)
@@ -4094,6 +4148,7 @@ function confirmDelete(orderId){
       const deleted = await deleteOrder(orderId);
       if(!deleted) return; // deleteOrder عرضت سبب الفشل — لا تشيلها من القائمة ولا تقول "تم"
       appData.orders = appData.orders.filter(o=>o.id!==orderId);
+      await purgeEditProposalsForOrder(orderId);
       renderKPIs();
       renderTable();
       showToast('تم حذف الطلبية', 'ok');
@@ -5005,9 +5060,21 @@ function pendingOrderActionProposal(kind){
   return (editProposals||[]).find(pr=> pr.order_id===draft.id && pr.kind===kind && !pr.part_id);
 }
 
+/* حقول من نوع مفتاح/قفل (checkbox) — الطلب عليها إرسال فوري لعكس القيمة الحالية، مو صندوق كتابة
+   قيمة زي باقي الحقول (composeFieldHtml). كل مفتاح وتسمية true/false الخاصة فيه بالعربي. */
+const BOOLEAN_FIELD_LABELS = {
+  used: {true:'مستعمل', false:'غير مستعمل'},
+  feeEnabled: {true:'مفعّلة', false:'غير مفعّلة'},
+  serviceFeeEnabled: {true:'مفعّلة', false:'غير مفعّلة'},
+  deliveryFeeEnabled: {true:'مفعّلة', false:'غير مفعّلة'}
+};
+function isBooleanProposalField(fieldKey){ return !!BOOLEAN_FIELD_LABELS[fieldKey]; }
+
 function formatProposalFieldValue(field, value){
+  if(BOOLEAN_FIELD_LABELS[field]) return BOOLEAN_FIELD_LABELS[field][value ? 'true' : 'false'];
   if(field==='description') return value==null ? '—' : String(value);
   if(field==='feePercent' || field==='serviceFeePercent') return (value==null?0:value)+'%';
+  if(field==='qty') return String(value==null?1:value);
   return fmtMoney(Number(value)||0);
 }
 
@@ -5062,14 +5129,18 @@ function fieldRequestUiHtml(fieldKey, partId, currentValue, displayHtml){
   const pending = pendingFieldProposal(fieldKey, partId);
   if(pending) return editProposalPendingHtml(pending);
   if(!fieldGated()) return null;
-  const key = composeKey(fieldKey, partId);
-  if(composingProposalFields.has(key)) return composeFieldHtml(fieldKey, partId, currentValue);
-  return displayHtml + (editRequestMode ? '<button type="button" class="icon-btn field-request-btn" data-request-field="'+escapeHtml(fieldKey)+'"'+(partId?' data-part-id="'+escapeHtml(partId)+'"':'')+' title="طلب تعديل">✏️</button>' : '');
+  const boolean = isBooleanProposalField(fieldKey);
+  if(!boolean){
+    const key = composeKey(fieldKey, partId);
+    if(composingProposalFields.has(key)) return composeFieldHtml(fieldKey, partId, currentValue);
+  }
+  return displayHtml + (editRequestMode ? '<button type="button" class="icon-btn field-request-btn" data-request-field="'+escapeHtml(fieldKey)+'"'+(partId?' data-part-id="'+escapeHtml(partId)+'"':'')+(boolean?' data-request-boolean="1"':'')+' title="طلب تعديل">✏️</button>' : '');
 }
 
 async function sendFieldEditRequest(fieldKey, partId){
   const key = composeKey(fieldKey, partId);
   if(editProposalSending.has(key)) return;
+  if(pendingFieldProposal(fieldKey, partId)) return;
   const root = document.getElementById('modal-root');
   const selector = '.field-request-input[data-field="'+fieldKey+'"]'+(partId?'[data-part-id="'+partId+'"]':':not([data-part-id])');
   const input = root.querySelector(selector);
@@ -5104,6 +5175,7 @@ async function sendFieldEditRequest(fieldKey, partId){
 async function sendPaymentEditRequest(paymentId){
   const key = 'payment-edit-'+paymentId;
   if(editProposalSending.has(key)) return;
+  if(pendingPaymentEditOrDeleteProposal(paymentId)) return;
   const root = document.getElementById('modal-root');
   const row = root.querySelector('.payment-row[data-payment-id="'+paymentId+'"]');
   if(!row) return;
@@ -5132,6 +5204,7 @@ async function sendPaymentEditRequest(paymentId){
 function requestDeletePayment(paymentId){
   const payment = (draft.customerPayments||[]).find(p=>p.id===paymentId);
   if(!payment) return;
+  if(pendingPaymentEditOrDeleteProposal(paymentId)) return;
   confirmAction({
     title: 'إرسال طلب حذف هذه الدفعة؟',
     message: payment.amount ? 'المبلغ: '+fmtMoney(payment.amount) : undefined,
@@ -5187,8 +5260,56 @@ async function cancelPendingSuppliedGatedProposalsForOrder(orderId){
   await refreshEditProposals();
 }
 
+/* الطلبية انحذفت فعليًا (مباشرة من مخوّل أو بقبول order_delete) — أي طلب تعديل تاني معلّق عليها
+   (مهما كان نوعه) صار بلا معنى، ما رح ينطبق أبدًا (order.id ما بيرجع يلاقيه applyEditProposal)
+   وبيضل يتكرّر بقائمة الطلبات المعلّقة للأبد لو ما انلغى هون */
+async function purgeEditProposalsForOrder(orderId){
+  const { error } = await sb.from('edit_proposals').delete().eq('order_id', orderId);
+  if(error) console.error('purgeEditProposalsForOrder:', error);
+  await refreshEditProposals();
+}
+
+/* نفس الفكرة — قطعة انحذفت أو رجعت مباشرة (من مخوّل، أو قبل ما "تحديد القطع" يصير فيه طلب أصلًا)
+   بتخلي أي طلب معلّق عليها بالذات (سعر/اسم/استبعاد/حذف/إرجاع) ميت لا محالة */
+async function purgeEditProposalsForPart(orderId, partId){
+  const { error } = await sb.from('edit_proposals').delete().eq('order_id', orderId).eq('part_id', partId);
+  if(error) console.error('purgeEditProposalsForPart:', error);
+  await refreshEditProposals();
+}
+
+/* حقول boolean (تصنيف مستعمل/غير مستعمل، تفعيل نسب الرسوم) — إرسال فوري لعكس القيمة الحالية
+   بدل صندوق كتابة (composeFieldHtml)، نفس مبدأ requestPartExclude بس عام لأي حقل boolean */
+function requestBooleanFieldChange(fieldKey, partId, currentValue){
+  if(pendingFieldProposal(fieldKey, partId)) return;
+  const key = composeKey(fieldKey, partId);
+  if(editProposalSending.has(key)) return;
+  const proposedValue = !currentValue;
+  const labels = BOOLEAN_FIELD_LABELS[fieldKey] || {};
+  confirmAction({
+    title: 'إرسال طلب تغيير "'+(EDIT_PROPOSAL_FIELD_LABELS[fieldKey]||fieldKey)+'" إلى '+(labels[proposedValue?'true':'false']||proposedValue)+'؟',
+    confirmLabel: 'إرسال الطلب',
+    onConfirm: async ()=>{
+      editProposalSending.add(key);
+      const { error } = await sb.from('edit_proposals').insert({
+        order_id: draft.id, kind: partId ? 'part_field' : 'order_field', part_id: partId || null, field: fieldKey,
+        current_value: !!currentValue, proposed_value: proposedValue, submitted_by: presenceEmail
+      });
+      editProposalSending.delete(key);
+      if(error){ showToast('تعذر إرسال الطلب', 'error'); return; }
+      showToast('تم إرسال الطلب', 'ok');
+      await refreshEditProposals();
+    }
+  });
+}
+
+/* حذف/إرجاع/استبعاد قطعة — ثلاثة أنواع طلبات ما ينفع يتعايشوا على نفس القطعة بنفس الوقت
+   (لو طلب حذف انقبل وبعده طلب استبعاد قدّم على نفس القطعة، الاستبعاد بيصير طلب ميت للأبد) */
+function hasAnyPendingPartAction(partId){
+  return !!(pendingPartActionProposal('part_exclude', partId) || pendingPartActionProposal('part_delete', partId) || pendingPartActionProposal('part_return', partId));
+}
+
 function requestPartExclude(part){
-  if(pendingPartActionProposal('part_exclude', part.id)) return;
+  if(hasAnyPendingPartAction(part.id)) return;
   confirmAction({
     title: 'إرسال طلب استبعاد هذه القطعة من حسابات الطلبية؟',
     message: part.description ? 'القطعة: '+part.description : undefined,
@@ -5206,7 +5327,7 @@ function requestPartExclude(part){
 }
 
 function requestPartDelete(part){
-  if(pendingPartActionProposal('part_delete', part.id)) return;
+  if(hasAnyPendingPartAction(part.id)) return;
   confirmAction({
     title: 'إرسال طلب حذف هذه القطعة؟',
     message: part.description ? 'القطعة: '+part.description : undefined,
@@ -5228,7 +5349,7 @@ function requestPartDelete(part){
 function requestPartReturn(part){
   const hasReceivable = part.used ? draft.paidToAmer : draft.paidToSupplier;
   if(hasReceivable && !part.supplierId){ showToast('حدد المورد لهذه القطعة قبل إرسال طلب الإرجاع', 'error'); return; }
-  if(pendingPartActionProposal('part_return', part.id)) return;
+  if(hasAnyPendingPartAction(part.id)) return;
   confirmAction({
     title: 'إرسال طلب إرجاع هذه القطعة؟',
     confirmLabel: 'إرسال الطلب',
@@ -5295,8 +5416,8 @@ async function withdrawEditProposal(proposalId){
   await refreshEditProposals();
 }
 
-function applyEditProposal(pr){
-  const order = appData.orders.find(o=>o.id===pr.order_id);
+function applyEditProposal(pr, orderOverride){
+  const order = orderOverride || appData.orders.find(o=>o.id===pr.order_id);
   if(!order) return false;
   if(pr.kind === 'part_field'){
     const part = (order.parts||[]).find(p=>p.id===pr.part_id);
@@ -5304,11 +5425,16 @@ function applyEditProposal(pr){
     if(pr.field === 'costPrice') part.costPrice = Math.max(0, Number(pr.proposed_value)||0);
     else if(pr.field === 'sellPrice') part.sellPrice = Math.max(0, Number(pr.proposed_value)||0);
     else if(pr.field === 'description') part.description = String(pr.proposed_value||'');
+    else if(pr.field === 'qty') part.qty = Math.max(1, Number(pr.proposed_value)||1);
+    else if(pr.field === 'used'){ part.used = !!pr.proposed_value; part.supplierId = null; }
     else return false;
   } else if(pr.kind === 'order_field'){
     if(pr.field === 'feePercent') order.feePercent = Math.max(0, Number(pr.proposed_value)||0);
     else if(pr.field === 'serviceFeePercent') order.serviceFeePercent = Math.max(0, Number(pr.proposed_value)||0);
     else if(pr.field === 'deliveryFeeAmount') order.deliveryFeeAmount = Math.max(0, Number(pr.proposed_value)||0);
+    else if(pr.field === 'feeEnabled') order.feeEnabled = !!pr.proposed_value;
+    else if(pr.field === 'serviceFeeEnabled') order.serviceFeeEnabled = !!pr.proposed_value;
+    else if(pr.field === 'deliveryFeeEnabled') order.deliveryFeeEnabled = !!pr.proposed_value;
     else return false;
   } else if(pr.kind === 'payment_add'){
     if(!Array.isArray(order.customerPayments)) order.customerPayments = [];
@@ -5394,12 +5520,23 @@ function handleEditProposalDecision(proposalId, accept){
           }
           appData.orders = appData.orders.filter(o=>o.id!==claimed.order_id);
           if(draft && draft.id === claimed.order_id) closeModal();
+          await purgeEditProposalsForOrder(claimed.order_id);
           renderKPIs();
           renderTable();
         } else {
-          const order = appData.orders.find(o=>o.id===claimed.order_id);
-          const orderSnapshot = order ? JSON.parse(JSON.stringify(order)) : null;
-          const applied = applyEditProposal(claimed);
+          // نجيب أحدث نسخة من الطلبية مباشرة من القاعدة قبل التطبيق — appData.orders المحلية
+          // ممكن تكون قديمة شوي (تأخر بسيط بالتزامن اللحظي)، وبدون هيك حفظ لاحق كان بيدهس أي
+          // تعديل تاني صار عالطلبية بالفترة الفاصلة بصمت (نفس درس draftOpenedAtUpdatedAt، هون
+          // بلا draft مفتوح بالضرورة). العمل على نسخة منفصلة (مو appData.orders المخزّنة) يعني
+          // كمان ما في داعي لأي "استرجاع" لو فشل التطبيق أو الحفظ — النسخة المخزّنة أصلًا ما انلمست.
+          const { data: freshRow, error: fetchError } = await sb.from('orders').select('*').eq('id', claimed.order_id).maybeSingle();
+          if(fetchError || !freshRow){
+            showToast('تعذر تطبيق الطلب — الطلبية غير موجودة. رجّعنا الطلب مكانه', 'error');
+            await restoreProposal();
+            return;
+          }
+          const order = orderRowToObject(freshRow);
+          const applied = applyEditProposal(claimed, order);
           if(!applied){
             showToast('تعذر تطبيق الطلب — الطلبية أو القطعة/الدفعة غير موجودة. رجّعنا الطلب مكانه', 'error');
             await restoreProposal();
@@ -5407,11 +5544,12 @@ function handleEditProposalDecision(proposalId, accept){
           }
           const saved = await persistOrder(order);
           if(!saved){
-            if(orderSnapshot) Object.assign(order, orderSnapshot);
             showToast('تعذر حفظ التعديل على الطلبية — رجّعنا الطلب مكانه، جرّب مرة تانية', 'error');
             await restoreProposal();
             return;
           }
+          const idx = appData.orders.findIndex(o=>o.id===order.id);
+          if(idx>=0) appData.orders[idx] = order; else appData.orders.push(order);
           // لو الطلبية المتأثرة مفتوحة حاليًا بالنافذة، لازم نزامن draft معها فورًا — غير هيك حفظ
           // لاحق من draft القديم بيلغي التعديل يلي لسا انطبق (نفس درس draftOpenedAtUpdatedAt)
           if(draft && draft.id === order.id){
@@ -5420,6 +5558,9 @@ function handleEditProposalDecision(proposalId, accept){
             draft.feePercent = order.feePercent;
             draft.serviceFeePercent = order.serviceFeePercent;
             draft.deliveryFeeAmount = order.deliveryFeeAmount;
+            draft.feeEnabled = order.feeEnabled;
+            draft.serviceFeeEnabled = order.serviceFeeEnabled;
+            draft.deliveryFeeEnabled = order.deliveryFeeEnabled;
             draft.updatedAt = order.updatedAt;
             draftOpenedAtUpdatedAt = order.updatedAt;
             refreshPartsList();
@@ -5508,7 +5649,15 @@ function bindEditProposalGlobalDelegation(){
   root.addEventListener('click', (e)=>{
     const reqBtn = e.target.closest('.field-request-btn');
     if(reqBtn){
-      composingProposalFields.add(composeKey(reqBtn.getAttribute('data-request-field'), reqBtn.getAttribute('data-part-id')));
+      const fieldKey = reqBtn.getAttribute('data-request-field');
+      const partId = reqBtn.getAttribute('data-part-id');
+      if(reqBtn.hasAttribute('data-request-boolean')){
+        const part = partId ? (draft.parts||[]).find(p=>p.id===partId) : null;
+        const currentValue = partId ? !!(part && part[fieldKey]) : !!(draft && draft[fieldKey]);
+        requestBooleanFieldChange(fieldKey, partId || null, currentValue);
+        return;
+      }
+      composingProposalFields.add(composeKey(fieldKey, partId));
       refreshGatedFieldViews();
       return;
     }
@@ -5533,8 +5682,9 @@ function bindEditProposalGlobalDelegation(){
 }
 
 const EDIT_PROPOSAL_FIELD_LABELS = {
-  description:'اسم القطعة', costPrice:'سعر الشراء', sellPrice:'سعر البيع',
-  feePercent:'نسبة الرسوم', serviceFeePercent:'نسبة رسوم الخدمة', deliveryFeeAmount:'رسوم التوصيل'
+  description:'اسم القطعة', costPrice:'سعر الشراء', sellPrice:'سعر البيع', qty:'العدد', used:'تصنيف القطعة',
+  feePercent:'نسبة الرسوم', serviceFeePercent:'نسبة رسوم الخدمة', deliveryFeeAmount:'رسوم التوصيل',
+  feeEnabled:'تفعيل نسبة الرسوم', serviceFeeEnabled:'تفعيل رسوم الخدمة', deliveryFeeEnabled:'تفعيل رسوم التوصيل'
 };
 function editProposalKindLabel(pr){
   if(pr.kind==='part_field' || pr.kind==='order_field') return EDIT_PROPOSAL_FIELD_LABELS[pr.field] || pr.field;
