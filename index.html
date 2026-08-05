@@ -669,6 +669,9 @@
   .edit-proposal-review-order{font-weight:700;color:var(--green);font-family:'Cairo',sans-serif;font-size:13.5px;}
   .edit-proposal-review-field{font-size:11.5px;color:var(--text-faint);font-weight:700;}
   .edit-proposal-review-meta{font-size:10.5px;color:var(--text-faint);margin-top:6px;}
+  .proposal-pending-note{font-size:12px;color:var(--amber);font-weight:700;margin:6px 0 0;}
+  .order-action-pending-wrap{display:inline-flex;}
+  .part-action-pending-wrap{margin-top:12px;}
   .payment-amount-input{
     width:100px;background:var(--bg);border:1px solid var(--border);color:var(--text);
     padding:7px 9px;border-radius:6px;font-size:13px;
@@ -1984,6 +1987,52 @@ function bindPartAddControls(){
   });
 }
 
+function orderActionButtonsHtml(d){
+  if(d.isNew) return '';
+  const deleteProposal = pendingOrderActionProposal('order_delete');
+  const deleteBtnHtml = deleteProposal
+    ? '<span class="order-action-pending-wrap">'+editProposalPendingHtml(deleteProposal)+'</span>'
+    : '<button type="button" class="btn btn-sm btn-danger-ghost" id="modal-delete-btn">حذف الطلبية</button>';
+
+  // الإرجاع معناه "قطعة استُلمت من المورد/التشليح ثم رجعت" — قبل "تم التوريد" أصلًا ما فيه شي
+  // استُلم بعد، فما يصير كلامه إرجاع
+  let returnBtnHtml = '';
+  if(d.supplied){
+    const returnProposal = pendingOrderActionProposal('order_return');
+    returnBtnHtml = returnProposal
+      ? '<span class="order-action-pending-wrap">'+editProposalPendingHtml(returnProposal)+'</span>'
+      : '<button type="button" class="btn btn-sm btn-ghost" id="modal-return-order-btn">↩️ '+(fieldGated()?'طلب إرجاع الطلبية':'إرجاع الطلبية')+'</button>';
+  }
+  return deleteBtnHtml + returnBtnHtml;
+}
+
+function bindOrderActionButtons(){
+  const root = document.getElementById('modal-root');
+  const delBtn = root.querySelector('#modal-delete-btn');
+  if(delBtn){
+    delBtn.addEventListener('click', ()=>{
+      if(!hasElevatedAccess()){ requestOrderDelete(); return; }
+      const id = draft.id;
+      closeModal();
+      confirmDelete(id);
+    });
+  }
+  const returnOrderBtn = root.querySelector('#modal-return-order-btn');
+  if(returnOrderBtn){
+    returnOrderBtn.addEventListener('click', ()=>{
+      if(fieldGated()){ requestOrderReturn(); return; }
+      confirmReturnWholeOrder();
+    });
+  }
+}
+
+function refreshOrderActionButtons(){
+  const wrap = document.getElementById('order-action-buttons-wrap');
+  if(!wrap || !draft) return;
+  wrap.innerHTML = orderActionButtonsHtml(draft);
+  bindOrderActionButtons();
+}
+
 function feeFieldRowHtml(d){
   const feePercentUi = fieldRequestUiHtml('feePercent', null, d.feePercent, '<span class="field-readonly-value num">'+(d.feePercent?d.feePercent:0)+'%</span>');
   const feePercentInputHtml = feePercentUi!=null ? feePercentUi : '<input type="number" min="0" step="0.1" id="order-fee-percent-input" class="num" value="'+escapeHtml(d.feePercent?d.feePercent:'')+'" placeholder="0">';
@@ -2084,8 +2133,15 @@ function partRowHtml(p, i){
   const sellFieldUi = fieldRequestUiHtml('sellPrice', p.id, sellVal, '<span class="field-readonly-value num">'+(sellVal===''?'—':fmtMoney(Number(sellVal)||0))+'</span>');
   const sellHtml = sellFieldUi!=null ? sellFieldUi : '<input type="number" min="0" step="0.01" class="part-sell-input num" placeholder="—" value="'+escapeHtml(sellVal)+'">';
 
+  const excludeProposal = pendingPartActionProposal('part_exclude', p.id);
+  const includeCheckHtml = !selectionOn ? '' : (
+    excludeProposal
+      ? editProposalPendingHtml(excludeProposal)
+      : '<input type="checkbox" class="part-include-check" '+(included?'checked':'')+' title="مشمولة بالطلبية">'
+  );
+
   return '<div class="part-row'+(selectionOn && !included ? ' part-row-excluded' : '')+'" data-part-id="'+escapeHtml(p.id)+'">' +
-    (selectionOn ? '<input type="checkbox" class="part-include-check" '+(included?'checked':'')+' title="مشمولة بالطلبية">' : '') +
+    includeCheckHtml +
     '<div class="part-desc-wrap">' +
       '<div class="part-desc-row">' +
         '<span class="part-index-badge">'+((i!=null?i:0)+1)+'</span>' +
@@ -2174,10 +2230,7 @@ function modalHtml(d){
       '</div>' +
       '<div class="modal-footer">' +
         '<div class="modal-footer-utility">' +
-          (!d.isNew ? '<button type="button" class="btn btn-sm btn-danger-ghost" id="modal-delete-btn">حذف الطلبية</button>' : '') +
-          // الإرجاع معناه "قطعة استُلمت من المورد/التشليح ثم رجعت" — قبل "تم التوريد" أصلًا
-          // ما فيه شي استُلم بعد، فما يصير كلامه إرجاع
-          (!d.isNew && d.supplied ? '<button type="button" class="btn btn-sm btn-ghost" id="modal-return-order-btn">↩️ إرجاع الطلبية</button>' : '') +
+          '<div id="order-action-buttons-wrap">'+orderActionButtonsHtml(d)+'</div>' +
           '<div class="parts-clipboard-mini">' +
             '<button type="button" class="btn-clip-mini" id="copy-parts-btn">📋 نسخ</button>' +
             '<button type="button" class="btn-clip-mini" id="paste-parts-btn">📥 لصق</button>' +
@@ -2316,7 +2369,7 @@ function attachModalHandlers(){
   if(pasteBtn) pasteBtn.addEventListener('click', pastePartsFromClipboard);
 
   root.querySelector('#cost-split-amer-btn').addEventListener('click', ()=>{
-    if(!hasElevatedAccess()){ showToast('تغيير حالة السداد للتشليح متاح فقط لمهاب وهمام وبشار', 'error'); return; }
+    if(!hasElevatedAccess()){ showToast('غير متاح', 'error'); return; }
     const willPay = !draft.paidToAmer;
     confirmAction({
       title: willPay ? 'تحديد الطلبية كـ"مسدد للتشليح"؟' : 'إلغاء تحديد الطلبية كـ"مسدد للتشليح"؟',
@@ -2336,7 +2389,7 @@ function attachModalHandlers(){
     });
   });
   root.querySelector('#cost-split-supplier-btn').addEventListener('click', ()=>{
-    if(!hasElevatedAccess()){ showToast('تغيير حالة السداد للمورد متاح فقط لمهاب وهمام وبشار', 'error'); return; }
+    if(!hasElevatedAccess()){ showToast('غير متاح', 'error'); return; }
     const willPay = !draft.paidToSupplier;
     confirmAction({
       title: willPay ? 'تحديد الطلبية كـ"مسدد للمورد"؟' : 'إلغاء تحديد الطلبية كـ"مسدد للمورد"؟',
@@ -2359,7 +2412,7 @@ function attachModalHandlers(){
     suppliedBtn.addEventListener('click', ()=>{
       const willSupply = !draft.supplied;
       if(!willSupply && !hasElevatedAccess()){
-        showToast('إلغاء تحديد "تم التوريد" متاح فقط لمهاب وهمام وبشار', 'error');
+        showToast('غير متاح', 'error');
         return;
       }
       confirmAction({
@@ -2408,20 +2461,7 @@ function attachModalHandlers(){
 
   bindOrderRefundConfirmButton();
 
-  const delBtn = root.querySelector('#modal-delete-btn');
-  if(delBtn){
-    delBtn.addEventListener('click', ()=>{
-      if(!hasElevatedAccess()){ showToast('حذف الطلبية متاح فقط لمهاب وهمام وبشار', 'error'); return; }
-      const id = draft.id;
-      closeModal();
-      confirmDelete(id);
-    });
-  }
-
-  const returnOrderBtn = root.querySelector('#modal-return-order-btn');
-  if(returnOrderBtn){
-    returnOrderBtn.addEventListener('click', confirmReturnWholeOrder);
-  }
+  bindOrderActionButtons();
 
   const quoteBtn = root.querySelector('#modal-quote-btn');
   if(quoteBtn){
@@ -2466,6 +2506,13 @@ function bindPartRowEvents(){
     const includeCheck = row.querySelector('.part-include-check');
     if(includeCheck){
       includeCheck.addEventListener('change', e=>{
+        // الاستبعاد (تحويل included من true إلى false) بس يلي بيأثر على الحسابات — لازم طلب
+        // بعد التوريد لغير المخوّل. إعادة التحديد (false إلى true) بتزيد المستحق، تضل حرة.
+        if(!e.target.checked && fieldGated()){
+          e.target.checked = true;
+          requestPartExclude(part);
+          return;
+        }
         part.included = e.target.checked;
         refreshPartsList();
       });
@@ -2593,15 +2640,19 @@ function openPartActionChoice(part){
   // نفس ملاحظة زر "↩️ إرجاع الطلبية" — إرجاع قطعة معناه استُلمت (من مورد/تشليح) وبعدين رجعت،
   // قبل "تم التوريد" ما فيه شي استُلم بعد
   const canReturn = !!(draft && draft.supplied);
+  const gated = fieldGated();
+  const pendingDelete = pendingPartActionProposal('part_delete', part.id);
+  const pendingReturn = pendingPartActionProposal('part_return', part.id);
   root.innerHTML =
     '<div class="modal-backdrop" data-close-confirm>' +
       '<div class="modal-card modal-card-sm" role="alertdialog" aria-modal="true">' +
         '<div class="modal-title">'+escapeHtml(part.description||'القطعة')+'</div>' +
         '<p class="modal-sub">اختر الإجراء المطلوب لهذه القطعة</p>' +
+        (pendingDelete || pendingReturn ? '<div class="part-action-pending-wrap">'+editProposalPendingHtml(pendingDelete||pendingReturn)+'</div>' : '') +
         '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;flex-wrap:wrap;">' +
           '<button type="button" class="btn btn-ghost" id="part-action-cancel-btn">إلغاء</button>' +
-          (canReturn ? '<button type="button" class="btn btn-ghost" id="part-action-return-btn">🔄 إرجاع</button>' : '') +
-          '<button type="button" class="btn btn-danger" id="part-action-delete-btn">🗑️ حذف</button>' +
+          (canReturn && !pendingReturn && !pendingDelete ? '<button type="button" class="btn btn-ghost" id="part-action-return-btn">🔄 '+(gated?'طلب إرجاع':'إرجاع')+'</button>' : '') +
+          (!pendingDelete && !pendingReturn ? '<button type="button" class="btn btn-danger" id="part-action-delete-btn">🗑️ '+(gated?'طلب حذف':'حذف')+'</button>' : '') +
         '</div>' +
       '</div>' +
     '</div>';
@@ -2611,23 +2662,36 @@ function openPartActionChoice(part){
     if(e.target.hasAttribute('data-close-confirm')) close();
   });
   root.querySelector('#part-action-cancel-btn').addEventListener('click', close);
-  root.querySelector('#part-action-delete-btn').addEventListener('click', ()=>{
-    close();
-    confirmAction({
-      title: 'حذف هذه القطعة؟',
-      message: part.description ? 'القطعة: '+part.description : undefined,
-      confirmLabel: 'تأكيد الحذف',
-      dangerous: true,
-      onConfirm: ()=>{
-        draft.parts = draft.parts.filter(p=>p.id!==part.id);
-        refreshPartsList();
-      }
+  // هالنافذة برّا #modal-root — التفويض العام bindEditProposalGlobalDelegation ما بيغطّيها،
+  // فلازم نربط أزرار القبول/الرفض/السحب هون محليًا لو في طلب معلّق ظاهر
+  const acceptBtn = root.querySelector('[data-accept-proposal]');
+  if(acceptBtn) acceptBtn.addEventListener('click', ()=>{ close(); handleEditProposalDecision(acceptBtn.getAttribute('data-accept-proposal'), true); });
+  const rejectBtn = root.querySelector('[data-reject-proposal]');
+  if(rejectBtn) rejectBtn.addEventListener('click', ()=>{ close(); handleEditProposalDecision(rejectBtn.getAttribute('data-reject-proposal'), false); });
+  const withdrawBtn = root.querySelector('[data-withdraw-proposal]');
+  if(withdrawBtn) withdrawBtn.addEventListener('click', ()=>{ close(); withdrawEditProposal(withdrawBtn.getAttribute('data-withdraw-proposal')); });
+  const deleteBtn = root.querySelector('#part-action-delete-btn');
+  if(deleteBtn){
+    deleteBtn.addEventListener('click', ()=>{
+      close();
+      if(gated){ requestPartDelete(part); return; }
+      confirmAction({
+        title: 'حذف هذه القطعة؟',
+        message: part.description ? 'القطعة: '+part.description : undefined,
+        confirmLabel: 'تأكيد الحذف',
+        dangerous: true,
+        onConfirm: ()=>{
+          draft.parts = draft.parts.filter(p=>p.id!==part.id);
+          refreshPartsList();
+        }
+      });
     });
-  });
+  }
   const returnBtn = root.querySelector('#part-action-return-btn');
   if(returnBtn){
     returnBtn.addEventListener('click', ()=>{
       close();
+      if(gated){ requestPartReturn(part); return; }
       confirmSinglePartReturn(part);
     });
   }
@@ -2654,11 +2718,13 @@ function confirmSinglePartReturn(part){
   });
 }
 
-/* تطبيق إرجاع قطعة وحدة: تعليمها كمرتجعة، وإذا كان الزبون دفع أكثر من المطلوب بعد استبعادها
+/* تطبيق إرجاع قطعة وحدة على أي طلبية (order) — عام، يشتغل على draft المفتوح أو على أي صف من
+   appData.orders (لازم لتطبيق طلب إرجاع مقبول عبر edit_proposals على الطلبية بقاعدة البيانات،
+   مو بس على draft المفتوح). تعليمها كمرتجعة، وإذا كان الزبون دفع أكثر من المطلوب بعد استبعادها
    (يعني كان دفع ثمنها ضمن دفعاته) نضيف تلقائيًا دفعة "مرتجع" سالبة الأثر تعادل الفرق،
    لحد ما يُحصّل مبلغها من المورد (عندها تُلغى تلقائيًا وترجع للحسابات — orderTotals يتكفّل بهيك). */
-function applyPartReturn(part){
-  const hasReceivable = part.used ? draft.paidToAmer : draft.paidToSupplier;
+function applyPartReturnOnOrder(order, part){
+  const hasReceivable = part.used ? order.paidToAmer : order.paidToSupplier;
   part.returned = true;
   part.returnHasReceivable = hasReceivable;
   part.returnCollected = false;
@@ -2668,18 +2734,20 @@ function applyPartReturn(part){
   // كان في `if(sellAmount<=0) return;` هون — يعني إرجاع قطعة غير مسعّرة ما بينتج أي استرداد
   // أبدًا، فأي عربون دفعه الزبون على طلبية رجعت قبل التسعير بيضل مسجّل عليه للأبد.
   // الاسترداد الصح مبني على الزيادة الفعلية: لو القطعة مسعّرة نحدّه بقيمتها، وإلا نرجّع الزيادة كلها.
-  const t = orderTotals(draft);
+  const t = orderTotals(order);
   const overpay = round2(t.customerPaidAmount - (t.hasSell ? t.sellTotal : 0));
   if(overpay > 0.01){
     const refundAmount = round2(sellAmount > 0 ? Math.min(overpay, sellAmount) : overpay);
     part.customerRefundConfirmed = false; // ما يخصم من الصندوق إلا بعد تأكيد صريح من شاشة العملاء إنه رجع فعليًا
-    if(!Array.isArray(draft.customerPayments)) draft.customerPayments = [];
-    draft.customerPayments.push({
+    if(!Array.isArray(order.customerPayments)) order.customerPayments = [];
+    order.customerPayments.push({
       id: uid('pay'), amount: refundAmount, method: 'مرتجع', date: todayNumeric(),
       returnAdjustment: true, linkedPartId: part.id
     });
   }
 }
+
+function applyPartReturn(part){ applyPartReturnOnOrder(draft, part); }
 
 function bindPaymentRowEvents(){
   const root = document.getElementById('modal-root');
@@ -2989,7 +3057,7 @@ async function onSaveOrder(){
     pendingScrapyardCancellations.clear();
   }
   if(pendingEditProposalsCancellation){
-    await cancelPendingFieldProposalsForOrder(draft.id);
+    await cancelPendingSuppliedGatedProposalsForOrder(draft.id);
     pendingEditProposalsCancellation = false;
   }
 
@@ -3517,7 +3585,7 @@ function attachQuoteModalHandlers(){
       // نفس الفحص الموجود على حذف الطلبية بنافذة الطلبية — كان ناقص هون، فغير المخوّل كان
       // يشوف "تم الحذف" والقاعدة رافضة الحذف بصمت (والصف يرجع يظهر مع أول تحديث).
       if(!hasElevatedAccess()){
-        showToast('حذف طلب التسعير متاح فقط لمهاب وهمام وبشار', 'error');
+        showToast('غير متاح', 'error');
         return;
       }
       const id = quoteDraft.id;
@@ -4808,6 +4876,17 @@ function pendingPaymentAddProposals(){
   return (editProposals||[]).filter(pr=> pr.order_id===draft.id && pr.kind==='payment_add');
 }
 
+/* طلبات معلّقة على إجراء قطعة (استبعاد/حذف/إرجاع) أو إجراء على مستوى الطلبية كلها (حذف/إرجاع) */
+function pendingPartActionProposal(kind, partId){
+  if(!draft) return null;
+  return (editProposals||[]).find(pr=> pr.order_id===draft.id && pr.kind===kind && pr.part_id===partId);
+}
+
+function pendingOrderActionProposal(kind){
+  if(!draft) return null;
+  return (editProposals||[]).find(pr=> pr.order_id===draft.id && pr.kind===kind && !pr.part_id);
+}
+
 function formatProposalFieldValue(field, value){
   if(field==='description') return value==null ? '—' : String(value);
   if(field==='feePercent' || field==='serviceFeePercent') return (value==null?0:value)+'%';
@@ -4828,6 +4907,16 @@ function editProposalPendingHtml(pr){
   } else if(pr.kind==='payment_edit'){
     const pv = pr.proposed_value||{};
     changeText = 'تعديل الدفعة إلى '+fmtMoney(Number(pv.amount)||0)+' ('+paymentMethodLabel(pv.method)+')';
+  } else if(pr.kind==='part_exclude'){
+    changeText = '🚫 طلب استبعاد القطعة من حسابات الطلبية';
+  } else if(pr.kind==='part_delete'){
+    changeText = '🗑️ طلب حذف القطعة';
+  } else if(pr.kind==='part_return'){
+    changeText = '🔄 طلب إرجاع القطعة';
+  } else if(pr.kind==='order_delete'){
+    changeText = '🗑️ طلب حذف الطلبية بالكامل';
+  } else if(pr.kind==='order_return'){
+    changeText = '🔄 طلب إرجاع الطلبية بالكامل';
   } else {
     changeText = escapeHtml(formatProposalFieldValue(pr.field, pr.current_value)) + ' ← ' + escapeHtml(formatProposalFieldValue(pr.field, pr.proposed_value));
   }
@@ -4968,13 +5057,116 @@ async function sendPaymentAddRequest(draftKey){
   await refreshEditProposals();
 }
 
-/* بعد إلغاء "تم التوريد"، طلبات تعديل السعر/الاسم/النسب المعلّقة (part_field/order_field) بتفقد
-   مبرر وجودها (شرط القفل نفسه ارتفع) فنلغيها. طلبات الدفعات (payment_*) ما إلها علاقة بحالة
-   التوريد أصلًا (كانت مقفولة على المخوّلين دايمًا) فما تُلمس هون. */
-async function cancelPendingFieldProposalsForOrder(orderId){
-  const { error } = await sb.from('edit_proposals').delete().eq('order_id', orderId).in('kind', ['part_field','order_field']);
-  if(error) console.error('cancelPendingFieldProposalsForOrder:', error);
+/* بعد إلغاء "تم التوريد"، أي طلب معلّق شرط قفله مبني على "الطلبية موردة" بيفقد مبرر وجوده
+   (شرط القفل نفسه ارتفع) فنلغيه — أسعار/اسم/نسب (part_field/order_field) واستبعاد/حذف/إرجاع
+   قطعة (part_exclude/part_delete/part_return) وإرجاع الطلبية بالكامل (order_return)، كلهم
+   مقفولين على old.supplied=true بالتريغر. order_delete وطلبات الدفعات (payment_*) ما إلهم
+   علاقة بحالة التوريد أصلًا (مقفولين على المخوّلين دايمًا) فما تُلمس هون. */
+async function cancelPendingSuppliedGatedProposalsForOrder(orderId){
+  const { error } = await sb.from('edit_proposals').delete().eq('order_id', orderId)
+    .in('kind', ['part_field','order_field','part_exclude','part_delete','part_return','order_return']);
+  if(error) console.error('cancelPendingSuppliedGatedProposalsForOrder:', error);
   await refreshEditProposals();
+}
+
+function requestPartExclude(part){
+  if(pendingPartActionProposal('part_exclude', part.id)) return;
+  confirmAction({
+    title: 'إرسال طلب استبعاد هذه القطعة من حسابات الطلبية؟',
+    message: part.description ? 'القطعة: '+part.description : undefined,
+    confirmLabel: 'إرسال الطلب',
+    onConfirm: async ()=>{
+      const { error } = await sb.from('edit_proposals').insert({
+        order_id: draft.id, kind: 'part_exclude', part_id: part.id,
+        current_value: true, proposed_value: false, submitted_by: presenceEmail
+      });
+      if(error){ showToast('تعذر إرسال الطلب', 'error'); return; }
+      showToast('تم إرسال الطلب', 'ok');
+      await refreshEditProposals();
+    }
+  });
+}
+
+function requestPartDelete(part){
+  if(pendingPartActionProposal('part_delete', part.id)) return;
+  confirmAction({
+    title: 'إرسال طلب حذف هذه القطعة؟',
+    message: part.description ? 'القطعة: '+part.description : undefined,
+    confirmLabel: 'إرسال الطلب',
+    dangerous: true,
+    onConfirm: async ()=>{
+      const { error } = await sb.from('edit_proposals').insert({
+        order_id: draft.id, kind: 'part_delete', part_id: part.id,
+        current_value: {description: part.description, costPrice: part.costPrice, sellPrice: part.sellPrice},
+        proposed_value: null, submitted_by: presenceEmail
+      });
+      if(error){ showToast('تعذر إرسال الطلب', 'error'); return; }
+      showToast('تم إرسال طلب الحذف', 'ok');
+      await refreshEditProposals();
+    }
+  });
+}
+
+function requestPartReturn(part){
+  const hasReceivable = part.used ? draft.paidToAmer : draft.paidToSupplier;
+  if(hasReceivable && !part.supplierId){ showToast('حدد المورد لهذه القطعة قبل إرسال طلب الإرجاع', 'error'); return; }
+  if(pendingPartActionProposal('part_return', part.id)) return;
+  confirmAction({
+    title: 'إرسال طلب إرجاع هذه القطعة؟',
+    confirmLabel: 'إرسال الطلب',
+    dangerous: true,
+    onConfirm: async ()=>{
+      const { error } = await sb.from('edit_proposals').insert({
+        order_id: draft.id, kind: 'part_return', part_id: part.id,
+        current_value: null, proposed_value: null, submitted_by: presenceEmail
+      });
+      if(error){ showToast('تعذر إرسال الطلب', 'error'); return; }
+      showToast('تم إرسال طلب الإرجاع', 'ok');
+      await refreshEditProposals();
+    }
+  });
+}
+
+function requestOrderDelete(){
+  if(pendingOrderActionProposal('order_delete')){ showToast('في طلب حذف معلّق أصلًا لهذه الطلبية', 'error'); return; }
+  confirmAction({
+    title: 'إرسال طلب حذف هذه الطلبية؟',
+    message: 'هذا إجراء نهائي بعد الموافقة — الطلبية بتُحذف بالكامل.',
+    confirmLabel: 'إرسال الطلب',
+    dangerous: true,
+    onConfirm: async ()=>{
+      const { error } = await sb.from('edit_proposals').insert({
+        order_id: draft.id, kind: 'order_delete', current_value: null, proposed_value: null, submitted_by: presenceEmail
+      });
+      if(error){ showToast('تعذر إرسال الطلب', 'error'); return; }
+      showToast('تم إرسال طلب الحذف', 'ok');
+      await refreshEditProposals();
+    }
+  });
+}
+
+function requestOrderReturn(){
+  const activeParts = orderActiveParts(draft).filter(p=>!p.returned);
+  if(!activeParts.length){ showToast('لا يوجد قطع قابلة للإرجاع بهذه الطلبية', 'error'); return; }
+  const missingSupplier = activeParts.some(p=>{
+    const hasReceivable = p.used ? draft.paidToAmer : draft.paidToSupplier;
+    return hasReceivable && !p.supplierId;
+  });
+  if(missingSupplier){ showToast('حدد المورد لكل قطعة مدفوعة مسبقًا قبل إرسال طلب الإرجاع', 'error'); return; }
+  if(pendingOrderActionProposal('order_return')){ showToast('في طلب إرجاع معلّق أصلًا لهذه الطلبية', 'error'); return; }
+  confirmAction({
+    title: 'إرسال طلب إرجاع الطلبية بالكامل ('+activeParts.length+' قطعة)؟',
+    confirmLabel: 'إرسال الطلب',
+    dangerous: true,
+    onConfirm: async ()=>{
+      const { error } = await sb.from('edit_proposals').insert({
+        order_id: draft.id, kind: 'order_return', current_value: null, proposed_value: null, submitted_by: presenceEmail
+      });
+      if(error){ showToast('تعذر إرسال الطلب', 'error'); return; }
+      showToast('تم إرسال طلب الإرجاع', 'ok');
+      await refreshEditProposals();
+    }
+  });
 }
 
 async function withdrawEditProposal(proposalId){
@@ -5015,6 +5207,32 @@ function applyEditProposal(pr){
     const existed = (order.customerPayments||[]).some(p=>p.id===pr.payment_id);
     if(!existed) return false;
     order.customerPayments = (order.customerPayments||[]).filter(p=>p.id!==pr.payment_id);
+  } else if(pr.kind === 'part_exclude'){
+    const part = (order.parts||[]).find(p=>p.id===pr.part_id);
+    if(!part) return false;
+    part.included = false;
+  } else if(pr.kind === 'part_delete'){
+    const targetPart = (order.parts||[]).find(p=>p.id===pr.part_id);
+    // نفس قيد part_return — قطعة مرتجعة أصلًا ما تنحذف (كان ممكن يصير لو حد رجّعها مباشرة
+    // بالفترة الفاصلة بين إرسال طلب الحذف وقبوله)، غير هيك دفعة الاسترداد المرتبطة فيها
+    // (returnAdjustment) بتضل معلّقة بلا قطعة توصلها، وأي مستحق للمورد عنها بيختفي بصمت
+    if(!targetPart || targetPart.returned) return false;
+    order.parts = (order.parts||[]).filter(p=>p.id!==pr.part_id);
+  } else if(pr.kind === 'part_return'){
+    const part = (order.parts||[]).find(p=>p.id===pr.part_id);
+    if(!part || part.returned) return false;
+    const hasReceivable = part.used ? order.paidToAmer : order.paidToSupplier;
+    if(hasReceivable && !part.supplierId) return false; // نفس شرط الإرجاع المباشر — لازم مورد محدد أولًا
+    applyPartReturnOnOrder(order, part);
+  } else if(pr.kind === 'order_return'){
+    const activeParts = orderActiveParts(order).filter(p=>!p.returned);
+    if(!activeParts.length) return false;
+    const missingSupplier = activeParts.some(p=>{
+      const hasReceivable = p.used ? order.paidToAmer : order.paidToSupplier;
+      return hasReceivable && !p.supplierId;
+    });
+    if(missingSupplier) return false;
+    activeParts.forEach(p=> applyPartReturnOnOrder(order, p));
   } else {
     return false;
   }
@@ -5047,38 +5265,53 @@ function handleEditProposalDecision(proposalId, accept){
       };
       if(accept){
         const claimed = deletedRows[0];
-        const order = appData.orders.find(o=>o.id===claimed.order_id);
-        const orderSnapshot = order ? JSON.parse(JSON.stringify(order)) : null;
-        const applied = applyEditProposal(claimed);
-        if(!applied){
-          showToast('تعذر تطبيق الطلب — الطلبية أو القطعة/الدفعة غير موجودة. رجّعنا الطلب مكانه', 'error');
-          await restoreProposal();
-          return;
+        // حذف الطلبية بالكامل — DELETE فعلي على orders، مش تعديل عبر applyEditProposal/persistOrder
+        // متل باقي الأنواع (اللي كلها UPDATE على صف موجود)
+        if(claimed.kind === 'order_delete'){
+          const deleted = await deleteOrder(claimed.order_id);
+          if(!deleted){
+            showToast('تعذر حذف الطلبية — رجّعنا الطلب مكانه، جرّب مرة تانية', 'error');
+            await restoreProposal();
+            return;
+          }
+          appData.orders = appData.orders.filter(o=>o.id!==claimed.order_id);
+          if(draft && draft.id === claimed.order_id) closeModal();
+          renderKPIs();
+          renderTable();
+        } else {
+          const order = appData.orders.find(o=>o.id===claimed.order_id);
+          const orderSnapshot = order ? JSON.parse(JSON.stringify(order)) : null;
+          const applied = applyEditProposal(claimed);
+          if(!applied){
+            showToast('تعذر تطبيق الطلب — الطلبية أو القطعة/الدفعة غير موجودة. رجّعنا الطلب مكانه', 'error');
+            await restoreProposal();
+            return;
+          }
+          const saved = await persistOrder(order);
+          if(!saved){
+            if(orderSnapshot) Object.assign(order, orderSnapshot);
+            showToast('تعذر حفظ التعديل على الطلبية — رجّعنا الطلب مكانه، جرّب مرة تانية', 'error');
+            await restoreProposal();
+            return;
+          }
+          // لو الطلبية المتأثرة مفتوحة حاليًا بالنافذة، لازم نزامن draft معها فورًا — غير هيك حفظ
+          // لاحق من draft القديم بيلغي التعديل يلي لسا انطبق (نفس درس draftOpenedAtUpdatedAt)
+          if(draft && draft.id === order.id){
+            draft.parts = JSON.parse(JSON.stringify(order.parts||[]));
+            draft.customerPayments = JSON.parse(JSON.stringify(order.customerPayments||[]));
+            draft.feePercent = order.feePercent;
+            draft.serviceFeePercent = order.serviceFeePercent;
+            draft.deliveryFeeAmount = order.deliveryFeeAmount;
+            draft.updatedAt = order.updatedAt;
+            draftOpenedAtUpdatedAt = order.updatedAt;
+            refreshPartsList();
+            refreshFeeFieldsBlock();
+            refreshPaymentsList();
+            updateModalTotals();
+          }
+          renderKPIs();
+          renderTable();
         }
-        const saved = await persistOrder(order);
-        if(!saved){
-          if(orderSnapshot) Object.assign(order, orderSnapshot);
-          showToast('تعذر حفظ التعديل على الطلبية — رجّعنا الطلب مكانه، جرّب مرة تانية', 'error');
-          await restoreProposal();
-          return;
-        }
-        // لو الطلبية المتأثرة مفتوحة حاليًا بالنافذة، لازم نزامن draft معها فورًا — غير هيك حفظ
-        // لاحق من draft القديم بيلغي التعديل يلي لسا انطبق (نفس درس draftOpenedAtUpdatedAt)
-        if(draft && draft.id === order.id){
-          draft.parts = JSON.parse(JSON.stringify(order.parts||[]));
-          draft.customerPayments = JSON.parse(JSON.stringify(order.customerPayments||[]));
-          draft.feePercent = order.feePercent;
-          draft.serviceFeePercent = order.serviceFeePercent;
-          draft.deliveryFeeAmount = order.deliveryFeeAmount;
-          draft.updatedAt = order.updatedAt;
-          draftOpenedAtUpdatedAt = order.updatedAt;
-          refreshPartsList();
-          refreshFeeFieldsBlock();
-          refreshPaymentsList();
-          updateModalTotals();
-        }
-        renderKPIs();
-        renderTable();
       }
       showToast(accept ? 'تم القبول والتطبيق' : 'تم رفض الطلب', 'ok');
       await refreshEditProposals();
@@ -5105,6 +5338,7 @@ async function refreshEditProposals(){
     refreshPartsList();
     refreshFeeFieldsBlock();
     refreshPaymentsList();
+    refreshOrderActionButtons();
   }
   if(document.getElementById('treasury-view') && document.getElementById('treasury-view').style.display!=='none'){
     renderTreasuryView();
@@ -5173,6 +5407,11 @@ function editProposalKindLabel(pr){
   if(pr.kind==='payment_add') return 'دفعة زبون جديدة';
   if(pr.kind==='payment_edit') return 'تعديل دفعة زبون';
   if(pr.kind==='payment_delete') return 'حذف دفعة زبون';
+  if(pr.kind==='part_exclude') return 'استبعاد قطعة';
+  if(pr.kind==='part_delete') return 'حذف قطعة';
+  if(pr.kind==='part_return') return 'إرجاع قطعة';
+  if(pr.kind==='order_delete') return 'حذف الطلبية';
+  if(pr.kind==='order_return') return 'إرجاع الطلبية';
   return pr.kind;
 }
 
@@ -5181,7 +5420,7 @@ function editProposalReviewRowHtml(pr){
   const order = appData.orders.find(o=>o.id===pr.order_id);
   const orderLabel = order ? ('#'+order.orderNumber+(order.orderLabel?' — '+order.orderLabel:'')) : ('طلبية #'+pr.order_id);
   let partLabel = '';
-  if(pr.kind==='part_field' && order){
+  if((pr.kind==='part_field' || pr.kind==='part_exclude' || pr.kind==='part_delete' || pr.kind==='part_return') && order){
     const part = (order.parts||[]).find(p=>p.id===pr.part_id);
     if(part) partLabel = ' · '+(part.description||'قطعة');
   }
