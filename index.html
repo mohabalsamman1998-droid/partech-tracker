@@ -8314,14 +8314,18 @@ function showAuthGate(msg, msgType){
   shownForEmail = null;
   scrapyardSharedState.canManage = false;
   currentUserIsElevated = false;
-  // رجّع خطوة إدخال البريد — بعد ما يُرسل رمز، أي إعادة عرض للبوابة كانت بتترك خانة الرمز
-  // ظاهرة لبريد ما عاد صالح، فالمستخدم عالق ما يقدر يطلب رمز جديد.
+  // رجّع خطوة إدخال البريد بس لو ما في رمز قيد الانتظار فعليًا (pendingAuthEmail فاضي) — قبل
+  // هالفحص كانت شاشة "تم إرسال الرمز" (وأي رسالة تانية بمنتصف التحقق، متل رمز غلط) بتستدعي
+  // showAuthGate() وترجّع المستخدم لخطوة البريد فورًا، فتختفي خانة إدخال الرمز قبل ما يقدر
+  // حتى يكتبه. pendingAuthEmail بيتصفّر بس عند "رجوع" الصريح أو بعد تحقق ناجح فعليًا.
   const stepEmail = document.getElementById('auth-step-email');
   const stepCode = document.getElementById('auth-step-code');
   const codeInput = document.getElementById('auth-code-input');
-  if(stepEmail) stepEmail.style.display = '';
-  if(stepCode) stepCode.style.display = 'none';
-  if(codeInput) codeInput.value = '';
+  if(!pendingAuthEmail){
+    if(stepEmail) stepEmail.style.display = '';
+    if(stepCode) stepCode.style.display = 'none';
+    if(codeInput) codeInput.value = '';
+  }
   document.getElementById('auth-gate').classList.remove('hidden');
   const msgEl = document.getElementById('auth-message');
   msgEl.textContent = msg || '';
@@ -9771,6 +9775,10 @@ function bindAuthGate(){
     try{
       const { error } = await sb.auth.verifyOtp({ email: pendingAuthEmail, token: code, type: 'email' });
       if(error) throw error;
+      // الجلسة صارت جاهزة — onAuthStateChange بياخذ من هون وطالع. تصفير pendingAuthEmail هون
+      // (مش بس بزر "رجوع") ضروري حتى showAuthGate ما تفضّل تعتبرنا "لسا بمنتصف إدخال الرمز"
+      // لو رجعت تنادى بعدين (مثلاً بريد غير مصرّح له بعد نجاح التحقق).
+      pendingAuthEmail = '';
     }catch(e){
       showAuthGate('رمز غير صحيح أو منتهي الصلاحية: ' + (e && e.message ? e.message : ''), 'error');
     }finally{
