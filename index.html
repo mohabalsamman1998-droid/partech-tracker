@@ -266,6 +266,7 @@
   .btn-confirmed-green{background:var(--green);border-color:var(--green);color:var(--green-ink);opacity:.9;cursor:pointer;}
   .btn-confirmed-green:hover{opacity:1;}
   .treasury-chip-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
+  .unsuccessful-reason-chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;}
   .expense-entry-row{display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:6px;padding:6px 8px;flex-wrap:wrap;}
   .expense-entry-amount-input{
     width:90px;background:var(--bg);border:1px solid var(--border);color:var(--rust);
@@ -1627,6 +1628,9 @@ function orderMatchesFilterAndSearch(order, filter, search){
   if(filter==='waitingSupplier' && !f.waitingSupplierPayment) return false;
   if(filter==='waitingCustomer' && !f.waitingCustomerPayment) return false;
   if(filter==='complete' && !f.complete) return false;
+  // فيلتر خاص بالأرشيف بس (مو ضمن FILTERS المشتركة) — الطلبيات المؤرشفة غير المؤكدة يلي
+  // انسجّل إلها سبب عدم نجاح
+  if(filter==='justified' && !order.unsuccessfulReason) return false;
   if(search){
     // بحث ذكي: يشمل رقم الطلبية ووصفها (اسم الزبون/نوع السيارة) ورقم الجوال ووصف كل القطع.
     // بيقسّم البحث لكلمات، وأي طلبية تحوي كل الكلمات (بأي ترتيب وبأي حقل) تعتبر مطابقة.
@@ -1699,6 +1703,9 @@ function rowHtml(order){
     '<td>'+(order.confirmed ? customerPaymentCellHtml(t, true) : '<span class="muted">—</span>')+'</td>' +
     '<td class="row-actions">' +
       '<button class="icon-btn" data-open="'+escapeHtml(order.id)+'">فتح</button>' +
+      (order.archived && !order.confirmed
+        ? '<button class="icon-btn" data-unsuccessful-reason="'+escapeHtml(order.id)+'" title="سبب عدم النجاح">📋'+(order.unsuccessfulReason?' '+unsuccessfulReasonLabel(order.unsuccessfulReason):' تحديد السبب')+'</button>'
+        : '') +
       (order.archived
         ? '<button class="icon-btn" data-restore="'+escapeHtml(order.id)+'">↩️ استعادة</button>'
         : '<button class="icon-btn" data-archive="'+escapeHtml(order.id)+'">🗄️ أرشفة</button>') +
@@ -1731,6 +1738,9 @@ function cardHtml(order){
     '</div>' +
     '<div class="order-card-actions">' +
       '<button class="icon-btn" data-open="'+escapeHtml(order.id)+'">فتح</button>' +
+      (order.archived && !order.confirmed
+        ? '<button class="icon-btn" data-unsuccessful-reason="'+escapeHtml(order.id)+'" title="سبب عدم النجاح">📋'+(order.unsuccessfulReason?' '+unsuccessfulReasonLabel(order.unsuccessfulReason):' تحديد السبب')+'</button>'
+        : '') +
       (order.archived
         ? '<button class="icon-btn" data-restore="'+escapeHtml(order.id)+'">↩️ استعادة</button>'
         : '<button class="icon-btn" data-archive="'+escapeHtml(order.id)+'">🗄️ أرشفة</button>') +
@@ -4168,6 +4178,92 @@ async function restoreOrder(orderId){
   refreshArchiveList();
   updateArchivePendingBadge();
   showToast('تم استعادة الطلبية', 'ok');
+}
+
+/* ---------- سبب عدم نجاح الطلبية (تُعرض بس للطلبيات المؤرشفة غير المؤكدة) ---------- */
+const UNSUCCESSFUL_REASONS = [
+  {id:'mismatch', label:'غير مطابق للوصف'},
+  {id:'unavailable', label:'لا يوجد'},
+  {id:'pricing_delay', label:'تأخر في التسعير'},
+  {id:'other', label:'أخرى'}
+];
+
+function unsuccessfulReasonLabel(reasonId){
+  return (UNSUCCESSFUL_REASONS.find(r=>r.id===reasonId)||{}).label || '';
+}
+
+function openUnsuccessfulReasonPicker(orderId){
+  const root = document.getElementById('confirm-root');
+  let selectedReason = null;
+
+  function render(){
+    const order = appData.orders.find(o=>o.id===orderId);
+    if(!order) return;
+    if(selectedReason===null) selectedReason = order.unsuccessfulReason || '';
+    root.innerHTML =
+      '<div class="modal-backdrop" data-close-confirm>' +
+        '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
+          '<div class="modal-title">سبب عدم نجاح الطلبية</div>' +
+          '<p class="modal-sub">'+escapeHtml(order.orderNumber)+(order.orderLabel?' — '+escapeHtml(order.orderLabel):'')+'</p>' +
+          '<div class="unsuccessful-reason-chips">' +
+            UNSUCCESSFUL_REASONS.map(r=>'<button type="button" class="chip'+(selectedReason===r.id?' chip-active':'')+'" data-reason="'+r.id+'">'+r.label+'</button>').join('') +
+          '</div>' +
+          (selectedReason ? (
+            '<label class="field" style="margin-top:12px;"><span class="field-label">تفاصيل إضافية (اختياري)</span>' +
+              '<input type="text" id="unsuccessful-reason-details-input" value="'+escapeHtml(order.unsuccessfulReason===selectedReason ? (order.unsuccessfulReasonDetails||'') : '')+'" placeholder="اكتب التفاصيل...">' +
+            '</label>'
+          ) : '') +
+          '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;flex-wrap:wrap;">' +
+            (order.unsuccessfulReason ? '<button type="button" class="btn btn-ghost" id="unsuccessful-reason-clear-btn">مسح السبب</button>' : '') +
+            '<button type="button" class="btn btn-ghost" id="unsuccessful-reason-cancel-btn">إلغاء</button>' +
+            '<button type="button" class="btn btn-primary" id="unsuccessful-reason-save-btn"'+(selectedReason?'':' disabled')+'>حفظ</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    root.classList.add('modal-open');
+    const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+    root.querySelector('[data-close-confirm]').addEventListener('click', e=>{
+      if(e.target.hasAttribute('data-close-confirm')) close();
+    });
+    root.querySelector('#unsuccessful-reason-cancel-btn').addEventListener('click', close);
+    root.querySelectorAll('[data-reason]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{ selectedReason = btn.getAttribute('data-reason'); render(); });
+    });
+    const clearBtn = root.querySelector('#unsuccessful-reason-clear-btn');
+    if(clearBtn){
+      clearBtn.addEventListener('click', async ()=>{
+        const prevReason = order.unsuccessfulReason, prevDetails = order.unsuccessfulReasonDetails, prevUpdatedAt = order.updatedAt;
+        order.unsuccessfulReason = null;
+        order.unsuccessfulReasonDetails = '';
+        order.updatedAt = new Date().toISOString();
+        const saved = await persistOrder(order);
+        if(!saved){ order.unsuccessfulReason = prevReason; order.unsuccessfulReasonDetails = prevDetails; order.updatedAt = prevUpdatedAt; return; }
+        close();
+        renderTable();
+        refreshArchiveViewIfOpen();
+        showToast('تم مسح السبب', 'ok');
+      });
+    }
+    const saveBtn = root.querySelector('#unsuccessful-reason-save-btn');
+    if(saveBtn){
+      saveBtn.addEventListener('click', async ()=>{
+        if(!selectedReason) return;
+        const detailsInput = document.getElementById('unsuccessful-reason-details-input');
+        const prevReason = order.unsuccessfulReason, prevDetails = order.unsuccessfulReasonDetails, prevUpdatedAt = order.updatedAt;
+        order.unsuccessfulReason = selectedReason;
+        order.unsuccessfulReasonDetails = detailsInput ? detailsInput.value.trim() : '';
+        order.updatedAt = new Date().toISOString();
+        const saved = await persistOrder(order);
+        if(!saved){ order.unsuccessfulReason = prevReason; order.unsuccessfulReasonDetails = prevDetails; order.updatedAt = prevUpdatedAt; return; }
+        close();
+        renderTable();
+        refreshArchiveViewIfOpen();
+        showToast('تم حفظ السبب', 'ok');
+      });
+    }
+  }
+
+  render();
 }
 
 /* ---------- invoice / quote documents ---------- */
@@ -8495,10 +8591,12 @@ function archiveListBodyHtml(){
     '<div class="cards-list">' + orders.map(cardHtml).join('') + '</div>';
 }
 
+const ARCHIVE_FILTERS = FILTERS.concat([{id:'justified', label:'📋 المبررة'}]);
+
 function renderArchiveFilterButtons(){
   const el = document.getElementById('archive-filter-buttons');
   if(!el) return;
-  el.innerHTML = FILTERS.map(f=>
+  el.innerHTML = ARCHIVE_FILTERS.map(f=>
     '<button type="button" class="chip '+(archiveFilter===f.id?'chip-active':'')+'" data-filter="'+escapeHtml(f.id)+'">'+f.label+'</button>'
   ).join('');
   el.querySelectorAll('.chip').forEach(btn=>{
@@ -8533,6 +8631,12 @@ function bindArchiveRowEvents(){
     btn.addEventListener('click', (e)=>{
       e.stopPropagation();
       restoreOrder(btn.getAttribute('data-restore'));
+    });
+  });
+  container.querySelectorAll('[data-unsuccessful-reason]').forEach(btn=>{
+    btn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      openUnsuccessfulReasonPicker(btn.getAttribute('data-unsuccessful-reason'));
     });
   });
 }
