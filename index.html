@@ -545,7 +545,7 @@
   .part-row-excluded .part-desc-input{text-decoration:line-through;}
   .part-row-returned{opacity:.7;background:var(--surface-2);}
   .part-desc-returned{color:var(--text);font-size:13.5px;font-family:'Tajawal',sans-serif;text-decoration:line-through;}
-  .part-desc-row{display:flex;align-items:center;gap:8px;}
+  .part-desc-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
   .part-index-badge{
     flex-shrink:0;color:var(--text-dim);font-family:'Cairo',sans-serif;font-weight:800;font-size:12.5px;
   }
@@ -670,8 +670,8 @@
   .payment-return-label{color:var(--rust);font-weight:800;font-size:13.5px;font-family:'Cairo',sans-serif;}
 
   /* ---------- edit_proposals: طلبات تعديل الطلبية بعد "تم التوريد" ---------- */
-  .field-readonly-value{background:var(--surface-2);border:1px dashed var(--border);border-radius:6px;padding:7px 9px;font-size:13px;color:var(--text-dim);display:inline-block;}
-  .field-readonly-desc{width:100%;box-sizing:border-box;}
+  .field-readonly-value{background:var(--surface-2);border:1px dashed var(--border);border-radius:6px;padding:7px 9px;font-size:13px;color:var(--text-dim);display:inline-block;min-width:0;overflow-wrap:break-word;}
+  .field-readonly-desc{width:100%;box-sizing:border-box;min-width:0;}
   .field-request-btn{padding:4px 7px;font-size:11px;margin-inline-start:4px;}
   .field-request-compose{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
   .field-request-input{width:100px;background:var(--bg);border:1px solid var(--green-line);color:var(--text);padding:7px 9px;border-radius:6px;font-size:13px;}
@@ -2391,6 +2391,26 @@ function closeModal(){
 
 function escListener(e){ if(e.key==='Escape') closeModal(); }
 
+/* بعد أي await جوا onSaveOrder، النافذة ممكن تكون انسكّرت (✕/Esc/برّا) أو تحوّلت لطلبية تانية —
+   draft صار null أو صار يشاور على غيرها. نفس مبدأ quoteModalStillOpen بالضبط. */
+function orderModalStillOpen(draftId){
+  return !!draft && draft.id === draftId;
+}
+
+/* تعطيل الزر أثناء طلب شبكة قيد التنفيذ — يمنع ضغطة/نقرة مزدوجة سريعة (شائعة عالجوال) من إرسال
+   نفس عملية الحفظ/الاعتماد مرتين بالتوازي (بتنتج INSERT مكرر بنفس الـid ورسالة خطأ مضلّلة "رقم
+   الطلبية صار مستخدم" رغم إن الحفظ الأول نجح فعليًا). نفس نمط disabled=true الموجود أصلًا بأزرار
+   إضافة العميل/المورد/تشليح — بس معمّم كـhelper واحد بدل تكراره بكل مكان. */
+function bindBusyButton(btn, handler){
+  if(!btn) return;
+  btn.addEventListener('click', async ()=>{
+    if(btn.disabled) return;
+    btn.disabled = true;
+    try{ await handler(); }
+    finally{ btn.disabled = false; }
+  });
+}
+
 function attachModalHandlers(){
   const root = document.getElementById('modal-root');
   root.querySelector('[data-close-backdrop]').addEventListener('click', (e)=>{
@@ -2533,7 +2553,7 @@ function attachModalHandlers(){
 
   bindPartRowEvents();
 
-  root.querySelector('#modal-save-btn').addEventListener('click', onSaveOrder);
+  bindBusyButton(root.querySelector('#modal-save-btn'), onSaveOrder);
 
   const returnToQuoteBtn = root.querySelector('#modal-return-to-quote-btn');
   if(returnToQuoteBtn){
@@ -3138,38 +3158,59 @@ async function onSaveOrder(){
   draft.orderLabel = (draft.orderLabel||'').trim();
   draft.updatedAt = new Date().toISOString();
   const orderWasNew = !!draft.isNew;
+  // نلتقط مرجع الطلبية والـid والمجموعات المعلّقة *قبل* أي await — لو المستخدم سكّر النافذة أو
+  // فتح طلبية تانية أثناء الحفظ، draft العام بيصير null أو يشاور على غيرها؛ العمل من هون وطالع
+  // على النسخ الملتقطة (savingOrder وليس draft) يمنع الانهيار (delete على null) وتلويث طلبية
+  // تانية فُتحت بالمنتصف بالخطأ — نفس درس quoteModalStillOpen بالضبط.
+  const draftId = draft.id;
+  const savingOrder = draft;
+  const scrapyardCancellationsSnapshot = new Set(pendingScrapyardCancellations);
+  const editProposalsCancellationSnapshot = pendingEditProposalsCancellation;
+  const partProposalPurgesSnapshot = new Set(pendingPartProposalPurges);
 
   // ما منمسح isNew ولا منقدّم خط أساس التعارض إلا بعد ما نتأكد إن الحفظ نجح فعليًا — لو فشل
   // الإدراج ومسحنا isNew، كل محاولة لاحقة بتتحوّل لتحديث صف مش موجود بالقاعدة (بتبان ناجحة وهي فاشلة).
-  const saved = await persistOrder(draft, orderWasNew);
+  const saved = await persistOrder(savingOrder, orderWasNew);
   if(!saved) return false;
 
-  delete draft.isNew;
-  draftOpenedAtUpdatedAt = draft.updatedAt; // المودال بيضل مفتوح بعد الحفظ — هاي صارت خط الأساس الجديد لأي حفظ لاحق بنفس الجلسة
+  delete savingOrder.isNew;
 
-  const idx = appData.orders.findIndex(o=>o.id===draft.id);
-  if(idx>=0) appData.orders[idx]=draft; else appData.orders.push(draft);
+  const idx = appData.orders.findIndex(o=>o.id===savingOrder.id);
+  if(idx>=0) appData.orders[idx]=savingOrder; else appData.orders.push(savingOrder);
 
   // الطلبية اتحفظت فعليًا هلق — نفّذ إلغاء أي اقتراح تسعير معلّق لقطع غيّرنا تصنيفها بهالجلسة
-  if(pendingScrapyardCancellations.size){
-    for(const partId of pendingScrapyardCancellations){
+  // (على نسخة الالتقاط، مش المجموعات العامة الحالية — ممكن تكون صارت لطلبية تانية فُتحت بالمنتصف)
+  if(scrapyardCancellationsSnapshot.size){
+    for(const partId of scrapyardCancellationsSnapshot){
       await cancelPendingScrapyardProposalsForPart(partId);
     }
-    pendingScrapyardCancellations.clear();
   }
-  if(pendingEditProposalsCancellation){
-    await cancelPendingSuppliedGatedProposalsForOrder(draft.id);
-    pendingEditProposalsCancellation = false;
+  if(editProposalsCancellationSnapshot){
+    await cancelPendingSuppliedGatedProposalsForOrder(savingOrder.id);
   }
-  if(pendingPartProposalPurges.size){
-    for(const partId of pendingPartProposalPurges){
-      await purgeEditProposalsForPart(draft.id, partId);
+  if(partProposalPurgesSnapshot.size){
+    for(const partId of partProposalPurgesSnapshot){
+      await purgeEditProposalsForPart(savingOrder.id, partId);
     }
-    pendingPartProposalPurges.clear();
   }
 
-  // حفظ الطلبية ما يطلعك منها — يبقى المودال مفتوح، بس يحدّث حالته (زي تحول "جديدة" لموجودة، إلخ)
+  renderKPIs();
+  renderTable();
+  updateCustomersBadge();
+  updateSuppliersBadge();
+  showToast('تم حفظ الطلبية', 'ok');
+
+  // النافذة انسكّرت أو تحوّلت لطلبية تانية أثناء الحفظ — الحفظ نجح وانعكس بالجدول فوق، بس ما
+  // في داعي (ولا يصح) نلمس draft/الواجهة الحالية يلي ممكن تخص طلبية تانية هلق
+  if(!orderModalStillOpen(draftId)) return true;
+
+  draftOpenedAtUpdatedAt = draft.updatedAt; // المودال بيضل مفتوح بعد الحفظ — هاي صارت خط الأساس الجديد لأي حفظ لاحق بنفس الجلسة
   editingPayments = {};
+  pendingScrapyardCancellations.clear();
+  pendingEditProposalsCancellation = false;
+  pendingPartProposalPurges.clear();
+
+  // حفظ الطلبية ما يطلعك منها — يبقى المودال مفتوح، بس يحدّث حالته (زي تحول "جديدة" لموجودة، إلخ)
   const root = document.getElementById('modal-root');
   // استبدال innerHTML بيصفّر تمرير المودال (عنصر جديد = بدون ذاكرة تمرير) — نحفظه ونرجّعه حتى الشاشة تضل ثابتة
   const prevBackdrop = root.querySelector('.modal-backdrop');
@@ -3180,11 +3221,6 @@ async function onSaveOrder(){
   const newBackdrop = root.querySelector('.modal-backdrop');
   if(newBackdrop) newBackdrop.scrollTop = prevScrollTop;
 
-  renderKPIs();
-  renderTable();
-  updateCustomersBadge();
-  updateSuppliersBadge();
-  showToast('تم حفظ الطلبية', 'ok');
   return true;
 }
 
@@ -3665,8 +3701,8 @@ function attachQuoteModalHandlers(){
   bindQuotePartRowEvents();
 
   if(isPurchasing){
-    root.querySelector('#quote-save-btn').addEventListener('click', onSaveQuotePricing);
-    root.querySelector('#quote-save-send-btn').addEventListener('click', onSaveAndSendQuotePricing);
+    bindBusyButton(root.querySelector('#quote-save-btn'), onSaveQuotePricing);
+    bindBusyButton(root.querySelector('#quote-save-send-btn'), onSaveAndSendQuotePricing);
     const addScrapyardBtn = root.querySelector('#quote-add-scrapyard-btn');
     if(addScrapyardBtn){
       addScrapyardBtn.addEventListener('click', ()=>{
@@ -3682,9 +3718,9 @@ function attachQuoteModalHandlers(){
     return;
   }
 
-  root.querySelector('#quote-save-btn').addEventListener('click', onSaveQuote);
-  root.querySelector('#quote-send-btn').addEventListener('click', onSendQuote);
-  root.querySelector('#quote-approve-btn').addEventListener('click', onApproveQuote);
+  bindBusyButton(root.querySelector('#quote-save-btn'), onSaveQuote);
+  bindBusyButton(root.querySelector('#quote-send-btn'), onSendQuote);
+  bindBusyButton(root.querySelector('#quote-approve-btn'), onApproveQuote);
 
   const deleteBtn = root.querySelector('#quote-delete-btn');
   if(deleteBtn){
@@ -3882,12 +3918,17 @@ async function onApproveQuote(){
   const idx = appData.orders.findIndex(o=>o.id===approvedId);
   if(idx>=0) appData.orders[idx]=approvedDraft; else appData.orders.push(approvedDraft);
 
-  closeQuoteModal();
-
   renderKPIs();
   renderTable();
   renderQuotesList();
   showToast('تم اعتماد طلب التسعير — صار طلبية '+approvedNumber, 'ok');
+
+  // النافذة انسكّرت أو تحوّلت لتسعيرة تانية أثناء الحفظ — الاعتماد نجح وانعكس فوق، بس فتح/إغلاق
+  // مودالات هلق ممكن يمسح نافذة تانية فتحها المستخدم بالمنتصف (نفس درس saveQuoteDraft/
+  // onSaveQuotePricing)
+  if(!quoteModalStillOpen(approvedId)) return;
+
+  closeQuoteModal();
   openModal('edit', approvedId);
 }
 
@@ -3973,9 +4014,11 @@ async function onSaveAndSendQuotePricing(){
   const idx = appData.orders.findIndex(o=>o.id===draftId);
   if(idx>=0) appData.orders[idx]=sentDraft;
 
-  closeQuoteModal();
   renderQuotesList();
   showToast('تم الحفظ والإرسال', 'ok');
+
+  if(!quoteModalStillOpen(draftId)) return; // نفس درس onApproveQuote — ما نلمس نافذة تانية فُتحت بالمنتصف
+  closeQuoteModal();
 }
 
 /* ---------- contact customer: call or WhatsApp, from either the orders list or inside the order modal ---------- */
@@ -5768,10 +5811,35 @@ function renderActivityLogList(){
   if(listEl) listEl.innerHTML = activityLogListHtml();
 }
 
+function closeActivityLog(){
+  const root = document.getElementById('modal-root');
+  root.innerHTML='';
+  root.classList.remove('modal-open');
+  activityLogModalOpen = false;
+  document.removeEventListener('keydown', activityLogEscListener);
+}
+
+/* دالة ثابتة (اسم واحد طول عمر الصفحة) بدل closure جديد كل فتحة — نفس مبدأ escListener/
+   quoteEscListener بالضبط. لو صار فتح مزدوج (ضغطة مزدوجة على الجرس، أو إشعاري push متتاليين قبل
+   ما يسكّر الأول) كانت كل فتحة تصنع دالة جديدة وتربطها، بس المتغيّر المشترك يضل يشاور بس على
+   آخر وحدة — الأولى تبقى معلّقة على document للأبد وتقفل أي مودال مفتوح لاحقًا بضغطة Esc عادية
+   لا علاقة إلها بالسجل. اسم ثابت = addEventListener المكرر ما بيعمل شي إضافي أصلًا. */
+function activityLogEscListener(e){ if(e.key==='Escape') closeActivityLog(); }
+
 async function openActivityLog(){
+  if(activityLogModalOpen) return; // مفتوحة أصلًا — فتحة مزدوجة (جرس بضغطتين، إشعاري push ورا بعض)
+  if(draft || quoteDraft){
+    // نافذة تعديل طلبية أو تسعير مفتوحة حاليًا وممكن فيها تعديل غير محفوظ — ما نلمسها أبدًا.
+    // الزر نفسه أصلًا غير قابل للوصول وقتها (خلفية المودال المفتوح تغطي شريط الزاوية)، بس
+    // الضغط على إشعار push بيوصل هون مباشرة (postMessage) متجاوزًا هالحماية بالكامل.
+    showToast('عندك نافذة مفتوحة حاليًا — سكّرها الأول وبعدين افتح سجل الإشعارات 🛎️', 'error');
+    return;
+  }
+  activityLogModalOpen = true;
   // نجيب أحدث حالة قبل ما نعرض/نعلّم كمقروء — غير هيك فجوة ريل-تايم عابرة (شبكة انقطعت لحظة/
   // الجهاز كان نايم) بتخلي حدث وصل فعلًا يبقى غير مقروء للأبد لأنه ما انعلّم unseen أصلًا
   await refreshActivityEvents();
+  if(draft || quoteDraft){ activityLogModalOpen = false; return; } // فُتحت نافذة تانية أثناء التحميل
   const root = document.getElementById('modal-root');
   root.innerHTML =
     '<div class="modal-backdrop" data-close-confirm>' +
@@ -5784,17 +5852,10 @@ async function openActivityLog(){
       '</div>' +
     '</div>';
   root.classList.add('modal-open');
-  activityLogModalOpen = true;
-  const close = ()=>{
-    root.innerHTML='';
-    root.classList.remove('modal-open');
-    activityLogModalOpen = false;
-    document.removeEventListener('keydown', activityLogEscListener);
-  };
   root.querySelector('[data-close-confirm]').addEventListener('click', e=>{
-    if(e.target.hasAttribute('data-close-confirm')) close();
+    if(e.target.hasAttribute('data-close-confirm')) closeActivityLog();
   });
-  root.querySelector('#close-activity-log-btn').addEventListener('click', close);
+  root.querySelector('#close-activity-log-btn').addEventListener('click', closeActivityLog);
   // تفويض على الحاوية الثابتة #activity-log-list مش على كل صف — renderActivityLogList() (لو
   // وصل تحديث لحظي والنافذة مفتوحة) بيستبدل محتواها بالكامل، فربط مباشر على الصفوف كان رح يفقد
   // مستمعاته بأول تحديث (نفس درس [[feedback_partech_rebind_and_persist_result]])
@@ -5803,20 +5864,26 @@ async function openActivityLog(){
     if(!row) return;
     const orderId = row.getAttribute('data-open-order-id');
     if(!orderId) return;
-    close();
+    // الطلبية يلي يخصها الإشعار ممكن تكون انحذفت (طلب حذف اتقبل)، أو — لعامر تحديدًا — خرجت من
+    // قائمته المحلية المحدودة (get_scrapyard_home_quotes ما ترجّع إلا طلبات التسعير النشطة، فأي
+    // طلبية تحوّلت لطلبية عادية بعد ما اعتُمدت بتختفي من قائمته). بدون هالفحص كان الضغط يسكّر
+    // السجل وما يصير أي شي — بدون أي تفسير للمستخدم.
+    const order = appData.orders.find(o=>o.id===orderId);
+    closeActivityLog();
+    if(!order){
+      showToast('الطلبية يلي يخصها هالإشعار ما عادت متوفرة', 'error');
+      return;
+    }
     if(currentUserRole==='scrapyard'){ openQuoteModal('edit', orderId, 'purchasing'); return; }
     // طلبية لسا بحالة "طلب تسعير" (ما اعتمدها المبيعات بعد) لازم تفتح بنافذة مراجعة التسعير
     // (فيها زر "اعتماد" الصريح) مش بنافذة تعديل الطلبية العادية — فتحها بالعادية كانت تسحبها من
     // قائمة "طلبات التسعير" لقائمة "الطلبيات" بصمت بدون ما حد يضغط اعتماد فعليًا
-    const order = appData.orders.find(o=>o.id===orderId);
-    if(order && order.isQuote){ openQuoteModal('edit', orderId); return; }
+    if(order.isQuote){ openQuoteModal('edit', orderId); return; }
     openModal('edit', orderId);
   });
-  activityLogEscListener = (e)=>{ if(e.key==='Escape') close(); };
   document.addEventListener('keydown', activityLogEscListener);
   markActivityEventsSeen();
 }
-let activityLogEscListener = null;
 
 /* تفويض واحد على مستوى #modal-root، يُربط مرة وحدة طول عمر الصفحة (مو داخل attachModalHandlers —
    هاي بتنعاد كل ما تُفتح الطلبية أو تُحفظ وهي مفتوحة، وroot نفسه ثابت DOM node طول عمر الصفحة
