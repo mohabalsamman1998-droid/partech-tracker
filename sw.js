@@ -13,7 +13,9 @@ self.addEventListener('push', (event) => {
       icon: 'icon-192.png',
       badge: 'icon-192.png',
       dir: 'rtl',
-      lang: 'ar'
+      lang: 'ar',
+      vibrate: [200, 100, 200, 100, 200], // بدون هذا بعض أجهزة أندرويد تعرض الإشعار بصمت تام بلا رنة ولا اهتزاز
+      requireInteraction: false
     })
   );
 });
