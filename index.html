@@ -124,7 +124,7 @@
   .auth-message.error{color:var(--rust);}
   .auth-message.ok{color:var(--green);}
   .app-top-utility-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
-  .announcement-banner{background:var(--rust-dim);border:1px solid var(--rust-line);color:var(--rust);font-weight:800;font-size:14px;line-height:1.6;padding:10px 14px;border-radius:8px;margin-bottom:14px;text-align:center;overflow-wrap:break-word;white-space:pre-wrap;}
+  .announcement-banner{color:var(--rust);font-weight:800;font-size:19px;line-height:1.6;margin-bottom:14px;text-align:center;overflow-wrap:break-word;white-space:pre-wrap;}
   .corner-mini-bar{display:flex;gap:6px;}
   .app-corner-logo{height:30px;width:auto;filter:brightness(0) saturate(100%) invert(1);opacity:.9;cursor:pointer;transition:.15s ease;}
   .app-corner-logo:hover{opacity:1;transform:scale(1.05);}
@@ -2424,21 +2424,23 @@ async function persistFieldOrRevert(obj, prevSnapshot, persistFn, refreshFn){
   return saved;
 }
 
-/* ---------- إعلان للموظفين (بانر أحمر عريض) — صف وحيد ثابت بجدول announcement، يكتبه مخوّل
-   ويظهر لكل المستخدمين (المبيعات وعامر سوا). #announcement-banner عنصر ثابت بـ#app-root ما بينلمس
-   من أي إعادة رسم تانية، فتحديثه مباشر وآمن؛ شاشتا عامر (renderScrapyardHomeView/renderScrapyardView)
-   بيرسمان كامل من الصفر كل مرة، فبنحط نفس الـHtml جوا القالب مباشرة هناك. */
-let announcementText = null;
+/* ---------- إعلان للموظفين — إعلانان منفصلان (sales/purchasing)، كل واحد بصفه الثابت بجدول
+   announcement، يكتبهم مخوّل. #announcement-banner عنصر ثابت بـ#app-root (يعرض إعلان sales) ما
+   بينلمس من أي إعادة رسم تانية فتحديثه مباشر وآمن؛ شاشتا عامر (renderScrapyardHomeView/
+   renderScrapyardView) بيرسمان كامل من الصفر كل مرة (تعرضان إعلان purchasing)، فبنحط نفس الـHtml
+   جوا القالب مباشرة هناك. */
+let announcementTexts = { sales: null, purchasing: null };
 let announcementChannel = null;
 
-function announcementBannerHtml(){
-  if(!announcementText) return '';
-  return '<div class="announcement-banner">'+escapeHtml(announcementText)+'</div>';
+function announcementBannerHtml(audience){
+  const text = announcementTexts[audience];
+  if(!text) return '';
+  return '<div class="announcement-banner">'+escapeHtml(text)+'</div>';
 }
 
 function renderAnnouncementBanner(){
   const el = document.getElementById('announcement-banner');
-  if(el) el.innerHTML = announcementBannerHtml();
+  if(el) el.innerHTML = announcementBannerHtml('sales');
 }
 
 function refreshScrapyardAnnouncementIfVisible(){
@@ -2451,9 +2453,9 @@ function refreshScrapyardAnnouncementIfVisible(){
 async function loadAnnouncement(){
   try{
     if(!sb) return;
-    const { data, error } = await sb.from('announcement').select('text').eq('id','main').maybeSingle();
+    const { data, error } = await sb.from('announcement').select('id, text');
     if(error) throw error;
-    announcementText = (data && data.text) ? data.text : null;
+    (data||[]).forEach(row=>{ if(row.id==='sales' || row.id==='purchasing') announcementTexts[row.id] = row.text || null; });
   }catch(e){ console.error('loadAnnouncement:', e); }
   renderAnnouncementBanner();
   refreshScrapyardAnnouncementIfVisible();
@@ -2463,7 +2465,9 @@ function subscribeAnnouncementRealtime(){
   if(!sb || announcementChannel) return;
   announcementChannel = sb.channel('announcement-changes')
     .on('postgres_changes', { event:'UPDATE', schema:'public', table:'announcement' }, (payload)=>{
-      announcementText = (payload.new && payload.new.text) ? payload.new.text : null;
+      const row = payload.new;
+      if(!row || (row.id!=='sales' && row.id!=='purchasing')) return;
+      announcementTexts[row.id] = row.text || null;
       renderAnnouncementBanner();
       refreshScrapyardAnnouncementIfVisible();
     })
@@ -2476,8 +2480,11 @@ function openAnnouncementEditor(){
     '<div class="modal-backdrop" data-close-confirm>' +
       '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
         '<div class="modal-title">📢 إعلان للموظفين</div>' +
-        '<label class="field" style="margin-top:12px;display:block;"><span class="field-label">النص (اتركه فاضي لإزالة الإعلان الحالي)</span>' +
-          '<textarea id="announcement-edit-input" rows="4" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:9px;border-radius:6px;font-family:inherit;font-size:14px;resize:vertical;">'+escapeHtml(announcementText||'')+'</textarea>' +
+        '<label class="field" style="margin-top:12px;display:block;"><span class="field-label">إعلان المبيعات (اتركه فاضي للإزالة)</span>' +
+          '<textarea id="announcement-edit-sales" rows="3" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:9px;border-radius:6px;font-family:inherit;font-size:14px;resize:vertical;">'+escapeHtml(announcementTexts.sales||'')+'</textarea>' +
+        '</label>' +
+        '<label class="field" style="margin-top:12px;display:block;"><span class="field-label">إعلان المشتريات (اتركه فاضي للإزالة)</span>' +
+          '<textarea id="announcement-edit-purchasing" rows="3" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:9px;border-radius:6px;font-family:inherit;font-size:14px;resize:vertical;">'+escapeHtml(announcementTexts.purchasing||'')+'</textarea>' +
         '</label>' +
         '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;flex-wrap:wrap;">' +
           '<button type="button" class="btn btn-ghost" id="announcement-cancel-btn">إلغاء</button>' +
@@ -2492,17 +2499,22 @@ function openAnnouncementEditor(){
   });
   root.querySelector('#announcement-cancel-btn').addEventListener('click', close);
   bindBusyButton(root.querySelector('#announcement-save-btn'), async ()=>{
-    const input = document.getElementById('announcement-edit-input');
-    const newText = input.value.trim();
-    const { error } = await sb.from('announcement').update({
-      text: newText || null, updated_by: presenceEmail, updated_at: new Date().toISOString()
-    }).eq('id','main');
-    if(error){ showToast('تعذر حفظ الإعلان', 'error'); return; }
-    announcementText = newText || null;
+    const salesInput = document.getElementById('announcement-edit-sales');
+    const purchasingInput = document.getElementById('announcement-edit-purchasing');
+    const newSales = salesInput.value.trim();
+    const newPurchasing = purchasingInput.value.trim();
+    const now = new Date().toISOString();
+    const [salesRes, purchasingRes] = await Promise.all([
+      sb.from('announcement').update({ text: newSales || null, updated_by: presenceEmail, updated_at: now }).eq('id','sales'),
+      sb.from('announcement').update({ text: newPurchasing || null, updated_by: presenceEmail, updated_at: now }).eq('id','purchasing')
+    ]);
+    if(salesRes.error || purchasingRes.error){ showToast('تعذر حفظ الإعلان', 'error'); return; }
+    announcementTexts.sales = newSales || null;
+    announcementTexts.purchasing = newPurchasing || null;
     renderAnnouncementBanner();
     refreshScrapyardAnnouncementIfVisible();
     close();
-    showToast(newText ? 'تم نشر الإعلان' : 'تم مسح الإعلان', 'ok');
+    showToast('تم الحفظ', 'ok');
   });
 }
 
@@ -9912,7 +9924,7 @@ function renderScrapyardHomeView(){
       '<div class="corner-mini-bar">'+scrapyardThemeToggleHtml()+'<button id="btn-activity-log-scrapyard" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge-scrapyard" class="tasks-badge"></span></button></div>' +
       '<img class="app-corner-logo" src="'+PARTECH_LOGO_DATA_URI+'" id="scrapyard-home-logo-img" alt="PARTECH" title="الصفحة الرئيسية">' +
     '</div>' +
-    announcementBannerHtml() +
+    announcementBannerHtml('purchasing') +
     '<header class="topbar"><div class="brand">قسم المشتريات</div></header>' +
     '<section class="kpi-row scrapyard-kpi-row">' +
       '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للتشليح</div><div class="kpi-value num">'+fmtMoney(usedTotal)+'</div></div>' +
@@ -10027,7 +10039,7 @@ function renderScrapyardView(){
       '</div>' +
       '<img class="app-corner-logo" src="'+PARTECH_LOGO_DATA_URI+'" id="scrapyard-logo-img" alt="PARTECH" title="الصفحة الرئيسية">' +
     '</div>' +
-    announcementBannerHtml() +
+    announcementBannerHtml('purchasing') +
     '<header class="topbar">' +
       '<div class="brand">'+SETTLEMENT_KINDS[kind].title+'</div>' +
     '</header>' +
