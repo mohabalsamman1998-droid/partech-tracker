@@ -10,8 +10,8 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(title, {
       body: body,
-      icon: 'icon-192.png',
-      badge: 'icon-192.png',
+      icon: 'icon-192-v2.png',
+      badge: 'icon-192-v2.png',
       dir: 'rtl',
       lang: 'ar',
       vibrate: [200, 100, 200, 100, 200], // بدون هذا بعض أجهزة أندرويد تعرض الإشعار بصمت تام بلا رنة ولا اهتزاز
