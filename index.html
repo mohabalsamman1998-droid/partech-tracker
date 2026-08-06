@@ -3872,6 +3872,23 @@ async function saveQuoteDraft(markSent){
     if(wasPendingReturn){ savingDraft.pendingReturnToQuote = true; savingDraft.isQuote = false; }
     return false;
   }
+  if(markSent){
+    // إشعار "تحتاج تسعير" صار يُدرَج هون صراحة، مش من ترصّد انتقال حالة تلقائي — طالما الزر
+    // اسمه "حفظ و اعادة طلب"، الضغطة نفسها لازم توصل إشعار لعامر حتى لو الطلبية أصلًا كانت
+    // "بانتظار تسعير" ومافي أي تعديل فعلي (تذكير صريح)، مو بس أول مرة تدخل هالحالة.
+    const orderRef = '#'+savingDraft.orderNumber+(savingDraft.orderLabel?' — '+savingDraft.orderLabel:'');
+    try{
+      await sb.from('activity_events').insert({
+        kind: 'order_needs_pricing',
+        order_id: savingDraft.id,
+        order_ref: orderRef,
+        actor_email: presenceEmail,
+        audience_role: 'scrapyard',
+        message: 'طلبية جديدة تحتاج تسعير: ' + orderRef
+      });
+    }catch(e){ console.error('logOrderNeedsPricing:', e); }
+  }
+
   if(!quoteModalStillOpen(draftId)) return true; // انحفظت، بس المستخدم سكّر النافذة أثناء الحفظ
 
   delete quoteDraft.isNew;
