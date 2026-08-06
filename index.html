@@ -125,6 +125,7 @@
   .auth-message.ok{color:var(--green);}
   .app-top-utility-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
   .announcement-banner{color:var(--rust);font-weight:800;font-size:19px;line-height:1.6;margin-bottom:14px;text-align:center;overflow-wrap:break-word;white-space:pre-wrap;}
+  .announcement-banner-sender{font-size:13px;font-weight:700;opacity:.8;margin-bottom:2px;}
   .corner-mini-bar{display:flex;gap:6px;}
   .app-corner-logo{height:30px;width:auto;filter:brightness(0) saturate(100%) invert(1);opacity:.9;cursor:pointer;transition:.15s ease;}
   .app-corner-logo:hover{opacity:1;transform:scale(1.05);}
@@ -2430,12 +2431,22 @@ async function persistFieldOrRevert(obj, prevSnapshot, persistFn, refreshFn){
    renderScrapyardView) بيرسمان كامل من الصفر كل مرة (تعرضان إعلان purchasing)، فبنحط نفس الـHtml
    جوا القالب مباشرة هناك. */
 let announcementTexts = { sales: null, purchasing: null };
+let announcementSenders = { sales: null, purchasing: null };
 let announcementChannel = null;
+
+/* أسماء المخوّلين الثلاثة — نفس القائمة المستخدمة كخط دفاع أخير بـELEVATED_ACCESS_EMAILS_FALLBACK،
+   هون لعرض "من فلان" على الإعلان بدل البريد الخام */
+const ELEVATED_DISPLAY_NAMES = {
+  'mohabalsamman1998@gmail.com': 'مهاب',
+  'homam.techno@gmail.com': 'همام',
+  'sammaneng@gmail.com': 'بشار'
+};
 
 function announcementBannerHtml(audience){
   const text = announcementTexts[audience];
   if(!text) return '';
-  return '<div class="announcement-banner">'+escapeHtml(text)+'</div>';
+  const senderName = ELEVATED_DISPLAY_NAMES[announcementSenders[audience]] || '';
+  return '<div class="announcement-banner">'+(senderName?'<div class="announcement-banner-sender">من '+escapeHtml(senderName)+'</div>':'')+escapeHtml(text)+'</div>';
 }
 
 function renderAnnouncementBanner(){
@@ -2453,9 +2464,13 @@ function refreshScrapyardAnnouncementIfVisible(){
 async function loadAnnouncement(){
   try{
     if(!sb) return;
-    const { data, error } = await sb.from('announcement').select('id, text');
+    const { data, error } = await sb.from('announcement').select('id, text, updated_by');
     if(error) throw error;
-    (data||[]).forEach(row=>{ if(row.id==='sales' || row.id==='purchasing') announcementTexts[row.id] = row.text || null; });
+    (data||[]).forEach(row=>{
+      if(row.id!=='sales' && row.id!=='purchasing') return;
+      announcementTexts[row.id] = row.text || null;
+      announcementSenders[row.id] = row.updated_by || null;
+    });
   }catch(e){ console.error('loadAnnouncement:', e); }
   renderAnnouncementBanner();
   refreshScrapyardAnnouncementIfVisible();
@@ -2468,6 +2483,7 @@ function subscribeAnnouncementRealtime(){
       const row = payload.new;
       if(!row || (row.id!=='sales' && row.id!=='purchasing')) return;
       announcementTexts[row.id] = row.text || null;
+      announcementSenders[row.id] = row.updated_by || null;
       renderAnnouncementBanner();
       refreshScrapyardAnnouncementIfVisible();
     })
@@ -2511,10 +2527,31 @@ function openAnnouncementEditor(){
     if(salesRes.error || purchasingRes.error){ showToast('تعذر حفظ الإعلان', 'error'); return; }
     announcementTexts.sales = newSales || null;
     announcementTexts.purchasing = newPurchasing || null;
+    announcementSenders.sales = presenceEmail;
+    announcementSenders.purchasing = presenceEmail;
     renderAnnouncementBanner();
     refreshScrapyardAnnouncementIfVisible();
     close();
     showToast('تم الحفظ', 'ok');
+    // إشعار "إعلان جديد" لكل جمهور نُشر له نص فعليًا (مو لو مسحه) — نفس مبدأ order_needs_pricing:
+    // بأفضل مجهود، ما بيوقف نجاح الحفظ نفسه لو فشل الإدراج لأي سبب
+    const senderName = ELEVATED_DISPLAY_NAMES[presenceEmail] || 'الإدارة';
+    const notifyInserts = [];
+    if(newSales){
+      notifyInserts.push(sb.from('activity_events').insert({
+        kind: 'announcement_posted', audience_role: 'full', actor_email: presenceEmail,
+        message: '📢 إعلان جديد من '+senderName+': '+newSales
+      }));
+    }
+    if(newPurchasing){
+      notifyInserts.push(sb.from('activity_events').insert({
+        kind: 'announcement_posted', audience_role: 'scrapyard', actor_email: presenceEmail,
+        message: '📢 إعلان جديد من '+senderName+': '+newPurchasing
+      }));
+    }
+    if(notifyInserts.length){
+      try{ await Promise.all(notifyInserts); }catch(e){ console.error('logAnnouncementPosted:', e); }
+    }
   });
 }
 
