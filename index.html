@@ -2360,7 +2360,7 @@ function openModal(mode, orderId){
     };
   } else {
     const found = appData.orders.find(o=>o.id===orderId);
-    if(!found) return;
+    if(!found){ showToast('هذه الطلبية غير موجودة (يمكن انحذفت)', 'error'); return; }
     draft = JSON.parse(JSON.stringify(found));
     draft.isNew = false;
   }
@@ -2409,6 +2409,16 @@ function bindBusyButton(btn, handler){
     try{ await handler(); }
     finally{ btn.disabled = false; }
   });
+}
+
+/* حقول التعديل المباشر (بدون زر حفظ مخصص، على تغيير الحقل) بشاشتي الموردين/العملاء كانت تحفظ
+   وتنسى نتيجة الحفظ — لو فشل (شبكة/RLS)، القيمة الجديدة تبقى ظاهرة بالواجهة وكأنها انحفظت لحد
+   ما إعادة تحميل أو تحديث لحظي يمحيها بصمت تام. نفس درس محرر مصاريف الصندوق (persistTreasuryEntry
+   + Object.assign(liveEntry, prev)) بس معمّم كـhelper واحد يستخدمه الموردين والعملاء سوا. */
+async function persistFieldOrRevert(obj, prevSnapshot, persistFn, refreshFn){
+  const saved = await persistFn(obj);
+  if(!saved){ Object.assign(obj, prevSnapshot); refreshFn(); }
+  return saved;
 }
 
 function attachModalHandlers(){
@@ -3635,7 +3645,7 @@ function openQuoteModal(mode, orderId, role){
     };
   } else {
     const found = appData.orders.find(o=>o.id===orderId);
-    if(!found) return;
+    if(!found){ showToast('هذه الطلبية غير موجودة (يمكن انحذفت)', 'error'); return; }
     quoteDraft = JSON.parse(JSON.stringify(found));
     quoteDraft.isNew = false;
   }
@@ -4358,7 +4368,11 @@ function openUnsuccessfulReasonPicker(orderId){
         order.unsuccessfulReasonDetails = '';
         order.updatedAt = new Date().toISOString();
         const saved = await persistOrder(order);
-        if(!saved){ order.unsuccessfulReason = prevReason; order.unsuccessfulReasonDetails = prevDetails; order.updatedAt = prevUpdatedAt; return; }
+        if(!saved){
+          order.unsuccessfulReason = prevReason; order.unsuccessfulReasonDetails = prevDetails; order.updatedAt = prevUpdatedAt;
+          selectedReason = null; render(); // نرجّع عرض المودال يطابق الحالة الفعلية (المرتجعة) بدل ما يبقى واقف على اختيار ما انحفظ
+          return;
+        }
         close();
         renderTable();
         refreshArchiveViewIfOpen();
@@ -4375,7 +4389,11 @@ function openUnsuccessfulReasonPicker(orderId){
         order.unsuccessfulReasonDetails = detailsInput ? detailsInput.value.trim() : '';
         order.updatedAt = new Date().toISOString();
         const saved = await persistOrder(order);
-        if(!saved){ order.unsuccessfulReason = prevReason; order.unsuccessfulReasonDetails = prevDetails; order.updatedAt = prevUpdatedAt; return; }
+        if(!saved){
+          order.unsuccessfulReason = prevReason; order.unsuccessfulReasonDetails = prevDetails; order.updatedAt = prevUpdatedAt;
+          selectedReason = null; render(); // نفس الفكرة — نرجّع عرض المودال يطابق الحالة الفعلية المرتجعة
+          return;
+        }
         close();
         renderTable();
         refreshArchiveViewIfOpen();
@@ -4720,13 +4738,23 @@ async function buildDocPdfBlob(){
 
 async function downloadDocPdf(){
   if(!docState) return;
+  // مرجع الكائن نفسه (مش orderId بس) — لو المستخدم سكّر شاشة المستند وفتح مستند تاني (حتى لنفس
+  // الطلبية)، docState صار كائن جديد كليًا؛ الفحص بعد أي await بيوقف اللمس بحالة ما تخصنا هلق.
+  const openedDocState = docState;
   const btn = document.getElementById('doc-pdf-btn');
-  const setBusy = (b)=>{ if(btn){ btn.disabled=b; btn.textContent = b ? 'جاري التجهيز…' : '📄 تحميل PDF'; } };
+  const closeBtn = document.getElementById('doc-close-btn');
+  const setBusy = (b)=>{
+    if(btn){ btn.disabled=b; btn.textContent = b ? 'جاري التجهيز…' : '📄 تحميل PDF'; }
+    if(closeBtn) closeBtn.disabled = b;
+    if(b) document.removeEventListener('keydown', docEscListener); else if(docState===openedDocState) document.addEventListener('keydown', docEscListener);
+  };
   setBusy(true);
   try{
     await persistDocMeta(false);
+    if(docState !== openedDocState) return;
     markEmptyDocFields();
     const blob = await buildDocPdfBlob();
+    if(docState !== openedDocState) return;
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -4747,10 +4775,16 @@ async function downloadDocPdf(){
 // falls back to sharing formatted text, then to a plain clipboard copy, depending on what the browser supports.
 async function shareDoc(){
   if(!docState) return;
+  const openedDocState = docState; // انظر ملاحظة downloadDocPdf — نفس الفحص بعد أي await هون
   const order = appData.orders.find(o=>o.id===docState.orderId);
   if(!order) return;
   const btn = document.getElementById('doc-share-btn');
-  const setBusy = (b)=>{ if(btn){ btn.disabled=b; btn.textContent = b ? 'جاري التجهيز…' : '📤 مشاركة'; } };
+  const closeBtn = document.getElementById('doc-close-btn');
+  const setBusy = (b)=>{
+    if(btn){ btn.disabled=b; btn.textContent = b ? 'جاري التجهيز…' : '📤 مشاركة'; }
+    if(closeBtn) closeBtn.disabled = b;
+    if(b) document.removeEventListener('keydown', docEscListener); else if(docState===openedDocState) document.addEventListener('keydown', docEscListener);
+  };
   setBusy(true);
   try{
     // markEmptyDocFields لازم يصير قبل أي انتظار (لأنه بيأثر على شكل الورقة قبل ما تُلتقط
@@ -4774,6 +4808,7 @@ async function shareDoc(){
       persistDocMeta(false),
       fileShareSupported ? buildDocPdfBlob().catch(()=>null) : Promise.resolve(null)
     ]);
+    if(docState !== openedDocState) return; // النافذة انسكّرت أو تحوّلت لمستند تاني أثناء الانتظار
     if(fileShareSupported && !blob) fileShareSupported = false; // انزل لمشاركة النص
     // إعادة جلب الطلبية بعد الانتظار (await) — ممكن يكون وصل تعديل من جلسة تانية بهالفترة
     // القصيرة، ونص المشاركة لازم يعكس آخر نسخة مش النسخة يلي كانت وقت فتح شاشة المستند.
@@ -7323,6 +7358,25 @@ function refreshTaskItemsList(key){
 }
 
 /* ---------- full data export (Excel) — a portability/backup escape hatch ---------- */
+/* حماية من "CSV/Formula injection" (CWE-1236) — أي حقل نصي حر بالتطبيق (اسم طلبية، وصف قطعة،
+   اسم/ملاحظة مورد أو عميل...) ممكن يكتبه مستخدم أقل ثقة (غير مخوّل، أو عامر عبر اقتراح مقبول)
+   ويقرأه لاحقًا مخوّل بفتح ملف التصدير — لو الملف انفتح ببرنامج جداول أقل تشدّدًا أو انحفظ لاحقًا
+   كـCSV، خلية تبدأ بـ =/+/-/@ ممكن تتفسّر كصيغة حيّة بدل نص عادي. نحط علامة اقتباس ' بالبداية
+   (اصطلاح إكسل نفسه لـ"فرض نص") لأي قيمة كهاي، قبل أي json_to_sheet — helper واحد بدل تكراره
+   بكل ورقة من الأوراق العشر. */
+function sanitizeForExcelFormula(value){
+  if(typeof value !== 'string' || !value.length) return value;
+  if(/^[=+\-@\t\r]/.test(value)) return "'" + value;
+  return value;
+}
+function sheetRowsSafe(rows){
+  return (rows||[]).map(row=>{
+    const safe = {};
+    Object.keys(row).forEach(k=>{ safe[k] = sanitizeForExcelFormula(row[k]); });
+    return safe;
+  });
+}
+
 function exportAllDataToExcel(){
   if(typeof XLSX === 'undefined'){
     showToast('تعذر تحميل مكتبة Excel — تأكد من الاتصال بالإنترنت وحاول مرة أخرى', 'error');
@@ -7356,7 +7410,7 @@ function exportAllDataToExcel(){
       'آخر تحديث': o.updatedAt || ''
     };
   });
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ordersRows), 'الطلبيات');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(ordersRows)), 'الطلبيات');
 
   const partsRows = [];
   appData.orders.forEach(o=>{
@@ -7373,7 +7427,7 @@ function exportAllDataToExcel(){
       });
     });
   });
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(partsRows), 'تفاصيل القطع');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(partsRows)), 'تفاصيل القطع');
 
   const paymentsRows = [];
   appData.orders.forEach(o=>{
@@ -7386,7 +7440,7 @@ function exportAllDataToExcel(){
       });
     });
   });
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(paymentsRows), 'دفعات الزبائن');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(paymentsRows)), 'دفعات الزبائن');
 
   const expenseRows = [];
   EXPENSE_CATEGORIES.forEach(c=>{
@@ -7394,12 +7448,12 @@ function exportAllDataToExcel(){
       expenseRows.push({ 'الفئة': c.label, 'المبلغ': entry.amount, 'التاريخ': entry.date || '', 'تفاصيل': entry.note || '' });
     });
   });
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(expenseRows), 'مصاريف الصندوق');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(expenseRows)), 'مصاريف الصندوق');
 
   const supportRows = (appData.treasury.support||[]).map(entry=>(
     { 'المبلغ': entry.amount, 'التاريخ': entry.date || '', 'تفاصيل': entry.note || '' }
   ));
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(supportRows), 'دعم الصندوق الخارجي');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(supportRows)), 'دعم الصندوق الخارجي');
 
   // عهدة عامر مش ضمن EXPENSE_CATEGORIES فما كانت تظهر بأي شيت — يعني حركات العهدة كلها
   // (سداد لها وسحب منها) كانت مفقودة من التصدير رغم إنها بند مالي أساسي.
@@ -7407,7 +7461,7 @@ function exportAllDataToExcel(){
     'النوع': (Number(entry.amount)||0) < 0 ? 'سحب من العهدة' : 'سداد للعهدة',
     'المبلغ': entry.amount, 'التاريخ': entry.date || '', 'تفاصيل': entry.note || ''
   }));
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(custodyRows), 'عهدة المشتريات');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(custodyRows)), 'عهدة المشتريات');
 
   const summary = computeAllTimeTreasurySummary();
   const summaryRows = [
@@ -7422,7 +7476,7 @@ function exportAllDataToExcel(){
     { 'المؤشر': 'حجم عمليات البيع', 'القيمة': summary.salesVolume },
     { 'المؤشر': 'حجم الأرباح', 'القيمة': summary.profitVolume }
   ];
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryRows), 'ملخص الصندوق');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(summaryRows)), 'ملخص الصندوق');
 
   const taskRows = [];
   TASK_CATEGORIES.forEach(c=>{
@@ -7435,7 +7489,7 @@ function exportAllDataToExcel(){
       });
     });
   });
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(taskRows), 'المهام');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(taskRows)), 'المهام');
 
   const supplierRows = (appData.suppliers||[]).map(s=>({
     'الاسم': s.name || '', 'الجوال': s.phone || '',
@@ -7443,12 +7497,12 @@ function exportAllDataToExcel(){
     'قطع جديدة': s.handlesNew ? 'نعم' : 'لا', 'قطع مستعملة': s.handlesUsed ? 'نعم' : 'لا',
     'ملاحظات': s.notes || ''
   }));
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(supplierRows), 'الموردين');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(supplierRows)), 'الموردين');
 
   const customerRows = (appData.customers||[]).map(c=>({
     'الاسم': c.name || '', 'الجوال': c.phone || '', 'ملاحظات': c.notes || ''
   }));
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(customerRows), 'العملاء');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(customerRows)), 'العملاء');
 
   // نسخة احتياطية خام (JSON) لضمان استعادة دقيقة ١٠٠٪ عند الاستيراد لاحقًا — لا تُعدَّل يدويًا
   const rawJson = JSON.stringify({ schemaVersion: DATA_SCHEMA_VERSION, exportedAt: new Date().toISOString(), orders: appData.orders, treasury: appData.treasury, tasks: appData.tasks, suppliers: appData.suppliers||[], customers: appData.customers||[] });
@@ -7811,6 +7865,17 @@ function applyRemoteOrderChange(payload){
     const oldId = payload.old && payload.old.id;
     if(!oldId) return;
     appData.orders = appData.orders.filter(o=>o.id!==oldId);
+    // الطلبية يلي المستخدم فاتحها حاليًا انحذفت من جلسة تانية — تركها مفتوحة كان يخلي أي طلب
+    // تعديل/اقتراح تسعير لاحق يتيتّم بصمت (order_id ما إله FK، فالإدخال ينجح لكن يعلق للأبد
+    // بلا مراجع). نسكّر فورًا مع تنبيه واضح.
+    if(draft && draft.id === oldId){
+      closeModal();
+      showToast('هذه الطلبية انحذفت من مكان تاني — سكّرنا النافذة', 'error');
+    }
+    if(quoteDraft && quoteDraft.id === oldId){
+      closeQuoteModal();
+      showToast('هذه الطلبية انحذفت من مكان تاني — سكّرنا النافذة', 'error');
+    }
   } else {
     const row = payload.new;
     if(!row || !row.id) return;
@@ -8582,7 +8647,7 @@ function renderSuppliersView(){
 function bindSuppliersViewEvents(){
   document.getElementById('btn-back-to-orders-from-suppliers').addEventListener('click', closeSuppliersView);
   renderSuppliersKindFilterButtons();
-  document.getElementById('add-supplier-btn').addEventListener('click', async ()=>{
+  bindBusyButton(document.getElementById('add-supplier-btn'), async ()=>{
     const nameInput = document.getElementById('new-supplier-name-input');
     const phoneInput = document.getElementById('new-supplier-phone-input');
     const handlesNewCheck = document.getElementById('new-supplier-handles-new-check');
@@ -8679,13 +8744,17 @@ function bindSupplierRowEvents(){
     const nameInput = row.querySelector('.supplier-name-input');
     if(nameInput){
       nameInput.addEventListener('change', async e=>{
-        const s = freshSupplier(); s.name = e.target.value; await persistSupplier(s);
+        const s = freshSupplier(); const prev = { name: s.name };
+        s.name = e.target.value;
+        await persistFieldOrRevert(s, prev, persistSupplier, refreshSuppliersList);
       });
     }
     const phoneInput = row.querySelector('.supplier-phone-input');
     if(phoneInput){
       phoneInput.addEventListener('change', async e=>{
-        const s = freshSupplier(); s.phone = e.target.value; await persistSupplier(s);
+        const s = freshSupplier(); const prev = { phone: s.phone };
+        s.phone = e.target.value;
+        await persistFieldOrRevert(s, prev, persistSupplier, refreshSuppliersList);
       });
     }
     const addPhoneBtn = row.querySelector('.supplier-add-phone-btn');
@@ -8693,9 +8762,10 @@ function bindSupplierRowEvents(){
       addPhoneBtn.addEventListener('click', async ()=>{
         const s = freshSupplier();
         if(!Array.isArray(s.extraPhones)) s.extraPhones = [];
+        const prev = { extraPhones: s.extraPhones.slice() };
         s.extraPhones.push('');
         refreshSuppliersList();
-        await persistSupplier(s);
+        await persistFieldOrRevert(s, prev, persistSupplier, refreshSuppliersList);
       });
     }
     const handlesNewCheck = row.querySelector('.supplier-handles-new-check');
@@ -8707,7 +8777,9 @@ function bindSupplierRowEvents(){
           showToast('لازم تحدد نوع واحد على الأقل', 'error');
           return;
         }
-        s.handlesNew = e.target.checked; await persistSupplier(s);
+        const prev = { handlesNew: s.handlesNew };
+        s.handlesNew = e.target.checked;
+        await persistFieldOrRevert(s, prev, persistSupplier, refreshSuppliersList);
       });
     }
     const handlesUsedCheck = row.querySelector('.supplier-handles-used-check');
@@ -8719,24 +8791,28 @@ function bindSupplierRowEvents(){
           showToast('لازم تحدد نوع واحد على الأقل', 'error');
           return;
         }
-        s.handlesUsed = e.target.checked; await persistSupplier(s);
+        const prev = { handlesUsed: s.handlesUsed };
+        s.handlesUsed = e.target.checked;
+        await persistFieldOrRevert(s, prev, persistSupplier, refreshSuppliersList);
       });
     }
     row.querySelectorAll('.supplier-extra-phone-input').forEach(inp=>{
       inp.addEventListener('change', async e=>{
         const idx = Number(inp.getAttribute('data-phone-index'));
         const s = freshSupplier();
+        const prev = { extraPhones: s.extraPhones.slice() };
         s.extraPhones[idx] = e.target.value;
-        await persistSupplier(s);
+        await persistFieldOrRevert(s, prev, persistSupplier, refreshSuppliersList);
       });
     });
     row.querySelectorAll('.supplier-remove-phone-btn').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
         const idx = Number(btn.getAttribute('data-phone-index'));
         const s = freshSupplier();
+        const prev = { extraPhones: s.extraPhones.slice() };
         s.extraPhones.splice(idx, 1);
         refreshSuppliersList();
-        await persistSupplier(s);
+        await persistFieldOrRevert(s, prev, persistSupplier, refreshSuppliersList);
       });
     });
   });
@@ -8998,7 +9074,7 @@ function renderCustomersView(){
 
 function bindCustomersViewEvents(){
   document.getElementById('btn-back-to-orders-from-customers').addEventListener('click', closeCustomersView);
-  document.getElementById('add-customer-btn').addEventListener('click', async ()=>{
+  bindBusyButton(document.getElementById('add-customer-btn'), async ()=>{
     const nameInput = document.getElementById('new-customer-name-input');
     const phoneInput = document.getElementById('new-customer-phone-input');
     const name = nameInput.value.trim();
@@ -9037,13 +9113,17 @@ function bindCustomerRowEvents(){
     const nameInput = row.querySelector('.customer-name-input');
     if(nameInput){
       nameInput.addEventListener('change', async e=>{
-        const c = freshCustomer(); c.name = e.target.value; await persistCustomer(c);
+        const c = freshCustomer(); const prev = { name: c.name };
+        c.name = e.target.value;
+        await persistFieldOrRevert(c, prev, persistCustomer, refreshCustomersList);
       });
     }
     const phoneInput = row.querySelector('.customer-phone-input');
     if(phoneInput){
       phoneInput.addEventListener('change', async e=>{
-        const c = freshCustomer(); c.phone = e.target.value; await persistCustomer(c);
+        const c = freshCustomer(); const prev = { phone: c.phone };
+        c.phone = e.target.value;
+        await persistFieldOrRevert(c, prev, persistCustomer, refreshCustomersList);
       });
     }
     const historyBtn = row.querySelector('.customer-history-btn');
