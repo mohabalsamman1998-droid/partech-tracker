@@ -124,6 +124,7 @@
   .auth-message.error{color:var(--rust);}
   .auth-message.ok{color:var(--green);}
   .app-top-utility-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
+  .announcement-banner{background:var(--rust-dim);border:1px solid var(--rust-line);color:var(--rust);font-weight:800;font-size:14px;line-height:1.6;padding:10px 14px;border-radius:8px;margin-bottom:14px;text-align:center;overflow-wrap:break-word;white-space:pre-wrap;}
   .corner-mini-bar{display:flex;gap:6px;}
   .app-corner-logo{height:30px;width:auto;filter:brightness(0) saturate(100%) invert(1);opacity:.9;cursor:pointer;transition:.15s ease;}
   .app-corner-logo:hover{opacity:1;transform:scale(1.05);}
@@ -1019,9 +1020,11 @@
         <button id="btn-theme-toggle" class="corner-mini-btn" title="تبديل الوضع الليلي/النهاري">🌞</button>
         <button id="btn-who-online" class="corner-mini-btn">👥</button>
         <button id="btn-activity-log" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge" class="tasks-badge"></span></button>
+        <button id="btn-announcement" class="corner-mini-btn" title="إعلان للموظفين" style="display:none;">📢</button>
       </div>
       <img class="app-corner-logo" src="" id="app-corner-logo-img" alt="PARTECH" title="الصفحة الرئيسية">
     </div>
+    <div id="announcement-banner"></div>
     <header class="topbar">
       <div class="topbar-actions">
         <button id="btn-open-treasury" class="btn btn-ghost btn-with-badge">📦 الصندوق<span id="treasury-scrapyard-badge" class="tasks-badge"></span></button>
@@ -2419,6 +2422,88 @@ async function persistFieldOrRevert(obj, prevSnapshot, persistFn, refreshFn){
   const saved = await persistFn(obj);
   if(!saved){ Object.assign(obj, prevSnapshot); refreshFn(); }
   return saved;
+}
+
+/* ---------- إعلان للموظفين (بانر أحمر عريض) — صف وحيد ثابت بجدول announcement، يكتبه مخوّل
+   ويظهر لكل المستخدمين (المبيعات وعامر سوا). #announcement-banner عنصر ثابت بـ#app-root ما بينلمس
+   من أي إعادة رسم تانية، فتحديثه مباشر وآمن؛ شاشتا عامر (renderScrapyardHomeView/renderScrapyardView)
+   بيرسمان كامل من الصفر كل مرة، فبنحط نفس الـHtml جوا القالب مباشرة هناك. */
+let announcementText = null;
+let announcementChannel = null;
+
+function announcementBannerHtml(){
+  if(!announcementText) return '';
+  return '<div class="announcement-banner">'+escapeHtml(announcementText)+'</div>';
+}
+
+function renderAnnouncementBanner(){
+  const el = document.getElementById('announcement-banner');
+  if(el) el.innerHTML = announcementBannerHtml();
+}
+
+function refreshScrapyardAnnouncementIfVisible(){
+  const scrapRoot = document.getElementById('scrapyard-root');
+  if(!scrapRoot || scrapRoot.style.display === 'none') return;
+  if(scrapyardCurrentScreen === 'home') renderScrapyardHomeView();
+  else if(scrapyardCurrentScreen === 'settlement') renderScrapyardView();
+}
+
+async function loadAnnouncement(){
+  try{
+    if(!sb) return;
+    const { data, error } = await sb.from('announcement').select('text').eq('id','main').maybeSingle();
+    if(error) throw error;
+    announcementText = (data && data.text) ? data.text : null;
+  }catch(e){ console.error('loadAnnouncement:', e); }
+  renderAnnouncementBanner();
+  refreshScrapyardAnnouncementIfVisible();
+}
+
+function subscribeAnnouncementRealtime(){
+  if(!sb || announcementChannel) return;
+  announcementChannel = sb.channel('announcement-changes')
+    .on('postgres_changes', { event:'UPDATE', schema:'public', table:'announcement' }, (payload)=>{
+      announcementText = (payload.new && payload.new.text) ? payload.new.text : null;
+      renderAnnouncementBanner();
+      refreshScrapyardAnnouncementIfVisible();
+    })
+    .subscribe();
+}
+
+function openAnnouncementEditor(){
+  const root = document.getElementById('confirm-root');
+  root.innerHTML =
+    '<div class="modal-backdrop" data-close-confirm>' +
+      '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
+        '<div class="modal-title">📢 إعلان للموظفين</div>' +
+        '<label class="field" style="margin-top:12px;display:block;"><span class="field-label">النص (اتركه فاضي لإزالة الإعلان الحالي)</span>' +
+          '<textarea id="announcement-edit-input" rows="4" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:9px;border-radius:6px;font-family:inherit;font-size:14px;resize:vertical;">'+escapeHtml(announcementText||'')+'</textarea>' +
+        '</label>' +
+        '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;flex-wrap:wrap;">' +
+          '<button type="button" class="btn btn-ghost" id="announcement-cancel-btn">إلغاء</button>' +
+          '<button type="button" class="btn btn-primary" id="announcement-save-btn">حفظ</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  root.querySelector('[data-close-confirm]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-confirm')) close();
+  });
+  root.querySelector('#announcement-cancel-btn').addEventListener('click', close);
+  bindBusyButton(root.querySelector('#announcement-save-btn'), async ()=>{
+    const input = document.getElementById('announcement-edit-input');
+    const newText = input.value.trim();
+    const { error } = await sb.from('announcement').update({
+      text: newText || null, updated_by: presenceEmail, updated_at: new Date().toISOString()
+    }).eq('id','main');
+    if(error){ showToast('تعذر حفظ الإعلان', 'error'); return; }
+    announcementText = newText || null;
+    renderAnnouncementBanner();
+    refreshScrapyardAnnouncementIfVisible();
+    close();
+    showToast(newText ? 'تم نشر الإعلان' : 'تم مسح الإعلان', 'ok');
+  });
 }
 
 function attachModalHandlers(){
@@ -7695,6 +7780,8 @@ function bindToolbar(){
   if(pushBtn) pushBtn.addEventListener('click', togglePushSubscription);
   const activityLogBtn = document.getElementById('btn-activity-log');
   if(activityLogBtn) activityLogBtn.addEventListener('click', openActivityLog);
+  const announcementBtn = document.getElementById('btn-announcement');
+  if(announcementBtn) announcementBtn.addEventListener('click', openAnnouncementEditor);
   document.getElementById('btn-logout').addEventListener('click', handleLogout);
   document.getElementById('btn-toggle-filters').addEventListener('click', ()=>{
     const el = document.getElementById('filter-buttons');
@@ -7865,6 +7952,8 @@ async function init(){
   refreshPushButtonState();
   refreshActivityEvents();
   subscribeActivityEventsRealtime();
+  loadAnnouncement();
+  subscribeAnnouncementRealtime();
   const openedFromUrl = consumeNotifUrlParam();
   if(pendingOpenActivityLogFromPush || openedFromUrl){ pendingOpenActivityLogFromPush = false; openActivityLog(); }
 }
@@ -9420,6 +9509,8 @@ async function showAppIfAllowed(session){
     startPresenceHeartbeat(email);
     const treasuryBtn = document.getElementById('btn-open-treasury');
     if(treasuryBtn) treasuryBtn.style.display = currentUserIsElevated ? '' : 'none';
+    const announcementBtn = document.getElementById('btn-announcement');
+    if(announcementBtn) announcementBtn.style.display = currentUserIsElevated ? '' : 'none';
     if(!appInitDone){
       appInitDone = true;
       init();
@@ -9453,6 +9544,8 @@ async function initScrapyardView(email){
   subscribeScrapyardAppDataRealtime();
   refreshActivityEvents();
   subscribeActivityEventsRealtime();
+  loadAnnouncement();
+  subscribeAnnouncementRealtime();
   // دخول عامر المباشر (دوره "scrapyard") يوديه للصفحة الرئيسية لقسم المشتريات؛
   // دخول صاحب الحساب من داخل التطبيق (زر الصندوق) يوديه لشاشة السداد مباشرة كالمعتاد
   if(scrapyardSharedState.canManage){
@@ -9819,6 +9912,7 @@ function renderScrapyardHomeView(){
       '<div class="corner-mini-bar">'+scrapyardThemeToggleHtml()+'<button id="btn-activity-log-scrapyard" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge-scrapyard" class="tasks-badge"></span></button></div>' +
       '<img class="app-corner-logo" src="'+PARTECH_LOGO_DATA_URI+'" id="scrapyard-home-logo-img" alt="PARTECH" title="الصفحة الرئيسية">' +
     '</div>' +
+    announcementBannerHtml() +
     '<header class="topbar"><div class="brand">قسم المشتريات</div></header>' +
     '<section class="kpi-row scrapyard-kpi-row">' +
       '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للتشليح</div><div class="kpi-value num">'+fmtMoney(usedTotal)+'</div></div>' +
@@ -9933,6 +10027,7 @@ function renderScrapyardView(){
       '</div>' +
       '<img class="app-corner-logo" src="'+PARTECH_LOGO_DATA_URI+'" id="scrapyard-logo-img" alt="PARTECH" title="الصفحة الرئيسية">' +
     '</div>' +
+    announcementBannerHtml() +
     '<header class="topbar">' +
       '<div class="brand">'+SETTLEMENT_KINDS[kind].title+'</div>' +
     '</header>' +
