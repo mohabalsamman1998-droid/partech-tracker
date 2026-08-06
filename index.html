@@ -1025,7 +1025,6 @@
     <div class="app-top-utility-row">
       <div class="corner-mini-bar">
         <button id="btn-push-toggle" class="corner-mini-btn" title="تفعيل إشعارات الجوال">🔕</button>
-        <button id="btn-location-toggle" class="corner-mini-btn" title="السماح بمشاركة موقعي عند الطلب">📍</button>
         <button id="btn-theme-toggle" class="corner-mini-btn" title="تبديل الوضع الليلي/النهاري">🌞</button>
         <button id="btn-who-online" class="corner-mini-btn">👥</button>
         <button id="btn-activity-log" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge" class="tasks-badge"></span></button>
@@ -7909,8 +7908,6 @@ function bindToolbar(){
   document.getElementById('btn-theme-toggle').addEventListener('click', toggleTheme);
   const pushBtn = document.getElementById('btn-push-toggle');
   if(pushBtn) pushBtn.addEventListener('click', togglePushSubscription);
-  const locationToggleBtn = document.getElementById('btn-location-toggle');
-  if(locationToggleBtn) locationToggleBtn.addEventListener('click', toggleLocationSharing);
   const activityLogBtn = document.getElementById('btn-activity-log');
   if(activityLogBtn) activityLogBtn.addEventListener('click', openActivityLog);
   const announcementBtn = document.getElementById('btn-announcement');
@@ -10048,7 +10045,7 @@ function renderScrapyardHomeView(){
 
   root.innerHTML =
     '<div class="app-top-utility-row">' +
-      '<div class="corner-mini-bar">'+scrapyardThemeToggleHtml()+'<button id="btn-location-toggle-scrapyard" class="corner-mini-btn" title="السماح بمشاركة موقعي عند الطلب">📍</button><button id="btn-activity-log-scrapyard" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge-scrapyard" class="tasks-badge"></span></button></div>' +
+      '<div class="corner-mini-bar">'+scrapyardThemeToggleHtml()+'<button id="btn-activity-log-scrapyard" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge-scrapyard" class="tasks-badge"></span></button></div>' +
       '<img class="app-corner-logo" src="'+PARTECH_LOGO_DATA_URI+'" id="scrapyard-home-logo-img" alt="PARTECH" title="الصفحة الرئيسية">' +
     '</div>' +
     announcementBannerHtml('purchasing') +
@@ -10082,9 +10079,6 @@ function renderScrapyardHomeView(){
   bindScrapyardThemeToggle();
   const activityLogBtnScrapyard = document.getElementById('btn-activity-log-scrapyard');
   if(activityLogBtnScrapyard) activityLogBtnScrapyard.addEventListener('click', openActivityLog);
-  const locationToggleBtnScrapyardHome = document.getElementById('btn-location-toggle-scrapyard');
-  if(locationToggleBtnScrapyardHome) locationToggleBtnScrapyardHome.addEventListener('click', toggleLocationSharing);
-  updateLocationToggleUi();
 
   const sections = ['settlement','quotes','tasks'];
   sections.forEach(key=>{
@@ -10165,7 +10159,7 @@ function renderScrapyardView(){
       '<div class="corner-mini-bar">' +
         (canManage
           ? '<button type="button" class="btn btn-ghost btn-sm" id="btn-exit-scrapyard-shared">→ الرجوع للصندوق</button>'
-          : '<button type="button" class="btn btn-ghost btn-sm" id="btn-scrapyard-back-home">→ الرئيسية</button>'+scrapyardThemeToggleHtml()+'<button id="btn-location-toggle-scrapyard" class="corner-mini-btn" title="السماح بمشاركة موقعي عند الطلب">📍</button>') +
+          : '<button type="button" class="btn btn-ghost btn-sm" id="btn-scrapyard-back-home">→ الرئيسية</button>'+scrapyardThemeToggleHtml()) +
       '</div>' +
       '<img class="app-corner-logo" src="'+PARTECH_LOGO_DATA_URI+'" id="scrapyard-logo-img" alt="PARTECH" title="الصفحة الرئيسية">' +
     '</div>' +
@@ -10608,9 +10602,6 @@ function bindScrapyardEvents(){
   const scrapLogo = document.getElementById('scrapyard-logo-img');
   if(scrapLogo) scrapLogo.addEventListener('click', goHomeFromLogo);
   bindScrapyardThemeToggle();
-  const locationToggleBtnScrapyardSettlement = document.getElementById('btn-location-toggle-scrapyard');
-  if(locationToggleBtnScrapyardSettlement) locationToggleBtnScrapyardSettlement.addEventListener('click', toggleLocationSharing);
-  updateLocationToggleUi();
   const addSupplierBtn = document.getElementById('btn-add-scrapyard-supplier');
   // لازم تغليف: تمرير الدالة مباشرة بيخلي onSaved يستقبل حدث الضغط (MouseEvent)، وبعدها
   // استدعاء onSaved(newSupplier) بيرمي TypeError لأن الحدث مش دالة.
@@ -10904,7 +10895,7 @@ function startPresenceHeartbeat(email){
   sendPresenceHeartbeat();
   loadPresenceCache();
   subscribePresenceRealtime();
-  initLocationSharingState();
+  startContinuousLocationReporting();
   if(presenceTimer) clearInterval(presenceTimer);
   presenceTimer = setInterval(sendPresenceHeartbeat, PRESENCE_HEARTBEAT_MS);
   if(presenceRecheckTimer) clearInterval(presenceRecheckTimer);
@@ -10996,102 +10987,65 @@ function showWhoIsOnline(){
   });
 }
 
-/* ---------- مشاركة الموقع عند الطلب — مو تتبع مستمر. الموظف يفعّلها مرة (تُحفظ محليًا على
-   جهازه)، وبعدين أي "طلب موقع" من مهاب/همام/بشار بيوصل لحظيًا عبر جدول location_requests،
-   وبيرد الجهاز بموقعه الحالي مرة وحدة — بس لو الصفحة مفتوحة وظاهرة أمامه فعليًا (foreground-only،
-   بدون أي قراءة موقع بالخلفية). التبديل موجود بشريط الزاوية الرئيسي وبشريط عامر (شاشة المشتريات)
-   سوا — كل الموظفين، مو بس المبيعات. ---------- */
-const LOCATION_SHARE_KEY = 'partech_location_sharing_v1';
-let locationSharingEnabled = false;
+/* ---------- تتبع موقع مستمر (بدون أي زر تفعيل/إيقاف — شغّال تلقائيًا لكل الموظفين طول ما
+   التطبيق مفتوح وظاهر أمامهم، foreground-only مثل الإشعارات، بدون أي قراءة موقع بالخلفية).
+   كل نقطة بتنسجل بجدول employee_location_history (append-only، ما فيها تعديل ولا حذف حتى
+   لصاحبها) فبيصير فيها "آخر موقع" و"تاريخ كامل" سوا — مهاب استثنى حاله بالكامل: جهازه ما
+   بيسجّل ولا بيرد على أي طلب موقع نهائيًا (LOCATION_SHARING_EXCLUDED_EMAILS). ---------- */
+const LOCATION_SHARING_EXCLUDED_EMAILS = ['mohabalsamman1998@gmail.com']; // مهاب: لا تسجيل ولا طلب لموقعه أبدًا
+const LOCATION_REPORT_INTERVAL_MS = 2*60*1000; // نقطة جديدة كل دقيقتين تلقائيًا
 let locationRequestChannel = null;
+let locationReportTimer = null;
 
-function updateLocationToggleUi(){
-  ['btn-location-toggle','btn-location-toggle-scrapyard'].forEach(id=>{
-    const btn = document.getElementById(id);
-    if(!btn) return;
-    btn.textContent = locationSharingEnabled ? '📌' : '📍';
-    btn.title = locationSharingEnabled ? 'مشاركة الموقع عند الطلب مفعّلة (اضغط للإيقاف)' : 'السماح بمشاركة موقعي عند الطلب';
-  });
+function recordLocationPoint(){
+  if(!sb || !presenceEmail || !navigator.geolocation) return;
+  if(LOCATION_SHARING_EXCLUDED_EMAILS.includes(presenceEmail)) return;
+  if(document.visibilityState !== 'visible') return; // فقط والصفحة مفتوحة وظاهرة فعليًا
+  navigator.geolocation.getCurrentPosition(async (pos)=>{
+    try{
+      await sb.from('employee_location_history').insert({
+        email: presenceEmail, lat: pos.coords.latitude, lng: pos.coords.longitude,
+        accuracy: pos.coords.accuracy, recorded_at: new Date().toISOString()
+      });
+    }catch(e){ console.error('recordLocationPoint:', e); }
+  }, (e)=>{ console.error('geolocation error:', e); }, { enableHighAccuracy:false, timeout:15000, maximumAge:60000 });
 }
 
 function subscribeLocationRequests(){
   if(!sb || locationRequestChannel) return;
+  if(presenceEmail && LOCATION_SHARING_EXCLUDED_EMAILS.includes(presenceEmail)) return; // ما منشترك أصلًا لحساب مهاب
   locationRequestChannel = sb.channel('location-requests-changes')
     .on('postgres_changes', { event:'UPDATE', schema:'public', table:'location_requests' }, ()=>{
-      if(locationSharingEnabled) reportMyLocationOnce();
+      recordLocationPoint(); // نقطة فورية إضافية بطلب "تحديث الآن" من مهاب/همام/بشار
     })
     .subscribe();
 }
 
-function unsubscribeLocationRequests(){
-  if(locationRequestChannel){ sb.removeChannel(locationRequestChannel); locationRequestChannel = null; }
-}
-
-function reportMyLocationOnce(){
-  if(!sb || !presenceEmail || !navigator.geolocation) return;
-  if(document.visibilityState !== 'visible') return; // فقط والصفحة مفتوحة وظاهرة فعليًا
-  navigator.geolocation.getCurrentPosition(async (pos)=>{
-    try{
-      await sb.from('employee_locations').upsert({
-        email: presenceEmail, lat: pos.coords.latitude, lng: pos.coords.longitude,
-        accuracy: pos.coords.accuracy, updated_at: new Date().toISOString()
-      }, { onConflict: 'email' });
-    }catch(e){ console.error('reportMyLocationOnce:', e); }
-  }, (e)=>{ console.error('geolocation error:', e); }, { enableHighAccuracy:false, timeout:15000, maximumAge:30000 });
-}
-
-async function enableLocationSharing(){
-  if(!navigator.geolocation){ showToast('متصفحك ما يدعم تحديد الموقع', 'error'); return; }
-  try{
-    await new Promise((resolve, reject)=>{
-      navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy:false, timeout:15000 });
-    });
-  }catch(e){
-    showToast('ما وافقت على مشاركة الموقع من إعدادات المتصفح', 'error');
-    return;
-  }
-  locationSharingEnabled = true;
-  localStorage.setItem(LOCATION_SHARE_KEY, '1');
-  updateLocationToggleUi();
+function startContinuousLocationReporting(){
+  if(!presenceEmail || LOCATION_SHARING_EXCLUDED_EMAILS.includes(presenceEmail)) return;
+  recordLocationPoint();
+  if(locationReportTimer) clearInterval(locationReportTimer);
+  locationReportTimer = setInterval(recordLocationPoint, LOCATION_REPORT_INTERVAL_MS);
   subscribeLocationRequests();
-  showToast('تم تفعيل مشاركة الموقع عند الطلب', 'ok');
 }
 
-function disableLocationSharing(){
-  locationSharingEnabled = false;
-  localStorage.removeItem(LOCATION_SHARE_KEY);
-  updateLocationToggleUi();
-  unsubscribeLocationRequests();
-  if(sb && presenceEmail) sb.from('employee_locations').delete().eq('email', presenceEmail).then(()=>{}, ()=>{});
-  showToast('تم إيقاف مشاركة الموقع', 'ok');
-}
-
-function toggleLocationSharing(){
-  if(locationSharingEnabled) disableLocationSharing();
-  else enableLocationSharing();
-}
-
-function initLocationSharingState(){
-  locationSharingEnabled = localStorage.getItem(LOCATION_SHARE_KEY) === '1';
-  updateLocationToggleUi();
-  if(locationSharingEnabled) subscribeLocationRequests();
-}
-
-/* ---------- خريطة مواقع الموظفين (مهاب/همام/بشار فقط) — الزر ثابت بشريط الزاوية دايمًا، بس
-   الموقع الفعلي ما بيتحدث إلا لما يفتح الخريطة (بينغ تلقائي) أو يضغط "تحديث الآن" — مو تتبع حي
-   مستمر. آخر موقع معروف (من جدول employee_locations) بيبين فورًا عند الفتح حتى قبل أي رد جديد. ---------- */
+/* ---------- خريطة مواقع الموظفين (مهاب/همام/بشار فقط — وموقع مهاب نفسه مستثنى دايمًا).
+   تعرض آخر موقع معروف لكل موظف فورًا (فيو employee_latest_location)، وتتحدث لحظيًا مع كل نقطة
+   جديدة. فيها كمان بحث "بوقت معيّن" يرجع أقرب نقطة مسجّلة قبل أي وقت تختاره. ---------- */
 let employeeMapInstance = null;
 let employeeMapMarkers = {};
 let employeeMapChannel = null;
 let employeeMapStaleTimer = null;
 let employeeMapModalOpen = false;
+let employeeMapHistoryMarker = null;
 const EMPLOYEE_LOCATION_STALE_MS = 2*60*1000;
 
-function employeeMapMarkerIcon(email, stale){
+function employeeMapMarkerIcon(email, stale, variant){
   const label = (email||'').split('@')[0];
+  const dot = variant==='history' ? '🕐' : (stale?'⚪':'🟢');
   return L.divIcon({
     className: 'employee-map-marker'+(stale?' employee-map-marker-stale':''),
-    html: '<div class="employee-map-marker-label">'+(stale?'⚪':'🟢')+' '+escapeHtml(label)+'</div>'
+    html: '<div class="employee-map-marker-label">'+dot+' '+escapeHtml(label)+'</div>'
   });
 }
 
@@ -11101,9 +11055,9 @@ function renderEmployeeMapMarkers(rows){
   (rows||[]).forEach(row=>{
     if(!row.email || row.lat==null || row.lng==null) return;
     seen.add(row.email);
-    const stale = (Date.now() - new Date(row.updated_at).getTime()) > EMPLOYEE_LOCATION_STALE_MS;
+    const stale = (Date.now() - new Date(row.recorded_at).getTime()) > EMPLOYEE_LOCATION_STALE_MS;
     const icon = employeeMapMarkerIcon(row.email, stale);
-    const tooltipText = (stale?'قبل ':'محدَّث ')+arabicRelativeTime(new Date(row.updated_at).getTime());
+    const tooltipText = (stale?'قبل ':'محدَّث ')+arabicRelativeTime(new Date(row.recorded_at).getTime());
     if(employeeMapMarkers[row.email]){
       employeeMapMarkers[row.email].setLatLng([row.lat, row.lng]).setIcon(icon).setTooltipContent(tooltipText);
     } else {
@@ -11117,9 +11071,28 @@ function renderEmployeeMapMarkers(rows){
 
 async function loadEmployeeLocations(){
   if(!sb) return [];
-  const { data, error } = await sb.from('employee_locations').select('email, lat, lng, accuracy, updated_at');
+  const { data, error } = await sb.from('employee_latest_location').select('email, lat, lng, accuracy, recorded_at');
   if(error){ console.error('loadEmployeeLocations:', error); return []; }
-  return data || [];
+  return (data||[]).filter(row => !LOCATION_SHARING_EXCLUDED_EMAILS.includes(row.email));
+}
+
+async function loadEmployeeLocationHistoryEmails(){
+  if(!sb) return [];
+  const { data, error } = await sb.from('employee_location_history').select('email');
+  if(error){ console.error('loadEmployeeLocationHistoryEmails:', error); return []; }
+  const emails = Array.from(new Set((data||[]).map(r=>r.email))).filter(e => !LOCATION_SHARING_EXCLUDED_EMAILS.includes(e));
+  emails.sort();
+  return emails;
+}
+
+async function searchLocationAtTime(email, isoTime){
+  if(!sb || !email || !isoTime) return null;
+  const { data, error } = await sb.from('employee_location_history')
+    .select('email, lat, lng, accuracy, recorded_at')
+    .eq('email', email).lte('recorded_at', isoTime)
+    .order('recorded_at', { ascending:false }).limit(1).maybeSingle();
+  if(error){ console.error('searchLocationAtTime:', error); return null; }
+  return data;
 }
 
 function pingEmployeeLocations(){
@@ -11130,8 +11103,8 @@ function pingEmployeeLocations(){
 
 function subscribeEmployeeMapRealtime(){
   if(!sb || employeeMapChannel) return;
-  employeeMapChannel = sb.channel('employee-locations-changes')
-    .on('postgres_changes', { event:'*', schema:'public', table:'employee_locations' }, async ()=>{
+  employeeMapChannel = sb.channel('employee-location-history-changes')
+    .on('postgres_changes', { event:'INSERT', schema:'public', table:'employee_location_history' }, async ()=>{
       renderEmployeeMapMarkers(await loadEmployeeLocations());
     })
     .subscribe();
@@ -11150,8 +11123,31 @@ function closeEmployeeMap(){
   if(employeeMapStaleTimer){ clearInterval(employeeMapStaleTimer); employeeMapStaleTimer = null; }
   if(employeeMapInstance){ employeeMapInstance.remove(); employeeMapInstance = null; }
   employeeMapMarkers = {};
+  employeeMapHistoryMarker = null;
 }
 function employeeMapEscListener(e){ if(e.key==='Escape') closeEmployeeMap(); }
+
+async function handleEmployeeMapHistorySearch(){
+  if(!employeeMapInstance) return;
+  const select = document.getElementById('employee-map-history-select');
+  const timeInput = document.getElementById('employee-map-history-time');
+  const resultEl = document.getElementById('employee-map-history-result');
+  const email = select && select.value;
+  const timeVal = timeInput && timeInput.value;
+  if(!email || !timeVal){ if(resultEl) resultEl.textContent = 'اختر موظف ووقت أولًا'; return; }
+  if(resultEl) resultEl.textContent = 'جاري البحث…';
+  const point = await searchLocationAtTime(email, new Date(timeVal).toISOString());
+  if(!employeeMapInstance) return; // تسكّرت الخريطة أثناء البحث
+  if(!point){
+    if(resultEl) resultEl.textContent = 'ما في أي موقع مسجّل لهذا الموظف قبل هذا الوقت';
+    return;
+  }
+  if(employeeMapHistoryMarker){ employeeMapInstance.removeLayer(employeeMapHistoryMarker); employeeMapHistoryMarker = null; }
+  employeeMapHistoryMarker = L.marker([point.lat, point.lng], { icon: employeeMapMarkerIcon(point.email, false, 'history') }).addTo(employeeMapInstance);
+  employeeMapInstance.setView([point.lat, point.lng], 15);
+  const recordedLabel = new Date(point.recorded_at).toLocaleString('ar-SY', { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit', year:'numeric' });
+  if(resultEl) resultEl.textContent = 'آخر موقع مسجّل لـ '+point.email.split('@')[0]+' — الساعة '+recordedLabel;
+}
 
 async function openEmployeeMap(){
   if(!hasElevatedAccess()) return;
@@ -11162,10 +11158,16 @@ async function openEmployeeMap(){
   root.innerHTML =
     '<div class="modal-backdrop" data-close-confirm>' +
       '<div class="modal-card" role="dialog" aria-modal="true">' +
-        '<div class="modal-header"><div><div class="modal-title">🗺️ مواقع الموظفين</div><div class="modal-sub">الموقع يتحدث فقط عند الطلب — مو تتبع مستمر</div></div>' +
+        '<div class="modal-header"><div><div class="modal-title">🗺️ مواقع الموظفين</div><div class="modal-sub">تتبع مستمر تلقائي — نقطة كل دقيقتين تقريبًا</div></div>' +
           '<button class="icon-btn" id="employee-map-close-btn" aria-label="إغلاق">✕</button></div>' +
         '<div id="employee-map-wrap" class="employee-map-wrap"></div>' +
-        '<div class="employee-map-legend"><span>🟢 رد خلال آخر دقيقتين &nbsp; ⚪ رد أقدم</span><button type="button" class="btn btn-ghost btn-sm" id="employee-map-refresh-btn">🔄 تحديث الآن</button></div>' +
+        '<div class="employee-map-legend"><span>🟢 خلال آخر دقيقتين &nbsp; ⚪ أقدم</span><button type="button" class="btn btn-ghost btn-sm" id="employee-map-refresh-btn">🔄 تحديث الآن</button></div>' +
+        '<div class="employee-map-history-row" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">' +
+          '<select id="employee-map-history-select" style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:6px;font-family:inherit;font-size:13px;"><option value="">جاري التحميل…</option></select>' +
+          '<input type="datetime-local" id="employee-map-history-time" style="flex:1;min-width:150px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px;border-radius:6px;font-family:inherit;font-size:13px;">' +
+          '<button type="button" class="btn btn-ghost btn-sm" id="employee-map-history-search-btn">🕐 أين كان</button>' +
+        '</div>' +
+        '<div id="employee-map-history-result" class="muted" style="margin-top:6px;font-size:12.5px;"></div>' +
       '</div>' +
     '</div>';
   root.classList.add('modal-open');
@@ -11174,6 +11176,7 @@ async function openEmployeeMap(){
   });
   root.querySelector('#employee-map-close-btn').addEventListener('click', closeEmployeeMap);
   root.querySelector('#employee-map-refresh-btn').addEventListener('click', pingEmployeeLocations);
+  root.querySelector('#employee-map-history-search-btn').addEventListener('click', handleEmployeeMapHistorySearch);
   document.addEventListener('keydown', employeeMapEscListener);
 
   employeeMapMarkers = {};
@@ -11183,12 +11186,18 @@ async function openEmployeeMap(){
   }).addTo(employeeMapInstance);
   employeeMapInstance.setView([25, 40], 5); // منظور عام مبدئي لحد ما توصل أول نقاط فعلية
 
-  const rows = await loadEmployeeLocations();
+  const [rows, historyEmails] = await Promise.all([loadEmployeeLocations(), loadEmployeeLocationHistoryEmails()]);
   if(myToken !== employeeMapOpenToken) return; // انسكرت و/أو انفتحت وانسكرت وانفتحت من جديد وهي عم تحمّل
   if(rows.length){
     renderEmployeeMapMarkers(rows);
     const pts = rows.filter(r=>r.lat!=null && r.lng!=null).map(r=>[r.lat, r.lng]);
     if(pts.length) employeeMapInstance.fitBounds(pts, { padding:[40,40], maxZoom:15 });
+  }
+  const historySelect = document.getElementById('employee-map-history-select');
+  if(historySelect){
+    historySelect.innerHTML = historyEmails.length
+      ? historyEmails.map(email=>'<option value="'+escapeHtml(email)+'">'+escapeHtml(email.split('@')[0])+'</option>').join('')
+      : '<option value="">لا يوجد سجل مواقع بعد</option>';
   }
   subscribeEmployeeMapRealtime();
   employeeMapStaleTimer = setInterval(async ()=>{ renderEmployeeMapMarkers(await loadEmployeeLocations()); }, 30000);
