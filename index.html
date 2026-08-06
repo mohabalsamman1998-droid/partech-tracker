@@ -348,6 +348,8 @@
   .quote-row-ready .quote-row-label{color:var(--green);}
   .activity-log-row{cursor:pointer;}
   .activity-log-row:hover{border-color:var(--text-faint);}
+  .doc-history-row{cursor:pointer;}
+  .doc-history-row:hover{border-color:var(--text-faint);}
   .task-item-check{width:20px;height:20px;accent-color:var(--green);cursor:pointer;flex-shrink:0;}
   .task-item-text{flex:1;min-width:0;overflow-wrap:break-word;font-size:14px;}
   .task-item-done{opacity:.55;}
@@ -4620,6 +4622,7 @@ function docSheetHtml(order, type, data){
           '<button type="button" class="btn btn-ghost btn-sm" id="doc-copy-btn">نسخ نص للواتساب</button>' +
           '<button type="button" class="btn btn-ghost btn-sm" id="doc-share-btn">📤 مشاركة</button>' +
           '<button type="button" class="btn btn-ghost btn-sm" id="doc-pdf-btn">📄 تحميل PDF</button>' +
+          '<button type="button" class="btn btn-ghost btn-sm" id="doc-history-btn">📜 السجل</button>' +
           '<button type="button" class="btn btn-primary btn-sm" id="doc-print-btn">طباعة</button>' +
         '</div>' +
       '</div>' +
@@ -4695,6 +4698,62 @@ function refreshDocSheet(){
   bindDocHandlers();
 }
 
+/* نسخ محفوظة سابقًا من نفس نوع المستند (فاتورة أو عرض سعر) لهاي الطلبية — تنضاف عند تحميل PDF/
+   طباعة/مشاركة/نسخ فقط، انظر persistDocMeta */
+function docHistoryList(){
+  if(!docState) return [];
+  const order = appData.orders.find(o=>o.id===docState.orderId);
+  if(!order) return [];
+  const historyField = docState.type==='invoice' ? 'invoiceDocHistory' : 'quoteDocHistory';
+  return Array.isArray(order[historyField]) ? order[historyField] : [];
+}
+
+function openDocHistory(){
+  if(!docState) return;
+  const list = docHistoryList().slice().reverse(); // الأحدث أولًا
+  const root = document.getElementById('confirm-root');
+  root.innerHTML =
+    '<div class="modal-backdrop" data-close-confirm>' +
+      '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
+        '<div class="modal-title">📜 سجل '+(docState.type==='invoice'?'الفواتير':'عروض الأسعار')+' السابقة</div>' +
+        '<div style="margin-top:14px;max-height:60vh;overflow-y:auto;">' +
+          (list.length
+            ? '<div class="task-items-list">'+list.map(entry=>{
+                const ms = new Date(entry._savedAt).getTime();
+                return '<div class="task-item-row doc-history-row" data-history-id="'+escapeHtml(entry._historyId)+'">' +
+                  '<span class="task-item-text">رقم '+escapeHtml(entry.number||'')+(entry.customerName?' — '+escapeHtml(entry.customerName):'')+'</span>' +
+                  '<span class="muted" style="white-space:nowrap;">'+arabicRelativeTime(ms)+'</span>' +
+                '</div>';
+              }).join('')+'</div>'
+            : '<p class="add-part-locked-hint">ما فيه نسخ سابقة محفوظة بالسجل بعد — تنضاف تلقائيًا أول ما تحمّل PDF أو تطبع أو تشارك</p>') +
+        '</div>' +
+        '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' +
+          '<button type="button" class="btn btn-ghost" id="doc-history-close-btn">إغلاق</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  root.querySelector('[data-close-confirm]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-confirm')) close();
+  });
+  root.querySelector('#doc-history-close-btn').addEventListener('click', close);
+  root.querySelectorAll('.doc-history-row').forEach(row=>{
+    row.addEventListener('click', ()=>{
+      const historyId = row.getAttribute('data-history-id');
+      const entry = docHistoryList().find(e=>e._historyId===historyId);
+      close();
+      if(!entry || !docState) return;
+      const snapshot = Object.assign({}, entry);
+      delete snapshot._historyId;
+      delete snapshot._savedAt;
+      docState.data = snapshot;
+      refreshDocSheet();
+      showToast('عرض نسخة محفوظة من '+arabicRelativeTime(new Date(entry._savedAt).getTime()), 'ok');
+    });
+  });
+}
+
 function closeDocView(){
   const root = document.getElementById('doc-root');
   root.innerHTML='';
@@ -4732,10 +4791,11 @@ function bindDocHandlers(){
   const root = document.getElementById('doc-root');
   root.querySelector('#doc-close-btn').addEventListener('click', async ()=>{ await persistDocMeta(false); closeDocViewAndReturn(); });
   root.querySelector('#doc-save-btn').addEventListener('click', ()=>{ persistDocMeta(true); });
-  root.querySelector('#doc-print-btn').addEventListener('click', async ()=>{ await persistDocMeta(false); markEmptyDocFields(); window.print(); });
+  root.querySelector('#doc-print-btn').addEventListener('click', async ()=>{ await persistDocMeta(false, true); markEmptyDocFields(); window.print(); });
   root.querySelector('#doc-copy-btn').addEventListener('click', copyDocToClipboard);
   root.querySelector('#doc-share-btn').addEventListener('click', shareDoc);
   root.querySelector('#doc-pdf-btn').addEventListener('click', downloadDocPdf);
+  root.querySelector('#doc-history-btn').addEventListener('click', openDocHistory);
 
   const customerInput = root.querySelector('#doc-customer-input');
   customerInput.addEventListener('input', e=>{ docState.data.customerName = e.target.innerText; });
@@ -4758,12 +4818,27 @@ function bindDocHandlers(){
   }
 }
 
-async function persistDocMeta(showToastMsg){
+/* appendHistory=true (عند تحميل PDF/طباعة/مشاركة/نسخ فقط — مش عند "حفظ البيانات" العادي ولا
+   الإغلاق) بيضيف نسخة جديدة لسجل invoiceDocHistory/quoteDocHistory بدل ما يكتفي بتحديث invoiceDoc/
+   quoteDoc الحالي — هيك فاتورة سابقة صدرت فعليًا للزبون ما تضيع لو صدرت فاتورة تانية لنفس الطلبية
+   بعدها. مقارنة بآخر نسخة بالسجل تمنع تكرار نفس المحتوى بالضبط (مثلاً تحميل PDF مرتين ورا بعض
+   بدون أي تعديل). */
+async function persistDocMeta(showToastMsg, appendHistory){
   if(!docState) return false;
   const order = appData.orders.find(o=>o.id===docState.orderId);
   if(!order) return false;
   const field = docState.type==='invoice' ? 'invoiceDoc' : 'quoteDoc';
   order[field] = Object.assign({}, docState.data);
+  if(appendHistory){
+    const historyField = docState.type==='invoice' ? 'invoiceDocHistory' : 'quoteDocHistory';
+    if(!Array.isArray(order[historyField])) order[historyField] = [];
+    const snapshot = Object.assign({}, docState.data);
+    const last = order[historyField][order[historyField].length-1];
+    const lastData = last ? Object.assign({}, last, {_historyId:undefined, _savedAt:undefined}) : null;
+    if(!last || JSON.stringify(lastData)!==JSON.stringify(snapshot)){
+      order[historyField].push(Object.assign({ _historyId: uid('doc'), _savedAt: new Date().toISOString() }, snapshot));
+    }
+  }
   // لازم نقدّم updatedAt زي أي حفظ تاني — بدونه عمود updated_at بالقاعدة ما بيتحرك (ما فيه
   // trigger)، فحفظ بيانات المستند كان يمرّ "خفي" على فحصي التعارض بنافذة الطلبية والتسعيرة.
   order.updatedAt = new Date().toISOString();
@@ -4848,7 +4923,7 @@ async function copyDocToClipboard(){
   const text = buildDocWhatsAppText(order, docState.type, docState.data);
   const ok = await writeTextToClipboard(text);
   showToast(ok ? 'تم نسخ النص، الصقه بالواتساب' : 'تعذر النسخ التلقائي، انسخ النص يدويًا', ok ? 'ok' : 'error');
-  await persistDocMeta(false);
+  await persistDocMeta(false, true);
 }
 
 /* ---------- PDF export + native share ---------- */
@@ -4899,7 +4974,7 @@ async function downloadDocPdf(){
   };
   setBusy(true);
   try{
-    await persistDocMeta(false);
+    await persistDocMeta(false, true);
     if(docState !== openedDocState) return;
     markEmptyDocFields();
     const blob = await buildDocPdfBlob();
@@ -4954,7 +5029,7 @@ async function shareDoc(){
     // buildDocPdfBlob ملفوفة بـ catch: فشلها (مثلاً مكتبة PDF ما تحمّلت) كان بيلغي المشاركة
     // كلها عبر Promise.all، مع إن مشاركة النص لسه ممكنة تمامًا.
     const [, blob] = await Promise.all([
-      persistDocMeta(false),
+      persistDocMeta(false, true),
       fileShareSupported ? buildDocPdfBlob().catch(()=>null) : Promise.resolve(null)
     ]);
     if(docState !== openedDocState) return; // النافذة انسكّرت أو تحوّلت لمستند تاني أثناء الانتظار
