@@ -2520,6 +2520,34 @@ function subscribeAnnouncementRealtime(){
     .subscribe();
 }
 
+// حفظ مستقل لكل إعلان (مبيعات/مشتريات) — كانا سابقًا يُحفظان معًا بزر واحد، وكان هذا يسبب
+// إشعار جمهور "المبيعات" حتى لو المُعدَّل الوحيد كان نص "المشتريات" (وبالعكس)، لأن الحفظ
+// المشترك كان يعيد إرسال إشعار announcement_posted لأي حقل نصه غير فاضي، بغض النظر هل تغيّر
+// فعليًا أو كان محتوى قديم بالحقل التاني لم يُلمس. الآن كل حقل له DB update + إشعار مستقلين
+// تمامًا، ويُشعر بس لو نصه هو نفسه تغيّر عن القيمة المحمّلة أصلًا.
+async function saveAnnouncementField(audience, audienceRole, newText, saved){
+  const now = new Date().toISOString();
+  const changed = (announcementTexts[audience]||'') !== newText;
+  const { error } = await sb.from('announcement').update({ text: newText || null, updated_by: presenceEmail, updated_at: now }).eq('id', audience);
+  if(error){ showToast('تعذر حفظ الإعلان', 'error'); return; }
+  announcementTexts[audience] = newText || null;
+  announcementSenders[audience] = presenceEmail;
+  renderAnnouncementBanner();
+  refreshScrapyardAnnouncementIfVisible();
+  saved();
+  showToast('تم الحفظ', 'ok');
+  // إشعار "إعلان جديد" بس لو النص نفسه تغيّر ومش فاضي — بأفضل مجهود، ما بيوقف نجاح الحفظ نفسه
+  // لو فشل الإدراج. بدون ذكر اسم المُعلن (نفس مبدأ البانر).
+  if(changed && newText){
+    try{
+      await sb.from('activity_events').insert({
+        kind: 'announcement_posted', audience_role: audienceRole, actor_email: presenceEmail,
+        message: '📢 إعلان جديد: '+newText
+      });
+    }catch(e){ console.error('logAnnouncementPosted:', e); }
+  }
+}
+
 function openAnnouncementEditor(){
   const root = document.getElementById('confirm-root');
   root.innerHTML =
@@ -2529,12 +2557,13 @@ function openAnnouncementEditor(){
         '<label class="field" style="margin-top:12px;display:block;"><span class="field-label">إعلان المبيعات (اتركه فاضي للإزالة)</span>' +
           '<textarea id="announcement-edit-sales" rows="3" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:9px;border-radius:6px;font-family:inherit;font-size:14px;resize:vertical;">'+escapeHtml(announcementTexts.sales||'')+'</textarea>' +
         '</label>' +
-        '<label class="field" style="margin-top:12px;display:block;"><span class="field-label">إعلان المشتريات (اتركه فاضي للإزالة)</span>' +
+        '<div style="margin-top:8px;display:flex;justify-content:flex-end;"><button type="button" class="btn btn-primary btn-sm" id="announcement-save-sales-btn">حفظ إعلان المبيعات</button></div>' +
+        '<label class="field" style="margin-top:16px;display:block;"><span class="field-label">إعلان المشتريات (اتركه فاضي للإزالة)</span>' +
           '<textarea id="announcement-edit-purchasing" rows="3" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:9px;border-radius:6px;font-family:inherit;font-size:14px;resize:vertical;">'+escapeHtml(announcementTexts.purchasing||'')+'</textarea>' +
         '</label>' +
+        '<div style="margin-top:8px;display:flex;justify-content:flex-end;"><button type="button" class="btn btn-primary btn-sm" id="announcement-save-purchasing-btn">حفظ إعلان المشتريات</button></div>' +
         '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;flex-wrap:wrap;">' +
-          '<button type="button" class="btn btn-ghost" id="announcement-cancel-btn">إلغاء</button>' +
-          '<button type="button" class="btn btn-primary" id="announcement-save-btn">حفظ</button>' +
+          '<button type="button" class="btn btn-ghost" id="announcement-cancel-btn">إغلاق</button>' +
         '</div>' +
       '</div>' +
     '</div>';
@@ -2544,44 +2573,13 @@ function openAnnouncementEditor(){
     if(e.target.hasAttribute('data-close-confirm')) close();
   });
   root.querySelector('#announcement-cancel-btn').addEventListener('click', close);
-  bindBusyButton(root.querySelector('#announcement-save-btn'), async ()=>{
-    const salesInput = document.getElementById('announcement-edit-sales');
-    const purchasingInput = document.getElementById('announcement-edit-purchasing');
-    const newSales = salesInput.value.trim();
-    const newPurchasing = purchasingInput.value.trim();
-    const now = new Date().toISOString();
-    const [salesRes, purchasingRes] = await Promise.all([
-      sb.from('announcement').update({ text: newSales || null, updated_by: presenceEmail, updated_at: now }).eq('id','sales'),
-      sb.from('announcement').update({ text: newPurchasing || null, updated_by: presenceEmail, updated_at: now }).eq('id','purchasing')
-    ]);
-    if(salesRes.error || purchasingRes.error){ showToast('تعذر حفظ الإعلان', 'error'); return; }
-    announcementTexts.sales = newSales || null;
-    announcementTexts.purchasing = newPurchasing || null;
-    announcementSenders.sales = presenceEmail;
-    announcementSenders.purchasing = presenceEmail;
-    renderAnnouncementBanner();
-    refreshScrapyardAnnouncementIfVisible();
-    close();
-    showToast('تم الحفظ', 'ok');
-    // إشعار "إعلان جديد" لكل جمهور نُشر له نص فعليًا (مو لو مسحه) — نفس مبدأ order_needs_pricing:
-    // بأفضل مجهود، ما بيوقف نجاح الحفظ نفسه لو فشل الإدراج لأي سبب. بدون ذكر اسم المُعلن —
-    // نفس مبدأ البانر نفسه (لا يذكر مين نشر الإعلان)
-    const notifyInserts = [];
-    if(newSales){
-      notifyInserts.push(sb.from('activity_events').insert({
-        kind: 'announcement_posted', audience_role: 'full', actor_email: presenceEmail,
-        message: '📢 إعلان جديد: '+newSales
-      }));
-    }
-    if(newPurchasing){
-      notifyInserts.push(sb.from('activity_events').insert({
-        kind: 'announcement_posted', audience_role: 'scrapyard', actor_email: presenceEmail,
-        message: '📢 إعلان جديد: '+newPurchasing
-      }));
-    }
-    if(notifyInserts.length){
-      try{ await Promise.all(notifyInserts); }catch(e){ console.error('logAnnouncementPosted:', e); }
-    }
+  bindBusyButton(root.querySelector('#announcement-save-sales-btn'), async ()=>{
+    const newSales = document.getElementById('announcement-edit-sales').value.trim();
+    await saveAnnouncementField('sales', 'full', newSales, ()=>{});
+  });
+  bindBusyButton(root.querySelector('#announcement-save-purchasing-btn'), async ()=>{
+    const newPurchasing = document.getElementById('announcement-edit-purchasing').value.trim();
+    await saveAnnouncementField('purchasing', 'scrapyard', newPurchasing, ()=>{});
   });
 }
 
