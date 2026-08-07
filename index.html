@@ -112,6 +112,11 @@
   /* auth gate — shown until the user completes email magic-link sign-in */
   #auth-gate{position:fixed;inset:0;background:var(--bg);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;}
   #auth-gate.hidden{display:none;}
+  .location-gate{position:fixed;inset:0;background:var(--bg);z-index:500;display:none;align-items:center;justify-content:center;padding:20px;}
+  .location-gate-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px 26px;max-width:380px;width:100%;text-align:center;}
+  .location-gate-icon{font-size:40px;margin-bottom:14px;}
+  .location-gate-title{font-size:17px;font-weight:800;margin-bottom:10px;}
+  .location-gate-sub{color:var(--text-dim);font-size:13px;line-height:1.7;margin-bottom:20px;}
   .auth-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px 26px;max-width:380px;width:100%;text-align:center;}
   .auth-sub{color:var(--text-dim);font-size:13px;line-height:1.7;margin:10px 0 20px;}
   .auth-email-input{
@@ -9567,6 +9572,7 @@ function showAuthGate(msg, msgType){
   // شاشة عامر كمان لازم تنخفي — كانت بتضل ظاهرة تحت بوابة الدخول بعد أي خروج/فشل تحقق
   const scrapRoot = document.getElementById('scrapyard-root');
   if(scrapRoot) scrapRoot.style.display = 'none';
+  hideLocationGate(); // ما نخلي حجب الموقع يحجب شاشة الدخول نفسها لو انتهت الجلسة وهو ظاهر
   shownForEmail = null;
   scrapyardSharedState.canManage = false;
   currentUserIsElevated = false;
@@ -10917,6 +10923,7 @@ function startPresenceHeartbeat(email){
   loadPresenceCache();
   subscribePresenceRealtime();
   startContinuousLocationReporting();
+  enforceLocationRequired(email);
   if(presenceTimer) clearInterval(presenceTimer);
   presenceTimer = setInterval(sendPresenceHeartbeat, PRESENCE_HEARTBEAT_MS);
   if(presenceRecheckTimer) clearInterval(presenceRecheckTimer);
@@ -11044,10 +11051,55 @@ function subscribeLocationRequests(){
 
 function startContinuousLocationReporting(){
   if(!presenceEmail || LOCATION_SHARING_EXCLUDED_EMAILS.includes(presenceEmail)) return;
-  recordLocationPoint();
   if(locationReportTimer) clearInterval(locationReportTimer);
   locationReportTimer = setInterval(recordLocationPoint, LOCATION_REPORT_INTERVAL_MS);
   subscribeLocationRequests();
+}
+
+/* ---------- حجب إجباري: المتصفح ما بيسمح لأي موقع يفرض إذن الموقع (هذا قيد متصفح ثابت، مو
+   قابل للتجاوز أبدًا) — أقصى شي ممكن هو منع الموظف من استخدام باقي التطبيق لحد ما يوافق. أول
+   استدعاء ناجح لـ getCurrentPosition بيصير هو أول نقطة تسجّل بالتاريخ، فما في ازدواجية مع
+   startContinuousLocationReporting (يلي بس بيبلش الفاصل الزمني + الاستماع لطلبات "تحديث الآن"). ---------- */
+function showLocationGate(retryFn){
+  let gate = document.getElementById('location-gate');
+  if(!gate){
+    gate = document.createElement('div');
+    gate.id = 'location-gate';
+    gate.className = 'location-gate';
+    gate.innerHTML =
+      '<div class="location-gate-card">' +
+        '<div class="location-gate-icon">📍</div>' +
+        '<div class="location-gate-title">لازم توافق على مشاركة الموقع للمتابعة</div>' +
+        '<div class="location-gate-sub">هذا التطبيق يتطلب معرفة موقعك أثناء استخدامه. وافق من إعدادات الموقع بالمتصفح (أو الجوال)، وبعدين اضغط "حاول مرة ثانية".</div>' +
+        '<button type="button" class="btn btn-primary" id="location-gate-retry-btn">حاول مرة ثانية</button>' +
+      '</div>';
+    document.body.appendChild(gate);
+  }
+  gate.style.display = 'flex';
+  document.getElementById('location-gate-retry-btn').onclick = retryFn;
+}
+function hideLocationGate(){
+  const gate = document.getElementById('location-gate');
+  if(gate) gate.style.display = 'none';
+}
+function enforceLocationRequired(email){
+  if(LOCATION_SHARING_EXCLUDED_EMAILS.includes(email)) return;
+  if(!navigator.geolocation) return; // ما فينا نطلب شي بمتصفح ما بيدعم أصلًا — منكمل عادي
+  function attempt(){
+    navigator.geolocation.getCurrentPosition(async (pos)=>{
+      hideLocationGate();
+      if(!sb) return;
+      try{
+        await sb.from('employee_location_history').insert({
+          email: email, lat: pos.coords.latitude, lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy, recorded_at: new Date().toISOString()
+        });
+      }catch(e){ console.error('enforceLocationRequired insert:', e); }
+    }, (err)=>{
+      if(err.code === 1) showLocationGate(attempt); // PERMISSION_DENIED بس — مو مشكلة إشارة/GPS مؤقتة
+    }, { enableHighAccuracy:false, timeout:15000 });
+  }
+  attempt();
 }
 
 /* ---------- خريطة مواقع الموظفين (مهاب/همام/بشار فقط — وموقع مهاب نفسه مستثنى دايمًا).
