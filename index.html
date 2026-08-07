@@ -1175,6 +1175,21 @@ function escapeHtml(s){
   return (s==null?'':String(s)).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+/* أسماء الموظفين الخمسة — لعرض اسم بدل البريد الكامل بأي مكان بيظهر فيه هوية موظف بالواجهة
+   (آخر ظهور، طلبات التعديل، خريطة المواقع...). البريد نفسه يضل هو المعرّف الحقيقي بقاعدة
+   البيانات وبمنطق الصلاحيات — هاد بس للعرض. */
+const EMAIL_DISPLAY_NAMES = {
+  'mohabalsamman1998@gmail.com': 'مهاب',
+  'homam.techno@gmail.com': 'همام',
+  'sammaneng@gmail.com': 'بشار',
+  'amerpartech@gmail.com': 'عامر',
+  'manomahomed11223@gmail.com': 'عبد الرحمن'
+};
+function displayNameForEmail(email){
+  if(!email) return '';
+  return EMAIL_DISPLAY_NAMES[email] || email.split('@')[0];
+}
+
 /* قائمة اختيار قابلة للبحث (بديل عن <select> عادي) — لازمة كل ما يكبر عدد الخيارات (موردين/عملاء)
    وصار التمرير بينها بطيء. options: [{id,label,sublabel?}]. */
 function searchableSelectHtml(inputClass, options, selectedId, placeholder){
@@ -6247,7 +6262,7 @@ function editProposalReviewRowHtml(pr){
       '<span class="edit-proposal-review-field">'+escapeHtml(editProposalKindLabel(pr))+'</span>' +
     '</div>' +
     '<div class="edit-proposal-review-body">' + editProposalPendingHtml(pr) + '</div>' +
-    '<div class="edit-proposal-review-meta">'+escapeHtml(pr.submitted_by||'')+'</div>' +
+    '<div class="edit-proposal-review-meta">'+escapeHtml(displayNameForEmail(pr.submitted_by))+'</div>' +
   '</div>';
 }
 
@@ -10993,7 +11008,7 @@ function presenceListHtml(rows){
     const ms = new Date(row.last_seen).getTime();
     const online = (Date.now() - ms) <= PRESENCE_ACTIVE_IDLE_LIMIT_MS;
     const label = online ? 'متصل الآن' : arabicRelativeTime(ms);
-    return '<div class="task-item-row"><span class="task-item-text">'+(online?'🟢':'⚪')+' '+escapeHtml(row.email)+(row.email===presenceEmail?' (أنت)':'')+' — '+label+'</span></div>';
+    return '<div class="task-item-row"><span class="task-item-text">'+(online?'🟢':'⚪')+' '+escapeHtml(displayNameForEmail(row.email))+(row.email===presenceEmail?' (أنت)':'')+' — '+label+'</span></div>';
   }).join('') + '</div>';
 }
 
@@ -11120,7 +11135,7 @@ let employeeMapHistoryMarker = null;
 const EMPLOYEE_LOCATION_STALE_MS = 2*60*1000;
 
 function employeeMapMarkerIcon(email, stale, variant){
-  const label = (email||'').split('@')[0];
+  const label = displayNameForEmail(email);
   const dot = variant==='history' ? '🕐' : (stale?'⚪':'🟢');
   return L.divIcon({
     className: 'employee-map-marker'+(stale?' employee-map-marker-stale':''),
@@ -11225,7 +11240,7 @@ async function handleEmployeeMapHistorySearch(){
   employeeMapHistoryMarker = L.marker([point.lat, point.lng], { icon: employeeMapMarkerIcon(point.email, false, 'history') }).addTo(employeeMapInstance);
   employeeMapInstance.setView([point.lat, point.lng], 15);
   const recordedLabel = new Date(point.recorded_at).toLocaleString('ar-SY', { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit', year:'numeric' });
-  if(resultEl) resultEl.textContent = 'آخر موقع مسجّل لـ '+point.email.split('@')[0]+' — الساعة '+recordedLabel;
+  if(resultEl) resultEl.textContent = 'آخر موقع مسجّل لـ '+displayNameForEmail(point.email)+' — الساعة '+recordedLabel;
 }
 
 async function openEmployeeMap(){
@@ -11278,7 +11293,7 @@ async function openEmployeeMap(){
   const historySelect = document.getElementById('employee-map-history-select');
   if(historySelect){
     historySelect.innerHTML = historyEmails.length
-      ? historyEmails.map(email=>'<option value="'+escapeHtml(email)+'">'+escapeHtml(email.split('@')[0])+'</option>').join('')
+      ? historyEmails.map(email=>'<option value="'+escapeHtml(email)+'">'+escapeHtml(displayNameForEmail(email))+'</option>').join('')
       : '<option value="">لا يوجد سجل مواقع بعد</option>';
   }
   subscribeEmployeeMapRealtime();
