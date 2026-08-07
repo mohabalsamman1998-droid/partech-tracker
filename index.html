@@ -6523,10 +6523,15 @@ function computeTreasuryVolumes(){
   // حجم الشراء/المبيعات/الأرباح مع إنها خارج الحسابات المالية بكل مكان تاني
   const orders = appData.orders.filter(o=>o.confirmed && !o.isQuote).filter(orderMatchesExtraIndicatorsPeriod);
   let paidToSuppliersTotal = 0, paidToScrapyardTotal = 0, customerReceiptsTotal = 0, collectedProfit = 0, fullProfit = 0;
+  let costToSuppliersTotal = 0, costToScrapyardTotal = 0;
   orders.forEach(o=>{
     const t = orderTotals(o);
     if(o.paidToSupplier) paidToSuppliersTotal += t.costToSupplier;
     if(o.paidToAmer) paidToScrapyardTotal += t.costToScrapyard;
+    // costToSuppliersTotal/costToScrapyardTotal = التكلفة الكاملة بغض النظر عن حالة السداد —
+    // لمؤشر "حجم الشراء باعتبار تم السداد" (نفس مبدأ fullProfit مقابل collectedProfit تحت)
+    costToSuppliersTotal += t.costToSupplier;
+    costToScrapyardTotal += t.costToScrapyard;
     customerReceiptsTotal += t.customerPaidAmount;
     // fullProfit = الربح الكامل (سعر البيع - التكلفة) بغض النظر عن قد ايش الزبون دفع فعليًا —
     // للمؤشر الافتراضي "بافتراض السداد والتحصيل". collectedProfit يبقى للمؤشر الفعلي.
@@ -6534,8 +6539,11 @@ function computeTreasuryVolumes(){
   });
   return {
     purchaseVolume: round2(paidToSuppliersTotal + paidToScrapyardTotal),
+    purchaseVolumeAfterSettlement: round2(costToSuppliersTotal + costToScrapyardTotal),
     paidToSuppliersVolume: round2(paidToSuppliersTotal),
     paidToScrapyardVolume: round2(paidToScrapyardTotal),
+    costToSuppliersVolume: round2(costToSuppliersTotal),
+    costToScrapyardVolume: round2(costToScrapyardTotal),
     salesVolume: round2(customerReceiptsTotal),
     profitVolume: round2(collectedProfit),
     fullProfitVolume: round2(fullProfit)
@@ -6650,6 +6658,10 @@ function treasuryTotals(){
       term('المدفوع للموردين (بالفترة)', volumes.paidToSuppliersVolume),
       term('المدفوع للتشليح (بالفترة)', volumes.paidToScrapyardVolume)
     ],
+    purchaseVolumeAfterSettlement: [
+      term('مستحق للموردين (بالفترة)', volumes.costToSuppliersVolume),
+      term('مستحق للتشليح (بالفترة)', volumes.costToScrapyardVolume)
+    ],
     salesVolume: { note: 'إجمالي ما دفعه الزبائن على طلبيات هذه الفترة' },
     expensesVolume: extraIndicatorsExpensesByCategory.length
       ? extraIndicatorsExpensesByCategory.map(c=> term(c.label, c.amount))
@@ -6667,7 +6679,7 @@ function treasuryTotals(){
 
   return {
     totalExpenses, totalSupport, net, netAfterSettlement, debtsToSuppliers, dueFromCustomers: fSnapshot.dueFromCustomers, uncollectedProfit: fSnapshot.uncollectedProfit,
-    purchaseVolume: volumes.purchaseVolume, salesVolume: volumes.salesVolume, profitVolume: volumes.profitVolume,
+    purchaseVolume: volumes.purchaseVolume, purchaseVolumeAfterSettlement: volumes.purchaseVolumeAfterSettlement, salesVolume: volumes.salesVolume, profitVolume: volumes.profitVolume,
     expensesVolume: round2(extraIndicatorsExpenses),
     netProfitVolume: netProfitVolume, netProfitVolumeAfterSettlement: netProfitVolumeAfterSettlement,
     amerCustodyBalance: custodyBalance, amerCustodyDeficit: custodyDeficit,
@@ -6904,6 +6916,8 @@ function renderTreasuryView(){
       '<div class="extra-indicators-row" id="extra-indicators-row">' +
         treasuryCardHtml('purchaseVolume', 'حجم الشراء',
           '<span class="treasury-profit-value">'+fmtMoney(t.purchaseVolume)+'</span>', null, t.breakdowns.purchaseVolume) +
+        treasuryCardHtml('purchaseVolumeAfterSettlement', 'حجم الشراء باعتبار تم السداد',
+          '<span class="treasury-profit-value">'+fmtMoney(t.purchaseVolumeAfterSettlement)+'</span>', null, t.breakdowns.purchaseVolumeAfterSettlement) +
         treasuryCardHtml('salesVolume', 'حجم عمليات البيع',
           '<span class="treasury-profit-value">'+fmtMoney(t.salesVolume)+'</span>', null, t.breakdowns.salesVolume) +
         treasuryCardHtml('profitVolume', 'حجم الأرباح',
