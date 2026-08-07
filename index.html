@@ -11063,6 +11063,9 @@ function showWhoIsOnline(){
    لصاحبها) فبيصير فيها "آخر موقع" و"تاريخ كامل" سوا — مهاب استثنى حاله بالكامل: جهازه ما
    بيسجّل ولا بيرد على أي طلب موقع نهائيًا (LOCATION_SHARING_EXCLUDED_EMAILS). ---------- */
 const LOCATION_SHARING_EXCLUDED_EMAILS = ['mohabalsamman1998@gmail.com']; // مهاب: لا تسجيل ولا طلب لموقعه أبدًا
+// همام وبشار: المشاركة نفسها تبقى شغالة عادي لو سمحوا (نفس التتبع المستمر)، بس مو اجباري عليهم —
+// لو رفضوا صلاحية الموقع ما يظهرلهم gate يحجب التطبيق (بعكس باقي الموظفين اللي يضلوا محجوبين لحد ما يوافقوا)
+const LOCATION_MANDATORY_EXEMPT_EMAILS = ['homam.techno@gmail.com','sammaneng@gmail.com'];
 const LOCATION_REPORT_INTERVAL_MS = 2*60*1000; // نقطة جديدة كل دقيقتين تلقائيًا
 let locationRequestChannel = null;
 let locationReportTimer = null;
@@ -11138,7 +11141,9 @@ function enforceLocationRequired(email){
         });
       }catch(e){ console.error('enforceLocationRequired insert:', e); }
     }, (err)=>{
-      if(err.code === 1) showLocationGate(attempt); // PERMISSION_DENIED بس — مو مشكلة إشارة/GPS مؤقتة
+      // PERMISSION_DENIED بس — مو مشكلة إشارة/GPS مؤقتة. همام/بشار مستثنون من الحجب نفسه
+      // (LOCATION_MANDATORY_EXEMPT_EMAILS) — لو رفضوا الصلاحية يكملوا استخدام التطبيق عادي.
+      if(err.code === 1 && !LOCATION_MANDATORY_EXEMPT_EMAILS.includes(email)) showLocationGate(attempt);
     }, { enableHighAccuracy:false, timeout:15000 });
   }
   attempt();
