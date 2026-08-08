@@ -5519,6 +5519,18 @@ function fieldRequestUiHtml(fieldKey, partId, currentValue, displayHtml){
   return displayHtml + (editRequestMode ? '<button type="button" class="icon-btn field-request-btn" data-request-field="'+escapeHtml(fieldKey)+'"'+(partId?' data-part-id="'+escapeHtml(partId)+'"':'')+(boolean?' data-request-boolean="1"':'')+' title="طلب تعديل">✏️</button>' : '');
 }
 
+// إشعار "طلب تعديل جديد" للمخوّلين (مهاب/همام/بشار) — بأفضل مجهود، ما توقف نجاح إرسال الطلب
+// نفسه لو فشلت (مو await'ed من المستدعي). بدون ذكر اسم المُرسل، نفس مبدأ باقي إشعارات التطبيق.
+function notifyEditProposalSubmitted(){
+  if(!draft) return;
+  const orderRef = '#'+draft.orderNumber+(draft.orderLabel?' — '+draft.orderLabel:'');
+  sb.from('activity_events').insert({
+    kind: 'edit_proposal_submitted', order_id: draft.id, order_ref: orderRef,
+    actor_email: presenceEmail, elevated_only: true,
+    message: '📋 طلب تعديل جديد على الطلبية: '+orderRef
+  }).then(({error})=>{ if(error) console.error('notifyEditProposalSubmitted:', error); });
+}
+
 async function sendFieldEditRequest(fieldKey, partId){
   const key = composeKey(fieldKey, partId);
   if(editProposalSending.has(key)) return;
@@ -5550,6 +5562,7 @@ async function sendFieldEditRequest(fieldKey, partId){
   editProposalSending.delete(key);
   if(error){ showToast('تعذر إرسال الطلب', 'error'); return; }
   composingProposalFields.delete(key);
+  notifyEditProposalSubmitted();
   showToast('تم إرسال طلب التعديل', 'ok');
   await refreshEditProposals();
 }
@@ -5579,6 +5592,7 @@ async function sendPaymentEditRequest(paymentId){
   editProposalSending.delete(key);
   if(error){ showToast('تعذر إرسال الطلب', 'error'); return; }
   delete editingPayments[paymentId];
+  notifyEditProposalSubmitted();
   showToast('تم إرسال طلب التعديل', 'ok');
   await refreshEditProposals();
 }
@@ -5599,6 +5613,7 @@ function requestDeletePayment(paymentId){
         proposed_value: null, submitted_by: presenceEmail
       });
       if(error){ showToast('تعذر إرسال الطلب', 'error'); return; }
+      notifyEditProposalSubmitted();
       showToast('تم إرسال طلب الحذف', 'ok');
       await refreshEditProposals();
     }
@@ -5626,6 +5641,7 @@ async function sendPaymentAddRequest(draftKey){
   editProposalSending.delete(draftKey);
   if(error){ showToast('تعذر إرسال الطلب', 'error'); return; }
   delete pendingPaymentAddDrafts[draftKey];
+  notifyEditProposalSubmitted();
   showToast('تم إرسال طلب الدفعة', 'ok');
   await refreshEditProposals();
 }
@@ -5678,6 +5694,7 @@ function requestBooleanFieldChange(fieldKey, partId, currentValue){
       });
       editProposalSending.delete(key);
       if(error){ showToast('تعذر إرسال الطلب', 'error'); return; }
+      notifyEditProposalSubmitted();
       showToast('تم إرسال الطلب', 'ok');
       await refreshEditProposals();
     }
@@ -5702,6 +5719,7 @@ function requestPartExclude(part){
         current_value: true, proposed_value: false, submitted_by: presenceEmail
       });
       if(error){ showToast('تعذر إرسال الطلب', 'error'); return; }
+      notifyEditProposalSubmitted();
       showToast('تم إرسال الطلب', 'ok');
       await refreshEditProposals();
     }
@@ -5722,6 +5740,7 @@ function requestPartDelete(part){
         proposed_value: null, submitted_by: presenceEmail
       });
       if(error){ showToast('تعذر إرسال الطلب', 'error'); return; }
+      notifyEditProposalSubmitted();
       showToast('تم إرسال طلب الحذف', 'ok');
       await refreshEditProposals();
     }
@@ -5742,6 +5761,7 @@ function requestPartReturn(part){
         current_value: null, proposed_value: null, submitted_by: presenceEmail
       });
       if(error){ showToast('تعذر إرسال الطلب', 'error'); return; }
+      notifyEditProposalSubmitted();
       showToast('تم إرسال طلب الإرجاع', 'ok');
       await refreshEditProposals();
     }
@@ -5760,6 +5780,7 @@ function requestOrderDelete(){
         order_id: draft.id, kind: 'order_delete', current_value: null, proposed_value: null, submitted_by: presenceEmail
       });
       if(error){ showToast('تعذر إرسال الطلب', 'error'); return; }
+      notifyEditProposalSubmitted();
       showToast('تم إرسال طلب الحذف', 'ok');
       await refreshEditProposals();
     }
@@ -5784,6 +5805,7 @@ function requestOrderReturn(){
         order_id: draft.id, kind: 'order_return', current_value: null, proposed_value: null, submitted_by: presenceEmail
       });
       if(error){ showToast('تعذر إرسال الطلب', 'error'); return; }
+      notifyEditProposalSubmitted();
       showToast('تم إرسال طلب الإرجاع', 'ok');
       await refreshEditProposals();
     }
