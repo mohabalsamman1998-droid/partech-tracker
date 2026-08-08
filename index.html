@@ -11251,20 +11251,24 @@ async function handleEmployeeMapHistorySearch(){
   const timeInput = document.getElementById('employee-map-history-time');
   const resultEl = document.getElementById('employee-map-history-result');
   const email = select && select.value;
+  if(!email){ if(resultEl) resultEl.textContent = 'اختر موظف أولًا'; return; }
   const timeVal = timeInput && timeInput.value;
-  if(!email || !timeVal){ if(resultEl) resultEl.textContent = 'اختر موظف ووقت أولًا'; return; }
+  // الوقت اختياري — لو ما اتحدد، نبحث عن آخر موقع معروف لهذا الموظف (نفس منطق searchLocationAtTime
+  // بس بوقت "الآن" فيرجع أحدث نقطة مسجّلة له)
+  const isLatest = !timeVal;
+  const isoTime = isLatest ? new Date().toISOString() : new Date(timeVal).toISOString();
   if(resultEl) resultEl.textContent = 'جاري البحث…';
-  const point = await searchLocationAtTime(email, new Date(timeVal).toISOString());
+  const point = await searchLocationAtTime(email, isoTime);
   if(!employeeMapInstance) return; // تسكّرت الخريطة أثناء البحث
   if(!point){
-    if(resultEl) resultEl.textContent = 'ما في أي موقع مسجّل لهذا الموظف قبل هذا الوقت';
+    if(resultEl) resultEl.textContent = 'ما في أي موقع مسجّل لهذا الموظف'+(isLatest?'':' قبل هذا الوقت');
     return;
   }
   if(employeeMapHistoryMarker){ employeeMapInstance.removeLayer(employeeMapHistoryMarker); employeeMapHistoryMarker = null; }
   employeeMapHistoryMarker = L.marker([point.lat, point.lng], { icon: employeeMapMarkerIcon(point.email, false, 'history') }).addTo(employeeMapInstance);
   employeeMapInstance.setView([point.lat, point.lng], 15);
   const recordedLabel = new Date(point.recorded_at).toLocaleString('ar-SY', { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit', year:'numeric' });
-  if(resultEl) resultEl.textContent = 'آخر موقع مسجّل لـ '+displayNameForEmail(point.email)+' — الساعة '+recordedLabel;
+  if(resultEl) resultEl.textContent = (isLatest?'آخر موقع معروف لـ ':'آخر موقع مسجّل لـ ')+displayNameForEmail(point.email)+' — الساعة '+recordedLabel;
 }
 
 async function openEmployeeMap(){
@@ -11316,8 +11320,16 @@ async function openEmployeeMap(){
   }
   const historySelect = document.getElementById('employee-map-history-select');
   if(historySelect){
+    // نضيف آخر ظهور بالموقع (recorded_at من employee_latest_location، نفس مصدر rows) جنب كل اسم —
+    // لقطة وقت فتح النافذة، ما تتحدث لحظيًا لو ضلت مفتوحة (مو ضروري لأداة بحث لمرة وحدة)
+    const latestByEmail = {};
+    rows.forEach(r=>{ if(r.recorded_at) latestByEmail[r.email] = r.recorded_at; });
     historySelect.innerHTML = historyEmails.length
-      ? historyEmails.map(email=>'<option value="'+escapeHtml(email)+'">'+escapeHtml(displayNameForEmail(email))+'</option>').join('')
+      ? historyEmails.map(email=>{
+          const ts = latestByEmail[email];
+          const suffix = ts ? ' — '+arabicRelativeTime(new Date(ts).getTime()) : '';
+          return '<option value="'+escapeHtml(email)+'">'+escapeHtml(displayNameForEmail(email))+suffix+'</option>';
+        }).join('')
       : '<option value="">لا يوجد سجل مواقع بعد</option>';
   }
   subscribeEmployeeMapRealtime();
