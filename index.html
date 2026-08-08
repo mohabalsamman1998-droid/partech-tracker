@@ -2161,6 +2161,10 @@ function feeFieldRowHtml(d){
     '<div class="fee-percent-row" id="order-fee-percent-row" style="'+(d.feeEnabled?'':'display:none;')+'"><span>النسبة</span>'+feePercentInputHtml+'<span>%</span><span class="fee-amount-preview" id="fee-amount-preview"></span></div>' +
     '<label class="toggle-row">'+serviceFeeToggleHtml+'<span>احتساب نسبة رسوم خدمات</span></label>' +
     '<div class="fee-percent-row" id="order-service-fee-percent-row" style="'+(d.serviceFeeEnabled?'':'display:none;')+'"><span>النسبة</span>'+serviceFeePercentInputHtml+'<span>%</span><span class="service-fee-amount-preview" id="service-fee-amount-preview"></span></div>' +
+    // خيار عكسي: تدخل المبلغ يلي تبيه مباشرة بدل النسبة، وهو يحسبلك كم نسبة تعادله من سعر القطع
+    // (partsSellTotal) ويحدّث حقل النسبة تلقائيًا — التخزين يضل دايمًا بالنسبة (serviceFeePercent)
+    // عشان الحساب يبقى صحيح حتى لو تغيّر سعر القطع بعدين
+    (serviceFeePercentUi==null ? '<div class="fee-percent-row" id="order-service-fee-amount-row" style="'+(d.serviceFeeEnabled?'':'display:none;')+'"><span>أو المبلغ مباشرة</span><input type="number" min="0" step="0.5" id="order-service-fee-amount-input" class="num" placeholder="0"><span>ر.س</span></div>' : '') +
     '<label class="toggle-row">'+deliveryFeeToggleHtml+'<span>احتساب أجور التوصيل</span></label>' +
     '<div class="fee-percent-row" id="order-delivery-fee-row" style="'+(d.deliveryFeeEnabled?'':'display:none;')+'"><span>المبلغ</span>'+deliveryFeeInputHtml+'<span>ر.س</span></div>' +
   '</div>';
@@ -2185,11 +2189,23 @@ function bindFeeFieldEvents(){
     draft.serviceFeeEnabled = e.target.checked;
     const row = document.getElementById('order-service-fee-percent-row');
     if(row) row.style.display = e.target.checked ? '' : 'none';
+    const amountRow = document.getElementById('order-service-fee-amount-row');
+    if(amountRow) amountRow.style.display = e.target.checked ? '' : 'none';
     updateModalTotals();
   });
   const serviceFeePercentInput = root.querySelector('#order-service-fee-percent-input');
   if(serviceFeePercentInput) serviceFeePercentInput.addEventListener('input', (e)=>{
     draft.serviceFeePercent = e.target.value===''? 0 : Math.max(0, Number(e.target.value)||0);
+    updateModalTotals();
+  });
+  const serviceFeeAmountInput = root.querySelector('#order-service-fee-amount-input');
+  if(serviceFeeAmountInput) serviceFeeAmountInput.addEventListener('input', (e)=>{
+    const amount = e.target.value===''? 0 : Math.max(0, Number(e.target.value)||0);
+    const partsSellTotal = orderTotals(draft).partsSellTotal;
+    // النسبة يلي المبلغ هذا يعادلها من سعر القطع — لو ما فيه سعر بعد ما نقدر نحسب نسبة
+    draft.serviceFeePercent = partsSellTotal>0 ? round2(amount / partsSellTotal * 100) : 0;
+    const percentInput = document.getElementById('order-service-fee-percent-input');
+    if(percentInput) percentInput.value = draft.serviceFeePercent || '';
     updateModalTotals();
   });
   const deliveryFeeToggle = root.querySelector('#order-delivery-fee-toggle');
