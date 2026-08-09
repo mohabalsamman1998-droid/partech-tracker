@@ -2908,10 +2908,20 @@ function bindPartRowEvents(){
               showToast('ما ينفع التراجع — المبلغ انرد للزبون فعلًا', 'error');
               return;
             }
+            // لو كانت هالقطعة احتفظت بحصة من النسبة/التوصيل وقت إرجاعها، لازم نلغي بالضبط نفس
+            // المبلغ من مجموع الطلبية — وإلا يضل عالقًا "يتيمًا" ويظهر كرسوم زايدة وهمية لاحقًا
+            if(part.returnKeptFeeShare || part.returnKeptServiceFeeShare || part.returnKeptDeliveryShare){
+              draft.returnKeptFeeAmount = round2(Math.max(0, (draft.returnKeptFeeAmount||0) - (part.returnKeptFeeShare||0)));
+              draft.returnKeptServiceFeeAmount = round2(Math.max(0, (draft.returnKeptServiceFeeAmount||0) - (part.returnKeptServiceFeeShare||0)));
+              draft.returnKeptDeliveryAmount = round2(Math.max(0, (draft.returnKeptDeliveryAmount||0) - (part.returnKeptDeliveryShare||0)));
+            }
             delete part.returned;
             delete part.returnHasReceivable;
             delete part.returnCollected;
             delete part.customerRefundConfirmed; // ما نخلي علامة يتيمة بعد إلغاء الإرجاع
+            delete part.returnKeptFeeShare;
+            delete part.returnKeptServiceFeeShare;
+            delete part.returnKeptDeliveryShare;
             draft.customerPayments = (draft.customerPayments||[]).filter(p=>!(p.returnAdjustment && p.linkedPartId===pid));
             refreshPartsList();
             refreshPaymentsList();
@@ -2964,25 +2974,27 @@ function proceedReturnWholeOrder(activeParts, keepFee){
     confirmLabel: 'تأكيد إرجاع الطلبية',
     dangerous: true,
     onConfirm: ()=>{
-      if(keepFee){
-        // "=" مو "+=" — t.feeAmount/serviceFeeAmount/deliveryFeeAmount أصلًا شاملين أي مبلغ
-        // محتفظ فيه سابقًا (orderTotals)، فتجميدهم كما هم أصلًا هو الصحيح؛ إضافتهم فوق القديم
-        // بيضاعف نفس المبلغ القديم مع كل إرجاع طلبية كاملة
-        const t = orderTotals(draft);
-        draft.returnKeptFeeAmount = t.feeAmount;
-        draft.returnKeptServiceFeeAmount = t.serviceFeeAmount;
-        draft.returnKeptDeliveryAmount = t.deliveryFeeAmount;
-        activeParts.forEach(p=>{ applyPartReturn(p, 0); pendingPartProposalPurges.add(p.id); });
-      } else {
-        // التوصيل مبلغ ثابت للطلبية كلها مو نسبي لأي قطعة — بيهبط تلقائيًا لصفر بس آخر قطعة نشطة
-        // ترجع (hasSell يصير false)، فحصته تُضاف لسقف دفعة المرتجع لآخر قطعة بالحلقة تحديدًا
-        activeParts.forEach((p,i)=>{
-          const s = computeReturnFeeShare(draft, p);
-          const deliveryShare = (i===activeParts.length-1) ? orderTotals(draft).deliveryFeeAmount : 0;
-          applyPartReturn(p, round2(s.feeShare + s.serviceFeeShare + deliveryShare));
-          pendingPartProposalPurges.add(p.id);
-        });
-      }
+      // نفس منطق القطعة الواحدة، بس بحلقة — كل قطعة تخزّن حصتها بالذات (لازم لزر "تراجع عن
+      // الإرجاع" يقدر يلغي المبلغ الصح بالضبط). التوصيل مبلغ ثابت للطلبية كلها مو نسبي لأي قطعة،
+      // بيهبط تلقائيًا لصفر بس آخر قطعة نشطة ترجع (hasSell يصير false)، فحصته تُنسب لآخر قطعة بالحلقة
+      activeParts.forEach((p,i)=>{
+        const s = computeReturnFeeShare(draft, p);
+        const isLast = i===activeParts.length-1;
+        const t = isLast ? orderTotals(draft) : null;
+        const liveDelivery = isLast ? round2(Math.max(0, t.deliveryFeeAmount - (draft.returnKeptDeliveryAmount||0))) : 0;
+        if(keepFee){
+          p.returnKeptFeeShare = s.feeShare;
+          p.returnKeptServiceFeeShare = s.serviceFeeShare;
+          if(isLast && liveDelivery>0.01) p.returnKeptDeliveryShare = liveDelivery;
+          draft.returnKeptFeeAmount = round2((draft.returnKeptFeeAmount||0) + s.feeShare);
+          draft.returnKeptServiceFeeAmount = round2((draft.returnKeptServiceFeeAmount||0) + s.serviceFeeShare);
+          if(isLast) draft.returnKeptDeliveryAmount = round2((draft.returnKeptDeliveryAmount||0) + liveDelivery);
+          applyPartReturn(p, 0);
+        } else {
+          applyPartReturn(p, round2(s.feeShare + s.serviceFeeShare + (isLast ? t.deliveryFeeAmount : 0)));
+        }
+        pendingPartProposalPurges.add(p.id);
+      });
       refreshPartsList();
       refreshPaymentsList();
     }
@@ -3081,6 +3093,10 @@ function proceedSinglePartReturn(part, hasReceivable, keepFee){
     onConfirm: ()=>{
       const s = computeReturnFeeShare(draft, part);
       if(keepFee){
+        // نخزّن حصة هالقطعة بالذات (مو بس نضيفها لمجموع الطلبية) — لازم زر "تراجع عن الإرجاع"
+        // يقدر يلغي بالضبط نفس المبلغ يلي هالقطعة أضافته، مش يسيبه عالق يتراكم فوق نفسه لاحقًا
+        part.returnKeptFeeShare = s.feeShare;
+        part.returnKeptServiceFeeShare = s.serviceFeeShare;
         draft.returnKeptFeeAmount = round2((draft.returnKeptFeeAmount||0) + s.feeShare);
         draft.returnKeptServiceFeeAmount = round2((draft.returnKeptServiceFeeAmount||0) + s.serviceFeeShare);
         applyPartReturn(part, 0);
@@ -5970,6 +5986,10 @@ function applyEditProposal(pr, orderOverride, opts){
     if(hasReceivable && !part.supplierId) return false; // نفس شرط الإرجاع المباشر — لازم مورد محدد أولًا
     const s = computeReturnFeeShare(order, part);
     if(opts.keepFee){
+      // نخزّن حصة هالقطعة بالذات — نفس ملاحظة proceedSinglePartReturn، لازم "تراجع عن الإرجاع"
+      // يقدر يلغي بالضبط نفس المبلغ لاحقًا
+      part.returnKeptFeeShare = s.feeShare;
+      part.returnKeptServiceFeeShare = s.serviceFeeShare;
       order.returnKeptFeeAmount = round2((order.returnKeptFeeAmount||0) + s.feeShare);
       order.returnKeptServiceFeeAmount = round2((order.returnKeptServiceFeeAmount||0) + s.serviceFeeShare);
       applyPartReturnOnOrder(order, part, 0);
@@ -5984,20 +6004,25 @@ function applyEditProposal(pr, orderOverride, opts){
       return hasReceivable && !p.supplierId;
     });
     if(missingSupplier) return false;
-    if(opts.keepFee){
-      // "=" مو "+=" — نفس ملاحظة النسخة المباشرة (proceedReturnWholeOrder)
-      const t = orderTotals(order);
-      order.returnKeptFeeAmount = t.feeAmount;
-      order.returnKeptServiceFeeAmount = t.serviceFeeAmount;
-      order.returnKeptDeliveryAmount = t.deliveryFeeAmount;
-      activeParts.forEach(p=> applyPartReturnOnOrder(order, p, 0));
-    } else {
-      activeParts.forEach((p,i)=>{
-        const ps = computeReturnFeeShare(order, p);
-        const deliveryShare = (i===activeParts.length-1) ? orderTotals(order).deliveryFeeAmount : 0;
-        applyPartReturnOnOrder(order, p, round2(ps.feeShare + ps.serviceFeeShare + deliveryShare));
-      });
-    }
+    // نفس منطق proceedReturnWholeOrder — حلقة توزّع حصة كل قطعة بالذات (لازم "تراجع عن الإرجاع"
+    // يقدر يلغي المبلغ الصح)، والتوصيل (مبلغ ثابت مو نسبي) يُنسب لآخر قطعة بالحلقة
+    activeParts.forEach((p,i)=>{
+      const s = computeReturnFeeShare(order, p);
+      const isLast = i===activeParts.length-1;
+      const t = isLast ? orderTotals(order) : null;
+      const liveDelivery = isLast ? round2(Math.max(0, t.deliveryFeeAmount - (order.returnKeptDeliveryAmount||0))) : 0;
+      if(opts.keepFee){
+        p.returnKeptFeeShare = s.feeShare;
+        p.returnKeptServiceFeeShare = s.serviceFeeShare;
+        if(isLast && liveDelivery>0.01) p.returnKeptDeliveryShare = liveDelivery;
+        order.returnKeptFeeAmount = round2((order.returnKeptFeeAmount||0) + s.feeShare);
+        order.returnKeptServiceFeeAmount = round2((order.returnKeptServiceFeeAmount||0) + s.serviceFeeShare);
+        if(isLast) order.returnKeptDeliveryAmount = round2((order.returnKeptDeliveryAmount||0) + liveDelivery);
+        applyPartReturnOnOrder(order, p, 0);
+      } else {
+        applyPartReturnOnOrder(order, p, round2(s.feeShare + s.serviceFeeShare + (isLast ? t.deliveryFeeAmount : 0)));
+      }
+    });
   } else {
     return false;
   }
