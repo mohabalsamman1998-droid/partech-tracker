@@ -1414,7 +1414,10 @@ function orderStatusFlags(order){
     waitingSupply: order.confirmed && !order.supplied,
     waitingPricing: !t.hasSell && !t.allPartsReturned && !t.noActiveParts,
     waitingCustomerPayment: order.confirmed && order.supplied && t.hasChargeable && !t.customerFullyPaid,
-    complete: order.confirmed && order.supplied && (t.costToScrapyard===0 || order.paidToAmer) && (t.costToSupplier===0 || order.paidToSupplier) && t.customerFullyPaid && t.fullyPriced
+    // fullyPriced أصلًا يشترط sellEligibleCount>0 — طلبية رجعت قطعها كلها ما عندها ولا قطعة
+    // مؤهلة للتسعير أصلًا (sellEligibleCount=0)، فما توصل "مكتملة" أبدًا حتى لو استقر عليها مبلغ
+    // محتفظ فيه (hasChargeable) وانسدد بالكامل — نضيف مسار بديل يغطي هالحالة بالذات
+    complete: order.confirmed && order.supplied && (t.costToScrapyard===0 || order.paidToAmer) && (t.costToSupplier===0 || order.paidToSupplier) && t.customerFullyPaid && (t.fullyPriced || (t.allPartsReturned && t.hasChargeable))
   });
 }
 
@@ -1605,9 +1608,9 @@ function computeAggregateFinancials(matchPeriodFn){
     // نفس مبدأ dueToScrapyard/dueToSuppliers فوق — ونفس شرط waitingCustomerPayment الأصلي
     // بـorderStatusFlags (كان already يشترط order.supplied، بعكس هالمجموع اللي كان يزيد فور
     // التأكيد بس): قبل التوريد المتبقي على الزبون لسه مو "مستحق تحصيله" فعليًا بنفس منطق الدين.
-    if(o.supplied && t.hasSell && t.customerRemaining>0){ dueFromCustomers += t.customerRemaining; dueFromCustomersCount++; }
+    if(o.supplied && t.hasChargeable && t.customerRemaining>0){ dueFromCustomers += t.customerRemaining; dueFromCustomersCount++; }
     customerReceiptsTotal += t.customerPaidAmountForBox;
-    if(t.hasSell){
+    if(t.hasChargeable){
       collectedProfit += t.collectedProfit;
       uncollectedProfit += t.uncollectedProfit;
     }
@@ -1741,14 +1744,14 @@ function stampBadge(isDone, doneLabel, pendingLabel){
 }
 
 function customerPaymentCellHtml(t, compact){
-  if(!t.hasSell) return '<span class="muted">—</span>';
+  if(!t.hasChargeable) return '<span class="muted">—</span>';
   if(t.customerFullyPaid) return '<span class="stamp stamp-green">'+(compact?'مدفوع':'مدفوع بالكامل')+'</span>';
   if(t.customerPaidAmount>0) return '<span class="stamp stamp-amber">متبقي '+fmtMoney(t.customerRemaining)+'</span>';
   return '<span class="stamp stamp-rust">'+(compact?'غير مدفوع':'لم يدفع الزبون')+'</span>';
 }
 
 function profitColorClass(t){
-  if(!t.hasSell) return '';
+  if(!t.hasChargeable) return '';
   if(t.profit<0) return 'text-rust';
   return t.customerFullyPaid ? 'text-green' : 'text-amber';
 }
@@ -1773,7 +1776,7 @@ function rowHtml(order){
     )+'</td>' +
     '<td class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? '<span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+(pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">'+pendingCount+'</span>' : '')+'</td>' +
     '<td>'+((order.customerPhone||'').trim() ? '<button type="button" class="icon-btn" data-contact-open="'+escapeHtml(order.id)+'" aria-label="تواصل">📞</button>' : '<span class="muted">—</span>')+'</td>' +
-    '<td class="num">'+(t.hasSell? '<span class="'+profitColorClass(t)+'">'+fmtMoney(t.sellTotal)+'</span>' : '<span class="muted">'+(t.allPartsReturned?'مرتجعة':(t.noActiveParts?'بدون قطع محددة':'لم يُسعّر بعد'))+'</span>')+'</td>' +
+    '<td class="num">'+(t.hasChargeable? '<span class="'+profitColorClass(t)+'">'+fmtMoney(t.sellTotal)+'</span>' : '<span class="muted">'+(t.allPartsReturned?'مرتجعة':(t.noActiveParts?'بدون قطع محددة':'لم يُسعّر بعد'))+'</span>')+'</td>' +
     '<td>'+(order.confirmed && t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد '+fmtMoney(t.costToScrapyard),'غير مسدد '+fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>')+'</td>' +
     '<td>'+(order.confirmed && t.costToSupplier>0 ? stampBadge(order.paidToSupplier,'مسدد '+fmtMoney(t.costToSupplier),'غير مسدد '+fmtMoney(t.costToSupplier)) : '<span class="muted">—</span>')+'</td>' +
     '<td>'+(order.confirmed ? customerPaymentCellHtml(t, true) : '<span class="muted">—</span>')+'</td>' +
@@ -1804,7 +1807,7 @@ function cardHtml(order){
         ((order.customerPhone||'').trim() ? '<button type="button" class="icon-btn" data-contact-open="'+escapeHtml(order.id)+'" aria-label="تواصل">📞</button>' : '') +
       '</div>' +
     '</div>' +
-    '<div class="order-card-row"><span>إجمالي البيع</span><span class="num '+(t.hasSell?profitColorClass(t):'')+'">'+(t.hasSell?fmtMoney(t.sellTotal):(t.allPartsReturned?'مرتجعة':(t.noActiveParts?'بدون قطع محددة':'لم يُسعّر بعد')))+'</span></div>' +
+    '<div class="order-card-row"><span>إجمالي البيع</span><span class="num '+(t.hasChargeable?profitColorClass(t):'')+'">'+(t.hasChargeable?fmtMoney(t.sellTotal):(t.allPartsReturned?'مرتجعة':(t.noActiveParts?'بدون قطع محددة':'لم يُسعّر بعد')))+'</span></div>' +
     '<div class="order-card-badges">' +
       (order.confirmed && t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد للتشليح '+fmtMoney(t.costToScrapyard),'غير مسدد للتشليح '+fmtMoney(t.costToScrapyard)) : '') +
       (order.confirmed && t.costToSupplier>0 ? stampBadge(order.paidToSupplier,'مسدد للمورد '+fmtMoney(t.costToSupplier),'غير مسدد للمورد '+fmtMoney(t.costToSupplier)) : '') +
@@ -2922,6 +2925,10 @@ function bindPartRowEvents(){
             delete part.returnKeptFeeShare;
             delete part.returnKeptServiceFeeShare;
             delete part.returnKeptDeliveryShare;
+            // كان الإرجاع أضاف القطعة لمجموعة "تُحذف طلباتها المعلّقة عند الحفظ" — التراجع
+            // يلغي الإرجاع نفسه، فلازم يلغي معه نية الحذف هاي، وإلا حفظ لاحق (حتى لغرض تاني
+            // تمامًا) بيحذف صامتًا أي طلب تعديل شرعي معلّق على هالقطعة بدون أي إشعار لحدا
+            pendingPartProposalPurges.delete(pid);
             draft.customerPayments = (draft.customerPayments||[]).filter(p=>!(p.returnAdjustment && p.linkedPartId===pid));
             refreshPartsList();
             refreshPaymentsList();
@@ -2991,7 +2998,10 @@ function proceedReturnWholeOrder(activeParts, keepFee){
           if(isLast) draft.returnKeptDeliveryAmount = round2((draft.returnKeptDeliveryAmount||0) + liveDelivery);
           applyPartReturn(p, 0);
         } else {
-          applyPartReturn(p, round2(s.feeShare + s.serviceFeeShare + (isLast ? t.deliveryFeeAmount : 0)));
+          // liveDelivery مو t.deliveryFeeAmount — الثاني بيشمل أي توصيل محتفظ فيه مسبقًا
+          // (orderTotals بيضيفه دايمًا)، فاستخدامه هون كان بيخلي الاسترجاع "يسترجع" مبلغ
+          // كان أصلًا متجمّد ومحسوم نهائيًا، وبيسمح بتسريب زيادة غير مرتبطة فوقه
+          applyPartReturn(p, round2(s.feeShare + s.serviceFeeShare + liveDelivery));
         }
         pendingPartProposalPurges.add(p.id);
       });
@@ -3296,7 +3306,7 @@ function refreshPaymentsList(){
 function updateModalTotals(){
   const t = orderTotals(draft);
   document.getElementById('total-cost-display').textContent = fmtMoney(t.costTotal);
-  document.getElementById('total-sell-display').textContent = t.hasSell? fmtMoney(t.sellTotal) : (t.allPartsReturned?'مرتجعة':(t.noActiveParts?'بدون قطع محددة':'لم يُسعّر بعد'));
+  document.getElementById('total-sell-display').textContent = t.hasChargeable? fmtMoney(t.sellTotal) : (t.allPartsReturned?'مرتجعة':(t.noActiveParts?'بدون قطع محددة':'لم يُسعّر بعد'));
   const costSupplierEl = document.getElementById('cost-supplier-display');
   if(costSupplierEl) costSupplierEl.textContent = fmtMoney(t.costToSupplier);
   const costAmerEl = document.getElementById('cost-amer-display');
@@ -3310,16 +3320,16 @@ function updateModalTotals(){
     serviceFeePreviewEl.textContent = (t.serviceFeeEnabled && t.serviceFeeAmount>0) ? ('= '+fmtMoney(t.serviceFeeAmount)) : '';
   }
   const profitEl = document.getElementById('total-profit-display');
-  profitEl.textContent = t.hasSell? fmtMoney(t.profit) : '—';
+  profitEl.textContent = t.hasChargeable? fmtMoney(t.profit) : '—';
   profitEl.classList.remove('text-green','text-rust','text-amber');
-  if(t.hasSell){
+  if(t.hasChargeable){
     if(t.profit<0) profitEl.classList.add('text-rust');
     else if(t.customerFullyPaid) profitEl.classList.add('text-green');
     else profitEl.classList.add('text-amber');
   }
   const profitSubEl = document.getElementById('total-profit-sub');
   if(profitSubEl){
-    if(t.hasSell && t.customerPaidAmount>0 && !t.customerFullyPaid){
+    if(t.hasChargeable && t.customerPaidAmount>0 && !t.customerFullyPaid){
       profitSubEl.innerHTML = 'محصّل <span class="text-green">'+fmtMoney(t.collectedProfit)+'</span> · متبقي <span class="text-amber">'+fmtMoney(t.uncollectedProfit)+'</span>';
     } else {
       profitSubEl.innerHTML = '';
@@ -3328,12 +3338,12 @@ function updateModalTotals(){
   const remainEl = document.getElementById('customer-remaining-display');
   const remainLabelEl = document.getElementById('customer-remaining-label');
   if(remainEl){
-    const isExcess = t.hasSell && t.customerRemaining < -0.01;
+    const isExcess = t.hasChargeable && t.customerRemaining < -0.01;
     if(remainLabelEl) remainLabelEl.textContent = isExcess ? 'زيادة' : 'المتبقي عليه';
-    remainEl.textContent = t.hasSell ? fmtMoney(isExcess ? Math.abs(t.customerRemaining) : Math.max(t.customerRemaining,0)) : (t.allPartsReturned?'مرتجعة':(t.noActiveParts?'بدون قطع محددة':'لم يُسعّر بعد'));
+    remainEl.textContent = t.hasChargeable ? fmtMoney(isExcess ? Math.abs(t.customerRemaining) : Math.max(t.customerRemaining,0)) : (t.allPartsReturned?'مرتجعة':(t.noActiveParts?'بدون قطع محددة':'لم يُسعّر بعد'));
     remainEl.classList.remove('text-green','text-amber');
-    remainEl.classList.toggle('text-green', t.hasSell && t.customerRemaining<=0.01 && !isExcess);
-    remainEl.classList.toggle('text-amber', t.hasSell && (t.customerRemaining>0.01 || isExcess));
+    remainEl.classList.toggle('text-green', t.hasChargeable && t.customerRemaining<=0.01 && !isExcess);
+    remainEl.classList.toggle('text-amber', t.hasChargeable && (t.customerRemaining>0.01 || isExcess));
   }
   const paidEl = document.getElementById('total-paid-display');
   if(paidEl) paidEl.textContent = fmtMoney(t.customerPaidAmount);
@@ -6020,7 +6030,8 @@ function applyEditProposal(pr, orderOverride, opts){
         if(isLast) order.returnKeptDeliveryAmount = round2((order.returnKeptDeliveryAmount||0) + liveDelivery);
         applyPartReturnOnOrder(order, p, 0);
       } else {
-        applyPartReturnOnOrder(order, p, round2(s.feeShare + s.serviceFeeShare + (isLast ? t.deliveryFeeAmount : 0)));
+        // liveDelivery مو t.deliveryFeeAmount — نفس ملاحظة proceedReturnWholeOrder
+        applyPartReturnOnOrder(order, p, round2(s.feeShare + s.serviceFeeShare + liveDelivery));
       }
     });
   } else {
@@ -6033,22 +6044,29 @@ function applyEditProposal(pr, orderOverride, opts){
 /* إرجاع قطعة/طلبية عبر طلب تعديل (كتير غير مخوّل) — المخوّل يلي عم يقبل هو اللي بياخد قرار
    استرجاع النسبة المضافة للزبون أو الاحتفاظ فيها، بنفس لحظة القبول (المتقدّم بالطلب ما بيُسأل
    هالسؤال أصلًا، نفس مبدأ إن كل قرار مالي فعلي مقصور على المخوّلين) */
-function handleEditProposalDecision(proposalId, accept){
+async function handleEditProposalDecision(proposalId, accept){
   const pr = (editProposals||[]).find(p=>p.id===proposalId);
   if(!pr) return;
   const needsFeeChoice = accept && (pr.kind==='part_return' || pr.kind==='order_return');
   if(needsFeeChoice){
-    const order = appData.orders.find(o=>o.id===pr.order_id);
+    // لازم بيانات طازجة من القاعدة، مو appData.orders المخزّنة محليًا — لو كانت متأخرة شوي عن
+    // آخر تعديل حقيقي (سعر تغيّر، نسبة اتفعّلت) ممكن تُظهر شير صفري وهمي، فيتخطى السؤال بالغلط
+    // ويقرر "استرجاع" تلقائيًا بدون ما يسأل المخوّل أصلًا — نفس الخطأ يلي applyEditProposal
+    // نفسها تتجنبه بجلب freshRow، بس هون كان القرار "نسأل ولا لا" وحده يعتمد على النسخة القديمة
     let shareAmount = 0;
-    if(order){
-      if(pr.kind==='part_return'){
-        const part = (order.parts||[]).find(p=>p.id===pr.part_id);
-        if(part){ const s = computeReturnFeeShare(order, part); shareAmount = round2(s.feeShare+s.serviceFeeShare); }
-      } else {
-        const t = orderTotals(order);
-        shareAmount = round2(t.feeAmount + t.serviceFeeAmount + t.deliveryFeeAmount);
+    try{
+      const { data: freshRow } = await sb.from('orders').select('*').eq('id', pr.order_id).maybeSingle();
+      if(freshRow){
+        const order = orderRowToObject(freshRow);
+        if(pr.kind==='part_return'){
+          const part = (order.parts||[]).find(p=>p.id===pr.part_id);
+          if(part){ const s = computeReturnFeeShare(order, part); shareAmount = round2(s.feeShare+s.serviceFeeShare); }
+        } else {
+          const t = orderTotals(order);
+          shareAmount = round2(t.feeAmount + t.serviceFeeAmount + t.deliveryFeeAmount);
+        }
       }
-    }
+    }catch(e){ /* فشل الجلب — نكمل بدون سؤال، نفس ما كان يصير سابقًا لو الطلبية غير موجودة */ }
     if(shareAmount > 0.01){
       openReturnFeeChoiceModal(shareAmount, pr.kind==='order_return', (keepFee)=> proceedEditProposalDecision(proposalId, accept, keepFee));
       return;
@@ -6744,7 +6762,7 @@ function computeTreasuryVolumes(){
     sellTotalSum += t.sellTotal;
     // fullProfit = الربح الكامل (سعر البيع - التكلفة) بغض النظر عن قد ايش الزبون دفع فعليًا —
     // بقى الرقم الرئيسي لـ"حجم الأرباح"، وcollectedProfit بقى "تم سداد منه" تحته
-    if(t.hasSell){ collectedProfit += t.collectedProfit; fullProfit += t.profit; }
+    if(t.hasChargeable){ collectedProfit += t.collectedProfit; fullProfit += t.profit; }
   });
   return {
     purchaseVolume: round2(costToSuppliersTotal + costToScrapyardTotal),
@@ -7616,7 +7634,7 @@ function overdueCustomersCount(){
       if(o.customerId !== c.id) return false;
       if(!o.supplied) return false;
       const t = orderTotals(o);
-      if(!t.hasSell || t.customerRemaining<=0) return false;
+      if(!t.hasChargeable || t.customerRemaining<=0) return false;
       const refDate = o.suppliedAt || o.updatedAt;
       if(!refDate) return false;
       const ref = new Date(refDate).getTime();
@@ -7892,13 +7910,13 @@ function exportAllDataToExcel(){
       'مستحق للمورد': t.costToSupplier,
       'مسدد للمورد': o.paidToSupplier ? 'نعم' : 'لا',
       'مسعّرة بالكامل': t.fullyPriced ? 'نعم' : 'لا',
-      'إجمالي البيع': t.hasSell ? t.sellTotal : '',
+      'إجمالي البيع': t.hasChargeable ? t.sellTotal : '',
       'نسبة رسوم الخدمة %': t.feeEnabled ? t.feePercent : '',
       'نسبة رسوم الخدمات %': t.serviceFeeEnabled ? t.serviceFeePercent : '',
       'أجور التوصيل': t.deliveryFeeEnabled ? t.deliveryFeeAmount : '',
-      'الربح': t.hasSell ? t.profit : '',
+      'الربح': t.hasChargeable ? t.profit : '',
       'المدفوع من الزبون': t.customerPaidAmount,
-      'المتبقي على الزبون': t.hasSell ? t.customerRemaining : '',
+      'المتبقي على الزبون': t.hasChargeable ? t.customerRemaining : '',
       'تاريخ الإنشاء': o.createdAt || '',
       'آخر تحديث': o.updatedAt || ''
     };
@@ -9337,7 +9355,7 @@ function customerOrderStats(customerId){
     if(!o.supplied) return; // قبل اتمام التوريد ما تُحسب على العميل — بس الربط محفوظ لغرض التحليل لاحقًا
     count++;
     const t = orderTotals(o);
-    if(t.hasSell) remaining += t.customerRemaining;
+    if(t.hasChargeable) remaining += t.customerRemaining;
   });
   return { count, remaining: round2(remaining) };
 }
@@ -9422,13 +9440,13 @@ function customerOrderHistory(customerId){
     const t = orderTotals(o);
     const row = {
       orderId: o.id, orderNumber: o.orderNumber, orderLabel: o.orderLabel,
-      total: t.hasSell ? t.sellTotal : 0, remaining: t.hasSell ? t.customerRemaining : 0,
-      hasSell: t.hasSell,
+      total: t.hasChargeable ? t.sellTotal : 0, remaining: t.hasChargeable ? t.customerRemaining : 0,
+      hasChargeable: t.hasChargeable,
       date: o.updatedAt || o.createdAt || ''
     };
-    // طلبية توردت بس لسه ما تسعّرت للبيع (!hasSell) لسه محتاجة متابعة — تُحسب "جارية"،
-    // مش "سابقة (مسددة)" — كانت تختفي عن متابعة العميل النشطة غلط.
-    (!t.hasSell || t.customerRemaining>0 ? ongoing : past).push(row);
+    // طلبية توردت بس لسه ما تسعّرت للبيع (ولا فيها مبلغ محتفظ فيه من إرجاع سابق) لسه محتاجة
+    // متابعة — تُحسب "جارية"، مش "سابقة (مسددة)" — كانت تختفي عن متابعة العميل النشطة غلط.
+    (!t.hasChargeable || t.customerRemaining>0 ? ongoing : past).push(row);
   });
   const byDateDesc = (a,b)=> new Date(b.date||0) - new Date(a.date||0);
   ongoing.sort(byDateDesc); past.sort(byDateDesc);
@@ -9436,7 +9454,7 @@ function customerOrderHistory(customerId){
 }
 
 function orderHistoryRowHtml(row){
-  const amountHtml = row.hasSell===false
+  const amountHtml = row.hasChargeable===false
     ? '<span class="num text-amber">بانتظار تسعير</span>'
     : '<span class="num '+(row.remaining>0?'text-rust':'text-green')+'">'+fmtMoney(row.remaining>0?row.remaining:row.total)+'</span>';
   return '<button type="button" class="purchase-history-row" data-open-order="'+escapeHtml(row.orderId)+'">' +
