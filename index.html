@@ -5642,6 +5642,10 @@ let editProposals = []; // كاش محلي لكل الطلبات المعلّق�
 let editProposalsChannel = null;
 let editProposalSending = new Set();
 let editProposalsModalOpen = false;
+// أي المورد/العميل يلي شاشة سجله مفتوحة حاليًا (لو مفتوحة) — عشان refreshEditProposals يقدر
+// يعيد رسمها لحظيًا لو صار قبول/رفض على طلب تحصيل/إرجاع من داخل الشاشة نفسها (البادج المضمّن)
+let openSupplierHistoryId = null;
+let openCustomerHistoryId = null;
 
 function composeKey(fieldKey, partId){ return (partId||'order') + '::' + fieldKey; }
 
@@ -5673,6 +5677,12 @@ function pendingPartActionProposal(kind, partId){
 function pendingOrderActionProposal(kind){
   if(!draft) return null;
   return (editProposals||[]).find(pr=> pr.order_id===draft.id && pr.kind===kind && !pr.part_id);
+}
+
+/* نفس فكرة pendingPartActionProposal بس بدون اعتماد على draft مفتوح — لازمة لشاشات سجل
+   المورد/العميل (تُفتح مباشرة من قوائم الموردين/العملاء، مو بالضرورة من نافذة طلبية مفتوحة) */
+function pendingActionProposalFor(kind, orderId, partId){
+  return (editProposals||[]).find(pr=> pr.order_id===orderId && pr.kind===kind && pr.part_id===partId);
 }
 
 /* حقول من نوع مفتاح/قفل (checkbox) — الطلب عليها إرسال فوري لعكس القيمة الحالية، مو صندوق كتابة
@@ -5717,6 +5727,10 @@ function editProposalPendingHtml(pr){
     changeText = '🗑️ طلب حذف الطلبية بالكامل';
   } else if(pr.kind==='order_return'){
     changeText = '🔄 طلب إرجاع الطلبية بالكامل';
+  } else if(pr.kind==='return_collect'){
+    changeText = '📨 طلب تأكيد تحصيل المبلغ من المورد/التشليح';
+  } else if(pr.kind==='customer_refund_confirm'){
+    changeText = '📨 طلب تأكيد إرجاع المبلغ للعميل';
   } else {
     changeText = escapeHtml(formatProposalFieldValue(pr.field, pr.current_value)) + ' ← ' + escapeHtml(formatProposalFieldValue(pr.field, pr.proposed_value));
   }
@@ -5981,6 +5995,32 @@ function requestPartReturn(part){
   });
 }
 
+/* طلب تأكيد تحصيل مبلغ مرتجع من مورد/تشليح، وطلب تأكيد إرجاع مبلغ للعميل — غير المخوّل يرسل
+   طلب بدل التنفيذ المباشر (نفس مبدأ requestPartReturn)، بس هالشاشتين (سجل المورد/سجل العميل)
+   بتتفتحان مباشرة من قوائم الموردين/العملاء بدون ما يكون فيه طلبية مفتوحة بالضرورة، فما بنعتمد
+   على draft — orderId/partId يوصلونا مباشرة من الصف نفسه */
+async function requestReturnCollect(orderId, partId){
+  if(pendingActionProposalFor('return_collect', orderId, partId)) return;
+  const { error } = await sb.from('edit_proposals').insert({
+    order_id: orderId, kind: 'return_collect', part_id: partId,
+    current_value: null, proposed_value: null, submitted_by: presenceEmail
+  });
+  if(error){ showToast('تعذر إرسال الطلب', 'error'); return; }
+  showToast('تم إرسال طلب التحصيل', 'ok');
+  await refreshEditProposals();
+}
+
+async function requestCustomerRefundConfirm(orderId, partId){
+  if(pendingActionProposalFor('customer_refund_confirm', orderId, partId)) return;
+  const { error } = await sb.from('edit_proposals').insert({
+    order_id: orderId, kind: 'customer_refund_confirm', part_id: partId,
+    current_value: null, proposed_value: null, submitted_by: presenceEmail
+  });
+  if(error){ showToast('تعذر إرسال الطلب', 'error'); return; }
+  showToast('تم إرسال طلب تأكيد الإرجاع', 'ok');
+  await refreshEditProposals();
+}
+
 function requestOrderDelete(){
   if(pendingOrderActionProposal('order_delete')){ showToast('في طلب حذف معلّق أصلًا لهذه الطلبية', 'error'); return; }
   confirmAction({
@@ -6123,6 +6163,18 @@ function applyEditProposal(pr, orderOverride, opts){
         applyPartReturnOnOrder(order, p, round2(s.feeShare + s.serviceFeeShare + liveDelivery));
       }
     });
+  } else if(pr.kind === 'return_collect'){
+    // نفس شرط الأهلية يلي returnReceivableRowHtml/supplierReturnReceivables تبني عليه العرض
+    const part = (order.parts||[]).find(p=>p.id===pr.part_id);
+    if(!part || !part.returned || !part.returnHasReceivable || part.returnCollected) return false;
+    part.returnCollected = true;
+  } else if(pr.kind === 'customer_refund_confirm'){
+    // نفس شرط الأهلية يلي customerRefundRowHtml/customerRefundsPending تبني عليه العرض
+    const part = (order.parts||[]).find(p=>p.id===pr.part_id);
+    if(!part || !part.returned || part.customerRefundConfirmed) return false;
+    const adjustment = (order.customerPayments||[]).find(pay=>pay.returnAdjustment && pay.linkedPartId===part.id);
+    if(!adjustment) return false;
+    part.customerRefundConfirmed = true;
   } else {
     return false;
   }
@@ -6302,6 +6354,10 @@ async function refreshEditProposals(){
     renderTreasuryView();
   }
   if(editProposalsModalOpen) refreshEditProposalsModal();
+  // سجل مورد/عميل مفتوح — طلبات تحصيل/إرجاع معلّقة تظهر شارتها هون مباشرة (قبول/رفض مضمّن)،
+  // فلازم تنعاد الشاشة لو صار قرار عليها من هالمكان نفسه أو من مكان تاني بنفس اللحظة
+  if(openSupplierHistoryId) openSupplierHistoryModal(openSupplierHistoryId);
+  if(openCustomerHistoryId) openCustomerHistoryModal(openCustomerHistoryId);
   // بادج كل طلبية بقائمتها (الرئيسية والأرشيف) — لازم يتحدّث لحظيًا لو وصل طلب جديد بالريل-تايم
   renderTable();
   refreshArchiveViewIfOpen();
@@ -6564,6 +6620,8 @@ function editProposalKindLabel(pr){
   if(pr.kind==='part_return') return 'إرجاع قطعة';
   if(pr.kind==='order_delete') return 'حذف الطلبية';
   if(pr.kind==='order_return') return 'إرجاع الطلبية';
+  if(pr.kind==='return_collect') return 'تأكيد تحصيل من المورد/التشليح';
+  if(pr.kind==='customer_refund_confirm') return 'تأكيد إرجاع مبلغ للعميل';
   return pr.kind;
 }
 
@@ -6572,7 +6630,7 @@ function editProposalReviewRowHtml(pr){
   const order = appData.orders.find(o=>o.id===pr.order_id);
   const orderLabel = order ? ('#'+order.orderNumber+(order.orderLabel?' — '+order.orderLabel:'')) : ('طلبية #'+pr.order_id);
   let partLabel = '';
-  if((pr.kind==='part_field' || pr.kind==='part_exclude' || pr.kind==='part_delete' || pr.kind==='part_return') && order){
+  if((pr.kind==='part_field' || pr.kind==='part_exclude' || pr.kind==='part_delete' || pr.kind==='part_return' || pr.kind==='return_collect' || pr.kind==='customer_refund_confirm') && order){
     const part = (order.parts||[]).find(p=>p.id===pr.part_id);
     if(part) partLabel = ' · '+(part.description||'قطعة');
   }
@@ -8993,6 +9051,10 @@ function totalSupplierReturnReceivables(){
 }
 
 function returnReceivableRowHtml(row){
+  const pending = pendingActionProposalFor('return_collect', row.orderId, row.partId);
+  const actionHtml = pending
+    ? editProposalPendingHtml(pending)
+    : '<button type="button" class="btn btn-sm btn-primary return-collect-btn" data-order-id="'+escapeHtml(row.orderId)+'" data-part-id="'+escapeHtml(row.partId)+'" data-used="'+(row.used?'1':'')+'">'+(hasElevatedAccess()?'✅ تم التحصيل':'📨 طلب تأكيد التحصيل')+'</button>';
   return '<div class="purchase-history-row return-receivable-row" data-open-order="'+escapeHtml(row.orderId)+'">' +
     '<div class="purchase-history-row-main">' +
       '<span class="purchase-history-desc">'+escapeHtml(row.description)+'</span>' +
@@ -9000,7 +9062,7 @@ function returnReceivableRowHtml(row){
     '</div>' +
     '<div class="purchase-history-row-sub">' +
       '<span>'+escapeHtml(row.orderNumber||'')+(row.orderLabel?' — '+escapeHtml(row.orderLabel):'')+'</span>' +
-      '<button type="button" class="btn btn-sm btn-primary return-collect-btn" data-order-id="'+escapeHtml(row.orderId)+'" data-part-id="'+escapeHtml(row.partId)+'" data-used="'+(row.used?'1':'')+'">✅ تم التحصيل</button>' +
+      actionHtml +
     '</div>' +
   '</div>';
 }
@@ -9019,6 +9081,7 @@ function purchaseHistoryRowHtml(row){
 }
 
 function openSupplierHistoryModal(supplierId){
+  openSupplierHistoryId = supplierId;
   const supplier = (appData.suppliers||[]).find(s=>s.id===supplierId);
   const label = supplier ? (supplier.name||supplier.phone||'مورد') : 'مورد';
   const { ongoing, past } = supplierPurchaseHistory(supplierId);
@@ -9047,23 +9110,30 @@ function openSupplierHistoryModal(supplierId){
       '</div>' +
     '</div>';
   root.classList.add('modal-open');
-  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); openSupplierHistoryId = null; };
   root.querySelector('[data-close-backdrop]').addEventListener('click', e=>{
     if(e.target.hasAttribute('data-close-backdrop')) close();
   });
   root.querySelector('#supplier-history-close-btn').addEventListener('click', close);
   root.querySelectorAll('[data-open-order]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
+    btn.addEventListener('click', (e)=>{
+      // لو الضغط كان على شارة طلب معلّق (قبول/رفض/سحب) المتداخلة جوا الصف — ما لازم يفتح
+      // الطلبية كمان فوق فتح/معالجة الطلب، هالحدث لازم يوصل بس لتفويض bindEditProposalGlobalDelegation
+      if(e.target.closest('.proposal-pending-banner')) return;
       close();
       openModal('edit', btn.getAttribute('data-open-order'));
     });
   });
   root.querySelectorAll('.return-collect-btn').forEach(btn=>{
-    btn.addEventListener('click', (e)=>{
+    btn.addEventListener('click', async (e)=>{
       e.stopPropagation();
-      if(!hasElevatedAccess()){ showToast('غير متاح', 'error'); return; }
       const orderId = btn.getAttribute('data-order-id');
       const partId = btn.getAttribute('data-part-id');
+      if(!hasElevatedAccess()){
+        await requestReturnCollect(orderId, partId);
+        openSupplierHistoryModal(supplierId);
+        return;
+      }
       const isUsed = btn.getAttribute('data-used')==='1';
       if(isUsed){
         confirmCollectScrapyardReturn(orderId, partId, supplierId);
@@ -9480,6 +9550,10 @@ function customerRefundTotal(customerId){
 }
 
 function customerRefundRowHtml(row){
+  const pending = pendingActionProposalFor('customer_refund_confirm', row.orderId, row.partId);
+  const actionHtml = pending
+    ? editProposalPendingHtml(pending)
+    : '<button type="button" class="btn btn-sm btn-primary customer-refund-confirm-btn" data-order-id="'+escapeHtml(row.orderId)+'" data-part-id="'+escapeHtml(row.partId)+'">'+(hasElevatedAccess()?'✅ تم إرجاع المبلغ للعميل':'📨 طلب تأكيد الإرجاع')+'</button>';
   return '<div class="purchase-history-row return-receivable-row" data-open-order="'+escapeHtml(row.orderId)+'">' +
     '<div class="purchase-history-row-main">' +
       '<span class="purchase-history-desc">'+escapeHtml(row.description)+'</span>' +
@@ -9487,7 +9561,7 @@ function customerRefundRowHtml(row){
     '</div>' +
     '<div class="purchase-history-row-sub">' +
       '<span>'+escapeHtml(row.orderNumber||'')+(row.orderLabel?' — '+escapeHtml(row.orderLabel):'')+'</span>' +
-      '<button type="button" class="btn btn-sm btn-primary customer-refund-confirm-btn" data-order-id="'+escapeHtml(row.orderId)+'" data-part-id="'+escapeHtml(row.partId)+'">✅ تم إرجاع المبلغ للعميل</button>' +
+      actionHtml +
     '</div>' +
   '</div>';
 }
@@ -9562,6 +9636,7 @@ function orderHistoryRowHtml(row){
 }
 
 function openCustomerHistoryModal(customerId){
+  openCustomerHistoryId = customerId;
   const customer = (appData.customers||[]).find(c=>c.id===customerId);
   const label = customer ? (customer.name||customer.phone||'عميل') : 'عميل';
   const { ongoing, past } = customerOrderHistory(customerId);
@@ -9590,23 +9665,30 @@ function openCustomerHistoryModal(customerId){
       '</div>' +
     '</div>';
   root.classList.add('modal-open');
-  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); openCustomerHistoryId = null; };
   root.querySelector('[data-close-backdrop]').addEventListener('click', e=>{
     if(e.target.hasAttribute('data-close-backdrop')) close();
   });
   root.querySelector('#customer-history-close-btn').addEventListener('click', close);
   root.querySelectorAll('[data-open-order]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
+    btn.addEventListener('click', (e)=>{
+      // لو الضغط كان على شارة طلب معلّق (قبول/رفض/سحب) المتداخلة جوا الصف — ما لازم يفتح
+      // الطلبية كمان فوق فتح/معالجة الطلب، هالحدث لازم يوصل بس لتفويض bindEditProposalGlobalDelegation
+      if(e.target.closest('.proposal-pending-banner')) return;
       close();
       openModal('edit', btn.getAttribute('data-open-order'));
     });
   });
   root.querySelectorAll('.customer-refund-confirm-btn').forEach(btn=>{
-    btn.addEventListener('click', (e)=>{
+    btn.addEventListener('click', async (e)=>{
       e.stopPropagation();
-      if(!hasElevatedAccess()){ showToast('غير متاح', 'error'); return; }
       const orderId = btn.getAttribute('data-order-id');
       const partId = btn.getAttribute('data-part-id');
+      if(!hasElevatedAccess()){
+        await requestCustomerRefundConfirm(orderId, partId);
+        openCustomerHistoryModal(customerId);
+        return;
+      }
       confirmAction({
         title: 'تأكيد إرجاع هذا المبلغ للعميل؟',
         message: 'رح يُخصم المبلغ تلقائيًا من صافي الصندوق.',
