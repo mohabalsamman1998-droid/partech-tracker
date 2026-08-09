@@ -249,6 +249,11 @@
   .scrapyard-order-header-clickable:hover{text-decoration:underline;}
   .scrapyard-part-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-soft);flex-wrap:wrap;}
   .scrapyard-part-row:last-of-type{border-bottom:none;}
+  .scrapyard-part-note-row{padding:0 0 8px;margin-top:-4px;border-bottom:1px solid var(--border-soft);}
+  .scrapyard-note-input{width:100%;background:transparent;border:1px dashed var(--border);border-radius:6px;padding:5px 10px;font-size:12.5px;color:var(--text-dim);font-family:'Tajawal',sans-serif;}
+  .scrapyard-note-input:focus{outline:none;border-color:var(--rust-line);color:var(--text);}
+  .scrapyard-note-input::placeholder{color:var(--text-faint);}
+  .scrapyard-part-note-amer{font-size:13px;font-weight:700;color:var(--rust);padding-top:2px;}
   .scrapyard-part-desc{flex:1;min-width:120px;font-size:15px;font-weight:700;color:var(--text);}
   .scrapyard-confirmed-check{display:inline-block;margin-inline-start:8px;font-size:13px;}
   .scrapyard-days-since{display:inline-block;margin-inline-start:8px;font-size:11.5px;font-weight:700;}
@@ -5496,6 +5501,29 @@ function handleScrapyardProposalDecision(proposalId, accept){
   });
 }
 
+/* ملاحظة على قطعة بشاشة سداد التشليح/المورد — يكتبها صاحب الحساب/همام/بشار، تظهر لعامر بالأحمر
+   كتنبيه (شرط خاص بالقطعة، سبب تأخير، إلخ). تُخزَّن داخل القطعة نفسها (part.scrapyardNote) —
+   نفس نمط handleScrapyardProposalDecision فوق: appData.orders.find + تعديل + persistOrder. */
+async function saveScrapyardPartNote(orderId, partId, value){
+  const order = appData.orders.find(o=>o.id===orderId);
+  if(!order) return;
+  const part = (order.parts||[]).find(p=>p.id===partId);
+  if(!part) return;
+  const trimmed = (value||'').trim();
+  if((part.scrapyardNote||'') === trimmed) return; // ما تغيّر شي فعليًا
+  const prevNote = part.scrapyardNote;
+  const prevUpdatedAt = order.updatedAt;
+  part.scrapyardNote = trimmed;
+  order.updatedAt = new Date().toISOString();
+  const saved = await persistOrder(order);
+  if(!saved){
+    part.scrapyardNote = prevNote;
+    order.updatedAt = prevUpdatedAt;
+    return;
+  }
+  showToast('تم حفظ الملاحظة', 'ok');
+}
+
 let scrapyardProposalsChannel = null;
 async function refreshScrapyardPendingCount(){
   // كانت مقصورة على المخوّلين — بس مهاب طلب صراحة إشعار "أي شيء يحتاج انتباه" يظهر عند الجميع.
@@ -10002,7 +10030,7 @@ function ownerScrapyardPartsFromAppData(kind){
       if(p.returned) return; // القطعة المرتجعة لها مسارها المنفصل (مرتجعات)، مو ضمن قائمة "غير المسدّدة"
       if(!partIsIncludedInOrder(o,p)) return; // قطعة مستبعدة يدويًا من الطلبية — ما تُحسب
       if(!!p.used === wantUsed){
-        list.push({ order_id:o.id, order_number:o.orderNumber, order_label:o.orderLabel, supplied_at:o.suppliedAt||null, part_id:p.id, description:p.description, qty:p.qty, cost_price:p.costPrice, supplier_id:p.supplierId||null });
+        list.push({ order_id:o.id, order_number:o.orderNumber, order_label:o.orderLabel, supplied_at:o.suppliedAt||null, part_id:p.id, description:p.description, qty:p.qty, cost_price:p.costPrice, supplier_id:p.supplierId||null, note:p.scrapyardNote||'' });
       }
     });
   });
@@ -10779,13 +10807,20 @@ function scrapyardPartRowHtml(p, canManage){
     '</div>'
   );
 
+  // ملاحظة على القطعة — المخوّل (صاحب الحساب) يكتبها، تظهر عند عامر بالأحمر كتنبيه. حصرًا
+  // على صفوف القطع الفعلية (مو صفوف اقتراح إضافة أو مسودة إضافة قطعة جديدة، ما فيهم part_id حقيقي بعد)
+  const noteHtml = canManage
+    ? '<div class="scrapyard-part-note-row"><input type="text" class="scrapyard-note-input" placeholder="ملاحظة لعامر (تظهر بالأحمر)…" value="'+escapeHtml(p.note||'')+'" data-scrapyard-note="'+escapeHtml(p.part_id)+'" data-order-id="'+escapeHtml(p.order_id)+'"></div>'
+    : (p.note ? '<div class="scrapyard-part-note-row scrapyard-part-note-amer">⚠️ '+escapeHtml(p.note)+'</div>' : '');
+
   return '<div class="scrapyard-part-row">' +
     '<span class="scrapyard-part-desc">'+escapeHtml(p.description||'')+'</span>' +
     '<span class="num scrapyard-qty-slot">×'+(p.qty||1)+'</span>' +
     '<div class="scrapyard-price-group">'+priceCells+'</div>' +
     supplierSelectHtml +
     actions +
-  '</div>';
+  '</div>' +
+  noteHtml;
 }
 
 function scrapyardAddProposalInlineHtml(pr, canManage){
@@ -10940,6 +10975,12 @@ function bindScrapyardEvents(){
       delete scrapyardPriceDrafts[partId];
       renderScrapyardView();
     });
+  });
+
+  // ملاحظة القطعة لعامر — تُحفظ عند فقدان التركيز (زي أي حقل نص عادي)، وبـEnter كمان
+  root.querySelectorAll('[data-scrapyard-note]').forEach(inp=>{
+    inp.addEventListener('change', ()=> saveScrapyardPartNote(inp.getAttribute('data-order-id'), inp.getAttribute('data-scrapyard-note'), inp.value));
+    inp.addEventListener('keydown', e=>{ if(e.key === 'Enter'){ e.preventDefault(); inp.blur(); } });
   });
 
   // إدخال السعر المقترح مباشرة بالصف — والمجموع الجديد يتحدّث فورًا مع الكتابة
