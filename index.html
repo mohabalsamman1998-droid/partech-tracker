@@ -2965,10 +2965,13 @@ function proceedReturnWholeOrder(activeParts, keepFee){
     dangerous: true,
     onConfirm: ()=>{
       if(keepFee){
+        // "=" مو "+=" — t.feeAmount/serviceFeeAmount/deliveryFeeAmount أصلًا شاملين أي مبلغ
+        // محتفظ فيه سابقًا (orderTotals)، فتجميدهم كما هم أصلًا هو الصحيح؛ إضافتهم فوق القديم
+        // بيضاعف نفس المبلغ القديم مع كل إرجاع طلبية كاملة
         const t = orderTotals(draft);
-        draft.returnKeptFeeAmount = round2((draft.returnKeptFeeAmount||0) + t.feeAmount);
-        draft.returnKeptServiceFeeAmount = round2((draft.returnKeptServiceFeeAmount||0) + t.serviceFeeAmount);
-        draft.returnKeptDeliveryAmount = round2((draft.returnKeptDeliveryAmount||0) + t.deliveryFeeAmount);
+        draft.returnKeptFeeAmount = t.feeAmount;
+        draft.returnKeptServiceFeeAmount = t.serviceFeeAmount;
+        draft.returnKeptDeliveryAmount = t.deliveryFeeAmount;
         activeParts.forEach(p=>{ applyPartReturn(p, 0); pendingPartProposalPurges.add(p.id); });
       } else {
         // التوصيل مبلغ ثابت للطلبية كلها مو نسبي لأي قطعة — بيهبط تلقائيًا لصفر بس آخر قطعة نشطة
@@ -3097,13 +3100,18 @@ function proceedSinglePartReturn(part, hasReceivable, keepFee){
    (يعني كان دفع ثمنها ضمن دفعاته) نضيف تلقائيًا دفعة "مرتجع" سالبة الأثر تعادل الفرق،
    لحد ما يُحصّل مبلغها من المورد (عندها تُلغى تلقائيًا وترجع للحسابات — orderTotals يتكفّل بهيك). */
 /* حصة قطعة معيّنة من نسبة الخدمة/الخدمات المضافة حاليًا على الطلبية — نسبيًا حسب سعر بيعها من
-   مجموع سعر بيع كل القطع النشطة، قبل ما تُعلّم القطعة كمرتجعة (partsSellTotal بعدها بيهبط). */
+   مجموع سعر بيع كل القطع النشطة، قبل ما تُعلّم القطعة كمرتجعة (partsSellTotal بعدها بيهبط).
+   لازم نطرح المبلغ المحتفظ فيه أصلًا (returnKept*) من t.feeAmount/t.serviceFeeAmount قبل حساب
+   النسبة — هنن أصلًا مجمّعين بداخلهم (orderTotals)، فلو ما طرحناهم رح نعيد توزيع نفس المبلغ
+   القديم المتجمّد على القطع يلي عم ترجع حاليًا ونضيفه فوق نفسه من جديد (تضخّم مضاعف مع كل إرجاع). */
 function computeReturnFeeShare(order, part){
   const t = orderTotals(order);
   const sellAmount = (part.sellPrice!==null && part.sellPrice!==undefined && part.sellPrice!=='') ? (Number(part.qty)||1)*Number(part.sellPrice) : 0;
   if(sellAmount<=0 || t.partsSellTotal<=0) return { feeShare:0, serviceFeeShare:0 };
+  const liveFeeAmount = round2(Math.max(0, t.feeAmount - (Number(order.returnKeptFeeAmount)||0)));
+  const liveServiceFeeAmount = round2(Math.max(0, t.serviceFeeAmount - (Number(order.returnKeptServiceFeeAmount)||0)));
   const ratio = sellAmount / t.partsSellTotal;
-  return { feeShare: round2(t.feeAmount*ratio), serviceFeeShare: round2(t.serviceFeeAmount*ratio) };
+  return { feeShare: round2(liveFeeAmount*ratio), serviceFeeShare: round2(liveServiceFeeAmount*ratio) };
 }
 
 /* تخيير: يسترجع الزبون النسبة المضافة (وأجور التوصيل لو إرجاع طلبية كاملة) مع القطعة/الطلبية
@@ -5977,10 +5985,11 @@ function applyEditProposal(pr, orderOverride, opts){
     });
     if(missingSupplier) return false;
     if(opts.keepFee){
+      // "=" مو "+=" — نفس ملاحظة النسخة المباشرة (proceedReturnWholeOrder)
       const t = orderTotals(order);
-      order.returnKeptFeeAmount = round2((order.returnKeptFeeAmount||0) + t.feeAmount);
-      order.returnKeptServiceFeeAmount = round2((order.returnKeptServiceFeeAmount||0) + t.serviceFeeAmount);
-      order.returnKeptDeliveryAmount = round2((order.returnKeptDeliveryAmount||0) + t.deliveryFeeAmount);
+      order.returnKeptFeeAmount = t.feeAmount;
+      order.returnKeptServiceFeeAmount = t.serviceFeeAmount;
+      order.returnKeptDeliveryAmount = t.deliveryFeeAmount;
       activeParts.forEach(p=> applyPartReturnOnOrder(order, p, 0));
     } else {
       activeParts.forEach((p,i)=>{
