@@ -3626,6 +3626,66 @@ function quotesListHtml(){
   return rows.map(quoteRowHtml).join('');
 }
 
+/* تسعيرات اعتمدتها المبيعات وصارت طلبيات فعلية — كانت تختفي تمامًا من شاشة عامر فور الاعتماد
+   (get_scrapyard_home_quotes ما ترجّع إلا isQuote=true)؛ هاي القائمة تخليها تظهر بقسم منفصل
+   بدل ما تضيع، بالاعتماد على wasQuote (يتحدّد مرة وحدة وقت إنشاء التسعيرة، يضل true للأبد) */
+function approvedQuotesMatchingList(){
+  return (appData.orders||[]).filter(o=>!o.isQuote && o.wasQuote).sort((a,b)=> orderNumberSortKey(b) - orderNumberSortKey(a));
+}
+
+function approvedQuoteRowHtml(o){
+  return '<div class="task-item-row quote-row quote-row-ready" data-approved-quote-id="'+escapeHtml(o.id)+'">' +
+    '<span class="quote-row-number">'+escapeHtml(o.orderNumber)+'</span>' +
+    '<span class="quote-row-label">'+escapeHtml(o.orderLabel||'—')+'</span>' +
+  '</div>';
+}
+
+function approvedQuotesListHtml(){
+  const rows = approvedQuotesMatchingList();
+  if(!rows.length) return '<div class="expense-empty-hint">ما فيه تسعيرات معتمدة بعد</div>';
+  return rows.map(approvedQuoteRowHtml).join('');
+}
+
+/* عرض للقراءة فقط لتسعيرة معتمدة — عامر ما بيعدّل عليها من هون (صارت طلبية حقيقية، أي تعديل
+   بعد الاعتماد لازم يمر بنظام طلبات التعديل العادي)، بس يشوف تفاصيلها بدل ما تختفي بصمت */
+function approvedQuotePartRowHtml(p){
+  const supplier = (appData.suppliers||[]).find(s=>s.id===p.supplierId);
+  const supplierName = supplier ? (supplier.name||supplier.phone||'مورد') : null;
+  return '<div class="purchase-history-row" style="cursor:default;">' +
+    '<div class="purchase-history-row-main">' +
+      '<span class="purchase-history-desc">'+escapeHtml(p.description||'')+'</span>' +
+      '<span class="num text-rust">'+(p.qty||1)+'× '+fmtMoney(Number(p.costPrice)||0)+'</span>' +
+    '</div>' +
+    '<div class="purchase-history-row-sub"><span>'+(p.used?'مستعمل':'جديد')+(supplierName?' — '+escapeHtml(supplierName):'')+'</span></div>' +
+  '</div>';
+}
+
+function openApprovedQuoteViewModal(orderId){
+  const order = (appData.orders||[]).find(o=>o.id===orderId);
+  if(!order){ showToast('هذه التسعيرة ما عادت متوفرة', 'error'); return; }
+  const root = document.getElementById('modal-root');
+  root.innerHTML =
+    '<div class="modal-backdrop" data-close-backdrop>' +
+      '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
+        '<div class="modal-header"><div><div class="modal-title">✅ '+escapeHtml(order.orderNumber)+'</div><div class="modal-sub">'+escapeHtml(order.orderLabel||'تسعيرة معتمدة')+'</div></div>' +
+          '<button type="button" class="icon-btn" id="approved-quote-close-btn" aria-label="إغلاق">✕</button></div>' +
+        (order.parts||[]).map(approvedQuotePartRowHtml).join('') +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  root.querySelector('[data-close-backdrop]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-backdrop')) close();
+  });
+  root.querySelector('#approved-quote-close-btn').addEventListener('click', close);
+}
+
+function bindScrapyardApprovedQuoteRowEvents(){
+  document.querySelectorAll('#scrapyard-approved-quotes-items-list [data-approved-quote-id]').forEach(row=>{
+    row.addEventListener('click', ()=> openApprovedQuoteViewModal(row.getAttribute('data-approved-quote-id')));
+  });
+}
+
 function renderQuotesList(){
   const el = document.getElementById('quotes-table-container');
   if(el){
@@ -3968,6 +4028,7 @@ function openQuoteModal(mode, orderId, role){
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isQuote: true,
+      wasQuote: true, // يضل true للأبد حتى بعد الاعتماد — يميّز "طلبية جات من مسار التسعير" لعامر
       quoteReady: false,
       isNew: true
     };
@@ -6418,16 +6479,21 @@ async function openActivityLog(){
     const orderId = row.getAttribute('data-open-order-id');
     if(!orderId) return;
     // الطلبية يلي يخصها الإشعار ممكن تكون انحذفت (طلب حذف اتقبل)، أو — لعامر تحديدًا — خرجت من
-    // قائمته المحلية المحدودة (get_scrapyard_home_quotes ما ترجّع إلا طلبات التسعير النشطة، فأي
-    // طلبية تحوّلت لطلبية عادية بعد ما اعتُمدت بتختفي من قائمته). بدون هالفحص كان الضغط يسكّر
-    // السجل وما يصير أي شي — بدون أي تفسير للمستخدم.
+    // قائمته المحلية المحدودة (get_scrapyard_home_quotes/get_scrapyard_approved_quotes بس، مو
+    // كل الطلبيات). بدون هالفحص كان الضغط يسكّر السجل وما يصير أي شي — بدون أي تفسير للمستخدم.
     const order = appData.orders.find(o=>o.id===orderId);
     closeActivityLog();
     if(!order){
       showToast('الطلبية يلي يخصها هالإشعار ما عادت متوفرة', 'error');
       return;
     }
-    if(currentUserRole==='scrapyard'){ openQuoteModal('edit', orderId, 'purchasing'); return; }
+    if(currentUserRole==='scrapyard'){
+      // اعتُمدت وصارت طلبية حقيقية — عرض للقراءة فقط (نفس شاشة "التسعيرات المعتمدة")، مو
+      // نافذة التسعير القابلة للتعديل يلي كانت رح تسمح لعامر يعدّل طلبية حقيقية من برّا نظام
+      // طلبات التعديل العادي
+      if(order.isQuote) openQuoteModal('edit', orderId, 'purchasing'); else openApprovedQuoteViewModal(orderId);
+      return;
+    }
     // طلبية لسا بحالة "طلب تسعير" (ما اعتمدها المبيعات بعد) لازم تفتح بنافذة مراجعة التسعير
     // (فيها زر "اعتماد" الصريح) مش بنافذة تعديل الطلبية العادية — فتحها بالعادية كانت تسحبها من
     // قائمة "طلبات التسعير" لقائمة "الطلبيات" بصمت بدون ما حد يضغط اعتماد فعليًا
@@ -10075,12 +10141,13 @@ async function loadScrapyardHomeTotals(){
   // (get_scrapyard_home_quotes) بيرجّع طلبات التسعير بس وبيصفّر sellPrice من كل قطعة، بدل
   // sb.from('orders').select('*') يلي كان يجيب كل الطلبيات المسموح لعامر يشوفها بكل أعمدتها —
   // بما فيها سعر البيع وهامش الربح لطلبيات حقيقية — لجهازه مباشرة رغم إن الواجهة ما بتعرضهم له.
-  const [usedRes, newRes, tasksRes, suppliersRes, ordersRes, customersRes, custodyRes] = await Promise.all([
+  const [usedRes, newRes, tasksRes, suppliersRes, ordersRes, approvedRes, customersRes, custodyRes] = await Promise.all([
     sb.rpc('get_scrapyard_used_parts'),
     sb.rpc('get_new_parts_supplier'),
     sb.rpc('get_purchases_tasks'),
     sb.from('suppliers').select('*'),
     sb.rpc('get_scrapyard_home_quotes'),
+    sb.rpc('get_scrapyard_approved_quotes'), // تسعيرات سابقة اعتُمدت وصارت طلبيات — نفس تقليم الحقول الحساسة
     sb.from('customers').select('*'),
     sb.from('treasury_entries').select('id').eq('category','amerCustody')
   ]);
@@ -10089,6 +10156,7 @@ async function loadScrapyardHomeTotals(){
   if(tasksRes.error) console.error('get_purchases_tasks:', tasksRes.error);
   if(suppliersRes.error) console.error('suppliers:', suppliersRes.error);
   if(ordersRes.error) console.error('get_scrapyard_home_quotes:', ordersRes.error);
+  if(approvedRes.error) console.error('get_scrapyard_approved_quotes:', approvedRes.error);
   if(customersRes.error) console.error('customers:', customersRes.error);
   if(custodyRes.error) console.error('treasury_entries (amerCustody):', custodyRes.error);
   scrapyardSharedState.partsByKind.used = usedRes.error ? [] : (usedRes.data || []);
@@ -10096,12 +10164,15 @@ async function loadScrapyardHomeTotals(){
   scrapyardSharedState.tasks = tasksRes.error ? [] : (tasksRes.data || []);
   scrapyardSharedState.suppliers = suppliersRes.error ? [] : (suppliersRes.data || []);
   appData.suppliers = suppliersRes.error ? [] : groupSupplierOrCustomerRows(suppliersRes.data);
-  appData.orders = ordersRes.error ? [] : (ordersRes.data||[]).map(orderRowToObject);
+  appData.orders = [
+    ...(ordersRes.error ? [] : (ordersRes.data||[])),
+    ...(approvedRes.error ? [] : (approvedRes.data||[]))
+  ].map(orderRowToObject);
   appData.customers = customersRes.error ? [] : groupSupplierOrCustomerRows(customersRes.data);
   scrapyardSharedState.custodyEntryCount = custodyRes.error ? 0 : (custodyRes.data||[]).length;
   // لو فشل أي من مصادر المستحقات، الشاشة كانت بتعرض "0 ر.س" بدون أي رسالة — يعني عامر يقرأ
   // "ما في مستحقات" وهي فعليًا "ما قدرنا نحمّل". منعلّم الفشل حتى تعرضه الشاشة كخطأ.
-  scrapyardSharedState.homeLoadFailed = !!(usedRes.error || newRes.error || tasksRes.error || ordersRes.error);
+  scrapyardSharedState.homeLoadFailed = !!(usedRes.error || newRes.error || tasksRes.error || ordersRes.error || approvedRes.error);
   if(scrapyardSharedState.homeLoadFailed){
     showToast('تعذر تحميل بعض البيانات — الأرقام تحت ممكن تكون ناقصة. تحقق من الاتصال وحدّث الصفحة', 'error');
   }
@@ -10288,9 +10359,9 @@ function scrapyardGroupProposedSubtotal(group){
 }
 
 /* ---------- الصفحة الرئيسية لعامر (قسم المشتريات) — مؤشرات بالأعلى (زي الصفحة الرئيسية
-   الأساسية بالضبط: kpi-row/kpi-card)، وتحتها 3 أزرار تطوي/تفتح أقسامها بمكانها (زي طي/فتح
+   الأساسية بالضبط: kpi-row/kpi-card)، وتحتها أزرار تطوي/تفتح أقسامها بمكانها (زي طي/فتح
    "الطلبيات"/"طلبات التسعير" بالواجهة الرئيسية) — قسم وحد مفتوح بالمرة. ---------- */
-let scrapyardHomeOpenSection = null; // null | 'settlement' | 'quotes' | 'tasks'
+let scrapyardHomeOpenSection = null; // null | 'settlement' | 'quotes' | 'approved' | 'tasks'
 
 function purchasesTasksListHtml(){
   const tasks = scrapyardSharedState.tasks || [];
@@ -10371,6 +10442,7 @@ function renderScrapyardHomeView(){
     '<div class="new-order-btn-row top-toggle-row">' +
       '<button type="button" class="btn btn-primary btn-with-badge" id="btn-toggle-scrapyard-settlement" aria-expanded="'+(scrapyardHomeOpenSection==='settlement'?'true':'false')+'">السداد<span class="tasks-badge" style="'+(settlementUnseen>0?'display:flex;':'display:none;')+'">'+(settlementUnseen>0?settlementUnseen:'')+'</span></button>' +
       '<button type="button" class="btn btn-amber btn-with-badge" id="btn-toggle-scrapyard-quotes" aria-expanded="'+(scrapyardHomeOpenSection==='quotes'?'true':'false')+'">طلبات التسعير<span class="tasks-badge" style="'+(pendingQuotes>0?'display:flex;':'display:none;')+'">'+(pendingQuotes>0?pendingQuotes:'')+'</span></button>' +
+      '<button type="button" class="btn btn-ghost" id="btn-toggle-scrapyard-approved" aria-expanded="'+(scrapyardHomeOpenSection==='approved'?'true':'false')+'">✅ التسعيرات المعتمدة</button>' +
       '<button type="button" class="btn btn-ghost btn-with-badge" id="btn-toggle-scrapyard-tasks" aria-expanded="'+(scrapyardHomeOpenSection==='tasks'?'true':'false')+'">المهام<span class="tasks-badge" style="'+(pendingTasks>0?'display:flex;':'display:none;')+'">'+(pendingTasks>0?pendingTasks:'')+'</span></button>' +
     '</div>' +
     '<div id="scrapyard-home-settlement-section" style="'+(scrapyardHomeOpenSection==='settlement'?'':'display:none;')+'">' +
@@ -10381,6 +10453,9 @@ function renderScrapyardHomeView(){
     '</div>' +
     '<div id="scrapyard-home-quotes-section" style="'+(scrapyardHomeOpenSection==='quotes'?'':'display:none;')+'">' +
       '<div class="task-items-list" id="scrapyard-quotes-items-list">'+quotesListHtml()+'</div>' +
+    '</div>' +
+    '<div id="scrapyard-home-approved-section" style="'+(scrapyardHomeOpenSection==='approved'?'':'display:none;')+'">' +
+      '<div class="task-items-list" id="scrapyard-approved-quotes-items-list">'+approvedQuotesListHtml()+'</div>' +
     '</div>' +
     '<div id="scrapyard-home-tasks-section" style="'+(scrapyardHomeOpenSection==='tasks'?'':'display:none;')+'">' +
       '<div class="task-items-list">'+purchasesTasksListHtml()+'</div>' +
@@ -10395,7 +10470,7 @@ function renderScrapyardHomeView(){
   if(whoOnlineBtnScrapyardHome) whoOnlineBtnScrapyardHome.addEventListener('click', showWhoIsOnline);
   refreshOnlineBadge();
 
-  const sections = ['settlement','quotes','tasks'];
+  const sections = ['settlement','quotes','approved','tasks'];
   sections.forEach(key=>{
     document.getElementById('btn-toggle-scrapyard-'+key).addEventListener('click', ()=>{
       scrapyardHomeOpenSection = (scrapyardHomeOpenSection===key) ? null : key;
@@ -10412,6 +10487,7 @@ function renderScrapyardHomeView(){
   });
 
   bindScrapyardQuoteRowEvents();
+  bindScrapyardApprovedQuoteRowEvents();
   bindScrapyardHomeTasksEvents();
 }
 
