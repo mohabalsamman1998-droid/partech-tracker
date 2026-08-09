@@ -1346,25 +1346,34 @@ function orderTotals(order){
   const noActiveParts = activeParts.length===0 && (order.parts||[]).length>0;
   const feeEnabled = !!order.feeEnabled;
   const feePercent = Math.max(0, Number(order.feePercent)||0);
-  const feeAmount = (hasSell && feeEnabled) ? round2(partsSellTotal * feePercent / 100) : 0;
+  // مبالغ "محتفظ فيها" من قطع/طلبيات رجعت واختار المستخدم عدم استرجاع نسبتها المضافة للزبون
+  // (تخييرFeeReturn) — تتجمّد وقت الإرجاع وتضل مضافة دائمًا، بغض النظر عن partsSellTotal الحالي
+  // أو حتى تفعيل feeEnabled/serviceFeeEnabled/deliveryFeeEnabled لاحقًا (قرار مالي مؤكد وقتها)
+  const returnKeptFeeAmount = round2(Math.max(0, Number(order.returnKeptFeeAmount)||0));
+  const returnKeptServiceFeeAmount = round2(Math.max(0, Number(order.returnKeptServiceFeeAmount)||0));
+  const returnKeptDeliveryAmount = round2(Math.max(0, Number(order.returnKeptDeliveryAmount)||0));
+  const feeAmount = round2(((hasSell && feeEnabled) ? partsSellTotal * feePercent / 100 : 0) + returnKeptFeeAmount);
   const serviceFeeEnabled = !!order.serviceFeeEnabled;
   const serviceFeePercent = Math.max(0, Number(order.serviceFeePercent)||0);
-  const serviceFeeAmount = (hasSell && serviceFeeEnabled) ? round2(partsSellTotal * serviceFeePercent / 100) : 0;
+  const serviceFeeAmount = round2(((hasSell && serviceFeeEnabled) ? partsSellTotal * serviceFeePercent / 100 : 0) + returnKeptServiceFeeAmount);
   const deliveryFeeEnabled = !!order.deliveryFeeEnabled;
-  const deliveryFeeAmount = (hasSell && deliveryFeeEnabled) ? round2(Math.max(0, Number(order.deliveryFeeAmount)||0)) : 0;
+  const deliveryFeeAmount = round2(((hasSell && deliveryFeeEnabled) ? Math.max(0, Number(order.deliveryFeeAmount)||0) : 0) + returnKeptDeliveryAmount);
   const sellTotal = partsSellTotal + feeAmount + serviceFeeAmount + deliveryFeeAmount; // المبلغ الكامل المستحق من الزبون (شامل نسبة الخدمة، نسبة الخدمات، وأجور التوصيل)
   const customerPaidAmount = round2(computeCustomerPaidAmount(order));
   const customerPaidAmountForBox = round2(computeCustomerPaidAmountForBox(order));
-  const customerRemaining = hasSell ? round2(sellTotal - customerPaidAmount) : 0;
-  const customerFullyPaid = hasSell && customerRemaining <= 0.01;
+  // مبالغ محتفظ فيها بعد إرجاع كل القطع (hasSell=false) تخلي الزبون لسه مدين فيها — ما لازم
+  // "المتبقي" يتصفّر عالغلط متل حالة "لسه ما تسعّرت" العادية (اللي فيها فعليًا ما فيه شي مستحق)
+  const hasChargeable = hasSell || (returnKeptFeeAmount+returnKeptServiceFeeAmount+returnKeptDeliveryAmount) > 0.01;
+  const customerRemaining = hasChargeable ? round2(sellTotal - customerPaidAmount) : 0;
+  const customerFullyPaid = hasChargeable && customerRemaining <= 0.01;
   const profit = sellTotal - costTotal;
   // الربح المحصّل = أي مبلغ دفعه الزبون زيادة عن تكلفة القطع (استرداد التكلفة أولًا، ثم الزائد ربح محصّل).
   // مثال: تكلفة 1000، بيع 2000 (ربح 1000)، دُفع 1750 → محصّل = 1750-1000 = 750، غير محصّل = 1000-750 = 250.
   let collectedProfit = 0;
-  if(hasSell && profit>0){
+  if(hasChargeable && profit>0){
     collectedProfit = round2(Math.max(0, Math.min(customerPaidAmount - costTotal, profit)));
   }
-  const uncollectedProfit = hasSell ? round2(profit - collectedProfit) : 0;
+  const uncollectedProfit = hasChargeable ? round2(profit - collectedProfit) : 0;
   return {
     costTotal,
     costToScrapyard,
@@ -1384,6 +1393,7 @@ function orderTotals(order){
     customerRemaining,
     customerFullyPaid,
     hasSell,
+    hasChargeable,
     fullyPriced,
     allPartsReturned,
     noActiveParts,
@@ -1403,7 +1413,7 @@ function orderStatusFlags(order){
     waitingSupplierPayment: order.confirmed && order.supplied && t.costToSupplier>0 && !order.paidToSupplier,
     waitingSupply: order.confirmed && !order.supplied,
     waitingPricing: !t.hasSell && !t.allPartsReturned && !t.noActiveParts,
-    waitingCustomerPayment: order.confirmed && order.supplied && t.hasSell && !t.customerFullyPaid,
+    waitingCustomerPayment: order.confirmed && order.supplied && t.hasChargeable && !t.customerFullyPaid,
     complete: order.confirmed && order.supplied && (t.costToScrapyard===0 || order.paidToAmer) && (t.costToSupplier===0 || order.paidToSupplier) && t.customerFullyPaid && t.fullyPriced
   });
 }
@@ -2935,6 +2945,16 @@ function confirmReturnWholeOrder(){
     showToast('حدد المورد لكل قطعة مدفوعة مسبقًا قبل تأكيد الإرجاع', 'error');
     return;
   }
+  const t = orderTotals(draft);
+  const shareAmount = round2(t.feeAmount + t.serviceFeeAmount + t.deliveryFeeAmount);
+  if(shareAmount > 0.01){
+    openReturnFeeChoiceModal(shareAmount, true, (keepFee)=> proceedReturnWholeOrder(activeParts, keepFee));
+  } else {
+    proceedReturnWholeOrder(activeParts, false);
+  }
+}
+
+function proceedReturnWholeOrder(activeParts, keepFee){
   const anyPaid = activeParts.some(p=> p.used ? draft.paidToAmer : draft.paidToSupplier);
   confirmAction({
     title: 'تأكيد إرجاع الطلبية بالكامل ('+activeParts.length+' قطعة)؟',
@@ -2944,6 +2964,12 @@ function confirmReturnWholeOrder(){
     confirmLabel: 'تأكيد إرجاع الطلبية',
     dangerous: true,
     onConfirm: ()=>{
+      if(keepFee){
+        const t = orderTotals(draft);
+        draft.returnKeptFeeAmount = round2((draft.returnKeptFeeAmount||0) + t.feeAmount);
+        draft.returnKeptServiceFeeAmount = round2((draft.returnKeptServiceFeeAmount||0) + t.serviceFeeAmount);
+        draft.returnKeptDeliveryAmount = round2((draft.returnKeptDeliveryAmount||0) + t.deliveryFeeAmount);
+      }
       activeParts.forEach(p=>{ applyPartReturn(p); pendingPartProposalPurges.add(p.id); });
       refreshPartsList();
       refreshPaymentsList();
@@ -3023,6 +3049,16 @@ function confirmSinglePartReturn(part){
     showToast('حدد المورد لهذه القطعة قبل تأكيد الإرجاع', 'error');
     return;
   }
+  const s = computeReturnFeeShare(draft, part);
+  const shareAmount = round2(s.feeShare + s.serviceFeeShare);
+  if(shareAmount > 0.01){
+    openReturnFeeChoiceModal(shareAmount, false, (keepFee)=> proceedSinglePartReturn(part, hasReceivable, keepFee));
+  } else {
+    proceedSinglePartReturn(part, hasReceivable, false);
+  }
+}
+
+function proceedSinglePartReturn(part, hasReceivable, keepFee){
   confirmAction({
     title: 'تأكيد إرجاع هذه القطعة؟',
     message: hasReceivable
@@ -3031,6 +3067,11 @@ function confirmSinglePartReturn(part){
     confirmLabel: 'تأكيد الإرجاع',
     dangerous: true,
     onConfirm: ()=>{
+      if(keepFee){
+        const s = computeReturnFeeShare(draft, part);
+        draft.returnKeptFeeAmount = round2((draft.returnKeptFeeAmount||0) + s.feeShare);
+        draft.returnKeptServiceFeeAmount = round2((draft.returnKeptServiceFeeAmount||0) + s.serviceFeeShare);
+      }
       applyPartReturn(part);
       pendingPartProposalPurges.add(part.id);
       refreshPartsList();
@@ -3044,6 +3085,45 @@ function confirmSinglePartReturn(part){
    مو بس على draft المفتوح). تعليمها كمرتجعة، وإذا كان الزبون دفع أكثر من المطلوب بعد استبعادها
    (يعني كان دفع ثمنها ضمن دفعاته) نضيف تلقائيًا دفعة "مرتجع" سالبة الأثر تعادل الفرق،
    لحد ما يُحصّل مبلغها من المورد (عندها تُلغى تلقائيًا وترجع للحسابات — orderTotals يتكفّل بهيك). */
+/* حصة قطعة معيّنة من نسبة الخدمة/الخدمات المضافة حاليًا على الطلبية — نسبيًا حسب سعر بيعها من
+   مجموع سعر بيع كل القطع النشطة، قبل ما تُعلّم القطعة كمرتجعة (partsSellTotal بعدها بيهبط). */
+function computeReturnFeeShare(order, part){
+  const t = orderTotals(order);
+  const sellAmount = (part.sellPrice!==null && part.sellPrice!==undefined && part.sellPrice!=='') ? (Number(part.qty)||1)*Number(part.sellPrice) : 0;
+  if(sellAmount<=0 || t.partsSellTotal<=0) return { feeShare:0, serviceFeeShare:0 };
+  const ratio = sellAmount / t.partsSellTotal;
+  return { feeShare: round2(t.feeAmount*ratio), serviceFeeShare: round2(t.serviceFeeAmount*ratio) };
+}
+
+/* تخيير: يسترجع الزبون النسبة المضافة (وأجور التوصيل لو إرجاع طلبية كاملة) مع القطعة/الطلبية
+   المرتجعة، أو تحتفظ الطلبية فيها؟ عند "الاحتفاظ"، المبلغ يتجمّد فورًا (order.returnKept*) ويضل
+   مضافًا دائمًا (orderTotals)، حتى لو رجعت قطع تانية بعدين أو تغيّرت أسعار البيع. */
+function openReturnFeeChoiceModal(shareAmount, includesDelivery, onChoice){
+  const root = document.getElementById('confirm-root');
+  const title = includesDelivery ? 'استرجاع النسبة المضافة والتوصيل مع الطلبية؟' : 'استرجاع النسبة المضافة مع هذه القطعة؟';
+  const msg = 'المبلغ المرتبط: '+fmtMoney(shareAmount)+' ريال'+(includesDelivery ? ' (نسبة الخدمة/الخدمات + أجور التوصيل)' : ' (حصة هذه القطعة من نسبة الخدمة/الخدمات)')+'. يسترجعه الزبون مع الإرجاع، أو تحتفظ فيه الطلبية؟';
+  root.innerHTML =
+    '<div class="modal-backdrop" data-close-confirm>' +
+      '<div class="modal-card modal-card-sm" role="alertdialog" aria-modal="true">' +
+        '<div class="modal-title">'+escapeHtml(title)+'</div>' +
+        '<p class="modal-sub">'+escapeHtml(msg)+'</p>' +
+        '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;flex-wrap:wrap;">' +
+          '<button type="button" class="btn btn-ghost" id="fee-choice-cancel-btn">إلغاء</button>' +
+          '<button type="button" class="btn btn-ghost" id="fee-choice-keep-btn">الاحتفاظ بها</button>' +
+          '<button type="button" class="btn btn-primary" id="fee-choice-refund-btn">استرجاعها للزبون</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  root.querySelector('[data-close-confirm]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-confirm')) close();
+  });
+  root.querySelector('#fee-choice-cancel-btn').addEventListener('click', close);
+  root.querySelector('#fee-choice-keep-btn').addEventListener('click', ()=>{ close(); onChoice(true); });
+  root.querySelector('#fee-choice-refund-btn').addEventListener('click', ()=>{ close(); onChoice(false); });
+}
+
 function applyPartReturnOnOrder(order, part){
   const hasReceivable = part.used ? order.paidToAmer : order.paidToSupplier;
   part.returned = true;
@@ -3056,7 +3136,9 @@ function applyPartReturnOnOrder(order, part){
   // أبدًا، فأي عربون دفعه الزبون على طلبية رجعت قبل التسعير بيضل مسجّل عليه للأبد.
   // الاسترداد الصح مبني على الزيادة الفعلية: لو القطعة مسعّرة نحدّه بقيمتها، وإلا نرجّع الزيادة كلها.
   const t = orderTotals(order);
-  const overpay = round2(t.customerPaidAmount - (t.hasSell ? t.sellTotal : 0));
+  // t.sellTotal أصلًا 0 لما hasSell=false بدون مبالغ محتفظ فيها (returnKept*) — فاستخدامه مباشرة
+  // بيحافظ على نفس السلوك القديم، وبيمنع كمان اعتبار مبلغ محتفظ فيه "زيادة" ترجع للزبون بالغلط
+  const overpay = round2(t.customerPaidAmount - t.sellTotal);
   if(overpay > 0.01){
     const refundAmount = round2(sellAmount > 0 ? Math.min(overpay, sellAmount) : overpay);
     part.customerRefundConfirmed = false; // ما يخصم من الصندوق إلا بعد تأكيد صريح من شاشة العملاء إنه رجع فعليًا
@@ -5810,7 +5892,8 @@ async function withdrawEditProposal(proposalId){
   await refreshEditProposals();
 }
 
-function applyEditProposal(pr, orderOverride){
+function applyEditProposal(pr, orderOverride, opts){
+  opts = opts || {};
   const order = orderOverride || appData.orders.find(o=>o.id===pr.order_id);
   if(!order) return false;
   if(pr.kind === 'part_field'){
@@ -5861,6 +5944,11 @@ function applyEditProposal(pr, orderOverride){
     if(!part || part.returned) return false;
     const hasReceivable = part.used ? order.paidToAmer : order.paidToSupplier;
     if(hasReceivable && !part.supplierId) return false; // نفس شرط الإرجاع المباشر — لازم مورد محدد أولًا
+    if(opts.keepFee){
+      const s = computeReturnFeeShare(order, part);
+      order.returnKeptFeeAmount = round2((order.returnKeptFeeAmount||0) + s.feeShare);
+      order.returnKeptServiceFeeAmount = round2((order.returnKeptServiceFeeAmount||0) + s.serviceFeeShare);
+    }
     applyPartReturnOnOrder(order, part);
   } else if(pr.kind === 'order_return'){
     const activeParts = orderActiveParts(order).filter(p=>!p.returned);
@@ -5870,6 +5958,12 @@ function applyEditProposal(pr, orderOverride){
       return hasReceivable && !p.supplierId;
     });
     if(missingSupplier) return false;
+    if(opts.keepFee){
+      const t = orderTotals(order);
+      order.returnKeptFeeAmount = round2((order.returnKeptFeeAmount||0) + t.feeAmount);
+      order.returnKeptServiceFeeAmount = round2((order.returnKeptServiceFeeAmount||0) + t.serviceFeeAmount);
+      order.returnKeptDeliveryAmount = round2((order.returnKeptDeliveryAmount||0) + t.deliveryFeeAmount);
+    }
     activeParts.forEach(p=> applyPartReturnOnOrder(order, p));
   } else {
     return false;
@@ -5878,7 +5972,34 @@ function applyEditProposal(pr, orderOverride){
   return true;
 }
 
+/* إرجاع قطعة/طلبية عبر طلب تعديل (كتير غير مخوّل) — المخوّل يلي عم يقبل هو اللي بياخد قرار
+   استرجاع النسبة المضافة للزبون أو الاحتفاظ فيها، بنفس لحظة القبول (المتقدّم بالطلب ما بيُسأل
+   هالسؤال أصلًا، نفس مبدأ إن كل قرار مالي فعلي مقصور على المخوّلين) */
 function handleEditProposalDecision(proposalId, accept){
+  const pr = (editProposals||[]).find(p=>p.id===proposalId);
+  if(!pr) return;
+  const needsFeeChoice = accept && (pr.kind==='part_return' || pr.kind==='order_return');
+  if(needsFeeChoice){
+    const order = appData.orders.find(o=>o.id===pr.order_id);
+    let shareAmount = 0;
+    if(order){
+      if(pr.kind==='part_return'){
+        const part = (order.parts||[]).find(p=>p.id===pr.part_id);
+        if(part){ const s = computeReturnFeeShare(order, part); shareAmount = round2(s.feeShare+s.serviceFeeShare); }
+      } else {
+        const t = orderTotals(order);
+        shareAmount = round2(t.feeAmount + t.serviceFeeAmount + t.deliveryFeeAmount);
+      }
+    }
+    if(shareAmount > 0.01){
+      openReturnFeeChoiceModal(shareAmount, pr.kind==='order_return', (keepFee)=> proceedEditProposalDecision(proposalId, accept, keepFee));
+      return;
+    }
+  }
+  proceedEditProposalDecision(proposalId, accept, false);
+}
+
+function proceedEditProposalDecision(proposalId, accept, keepFee){
   const pr = (editProposals||[]).find(p=>p.id===proposalId);
   if(!pr) return;
   // نص مرجعي للطلبية يُلتقط الآن (نفس صيغة #الرقم — الاسم المستخدمة بكل مكان بهالمودال) — بعد
@@ -5936,7 +6057,7 @@ function handleEditProposalDecision(proposalId, accept){
             return;
           }
           const order = orderRowToObject(freshRow);
-          const applied = applyEditProposal(claimed, order);
+          const applied = applyEditProposal(claimed, order, {keepFee});
           if(!applied){
             showToast('تعذر تطبيق الطلب — الطلبية أو القطعة/الدفعة غير موجودة. رجّعنا الطلب مكانه', 'error');
             await restoreProposal();
@@ -5961,6 +6082,9 @@ function handleEditProposalDecision(proposalId, accept){
             draft.feeEnabled = order.feeEnabled;
             draft.serviceFeeEnabled = order.serviceFeeEnabled;
             draft.deliveryFeeEnabled = order.deliveryFeeEnabled;
+            draft.returnKeptFeeAmount = order.returnKeptFeeAmount;
+            draft.returnKeptServiceFeeAmount = order.returnKeptServiceFeeAmount;
+            draft.returnKeptDeliveryAmount = order.returnKeptDeliveryAmount;
             draft.updatedAt = order.updatedAt;
             draftOpenedAtUpdatedAt = order.updatedAt;
             refreshPartsList();
