@@ -2260,6 +2260,72 @@ function refreshFeeFieldsBlock(){
   updateModalTotals();
 }
 
+/* العميل المربوط بالطلبية — كان الحقل الوحيد بمستوى الطلبية يتعدّل مباشرة بعد التوريد بدون طلب،
+   حتى لغير المخوّل (رصيد العميل كان يقدر ينتقل بصمت لعميل تاني أو يختفي). نفس منطق المورد على
+   مستوى القطعة: اختيار مباشر = إرسال طلب فورًا لو مقفول. */
+function orderCustomerFieldHtml(d){
+  const pending = pendingFieldProposal('customerId', null);
+  if(pending) return editProposalPendingHtml(pending);
+  return searchableSelectHtml('order-customer-select-input',
+    (appData.customers||[]).map(c=>({id:c.id, label:c.name||c.phone||'عميل', sublabel:c.phone})),
+    d.customerId, '— بدون عميل محدد —');
+}
+
+function refreshOrderCustomerBlock(){
+  const wrap = document.getElementById('order-customer-select');
+  if(!wrap || !draft) return;
+  wrap.innerHTML = orderCustomerFieldHtml(draft);
+  bindOrderCustomerSelectEvents();
+}
+
+/* دالة على مستوى الملف (مو closure جوا attachModalHandlers) — لازم نفس الدالة تتوفر لزر
+   "➕ عميل جديد" (يتربط مرة وحدة بـattachModalHandlers) ولخيار "إضافة كعميل جديد" جوا القائمة
+   المنسدلة (يتربط من جديد كل refreshOrderCustomerBlock)، وكلاهما لازم يحترم fieldGated() لحظيًا */
+function orderQuickAddCustomer(prefill){
+  openQuickAddCustomerModal((newCustomer)=>{
+    if(fieldGated()){ requestOrderCustomerChange(newCustomer.id); return; }
+    draft.customerId = newCustomer.id;
+    draft.customerPhone = newCustomer.phone || '';
+    const wrap = document.querySelector('#order-customer-select .searchable-select');
+    if(wrap){
+      wrap.setAttribute('data-selected-id', newCustomer.id);
+      const input = wrap.querySelector('.searchable-select-input');
+      if(input){
+        input.value = newCustomer.name || newCustomer.phone || 'عميل';
+        input.classList.remove('select-empty-warn');
+      }
+    }
+  }, prefill);
+}
+
+function bindOrderCustomerSelectEvents(){
+  const root = document.getElementById('modal-root');
+  const selectWrap = root.querySelector('#order-customer-select .searchable-select');
+  if(!selectWrap) return; // بادج طلب معلّق ظاهرة بدالها — ما فيه دروب-داون يُربط
+  bindSearchableSelect(selectWrap,
+    ()=> (appData.customers||[]).map(c=>({id:c.id, label:c.name||c.phone||'عميل', sublabel:c.phone})),
+    (id)=>{
+      if(fieldGated()){ requestOrderCustomerChange(id || null); return; }
+      draft.customerId = id || null;
+      const c = (appData.customers||[]).find(c=>c.id===draft.customerId);
+      draft.customerPhone = c ? (c.phone||'') : '';
+    },
+    (typedText)=> orderQuickAddCustomer(looksLikePhoneNumber(typedText) ? {phone: typedText} : {name: typedText})
+  );
+}
+
+async function requestOrderCustomerChange(newCustomerId){
+  if(pendingFieldProposal('customerId', null)){ showToast('في طلب تعديل عميل معلّق أصلًا لهذه الطلبية', 'error'); refreshOrderCustomerBlock(); return; }
+  const { error } = await sb.from('edit_proposals').insert({
+    order_id: draft.id, kind: 'order_field', field: 'customerId', part_id: null,
+    current_value: draft.customerId, proposed_value: newCustomerId, submitted_by: presenceEmail
+  });
+  if(error){ showToast('تعذر إرسال الطلب', 'error'); refreshOrderCustomerBlock(); return; }
+  showToast('تم إرسال طلب تعديل العميل', 'ok');
+  await refreshEditProposals();
+  refreshOrderCustomerBlock();
+}
+
 function partRowHtml(p, i){
   const costVal = (p.costPrice===''||p.costPrice==null) ? '' : p.costPrice;
   const sellVal = (p.sellPrice===''||p.sellPrice==null) ? '' : p.sellPrice;
@@ -2298,6 +2364,16 @@ function partRowHtml(p, i){
   const usedFieldUi = fieldRequestUiHtml('used', p.id, p.used, '<span class="field-readonly-value">'+(p.used?'مستعمل':'غير مستعمل')+'</span>');
   const usedBadgeHtml = usedFieldUi!=null ? usedFieldUi : '<button type="button" class="used-badge'+(p.used?'':' used-badge-off')+'" data-toggle-used="'+escapeHtml(p.id)+'">'+(p.used?'مستعمل':'غير مستعمل')+' ✏️</button>';
 
+  // المورد/التشليح — كان الحقل الوحيد بصف القطعة يتعدّل مباشرة بعد التوريد بدون طلب، حتى لغير
+  // المخوّل (مديونية المورد كانت تنتقل بصمت). دروب-داون مو نص، فبنعتمد اختيار مباشر = إرسال طلب
+  // فورًا (بدل التركيبة العادية إدخال+إرسال) لو مقفول، مع بادج الطلب المعلّق نفسها لباقي الحقول.
+  const pendingSupplierProposal = pendingFieldProposal('supplierId', p.id);
+  const supplierFieldHtml = pendingSupplierProposal
+    ? editProposalPendingHtml(pendingSupplierProposal)
+    : searchableSelectHtml('part-supplier-select',
+        (appData.suppliers||[]).filter(s=> p.used ? s.handlesUsed : s.handlesNew).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
+        p.supplierId, p.used?'— بدون تشليح —':'— بدون مورد —');
+
   const excludeProposal = pendingPartActionProposal('part_exclude', p.id);
   const includeCheckHtml = !selectionOn ? '' : (
     excludeProposal
@@ -2318,11 +2394,7 @@ function partRowHtml(p, i){
       '<label class="mini-label">العدد'+qtyHtml+'</label>' +
       '<label class="mini-label mini-label-cost">سعر الشراء'+costHtml+'</label>' +
       '<label class="mini-label mini-label-sell">سعر البيع'+sellHtml+'</label>' +
-      '<label class="mini-label mini-label-supplier">'+(p.used?'التشليح':'المورد')+
-        searchableSelectHtml('part-supplier-select',
-          (appData.suppliers||[]).filter(s=> p.used ? s.handlesUsed : s.handlesNew).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
-          p.supplierId, p.used?'— بدون تشليح —':'— بدون مورد —') +
-      '</label>' +
+      '<label class="mini-label mini-label-supplier">'+(p.used?'التشليح':'المورد')+supplierFieldHtml+'</label>' +
     '</div>' +
     '<button type="button" class="part-remove-btn" data-part-actions="'+escapeHtml(p.id)+'" aria-label="خيارات القطعة (حذف أو إرجاع)">⋯</button>' +
   '</div>';
@@ -2342,11 +2414,7 @@ function modalHtml(d){
         '<div class="field">' +
           '<span class="field-label">العميل (اختياري)</span>' +
           '<div class="phone-field-row">' +
-            '<div id="order-customer-select" style="flex:1;">' +
-              searchableSelectHtml('order-customer-select-input',
-                (appData.customers||[]).map(c=>({id:c.id, label:c.name||c.phone||'عميل', sublabel:c.phone})),
-                d.customerId, '— بدون عميل محدد —') +
-            '</div>' +
+            '<div id="order-customer-select" style="flex:1;">'+orderCustomerFieldHtml(d)+'</div>' +
             '<button type="button" class="icon-btn" id="order-add-customer-btn" aria-label="عميل جديد">➕</button>' +
           '</div>' +
         '</div>' +
@@ -2638,30 +2706,7 @@ function attachModalHandlers(){
   root.querySelector('#modal-cancel-btn').addEventListener('click', closeModal);
 
   root.querySelector('#order-label-input').addEventListener('input', e=>{ draft.orderLabel = e.target.value; });
-  const orderQuickAddCustomer = (prefill)=>{
-    openQuickAddCustomerModal((newCustomer)=>{
-      draft.customerId = newCustomer.id;
-      draft.customerPhone = newCustomer.phone || '';
-      const wrap = document.querySelector('#order-customer-select .searchable-select');
-      if(wrap){
-        wrap.setAttribute('data-selected-id', newCustomer.id);
-        const input = wrap.querySelector('.searchable-select-input');
-        if(input){
-          input.value = newCustomer.name || newCustomer.phone || 'عميل';
-          input.classList.remove('select-empty-warn');
-        }
-      }
-    }, prefill);
-  };
-  bindSearchableSelect(root.querySelector('#order-customer-select .searchable-select'),
-    ()=> (appData.customers||[]).map(c=>({id:c.id, label:c.name||c.phone||'عميل', sublabel:c.phone})),
-    (id)=>{
-      draft.customerId = id || null;
-      const c = (appData.customers||[]).find(c=>c.id===draft.customerId);
-      draft.customerPhone = c ? (c.phone||'') : '';
-    },
-    (typedText)=> orderQuickAddCustomer(looksLikePhoneNumber(typedText) ? {phone: typedText} : {name: typedText})
-  );
+  bindOrderCustomerSelectEvents();
   root.querySelector('#order-add-customer-btn').addEventListener('click', ()=> orderQuickAddCustomer());
   root.querySelector('#order-add-supplier-btn').addEventListener('click', ()=>{
     // ما فيه "مورد الطلبية" واحد نحط فيه المختار — كل قطعة إلها مورد مستقل، فهاي بس بتسجّل
@@ -2880,7 +2925,10 @@ function bindPartRowEvents(){
     if(supplierSelectWrap){
       bindSearchableSelect(supplierSelectWrap,
         ()=> (appData.suppliers||[]).filter(s=> part.used ? s.handlesUsed : s.handlesNew).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
-        (id)=>{ part.supplierId = id || null; }
+        (id)=>{
+          if(fieldGated()){ requestPartSupplierChange(part, id || null); return; }
+          part.supplierId = id || null;
+        }
       );
     }
     const actionsBtn = row.querySelector('[data-part-actions]');
@@ -5448,6 +5496,11 @@ function hideAllSecondaryViews(){
 }
 
 async function openTreasuryView(){
+  // زر الدخول مخفي عن غير المخوّلين بالواجهة بس — هذا مو حماية حقيقية (استدعاء الدالة مباشرة من
+  // console كان يفتح الشاشة عادي). صار عندنا حماية حقيقية بقاعدة البيانات (RLS على treasury_entries
+  // صارت is_elevated لا role='full')، بس هالفحص هون يمنع كمان فتح شاشة فاضية/مربكة أو محاولة
+  // استيراد/تصدير غير مفهومة الفشل لغير المخوّل.
+  if(!hasElevatedAccess()){ showToast('غير متاح', 'error'); return; }
   hideAllSecondaryViews();
   document.getElementById('treasury-view').style.display = 'block';
   document.getElementById('treasury-view').innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
@@ -5700,6 +5753,16 @@ function formatProposalFieldValue(field, value){
   if(field==='description') return value==null ? '—' : String(value);
   if(field==='feePercent' || field==='serviceFeePercent') return (value==null?0:value)+'%';
   if(field==='qty') return String(value==null?1:value);
+  if(field==='supplierId'){
+    if(!value) return '— بدون —';
+    const s = (appData.suppliers||[]).find(s=>s.id===value);
+    return s ? (s.name||s.phone||'مورد') : 'مورد محذوف';
+  }
+  if(field==='customerId'){
+    if(!value) return '— بدون —';
+    const c = (appData.customers||[]).find(c=>c.id===value);
+    return c ? (c.name||c.phone||'عميل') : 'عميل محذوف';
+  }
   return fmtMoney(Number(value)||0);
 }
 
@@ -5999,6 +6062,20 @@ function requestPartReturn(part){
    طلب بدل التنفيذ المباشر (نفس مبدأ requestPartReturn)، بس هالشاشتين (سجل المورد/سجل العميل)
    بتتفتحان مباشرة من قوائم الموردين/العملاء بدون ما يكون فيه طلبية مفتوحة بالضرورة، فما بنعتمد
    على draft — orderId/partId يوصلونا مباشرة من الصف نفسه */
+/* تغيير المورد/التشليح على قطعة بطلبية موردة — دروب-داون، فالاختيار نفسه هو "إدخال القيمة"،
+   ما في داعي لخطوة تركيب/إرسال منفصلة متل الحقول النصية. يرسل الطلب فورًا لحظة الاختيار. */
+async function requestPartSupplierChange(part, newSupplierId){
+  if(pendingFieldProposal('supplierId', part.id)){ showToast('في طلب تعديل مورد معلّق أصلًا لهذه القطعة', 'error'); refreshPartsList(); return; }
+  const { error } = await sb.from('edit_proposals').insert({
+    order_id: draft.id, kind: 'part_field', field: 'supplierId', part_id: part.id,
+    current_value: part.supplierId, proposed_value: newSupplierId, submitted_by: presenceEmail
+  });
+  if(error){ showToast('تعذر إرسال الطلب', 'error'); refreshPartsList(); return; }
+  showToast('تم إرسال طلب تعديل المورد', 'ok');
+  await refreshEditProposals();
+  refreshPartsList();
+}
+
 async function requestReturnCollect(orderId, partId){
   if(pendingActionProposalFor('return_collect', orderId, partId)) return;
   const { error } = await sb.from('edit_proposals').insert({
@@ -6083,6 +6160,7 @@ function applyEditProposal(pr, orderOverride, opts){
     else if(pr.field === 'description') part.description = String(pr.proposed_value||'');
     else if(pr.field === 'qty') part.qty = Math.max(1, Number(pr.proposed_value)||1);
     else if(pr.field === 'used'){ part.used = !!pr.proposed_value; part.supplierId = null; }
+    else if(pr.field === 'supplierId') part.supplierId = pr.proposed_value || null;
     else return false;
   } else if(pr.kind === 'order_field'){
     if(pr.field === 'feePercent') order.feePercent = Math.max(0, Number(pr.proposed_value)||0);
@@ -6091,6 +6169,11 @@ function applyEditProposal(pr, orderOverride, opts){
     else if(pr.field === 'feeEnabled') order.feeEnabled = !!pr.proposed_value;
     else if(pr.field === 'serviceFeeEnabled') order.serviceFeeEnabled = !!pr.proposed_value;
     else if(pr.field === 'deliveryFeeEnabled') order.deliveryFeeEnabled = !!pr.proposed_value;
+    else if(pr.field === 'customerId'){
+      order.customerId = pr.proposed_value || null;
+      const c = (appData.customers||[]).find(c=>c.id===order.customerId);
+      order.customerPhone = c ? (c.phone||'') : '';
+    }
     else return false;
   } else if(pr.kind === 'payment_add'){
     if(!Array.isArray(order.customerPayments)) order.customerPayments = [];
@@ -6293,6 +6376,8 @@ function proceedEditProposalDecision(proposalId, accept, keepFee){
           if(draft && draft.id === order.id){
             draft.parts = JSON.parse(JSON.stringify(order.parts||[]));
             draft.customerPayments = JSON.parse(JSON.stringify(order.customerPayments||[]));
+            draft.customerId = order.customerId;
+            draft.customerPhone = order.customerPhone;
             draft.feePercent = order.feePercent;
             draft.serviceFeePercent = order.serviceFeePercent;
             draft.deliveryFeeAmount = order.deliveryFeeAmount;
@@ -6306,6 +6391,7 @@ function proceedEditProposalDecision(proposalId, accept, keepFee){
             draftOpenedAtUpdatedAt = order.updatedAt;
             refreshPartsList();
             refreshFeeFieldsBlock();
+            refreshOrderCustomerBlock();
             refreshPaymentsList();
             updateModalTotals();
           }
@@ -6347,6 +6433,7 @@ async function refreshEditProposals(){
   if(draft && !modalListFocused()){
     refreshPartsList();
     refreshFeeFieldsBlock();
+    refreshOrderCustomerBlock();
     refreshPaymentsList();
     refreshOrderActionButtons();
   }
@@ -6608,7 +6695,8 @@ function bindEditProposalGlobalDelegation(){
 const EDIT_PROPOSAL_FIELD_LABELS = {
   description:'اسم القطعة', costPrice:'سعر الشراء', sellPrice:'سعر البيع', qty:'العدد', used:'تصنيف القطعة',
   feePercent:'نسبة الرسوم', serviceFeePercent:'نسبة رسوم الخدمة', deliveryFeeAmount:'رسوم التوصيل',
-  feeEnabled:'تفعيل نسبة الرسوم', serviceFeeEnabled:'تفعيل رسوم الخدمة', deliveryFeeEnabled:'تفعيل رسوم التوصيل'
+  feeEnabled:'تفعيل نسبة الرسوم', serviceFeeEnabled:'تفعيل رسوم الخدمة', deliveryFeeEnabled:'تفعيل رسوم التوصيل',
+  supplierId:'المورد/التشليح', customerId:'العميل'
 };
 function editProposalKindLabel(pr){
   if(pr.kind==='part_field' || pr.kind==='order_field') return EDIT_PROPOSAL_FIELD_LABELS[pr.field] || pr.field;
