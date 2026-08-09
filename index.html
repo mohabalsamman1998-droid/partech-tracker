@@ -2969,8 +2969,17 @@ function proceedReturnWholeOrder(activeParts, keepFee){
         draft.returnKeptFeeAmount = round2((draft.returnKeptFeeAmount||0) + t.feeAmount);
         draft.returnKeptServiceFeeAmount = round2((draft.returnKeptServiceFeeAmount||0) + t.serviceFeeAmount);
         draft.returnKeptDeliveryAmount = round2((draft.returnKeptDeliveryAmount||0) + t.deliveryFeeAmount);
+        activeParts.forEach(p=>{ applyPartReturn(p, 0); pendingPartProposalPurges.add(p.id); });
+      } else {
+        // التوصيل مبلغ ثابت للطلبية كلها مو نسبي لأي قطعة — بيهبط تلقائيًا لصفر بس آخر قطعة نشطة
+        // ترجع (hasSell يصير false)، فحصته تُضاف لسقف دفعة المرتجع لآخر قطعة بالحلقة تحديدًا
+        activeParts.forEach((p,i)=>{
+          const s = computeReturnFeeShare(draft, p);
+          const deliveryShare = (i===activeParts.length-1) ? orderTotals(draft).deliveryFeeAmount : 0;
+          applyPartReturn(p, round2(s.feeShare + s.serviceFeeShare + deliveryShare));
+          pendingPartProposalPurges.add(p.id);
+        });
       }
-      activeParts.forEach(p=>{ applyPartReturn(p); pendingPartProposalPurges.add(p.id); });
       refreshPartsList();
       refreshPaymentsList();
     }
@@ -3067,12 +3076,14 @@ function proceedSinglePartReturn(part, hasReceivable, keepFee){
     confirmLabel: 'تأكيد الإرجاع',
     dangerous: true,
     onConfirm: ()=>{
+      const s = computeReturnFeeShare(draft, part);
       if(keepFee){
-        const s = computeReturnFeeShare(draft, part);
         draft.returnKeptFeeAmount = round2((draft.returnKeptFeeAmount||0) + s.feeShare);
         draft.returnKeptServiceFeeAmount = round2((draft.returnKeptServiceFeeAmount||0) + s.serviceFeeShare);
+        applyPartReturn(part, 0);
+      } else {
+        applyPartReturn(part, round2(s.feeShare + s.serviceFeeShare));
       }
-      applyPartReturn(part);
       pendingPartProposalPurges.add(part.id);
       refreshPartsList();
       refreshPaymentsList();
@@ -3124,7 +3135,11 @@ function openReturnFeeChoiceModal(shareAmount, includesDelivery, onChoice){
   root.querySelector('#fee-choice-refund-btn').addEventListener('click', ()=>{ close(); onChoice(false); });
 }
 
-function applyPartReturnOnOrder(order, part){
+/* extraRefundCap: مبلغ إضافي (حصة هذي القطعة من النسبة المضافة، وأجور التوصيل لو هاي آخر قطعة
+   بإرجاع طلبية كاملة) يُسمح لدفعة المرتجع تغطيه فوق سعر بيع القطعة نفسها — لولاه أي "زيادة" غير
+   مرتبطة بهالقطعة تحديدًا (زبون دافع أكتر من المطلوب لسبب تاني) ما لازم تُنسب لإرجاعها. */
+function applyPartReturnOnOrder(order, part, extraRefundCap){
+  extraRefundCap = round2(Math.max(0, Number(extraRefundCap)||0));
   const hasReceivable = part.used ? order.paidToAmer : order.paidToSupplier;
   part.returned = true;
   part.returnHasReceivable = hasReceivable;
@@ -3140,7 +3155,8 @@ function applyPartReturnOnOrder(order, part){
   // بيحافظ على نفس السلوك القديم، وبيمنع كمان اعتبار مبلغ محتفظ فيه "زيادة" ترجع للزبون بالغلط
   const overpay = round2(t.customerPaidAmount - t.sellTotal);
   if(overpay > 0.01){
-    const refundAmount = round2(sellAmount > 0 ? Math.min(overpay, sellAmount) : overpay);
+    const cap = round2(sellAmount + extraRefundCap);
+    const refundAmount = round2(cap > 0 ? Math.min(overpay, cap) : overpay);
     part.customerRefundConfirmed = false; // ما يخصم من الصندوق إلا بعد تأكيد صريح من شاشة العملاء إنه رجع فعليًا
     if(!Array.isArray(order.customerPayments)) order.customerPayments = [];
     order.customerPayments.push({
@@ -3150,7 +3166,7 @@ function applyPartReturnOnOrder(order, part){
   }
 }
 
-function applyPartReturn(part){ applyPartReturnOnOrder(draft, part); }
+function applyPartReturn(part, extraRefundCap){ applyPartReturnOnOrder(draft, part, extraRefundCap); }
 
 function bindPaymentRowEvents(){
   const root = document.getElementById('modal-root');
@@ -5944,12 +5960,14 @@ function applyEditProposal(pr, orderOverride, opts){
     if(!part || part.returned) return false;
     const hasReceivable = part.used ? order.paidToAmer : order.paidToSupplier;
     if(hasReceivable && !part.supplierId) return false; // نفس شرط الإرجاع المباشر — لازم مورد محدد أولًا
+    const s = computeReturnFeeShare(order, part);
     if(opts.keepFee){
-      const s = computeReturnFeeShare(order, part);
       order.returnKeptFeeAmount = round2((order.returnKeptFeeAmount||0) + s.feeShare);
       order.returnKeptServiceFeeAmount = round2((order.returnKeptServiceFeeAmount||0) + s.serviceFeeShare);
+      applyPartReturnOnOrder(order, part, 0);
+    } else {
+      applyPartReturnOnOrder(order, part, round2(s.feeShare + s.serviceFeeShare));
     }
-    applyPartReturnOnOrder(order, part);
   } else if(pr.kind === 'order_return'){
     const activeParts = orderActiveParts(order).filter(p=>!p.returned);
     if(!activeParts.length) return false;
@@ -5963,8 +5981,14 @@ function applyEditProposal(pr, orderOverride, opts){
       order.returnKeptFeeAmount = round2((order.returnKeptFeeAmount||0) + t.feeAmount);
       order.returnKeptServiceFeeAmount = round2((order.returnKeptServiceFeeAmount||0) + t.serviceFeeAmount);
       order.returnKeptDeliveryAmount = round2((order.returnKeptDeliveryAmount||0) + t.deliveryFeeAmount);
+      activeParts.forEach(p=> applyPartReturnOnOrder(order, p, 0));
+    } else {
+      activeParts.forEach((p,i)=>{
+        const ps = computeReturnFeeShare(order, p);
+        const deliveryShare = (i===activeParts.length-1) ? orderTotals(order).deliveryFeeAmount : 0;
+        applyPartReturnOnOrder(order, p, round2(ps.feeShare + ps.serviceFeeShare + deliveryShare));
+      });
     }
-    activeParts.forEach(p=> applyPartReturnOnOrder(order, p));
   } else {
     return false;
   }
