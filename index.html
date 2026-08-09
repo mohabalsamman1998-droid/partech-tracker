@@ -2159,6 +2159,7 @@ function feeFieldRowHtml(d){
   return '<div id="order-fee-fields-wrap">' +
     '<label class="toggle-row">'+feeToggleHtml+'<span>احتساب نسبة رسوم خدمة وتوصيل</span></label>' +
     '<div class="fee-percent-row" id="order-fee-percent-row" style="'+(d.feeEnabled?'':'display:none;')+'"><span>النسبة</span>'+feePercentInputHtml+'<span>%</span><span class="fee-amount-preview" id="fee-amount-preview"></span></div>' +
+    (feePercentUi==null ? '<div class="fee-percent-row" id="order-fee-amount-row" style="'+(d.feeEnabled?'':'display:none;')+'"><span>أو المبلغ مباشرة</span><input type="number" min="0" step="0.5" id="order-fee-amount-input" class="num" placeholder="0"><span>ر.س</span></div>' : '') +
     '<label class="toggle-row">'+serviceFeeToggleHtml+'<span>احتساب نسبة رسوم خدمات</span></label>' +
     '<div class="fee-percent-row" id="order-service-fee-percent-row" style="'+(d.serviceFeeEnabled?'':'display:none;')+'"><span>النسبة</span>'+serviceFeePercentInputHtml+'<span>%</span><span class="service-fee-amount-preview" id="service-fee-amount-preview"></span></div>' +
     // خيار عكسي: تدخل المبلغ يلي تبيه مباشرة بدل النسبة، وهو يحسبلك كم نسبة تعادله من سعر القطع
@@ -2177,11 +2178,22 @@ function bindFeeFieldEvents(){
     draft.feeEnabled = e.target.checked;
     const row = document.getElementById('order-fee-percent-row');
     if(row) row.style.display = e.target.checked ? '' : 'none';
+    const amountRow = document.getElementById('order-fee-amount-row');
+    if(amountRow) amountRow.style.display = e.target.checked ? '' : 'none';
     updateModalTotals();
   });
   const feePercentInput = root.querySelector('#order-fee-percent-input');
   if(feePercentInput) feePercentInput.addEventListener('input', (e)=>{
     draft.feePercent = e.target.value===''? 0 : Math.max(0, Number(e.target.value)||0);
+    updateModalTotals();
+  });
+  const feeAmountInput = root.querySelector('#order-fee-amount-input');
+  if(feeAmountInput) feeAmountInput.addEventListener('input', (e)=>{
+    const amount = e.target.value===''? 0 : Math.max(0, Number(e.target.value)||0);
+    const partsSellTotal = orderTotals(draft).partsSellTotal;
+    draft.feePercent = partsSellTotal>0 ? round2(amount / partsSellTotal * 100) : 0;
+    const percentInput = document.getElementById('order-fee-percent-input');
+    if(percentInput) percentInput.value = draft.feePercent || '';
     updateModalTotals();
   });
   const serviceFeeToggle = root.querySelector('#order-service-fee-toggle');
