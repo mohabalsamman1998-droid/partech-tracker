@@ -812,6 +812,10 @@
   .doc-table td{border:1px solid #E2E2E2;padding:8px 10px;color:#222;}
   .doc-table td:first-child{text-align:right;}
   .doc-table tbody tr:nth-child(even){background:#FAFAFA;}
+  /* مستندات طويلة (كشف حساب فيه عدة طلبيات) ممكن تتجاوز صفحة وحدة عند الطباعة/PDF — بدون هالقواعد
+     كانت الصفوف تنقطع بمنتصفها عبر حد الصفحة (فجوة فاضية غريبة + صف مقسوم بين صفحتين) */
+  .doc-table tr, .doc-section-title{break-inside:avoid;page-break-inside:avoid;}
+  .doc-table thead{display:table-header-group;}
 
   .doc-vat-toggle{display:flex;align-items:center;gap:6px;margin-top:10px;font-size:12px;color:#666;cursor:pointer;font-family:'Tajawal',sans-serif;}
   .doc-vat-toggle input{cursor:pointer;}
@@ -5535,7 +5539,12 @@ let statementShowPaid = true;
 let statementShowRefunds = true;
 
 function statementPdfFilename(customer){
-  return 'PARTECH-كشف-حساب-' + (customer ? (customer.name||customer.phone||'عميل') : 'عميل') + '.pdf';
+  // اسم الملف لازم ASCII بالكامل (بدون عربي ولا مسافات) — اسم عربي كان يطلع مشفّر/معطوب
+  // (mojibake) لما يتشارك عبر بعض تطبيقات المشاركة (واتساب أندرويد مثلًا)، نفس مبدأ
+  // docPdfFilename يلي أصلًا بيعتمد رقم الطلبية (ASCII) لا اسم العميل/النوع بالعربي
+  const phoneDigits = customer && customer.phone ? String(customer.phone).replace(/[^0-9]/g,'') : '';
+  const safeId = phoneDigits || (customer ? customer.id : 'customer');
+  return 'PARTECH-Statement-' + safeId + '.pdf';
 }
 
 function statementOrderRowsHtml(rows){
@@ -5609,17 +5618,17 @@ function customerStatementHtml(customer, ongoing, past, refunds, opts){
           '<div class="doc-totals-row grand"><span>الرصيد الصافي '+(net>=0?'(عليه)':'(له)')+'</span><span class="num">'+fmtNum(Math.abs(net))+' ريال</span></div>' +
         '</div>' +
         (ongoing.length ? (
-          '<div style="font-weight:700;margin:10px 0;">طلبيات جارية</div>' +
+          '<div class="doc-section-title" style="font-weight:700;margin:10px 0;">طلبيات جارية</div>' +
           '<table class="doc-table"><thead><tr><th>الطلبية</th><th>التاريخ</th><th>الإجمالي</th><th>الحالة</th></tr></thead>' +
           '<tbody>'+statementOrderRowsHtml(ongoing)+'</tbody></table>'
         ) : '') +
         (showPaid && past.length ? (
-          '<div style="font-weight:700;margin:16px 0 10px;">طلبيات مسددة</div>' +
+          '<div class="doc-section-title" style="font-weight:700;margin:16px 0 10px;">طلبيات مسددة</div>' +
           '<table class="doc-table"><thead><tr><th>الطلبية</th><th>التاريخ</th><th>الإجمالي</th><th>الحالة</th></tr></thead>' +
           '<tbody>'+statementOrderRowsHtml(past)+'</tbody></table>'
         ) : '') +
         (showRefunds && refunds.length ? (
-          '<div style="font-weight:700;margin:16px 0 10px;">مرتجعات مستحقة</div>' +
+          '<div class="doc-section-title" style="font-weight:700;margin:16px 0 10px;">مرتجعات مستحقة</div>' +
           '<table class="doc-table"><thead><tr><th>الطلبية</th><th>القطعة</th><th>المبلغ</th></tr></thead><tbody>' +
           refunds.map(r=>'<tr data-open-order="'+escapeHtml(r.orderId)+'" style="cursor:pointer;"><td>'+escapeHtml(r.orderNumber||'')+(r.orderLabel?' — '+escapeHtml(r.orderLabel):'')+'</td><td>'+escapeHtml(r.description||'')+'</td><td style="text-align:center;" class="num">'+fmtNum(r.amount)+'</td></tr>').join('') +
           '</tbody></table>'
