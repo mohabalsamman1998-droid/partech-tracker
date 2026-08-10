@@ -5543,8 +5543,13 @@ function statementOrderRowsHtml(rows){
       : (r.remaining>0.01
         ? '<span class="num text-rust">'+fmtNum(r.remaining)+'</span>'
         : '<span class="num text-green">مسدد</span>');
-    return '<tr>' +
-      '<td>'+escapeHtml(r.orderNumber||'')+(r.orderLabel?' — '+escapeHtml(r.orderLabel):'')+'</td>' +
+    // الصف كله قابل للضغط لفتح الطلبية (data-open-order)، وزر ✏️ يفتح تعديل سريع لعنوان الطلبية
+    // بمكانه بدون ما يفتح الطلبية كمان (stopPropagation بمكان الربط) — انظر openCustomerStatementView
+    return '<tr data-open-order="'+escapeHtml(r.orderId)+'" style="cursor:pointer;">' +
+      '<td><span class="statement-order-label-cell" data-label-cell="'+escapeHtml(r.orderId)+'">' +
+        '<span class="statement-order-label-text">'+escapeHtml(r.orderNumber||'')+(r.orderLabel?' — '+escapeHtml(r.orderLabel):'')+'</span> ' +
+        '<button type="button" class="icon-btn no-print" data-edit-order-label="'+escapeHtml(r.orderId)+'" title="تعديل عنوان الطلبية" aria-label="تعديل عنوان الطلبية" style="padding:1px 5px;font-size:12px;">✏️</button>' +
+      '</span></td>' +
       '<td style="text-align:center;">'+isoToDisplayDate(r.date)+'</td>' +
       '<td style="text-align:center;" class="num">'+(r.hasChargeable===false?'—':fmtNum(r.total))+'</td>' +
       '<td style="text-align:center;">'+statusHtml+'</td>' +
@@ -5604,7 +5609,7 @@ function customerStatementHtml(customer, ongoing, past, refunds){
         (refunds.length ? (
           '<div style="font-weight:700;margin:16px 0 10px;">مبالغ مستحقة للعميل (قطع مرتجعة لسه ما ردّت)</div>' +
           '<table class="doc-table"><thead><tr><th>الطلبية</th><th>القطعة</th><th>المبلغ</th></tr></thead><tbody>' +
-          refunds.map(r=>'<tr><td>'+escapeHtml(r.orderNumber||'')+(r.orderLabel?' — '+escapeHtml(r.orderLabel):'')+'</td><td>'+escapeHtml(r.description||'')+'</td><td style="text-align:center;" class="num">'+fmtNum(r.amount)+'</td></tr>').join('') +
+          refunds.map(r=>'<tr data-open-order="'+escapeHtml(r.orderId)+'" style="cursor:pointer;"><td>'+escapeHtml(r.orderNumber||'')+(r.orderLabel?' — '+escapeHtml(r.orderLabel):'')+'</td><td>'+escapeHtml(r.description||'')+'</td><td style="text-align:center;" class="num">'+fmtNum(r.amount)+'</td></tr>').join('') +
           '</tbody></table>'
         ) : '') +
         (!ongoing.length && !past.length ? '<p class="add-part-locked-hint">ما فيه طلبيات مسجّلة لهذا العميل بعد</p>' : '') +
@@ -5751,6 +5756,46 @@ function closeStatementView(){
   document.removeEventListener('keydown', statementEscListener);
 }
 
+// إعادة جلب الطلبية بلحظة الحفظ نفسها (مو أي مرجع قديم) — نفس مبدأ confirmToggleConfirmation،
+// يمنع دهس تعديل تاني وصل بالفترة الفاصلة بين فتح كشف الحساب وضغطة الحفظ
+async function saveStatementOrderLabel(orderId, newLabel){
+  const order = appData.orders.find(o=>o.id===orderId);
+  if(!order) return false;
+  const prevLabel = order.orderLabel, prevUpdatedAt = order.updatedAt;
+  order.orderLabel = newLabel;
+  order.updatedAt = new Date().toISOString();
+  const saved = await persistOrder(order);
+  if(!saved){ order.orderLabel = prevLabel; order.updatedAt = prevUpdatedAt; return false; }
+  renderTable();
+  return true;
+}
+
+// تعديل سريع لعنوان الطلبية بمكانه جوا كشف الحساب — بدون ما يفتح الطلبية كاملة
+function startEditStatementOrderLabel(orderId, currentLabel, cellEl){
+  cellEl.innerHTML =
+    '<input type="text" class="statement-label-edit-input" value="'+escapeHtml(currentLabel||'')+'" style="width:150px;max-width:100%;">' +
+    '<button type="button" class="icon-btn" data-save-order-label="'+escapeHtml(orderId)+'" title="حفظ" aria-label="حفظ" style="padding:1px 5px;">💾</button>';
+  const input = cellEl.querySelector('.statement-label-edit-input');
+  input.focus();
+  input.select();
+  let saving = false;
+  const save = async ()=>{
+    if(saving) return;
+    saving = true;
+    const val = input.value.trim();
+    const ok = await saveStatementOrderLabel(orderId, val);
+    if(!ok) showToast('تعذر حفظ التعديل', 'error');
+    if(statementCustomerId) openCustomerStatementView(statementCustomerId); // إعادة رسم كشف الحساب كامل بآخر بيانات
+  };
+  input.addEventListener('click', e=> e.stopPropagation());
+  input.addEventListener('keydown', e=>{
+    if(e.key==='Enter'){ e.preventDefault(); save(); }
+    else if(e.key==='Escape'){ e.preventDefault(); if(statementCustomerId) openCustomerStatementView(statementCustomerId); }
+  });
+  const saveBtn = cellEl.querySelector('[data-save-order-label]');
+  saveBtn.addEventListener('click', e=>{ e.stopPropagation(); save(); });
+}
+
 function openCustomerStatementView(customerId){
   const customer = (appData.customers||[]).find(c=>c.id===customerId);
   if(!customer) return;
@@ -5765,6 +5810,22 @@ function openCustomerStatementView(customerId){
   root.querySelector('#statement-share-btn').addEventListener('click', shareStatement);
   root.querySelector('#statement-pdf-btn').addEventListener('click', downloadStatementPdf);
   root.querySelector('#statement-print-btn').addEventListener('click', ()=> window.print());
+  root.querySelectorAll('[data-edit-order-label]').forEach(btn=>{
+    btn.addEventListener('click', e=>{
+      e.stopPropagation();
+      const orderId = btn.getAttribute('data-edit-order-label');
+      const order = appData.orders.find(o=>o.id===orderId);
+      startEditStatementOrderLabel(orderId, order ? order.orderLabel : '', btn.closest('[data-label-cell]'));
+    });
+  });
+  root.querySelectorAll('[data-open-order]').forEach(row=>{
+    row.addEventListener('click', ()=>{
+      // ضغطة زر ✏️ أو صندوق تعديل العنوان (input/💾) بتوقف وصول الحدث هون بـstopPropagation
+      // (انظر ربطها فوق) — فما لازم فحص إضافي هون، أي ضغطة توصل لهذا المستوى تعني فتح الطلبية
+      closeStatementView();
+      openModal('edit', row.getAttribute('data-open-order'));
+    });
+  });
   document.addEventListener('keydown', statementEscListener);
 }
 
