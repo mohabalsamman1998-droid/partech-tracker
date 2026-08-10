@@ -3783,8 +3783,19 @@ function quotesListHtml(){
 /* تسعيرات اعتمدتها المبيعات وصارت طلبيات فعلية — كانت تختفي تمامًا من شاشة عامر فور الاعتماد
    (get_scrapyard_home_quotes ما ترجّع إلا isQuote=true)؛ هاي القائمة تخليها تظهر بقسم منفصل
    بدل ما تضيع، بالاعتماد على wasQuote (يتحدّد مرة وحدة وقت إنشاء التسعيرة، يضل true للأبد) */
+let approvedQuotesSearchQuery = '';
 function approvedQuotesMatchingList(){
-  return (appData.orders||[]).filter(o=>!o.isQuote && o.wasQuote).sort((a,b)=> orderNumberSortKey(b) - orderNumberSortKey(a));
+  const rows = (appData.orders||[]).filter(o=>!o.isQuote && o.wasQuote).sort((a,b)=> orderNumberSortKey(b) - orderNumberSortKey(a));
+  const words = normalizeArabicSearch(approvedQuotesSearchQuery.trim()).split(/\s+/).filter(Boolean);
+  if(!words.length) return rows;
+  // نفس منطق البحث الذكي بقائمة الطلبيات الرئيسية (orderMatches) — رقم/وصف الطلبية ووصف القطع،
+  // بدون اسم/رقم العميل عمدًا (عامر أصلًا ما يوصله أي شي يخص العميل — customerId فاضي بردّ الـRPC)
+  return rows.filter(o=>{
+    const haystack = normalizeArabicSearch([
+      o.orderNumber||'', o.orderLabel||'', ...(o.parts||[]).map(p=>p.description||'')
+    ].join(' '));
+    return words.every(w=> haystack.includes(w));
+  });
 }
 
 function approvedQuoteRowHtml(o){
@@ -3796,8 +3807,15 @@ function approvedQuoteRowHtml(o){
 
 function approvedQuotesListHtml(){
   const rows = approvedQuotesMatchingList();
-  if(!rows.length) return '<div class="expense-empty-hint">ما فيه تسعيرات معتمدة بعد</div>';
+  if(!rows.length) return '<div class="expense-empty-hint">'+(approvedQuotesSearchQuery.trim() ? 'ما فيه نتائج مطابقة' : 'ما فيه تسعيرات معتمدة بعد')+'</div>';
   return rows.map(approvedQuoteRowHtml).join('');
+}
+
+function refreshApprovedQuotesList(){
+  const list = document.getElementById('scrapyard-approved-quotes-items-list');
+  if(!list) return;
+  list.innerHTML = approvedQuotesListHtml();
+  bindScrapyardApprovedQuoteRowEvents();
 }
 
 /* عرض للقراءة فقط لتسعيرة معتمدة — عامر ما بيعدّل عليها من هون (صارت طلبية حقيقية، أي تعديل
@@ -11237,6 +11255,7 @@ function renderScrapyardHomeView(){
       '<div class="task-items-list" id="scrapyard-quotes-items-list">'+quotesListHtml()+'</div>' +
     '</div>' +
     '<div id="scrapyard-home-approved-section" style="'+(scrapyardHomeOpenSection==='approved'?'':'display:none;')+'">' +
+      '<input type="text" id="approved-quotes-search-input" class="search-input" style="margin-bottom:12px;width:100%;" placeholder="🔍 ابحث برقم الطلبية أو وصف القطعة..." value="'+escapeHtml(approvedQuotesSearchQuery)+'">' +
       '<div class="task-items-list" id="scrapyard-approved-quotes-items-list">'+approvedQuotesListHtml()+'</div>' +
     '</div>' +
     '<div id="scrapyard-home-tasks-section" style="'+(scrapyardHomeOpenSection==='tasks'?'':'display:none;')+'">' +
@@ -11270,6 +11289,11 @@ function renderScrapyardHomeView(){
 
   bindScrapyardQuoteRowEvents();
   bindScrapyardApprovedQuoteRowEvents();
+  const approvedSearchInput = document.getElementById('approved-quotes-search-input');
+  if(approvedSearchInput) approvedSearchInput.addEventListener('input', e=>{
+    approvedQuotesSearchQuery = e.target.value;
+    refreshApprovedQuotesList();
+  });
   bindScrapyardHomeTasksEvents();
 }
 
