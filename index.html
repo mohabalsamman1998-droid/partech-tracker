@@ -1702,6 +1702,12 @@ function renderFilterButtons(){
   });
 }
 
+// توحيد صيغ الحروف العربية اللي بتختلف بالكتابة لنفس المعنى (همزات الألف، الألف المقصورة،
+// التاء المربوطة) — بدونها بحث "احمد" ما كان يطابق "أحمد" المخزّنة بحرف مختلف فعليًا
+function normalizeArabicSearch(s){
+  return (s||'').toLowerCase().replace(/[أإآ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه');
+}
+
 function orderMatchesFilterAndSearch(order, filter, search){
   const f = orderStatusFlags(order);
   if(filter==='unconfirmed' && order.confirmed) return false;
@@ -1715,16 +1721,20 @@ function orderMatchesFilterAndSearch(order, filter, search){
   // انسجّل إلها سبب عدم نجاح
   if(filter==='justified' && !order.unsuccessfulReason) return false;
   if(search){
-    // بحث ذكي: يشمل رقم الطلبية ووصفها (اسم الزبون/نوع السيارة) ورقم الجوال ووصف كل القطع.
-    // بيقسّم البحث لكلمات، وأي طلبية تحوي كل الكلمات (بأي ترتيب وبأي حقل) تعتبر مطابقة.
-    const words = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    // بحث ذكي: يشمل رقم الطلبية ووصفها (اسم الزبون/نوع السيارة) ورقم الجوال واسم الزبون
+    // المسجّل (لو الطلبية مربوطة بعميل محفوظ) ووصف كل القطع. بيقسّم البحث لكلمات، وأي طلبية
+    // تحوي كل الكلمات (بأي ترتيب وبأي حقل) تعتبر مطابقة. التطبيع (normalizeArabicSearch)
+    // بيوحّد صيغ الهمزة/الألف المقصورة/التاء المربوطة حتى ما يفوت تطابق بسبب اختلاف الكتابة.
+    const words = normalizeArabicSearch(search.trim()).split(/\s+/).filter(Boolean);
     if(words.length){
-      const haystack = [
+      const customer = order.customerId ? (appData.customers||[]).find(c=>c.id===order.customerId) : null;
+      const haystack = normalizeArabicSearch([
         order.orderNumber||'',
         order.orderLabel||'',
         order.customerPhone||'',
+        (customer && customer.name) || '',
         ...(order.parts||[]).map(p=>p.description||'')
-      ].join(' ').toLowerCase();
+      ].join(' '));
       if(!words.every(w=> haystack.includes(w))) return false;
     }
   }
@@ -1782,8 +1792,11 @@ function rowHtml(order){
     '<td class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? '<span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+(pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">'+pendingCount+'</span>' : '')+'</td>' +
     '<td>'+((order.customerPhone||'').trim() ? '<button type="button" class="icon-btn" data-contact-open="'+escapeHtml(order.id)+'" aria-label="تواصل">📞</button>' : '<span class="muted">—</span>')+'</td>' +
     '<td class="num">'+(t.hasChargeable? '<span class="'+profitColorClass(t)+'">'+fmtMoney(t.sellTotal)+'</span>' : '<span class="muted">'+(t.allPartsReturned?'مرتجعة':(t.noActiveParts?'بدون قطع محددة':'لم يُسعّر بعد'))+'</span>')+'</td>' +
-    '<td>'+(order.confirmed && t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد '+fmtMoney(t.costToScrapyard),'غير مسدد '+fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>')+'</td>' +
-    '<td>'+(order.confirmed && t.costToSupplier>0 ? stampBadge(order.paidToSupplier,'مسدد '+fmtMoney(t.costToSupplier),'غير مسدد '+fmtMoney(t.costToSupplier)) : '<span class="muted">—</span>')+'</td>' +
+    // (order.paidToAmer || order.supplied): لو لسه ما اتوردت وما انسددت، مافي دين حقيقي بعد
+    // (نفس مبدأ waitingAmerPayment/waitingSupplierPayment) فما نعرض "غير مسدد" مضلّلة — بس لو
+    // فيه سداد مسبق فعلي (دفعة مقدّمة قبل التوريد) نضلّ نعرضه "مسدد"، هذا معلومة صحيحة مو دين
+    '<td>'+((order.paidToAmer || order.supplied) && t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد '+fmtMoney(t.costToScrapyard),'غير مسدد '+fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>')+'</td>' +
+    '<td>'+((order.paidToSupplier || order.supplied) && t.costToSupplier>0 ? stampBadge(order.paidToSupplier,'مسدد '+fmtMoney(t.costToSupplier),'غير مسدد '+fmtMoney(t.costToSupplier)) : '<span class="muted">—</span>')+'</td>' +
     '<td>'+(order.confirmed ? customerPaymentCellHtml(t, true) : '<span class="muted">—</span>')+'</td>' +
     '<td class="row-actions">' +
       '<button class="icon-btn" data-open="'+escapeHtml(order.id)+'">فتح</button>' +
@@ -1814,8 +1827,9 @@ function cardHtml(order){
     '</div>' +
     '<div class="order-card-row"><span>إجمالي البيع</span><span class="num '+(t.hasChargeable?profitColorClass(t):'')+'">'+(t.hasChargeable?fmtMoney(t.sellTotal):(t.allPartsReturned?'مرتجعة':(t.noActiveParts?'بدون قطع محددة':'لم يُسعّر بعد')))+'</span></div>' +
     '<div class="order-card-badges">' +
-      (order.confirmed && t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد للتشليح '+fmtMoney(t.costToScrapyard),'غير مسدد للتشليح '+fmtMoney(t.costToScrapyard)) : '') +
-      (order.confirmed && t.costToSupplier>0 ? stampBadge(order.paidToSupplier,'مسدد للمورد '+fmtMoney(t.costToSupplier),'غير مسدد للمورد '+fmtMoney(t.costToSupplier)) : '') +
+      // نفس مبدأ rowHtml فوق: ما نعرض "غير مسدد" قبل التوريد الفعلي إلا لو فيه سداد مسبق فعلي
+      ((order.paidToAmer || order.supplied) && t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد للتشليح '+fmtMoney(t.costToScrapyard),'غير مسدد للتشليح '+fmtMoney(t.costToScrapyard)) : '') +
+      ((order.paidToSupplier || order.supplied) && t.costToSupplier>0 ? stampBadge(order.paidToSupplier,'مسدد للمورد '+fmtMoney(t.costToSupplier),'غير مسدد للمورد '+fmtMoney(t.costToSupplier)) : '') +
       // نفس شروط orderStatusFlags.waitingPricing — بدون الحارسين كانت طلبية كل قطعها مرتجعة
       // (أو بلا قطع محددة) تطلّع "بانتظار التسعير" بالبطاقات بينما صفوف الجدول ما بتعتبرها كذلك
       (!t.hasSell && !t.allPartsReturned && !t.noActiveParts ? '<span class="stamp stamp-amber">بانتظار التسعير</span>' : (order.confirmed ? customerPaymentCellHtml(t, false) : '')) +
@@ -2364,15 +2378,18 @@ function partRowHtml(p, i){
   const usedFieldUi = fieldRequestUiHtml('used', p.id, p.used, '<span class="field-readonly-value">'+(p.used?'مستعمل':'غير مستعمل')+'</span>');
   const usedBadgeHtml = usedFieldUi!=null ? usedFieldUi : '<button type="button" class="used-badge'+(p.used?'':' used-badge-off')+'" data-toggle-used="'+escapeHtml(p.id)+'">'+(p.used?'مستعمل':'غير مستعمل')+' ✏️</button>';
 
+  // المورد/التشليح شغلة المشتريات حصرًا — المبيعات ما بتشوفها أبدًا (نفس مبدأ quotePartRowHtml
+  // بمسار التسعير). هالصف كان الطريق الوحيد الناقص هالقيد: أي حساب مبيعات عادي كان يشوف
+  // ويقدر يعدّل المورد/التشليح مباشرة عن طريق شاشة "الطلبيات" العادية.
   // المورد/التشليح — كان الحقل الوحيد بصف القطعة يتعدّل مباشرة بعد التوريد بدون طلب، حتى لغير
   // المخوّل (مديونية المورد كانت تنتقل بصمت). دروب-داون مو نص، فبنعتمد اختيار مباشر = إرسال طلب
   // فورًا (بدل التركيبة العادية إدخال+إرسال) لو مقفول، مع بادج الطلب المعلّق نفسها لباقي الحقول.
   const pendingSupplierProposal = pendingFieldProposal('supplierId', p.id);
-  const supplierFieldHtml = pendingSupplierProposal
+  const supplierFieldHtml = !hasElevatedAccess() ? '' : (pendingSupplierProposal
     ? editProposalPendingHtml(pendingSupplierProposal)
     : searchableSelectHtml('part-supplier-select',
         (appData.suppliers||[]).filter(s=> p.used ? s.handlesUsed : s.handlesNew).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
-        p.supplierId, p.used?'— بدون تشليح —':'— بدون مورد —');
+        p.supplierId, p.used?'— بدون تشليح —':'— بدون مورد —'));
 
   const excludeProposal = pendingPartActionProposal('part_exclude', p.id);
   const includeCheckHtml = !selectionOn ? '' : (
@@ -2394,7 +2411,7 @@ function partRowHtml(p, i){
       '<label class="mini-label">العدد'+qtyHtml+'</label>' +
       '<label class="mini-label mini-label-cost">سعر الشراء'+costHtml+'</label>' +
       '<label class="mini-label mini-label-sell">سعر البيع'+sellHtml+'</label>' +
-      '<label class="mini-label mini-label-supplier">'+(p.used?'التشليح':'المورد')+supplierFieldHtml+'</label>' +
+      (hasElevatedAccess() ? '<label class="mini-label mini-label-supplier">'+(p.used?'التشليح':'المورد')+supplierFieldHtml+'</label>' : '') +
     '</div>' +
     '<button type="button" class="part-remove-btn" data-part-actions="'+escapeHtml(p.id)+'" aria-label="خيارات القطعة (حذف أو إرجاع)">⋯</button>' +
   '</div>';
@@ -2439,6 +2456,10 @@ function modalHtml(d){
             '<div class="total-box"><span>مستحق من الزبون</span><span class="num text-green" id="total-sell-display">0 ر.س</span></div>' +
             '<div class="total-box"><span>الربح</span><span class="num" id="total-profit-display">0 ر.س</span><span class="total-box-sub" id="total-profit-sub"></span></div>' +
           '</div>' +
+          // مبلغ مستحق لمورد/تشليح بعينه (accounts-payable) بيانات مشتريات — نفس مبدأ حقل
+          // المورد بصف القطعة فوق، مقفول عن المبيعات (الفحص بحدث الضغط موجود أصلًا بس ما كان
+          // يمنع ظهور الرقم نفسه بالواجهة)
+          (hasElevatedAccess() ? (
           '<div class="cost-split-row">' +
             '<button type="button" class="cost-split-box'+(d.paidToSupplier?' cost-split-paid':'')+'" id="cost-split-supplier-btn">' +
               '<span>المجموع للمورد</span>' +
@@ -2450,7 +2471,8 @@ function modalHtml(d){
               '<span class="num" id="cost-amer-display">0 ر.س</span>' +
               '<span class="cost-split-status" id="cost-amer-status">'+(d.paidToAmer?'✓ مسدد':'غير مسدد')+'</span>' +
             '</button>' +
-          '</div>' +
+          '</div>'
+          ) : '') +
           '<div class="payments-block">' +
             '<div id="payments-list" class="payments-list">'+paymentsListInnerHtml()+'</div>' +
             '<button type="button" id="add-payment-btn" class="btn btn-ghost btn-sm">+ إضافة دفعة</button>' +
@@ -2730,7 +2752,10 @@ function attachModalHandlers(){
   const pasteBtn = root.querySelector('#paste-parts-btn');
   if(pasteBtn) pasteBtn.addEventListener('click', pastePartsFromClipboard);
 
-  root.querySelector('#cost-split-amer-btn').addEventListener('click', ()=>{
+  // الزرّين هدول ما بيترسموا أصلًا لغير المخوّل (hasElevatedAccess فوق بـmodalHtml) — الفحص
+  // هون ثاني طبقة للفعل نفسه، بس لازم null-guard حتى ما تنكسر بقية الربط لو العنصر مو موجود
+  const costSplitAmerBtn = root.querySelector('#cost-split-amer-btn');
+  if(costSplitAmerBtn) costSplitAmerBtn.addEventListener('click', ()=>{
     if(!hasElevatedAccess()){ showToast('غير متاح', 'error'); return; }
     const willPay = !draft.paidToAmer;
     confirmAction({
@@ -2742,6 +2767,9 @@ function attachModalHandlers(){
         // تاريخ لحظة التسديد نفسها — بدونه تقرير "حركة الحسابات" اليومي ما يقدر يعرف متى صار
         // هذا التسديد فعليًا (updatedAt بتتحرك مع أي تعديل تاني على الطلبية، مو التسديد بالذات)
         draft.paidToAmerAt = willPay ? new Date().toISOString() : null;
+        // لقطة من المبلغ وقت التسديد نفسه — بدونها تقرير يوم سابق (مقفول فعليًا) كان يتغيّر
+        // بصمت لو انعدّل سعر تكلفة القطعة بعدين أو ترجّعت واترد سعرها (انظر accountsActivityForDate)
+        draft.paidToAmerAmountSnapshot = willPay ? orderTotals(draft).costToScrapyard : null;
         const btn = document.getElementById('cost-split-amer-btn');
         if(btn){
           btn.classList.toggle('cost-split-paid', willPay);
@@ -2750,7 +2778,8 @@ function attachModalHandlers(){
       }
     });
   });
-  root.querySelector('#cost-split-supplier-btn').addEventListener('click', ()=>{
+  const costSplitSupplierBtn = root.querySelector('#cost-split-supplier-btn');
+  if(costSplitSupplierBtn) costSplitSupplierBtn.addEventListener('click', ()=>{
     if(!hasElevatedAccess()){ showToast('غير متاح', 'error'); return; }
     const willPay = !draft.paidToSupplier;
     confirmAction({
@@ -2759,8 +2788,9 @@ function attachModalHandlers(){
       cancelLabel: 'لا',
       onConfirm: ()=>{
         draft.paidToSupplier = willPay;
-        // نفس ملاحظة paidToAmerAt فوق
+        // نفس ملاحظة paidToAmerAt/paidToAmerAmountSnapshot فوق
         draft.paidToSupplierAt = willPay ? new Date().toISOString() : null;
+        draft.paidToSupplierAmountSnapshot = willPay ? orderTotals(draft).costToSupplier : null;
         const btn = document.getElementById('cost-split-supplier-btn');
         if(btn){
           btn.classList.toggle('cost-split-paid', willPay);
@@ -4817,13 +4847,19 @@ function openUnsuccessfulReasonPicker(orderId){
     const clearBtn = root.querySelector('#unsuccessful-reason-clear-btn');
     if(clearBtn){
       clearBtn.addEventListener('click', async ()=>{
-        const prevReason = order.unsuccessfulReason, prevDetails = order.unsuccessfulReasonDetails, prevUpdatedAt = order.updatedAt;
-        order.unsuccessfulReason = null;
-        order.unsuccessfulReasonDetails = '';
-        order.updatedAt = new Date().toISOString();
-        const saved = await persistOrder(order);
+        // إعادة جلب هون (مو الاعتماد على order يلي جُلبت وقت آخر render) — نفس ملاحظة
+        // confirmToggleConfirmation: تعديل لحظي وصل من مستخدم تاني بالفترة الفاصلة (بين فتح
+        // المودال وضغطة الحفظ/المسح) بيبدّل appData.orders[idx] بعنصر جديد كليًا، والمرجع
+        // القديم يضل معزول عنه، وحفظه بيرجّع تعديل التاني بصمت
+        const freshOrder = appData.orders.find(o=>o.id===orderId);
+        if(!freshOrder){ close(); return; }
+        const prevReason = freshOrder.unsuccessfulReason, prevDetails = freshOrder.unsuccessfulReasonDetails, prevUpdatedAt = freshOrder.updatedAt;
+        freshOrder.unsuccessfulReason = null;
+        freshOrder.unsuccessfulReasonDetails = '';
+        freshOrder.updatedAt = new Date().toISOString();
+        const saved = await persistOrder(freshOrder);
         if(!saved){
-          order.unsuccessfulReason = prevReason; order.unsuccessfulReasonDetails = prevDetails; order.updatedAt = prevUpdatedAt;
+          freshOrder.unsuccessfulReason = prevReason; freshOrder.unsuccessfulReasonDetails = prevDetails; freshOrder.updatedAt = prevUpdatedAt;
           selectedReason = null; render(); // نرجّع عرض المودال يطابق الحالة الفعلية (المرتجعة) بدل ما يبقى واقف على اختيار ما انحفظ
           return;
         }
@@ -4838,13 +4874,16 @@ function openUnsuccessfulReasonPicker(orderId){
       saveBtn.addEventListener('click', async ()=>{
         if(!selectedReason) return;
         const detailsInput = document.getElementById('unsuccessful-reason-details-input');
-        const prevReason = order.unsuccessfulReason, prevDetails = order.unsuccessfulReasonDetails, prevUpdatedAt = order.updatedAt;
-        order.unsuccessfulReason = selectedReason;
-        order.unsuccessfulReasonDetails = detailsInput ? detailsInput.value.trim() : '';
-        order.updatedAt = new Date().toISOString();
-        const saved = await persistOrder(order);
+        // إعادة جلب — انظر نفس ملاحظة زر المسح فوق
+        const freshOrder = appData.orders.find(o=>o.id===orderId);
+        if(!freshOrder){ close(); return; }
+        const prevReason = freshOrder.unsuccessfulReason, prevDetails = freshOrder.unsuccessfulReasonDetails, prevUpdatedAt = freshOrder.updatedAt;
+        freshOrder.unsuccessfulReason = selectedReason;
+        freshOrder.unsuccessfulReasonDetails = detailsInput ? detailsInput.value.trim() : '';
+        freshOrder.updatedAt = new Date().toISOString();
+        const saved = await persistOrder(freshOrder);
         if(!saved){
-          order.unsuccessfulReason = prevReason; order.unsuccessfulReasonDetails = prevDetails; order.updatedAt = prevUpdatedAt;
+          freshOrder.unsuccessfulReason = prevReason; freshOrder.unsuccessfulReasonDetails = prevDetails; freshOrder.updatedAt = prevUpdatedAt;
           selectedReason = null; render(); // نفس الفكرة — نرجّع عرض المودال يطابق الحالة الفعلية المرتجعة
           return;
         }
@@ -4899,6 +4938,21 @@ function partsTableRowsHtml(order){
   }).join('');
 }
 
+// نفس partsTableRowsHtml بس عن لقطة محفوظة بالسجل (📜) بدل قطع الطلبية الحية — انظر ملاحظة
+// docSheetHtml/persistDocMeta
+function partsTableRowsHtmlFromSnapshot(partsSnapshot){
+  return (partsSnapshot||[]).map(p=>{
+    const qty = Number(p.qty)||1;
+    const unit = Number(p.sellPrice)||0;
+    return '<tr>' +
+      '<td>'+escapeHtml(p.name||'')+'</td>' +
+      '<td style="text-align:center;" class="num">'+qty+'</td>' +
+      '<td style="text-align:center;" class="num">'+fmtNum(unit)+'</td>' +
+      '<td style="text-align:center;" class="num">'+fmtNum(qty*unit)+'</td>' +
+    '</tr>';
+  }).join('');
+}
+
 function defaultFooterNoteFor(type){
   return type==='invoice'
     ? 'لا يتم إرجاع البضاعة المباعة إلا مع وجود الفاتورة الأصلية\nيجب إبراز الفاتورة الأصل عند المراجعة'
@@ -4914,7 +4968,10 @@ function docSheetHtml(order, type, data){
   const titleAr = isInvoice ? 'فاتورة نقدية' : 'عرض أسعار';
   const titleEn = isInvoice ? 'CASH INVOICE' : 'PRICE QUOTATION';
   const feeLabel = isInvoice ? 'رسوم خدمات وتوصيل' : 'رسوم خدمات شامل التوصيل';
-  const t = orderTotals(order);
+  // نسخة تاريخية محفوظة (من 📜 السجل، انظر persistDocMeta) بتحمل totalsSnapshot/partsSnapshot —
+  // لازم نعرض هالأرقام بالذات مو أرقام الطلبية الحية، وإلا فاتورة قديمة معروضة من السجل بترجع
+  // تعرض قطع/أسعار الطلبية الحالية بعد ما تتعدّل، بأرقام ما تطابق اللي فعليًا وصل للزبون وقتها
+  const t = data.totalsSnapshot || orderTotals(order);
   const subtotal = t.partsSellTotal;
   const feePercent = t.feePercent;
   const feeEnabled = t.feeEnabled;
@@ -4961,7 +5018,7 @@ function docSheetHtml(order, type, data){
           '</div>' +
         '</div>' +
         '<table class="doc-table"><thead><tr><th>البيـان</th><th>العدد</th><th>السعر الإفرادي</th><th>السعر الإجمالي</th></tr></thead>' +
-        '<tbody>'+partsTableRowsHtml(order)+'</tbody></table>' +
+        '<tbody>'+(Array.isArray(data.partsSnapshot) ? partsTableRowsHtmlFromSnapshot(data.partsSnapshot) : partsTableRowsHtml(order))+'</tbody></table>' +
         '<label class="doc-vat-toggle no-print"><input type="checkbox" id="doc-vat-toggle-input" '+(showVat?'checked':'')+'><span>إظهار تفاصيل الضريبة المضافة</span></label>' +
         '<div class="doc-totals">' +
           (showVat ? '<div class="doc-totals-row"><span>قيمة الضريبة المضافة (15%)</span><span class="num">'+fmtNum(vatAmount)+' ريال</span></div>' : '') +
@@ -5145,6 +5202,18 @@ async function persistDocMeta(showToastMsg, appendHistory){
     const historyField = docState.type==='invoice' ? 'invoiceDocHistory' : 'quoteDocHistory';
     if(!Array.isArray(order[historyField])) order[historyField] = [];
     const snapshot = Object.assign({}, docState.data);
+    // لقطة فعلية من القطع/الأسعار/الرسوم وقت الإصدار — بدونها إعادة فتح فاتورة قديمة من السجل
+    // بعد ما تتعدّل الطلبية كانت تعرض قطع/أرقام الطلبية الحالية مع بيانات العميل/التاريخ القديمة،
+    // فتطلع فاتورة "مستعادة" بأرقام غلط لو انطبعت/انشوركت من جديد (انظر docSheetHtml)
+    const st = orderTotals(order);
+    snapshot.partsSnapshot = orderActiveParts(order).filter(p=>!p.returned).map(p=>(
+      { name: partDisplayName(p), qty: Number(p.qty)||1, sellPrice: Number(p.sellPrice)||0 }
+    ));
+    snapshot.totalsSnapshot = {
+      partsSellTotal: st.partsSellTotal, feePercent: st.feePercent, feeEnabled: st.feeEnabled, feeAmount: st.feeAmount,
+      serviceFeeEnabled: st.serviceFeeEnabled, serviceFeeAmount: st.serviceFeeAmount, serviceFeePercent: st.serviceFeePercent,
+      deliveryFeeEnabled: st.deliveryFeeEnabled, deliveryFeeAmount: st.deliveryFeeAmount, sellTotal: st.sellTotal
+    };
     const last = order[historyField][order[historyField].length-1];
     const lastData = last ? Object.assign({}, last, {_historyId:undefined, _savedAt:undefined}) : null;
     if(!last || JSON.stringify(lastData)!==JSON.stringify(snapshot)){
@@ -5163,11 +5232,14 @@ async function persistDocMeta(showToastMsg, appendHistory){
 
 function buildDocWhatsAppText(order, type, data){
   const isInvoice = type==='invoice';
-  const t = orderTotals(order);
+  // نفس ملاحظة docSheetHtml — نسخة تاريخية من السجل لازم تستخدم أرقام/قطع وقت الإصدار، مو
+  // الطلبية الحية، وإلا نص واتساب لفاتورة قديمة معروضة بيطلع بأرقام الطلبية الحالية
+  const t = data.totalsSnapshot || orderTotals(order);
   const feePercent = t.feePercent;
   const feeEnabled = t.feeEnabled;
   const fee = t.feeAmount;
   const grand = t.sellTotal;
+  const parts = Array.isArray(data.partsSnapshot) ? data.partsSnapshot : orderActiveParts(order).filter(p=>!p.returned).map(p=>({name: partDisplayName(p), qty: p.qty, sellPrice: p.sellPrice}));
   const lines = [];
   lines.push('*PARTECH*');
   lines.push((isInvoice?'فاتورة نقدية':'عرض أسعار')+' رقم '+data.number);
@@ -5178,10 +5250,10 @@ function buildDocWhatsAppText(order, type, data){
   if(data.vin) lines.push('VIN: '+data.vin);
   lines.push('');
   lines.push('القطع:');
-  orderActiveParts(order).filter(p=>!p.returned).forEach((p,i)=>{
+  parts.forEach((p,i)=>{
     const qty = Number(p.qty)||1;
     const unit = Number(p.sellPrice)||0;
-    lines.push((i+1)+'. '+partDisplayName(p)+' × '+qty+' — '+fmtNum(qty*unit)+' ريال');
+    lines.push((i+1)+'. '+(p.name!=null?p.name:partDisplayName(p))+' × '+qty+' — '+fmtNum(qty*unit)+' ريال');
   });
   lines.push('');
   if(data.showVat !== false){
@@ -5973,6 +6045,12 @@ async function purgeEditProposalsForPart(orderId, partId){
    بدل صندوق كتابة (composeFieldHtml)، نفس مبدأ requestPartExclude بس عام لأي حقل boolean */
 function requestBooleanFieldChange(fieldKey, partId, currentValue){
   if(pendingFieldProposal(fieldKey, partId)) return;
+  // تبديل "مستعمل/غير مستعمل" بيصفّر supplierId كـ side effect عند applyEditProposal — لو فيه
+  // طلب تعديل مورد معلّق بنفس الوقت على نفس القطعة، قبول الاثنين (بأي ترتيب) بيلغي واحد منهم بصمت
+  if(fieldKey==='used' && partId && pendingFieldProposal('supplierId', partId)){
+    showToast('في طلب تعديل مورد معلّق على هذه القطعة — لازم يتحسم أولًا', 'error');
+    return;
+  }
   const key = composeKey(fieldKey, partId);
   if(editProposalSending.has(key)) return;
   const proposedValue = !currentValue;
@@ -6066,6 +6144,13 @@ function requestPartReturn(part){
    ما في داعي لخطوة تركيب/إرسال منفصلة متل الحقول النصية. يرسل الطلب فورًا لحظة الاختيار. */
 async function requestPartSupplierChange(part, newSupplierId){
   if(pendingFieldProposal('supplierId', part.id)){ showToast('في طلب تعديل مورد معلّق أصلًا لهذه القطعة', 'error'); refreshPartsList(); return; }
+  // نفس ملاحظة requestBooleanFieldChange فوق — تعديل "مستعمل/غير مستعمل" معلّق بنفس الوقت
+  // بيصفّر المورد كـ side effect عند القبول، فتعايش الطلبين ممكن يلغي واحد منهم بصمت
+  if(pendingFieldProposal('used', part.id)){
+    showToast('في طلب تغيير "مستعمل/غير مستعمل" معلّق على هذه القطعة — لازم يتحسم أولًا', 'error');
+    refreshPartsList();
+    return;
+  }
   const { error } = await sb.from('edit_proposals').insert({
     order_id: draft.id, kind: 'part_field', field: 'supplierId', part_id: part.id,
     current_value: part.supplierId, proposed_value: newSupplierId, submitted_by: presenceEmail
@@ -6154,7 +6239,10 @@ function applyEditProposal(pr, orderOverride, opts){
   if(!order) return false;
   if(pr.kind === 'part_field'){
     const part = (order.parts||[]).find(p=>p.id===pr.part_id);
-    if(!part) return false;
+    // نفس قيد part_delete/part_return — قطعة اترجعت أصلًا بالفترة الفاصلة (طلب تعديل حقل تاني
+    // كان لسه معلّق) ما ينفع تتطبّق عليها التعديل بصمت، خصوصًا إنه بيفسد حساب المستحق للمورد
+    // بعد الإرجاع (costPrice/supplierId يدخلان مباشرة بحساب supplierReturnReceivables)
+    if(!part || part.returned) return false;
     if(pr.field === 'costPrice') part.costPrice = Math.max(0, Number(pr.proposed_value)||0);
     else if(pr.field === 'sellPrice') part.sellPrice = Math.max(0, Number(pr.proposed_value)||0);
     else if(pr.field === 'description') part.description = String(pr.proposed_value||'');
@@ -6922,11 +7010,16 @@ function accountsActivityForDate(isoDate){
       const row = { orderNumber: o.orderNumber, orderLabel: o.orderLabel, amount: Number(p.amount)||0, method: p.method||'' };
       if(p.returnAdjustment) customerRefunds.push(row); else customerPayments.push(row);
     });
+    // نستخدم لقطة المبلغ وقت التسديد (paidTo*AmountSnapshot) لو موجودة — تعديل سعر تكلفة القطعة
+    // أو إرجاعها بعدين ما لازم يغيّر تقرير يوم سابق مقفول فعليًا. الطلبيات المسدّدة قبل إضافة
+    // اللقطة (بلا paidTo*AmountSnapshot) بترجع للحساب الحي كما كان، نفس مبدأ paidTo*At فوق.
     if(matchIso(o.paidToSupplierAt)){
-      supplierPayments.push({ orderNumber: o.orderNumber, orderLabel: o.orderLabel, amount: orderTotals(o).costToSupplier, kind: 'مورد' });
+      const amt = o.paidToSupplierAmountSnapshot!=null ? Number(o.paidToSupplierAmountSnapshot)||0 : orderTotals(o).costToSupplier;
+      supplierPayments.push({ orderNumber: o.orderNumber, orderLabel: o.orderLabel, amount: amt, kind: 'مورد' });
     }
     if(matchIso(o.paidToAmerAt)){
-      supplierPayments.push({ orderNumber: o.orderNumber, orderLabel: o.orderLabel, amount: orderTotals(o).costToScrapyard, kind: 'تشليح' });
+      const amt = o.paidToAmerAmountSnapshot!=null ? Number(o.paidToAmerAmountSnapshot)||0 : orderTotals(o).costToScrapyard;
+      supplierPayments.push({ orderNumber: o.orderNumber, orderLabel: o.orderLabel, amount: amt, kind: 'تشليح' });
     }
   });
 
@@ -10195,6 +10288,10 @@ async function showAppIfAllowed(session){
     if(whoOnlineBtn) whoOnlineBtn.style.display = (currentUserIsElevated || WHO_ONLINE_EXTRA_VISIBLE_EMAILS.includes(email)) ? '' : 'none';
     const employeeMapBtnVis = document.getElementById('btn-employee-map');
     if(employeeMapBtnVis) employeeMapBtnVis.style.display = currentUserIsElevated ? '' : 'none';
+    // "🏭 الموردين" بيانات مشتريات حصرية (اسم/هاتف/مستحق/تاريخ شراء) — نفس مبدأ الصندوق/الإعلان،
+    // كان ناقص من هالقائمة بالغلط فيضل ظاهر لأي حساب مبيعات عادي
+    const suppliersBtn = document.getElementById('btn-open-suppliers');
+    if(suppliersBtn) suppliersBtn.style.display = currentUserIsElevated ? '' : 'none';
     if(!appInitDone){
       appInitDone = true;
       init();
