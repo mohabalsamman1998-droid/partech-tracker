@@ -1357,18 +1357,22 @@ function orderTotals(order){
   const returnKeptFeeAmount = round2(Math.max(0, Number(order.returnKeptFeeAmount)||0));
   const returnKeptServiceFeeAmount = round2(Math.max(0, Number(order.returnKeptServiceFeeAmount)||0));
   const returnKeptDeliveryAmount = round2(Math.max(0, Number(order.returnKeptDeliveryAmount)||0));
+  // نفس مبدأ returnKeptFeeAmount بالضبط، بس لزيادة دفع عامة مو مرتبطة بقطعة/رسوم بالذات (مثلاً
+  // زبون دافع أكثر من المطلوب لسبب تاني) — بتتحدد وقت إرجاع آخر قطعة "مؤهلة" لو اختار المستخدم
+  // "الاحتفاظ فيها" بدل إرجاعها (انظر applyPartReturnOnOrder وopenReturnExcessChoiceModal)
+  const returnKeptExcessAmount = round2(Math.max(0, Number(order.returnKeptExcessAmount)||0));
   const feeAmount = round2(((hasSell && feeEnabled) ? partsSellTotal * feePercent / 100 : 0) + returnKeptFeeAmount);
   const serviceFeeEnabled = !!order.serviceFeeEnabled;
   const serviceFeePercent = Math.max(0, Number(order.serviceFeePercent)||0);
   const serviceFeeAmount = round2(((hasSell && serviceFeeEnabled) ? partsSellTotal * serviceFeePercent / 100 : 0) + returnKeptServiceFeeAmount);
   const deliveryFeeEnabled = !!order.deliveryFeeEnabled;
   const deliveryFeeAmount = round2(((hasSell && deliveryFeeEnabled) ? Math.max(0, Number(order.deliveryFeeAmount)||0) : 0) + returnKeptDeliveryAmount);
-  const sellTotal = partsSellTotal + feeAmount + serviceFeeAmount + deliveryFeeAmount; // المبلغ الكامل المستحق من الزبون (شامل نسبة الخدمة، نسبة الخدمات، وأجور التوصيل)
+  const sellTotal = partsSellTotal + feeAmount + serviceFeeAmount + deliveryFeeAmount + returnKeptExcessAmount; // المبلغ الكامل المستحق من الزبون (شامل نسبة الخدمة، نسبة الخدمات، أجور التوصيل، وأي زيادة تم الاحتفاظ فيها)
   const customerPaidAmount = round2(computeCustomerPaidAmount(order));
   const customerPaidAmountForBox = round2(computeCustomerPaidAmountForBox(order));
   // مبالغ محتفظ فيها بعد إرجاع كل القطع (hasSell=false) تخلي الزبون لسه مدين فيها — ما لازم
   // "المتبقي" يتصفّر عالغلط متل حالة "لسه ما تسعّرت" العادية (اللي فيها فعليًا ما فيه شي مستحق)
-  const hasChargeable = hasSell || (returnKeptFeeAmount+returnKeptServiceFeeAmount+returnKeptDeliveryAmount) > 0.01;
+  const hasChargeable = hasSell || (returnKeptFeeAmount+returnKeptServiceFeeAmount+returnKeptDeliveryAmount+returnKeptExcessAmount) > 0.01;
   const customerRemaining = hasChargeable ? round2(sellTotal - customerPaidAmount) : 0;
   const customerFullyPaid = hasChargeable && customerRemaining <= 0.01;
   const profit = sellTotal - costTotal;
@@ -2994,12 +2998,13 @@ function bindPartRowEvents(){
               showToast('ما ينفع التراجع — المبلغ انرد للزبون فعلًا', 'error');
               return;
             }
-            // لو كانت هالقطعة احتفظت بحصة من النسبة/التوصيل وقت إرجاعها، لازم نلغي بالضبط نفس
-            // المبلغ من مجموع الطلبية — وإلا يضل عالقًا "يتيمًا" ويظهر كرسوم زايدة وهمية لاحقًا
-            if(part.returnKeptFeeShare || part.returnKeptServiceFeeShare || part.returnKeptDeliveryShare){
+            // لو كانت هالقطعة احتفظت بحصة من النسبة/التوصيل/الزيادة العامة وقت إرجاعها، لازم نلغي
+            // بالضبط نفس المبلغ من مجموع الطلبية — وإلا يضل عالقًا "يتيمًا" ويظهر كرسوم زايدة وهمية لاحقًا
+            if(part.returnKeptFeeShare || part.returnKeptServiceFeeShare || part.returnKeptDeliveryShare || part.returnKeptExcessShare){
               draft.returnKeptFeeAmount = round2(Math.max(0, (draft.returnKeptFeeAmount||0) - (part.returnKeptFeeShare||0)));
               draft.returnKeptServiceFeeAmount = round2(Math.max(0, (draft.returnKeptServiceFeeAmount||0) - (part.returnKeptServiceFeeShare||0)));
               draft.returnKeptDeliveryAmount = round2(Math.max(0, (draft.returnKeptDeliveryAmount||0) - (part.returnKeptDeliveryShare||0)));
+              draft.returnKeptExcessAmount = round2(Math.max(0, (draft.returnKeptExcessAmount||0) - (part.returnKeptExcessShare||0)));
             }
             delete part.returned;
             delete part.returnHasReceivable;
@@ -3008,6 +3013,7 @@ function bindPartRowEvents(){
             delete part.returnKeptFeeShare;
             delete part.returnKeptServiceFeeShare;
             delete part.returnKeptDeliveryShare;
+            delete part.returnKeptExcessShare;
             // كان الإرجاع أضاف القطعة لمجموعة "تُحذف طلباتها المعلّقة عند الحفظ" — التراجع
             // يلغي الإرجاع نفسه، فلازم يلغي معه نية الحذف هاي، وإلا حفظ لاحق (حتى لغرض تاني
             // تمامًا) بيحذف صامتًا أي طلب تعديل شرعي معلّق على هالقطعة بدون أي إشعار لحدا
@@ -3067,6 +3073,7 @@ function proceedReturnWholeOrder(activeParts, keepFee){
       // نفس منطق القطعة الواحدة، بس بحلقة — كل قطعة تخزّن حصتها بالذات (لازم لزر "تراجع عن
       // الإرجاع" يقدر يلغي المبلغ الصح بالضبط). التوصيل مبلغ ثابت للطلبية كلها مو نسبي لأي قطعة،
       // بيهبط تلقائيًا لصفر بس آخر قطعة نشطة ترجع (hasSell يصير false)، فحصته تُنسب لآخر قطعة بالحلقة
+      let totalLeftoverExcess = 0;
       activeParts.forEach((p,i)=>{
         const s = computeReturnFeeShare(draft, p);
         const isLast = i===activeParts.length-1;
@@ -3079,17 +3086,24 @@ function proceedReturnWholeOrder(activeParts, keepFee){
           draft.returnKeptFeeAmount = round2((draft.returnKeptFeeAmount||0) + s.feeShare);
           draft.returnKeptServiceFeeAmount = round2((draft.returnKeptServiceFeeAmount||0) + s.serviceFeeShare);
           if(isLast) draft.returnKeptDeliveryAmount = round2((draft.returnKeptDeliveryAmount||0) + liveDelivery);
-          applyPartReturn(p, 0);
+          totalLeftoverExcess += applyPartReturn(p, 0);
         } else {
           // liveDelivery مو t.deliveryFeeAmount — الثاني بيشمل أي توصيل محتفظ فيه مسبقًا
           // (orderTotals بيضيفه دايمًا)، فاستخدامه هون كان بيخلي الاسترجاع "يسترجع" مبلغ
           // كان أصلًا متجمّد ومحسوم نهائيًا، وبيسمح بتسريب زيادة غير مرتبطة فوقه
-          applyPartReturn(p, round2(s.feeShare + s.serviceFeeShare + liveDelivery));
+          totalLeftoverExcess += applyPartReturn(p, round2(s.feeShare + s.serviceFeeShare + liveDelivery));
         }
         pendingPartProposalPurges.add(p.id);
       });
       refreshPartsList();
       refreshPaymentsList();
+      // زيادة دفع غير مرتبطة بسعر أي قطعة من القطع المرتجعة ولا برسومها — تُجمع عبر كل القطع
+      // وتُنسب لآخر قطعة بالحلقة (نفس مبدأ أجور التوصيل فوق)، بدل ما تختفي بصمت
+      totalLeftoverExcess = round2(totalLeftoverExcess);
+      if(totalLeftoverExcess > 0.01){
+        const lastReturnedPart = activeParts[activeParts.length-1];
+        openReturnExcessChoiceModal(totalLeftoverExcess, draft, lastReturnedPart, ()=>{ refreshPartsList(); refreshPaymentsList(); });
+      }
     }
   });
 }
@@ -3185,6 +3199,7 @@ function proceedSinglePartReturn(part, hasReceivable, keepFee){
     dangerous: true,
     onConfirm: ()=>{
       const s = computeReturnFeeShare(draft, part);
+      let leftoverExcess = 0;
       if(keepFee){
         // نخزّن حصة هالقطعة بالذات (مو بس نضيفها لمجموع الطلبية) — لازم زر "تراجع عن الإرجاع"
         // يقدر يلغي بالضبط نفس المبلغ يلي هالقطعة أضافته، مش يسيبه عالق يتراكم فوق نفسه لاحقًا
@@ -3192,13 +3207,17 @@ function proceedSinglePartReturn(part, hasReceivable, keepFee){
         part.returnKeptServiceFeeShare = s.serviceFeeShare;
         draft.returnKeptFeeAmount = round2((draft.returnKeptFeeAmount||0) + s.feeShare);
         draft.returnKeptServiceFeeAmount = round2((draft.returnKeptServiceFeeAmount||0) + s.serviceFeeShare);
-        applyPartReturn(part, 0);
+        leftoverExcess = applyPartReturn(part, 0);
       } else {
-        applyPartReturn(part, round2(s.feeShare + s.serviceFeeShare));
+        leftoverExcess = applyPartReturn(part, round2(s.feeShare + s.serviceFeeShare));
       }
       pendingPartProposalPurges.add(part.id);
       refreshPartsList();
       refreshPaymentsList();
+      // زيادة دفع غير مرتبطة بسعر هالقطعة/رسومها — نسأل المستخدم صراحة بدل ما تختفي بصمت
+      if(leftoverExcess > 0.01){
+        openReturnExcessChoiceModal(leftoverExcess, draft, part, ()=>{ refreshPartsList(); refreshPaymentsList(); });
+      }
     }
   });
 }
@@ -3271,9 +3290,14 @@ function applyPartReturnOnOrder(order, part, extraRefundCap){
   // t.sellTotal أصلًا 0 لما hasSell=false بدون مبالغ محتفظ فيها (returnKept*) — فاستخدامه مباشرة
   // بيحافظ على نفس السلوك القديم، وبيمنع كمان اعتبار مبلغ محتفظ فيه "زيادة" ترجع للزبون بالغلط
   const overpay = round2(t.customerPaidAmount - t.sellTotal);
+  // زيادة عن الحد (overpay > cap) ما لها علاقة بهالقطعة تحديدًا — بترجعها الدالة بدل ما تُهمَل
+  // بصمت، حتى المستدعي يسأل المستخدم "ترجعها للزبون أو تحتفظ فيها الطلبية؟" (انظر
+  // openReturnExcessChoiceModal بمواقع الاستدعاء) بدل ما تختفي بلا أي أثر.
+  let leftoverExcess = 0;
   if(overpay > 0.01){
     const cap = round2(sellAmount + extraRefundCap);
     const refundAmount = round2(cap > 0 ? Math.min(overpay, cap) : overpay);
+    leftoverExcess = round2(Math.max(0, overpay - refundAmount));
     part.customerRefundConfirmed = false; // ما يخصم من الصندوق إلا بعد تأكيد صريح من شاشة العملاء إنه رجع فعليًا
     if(!Array.isArray(order.customerPayments)) order.customerPayments = [];
     order.customerPayments.push({
@@ -3281,9 +3305,57 @@ function applyPartReturnOnOrder(order, part, extraRefundCap){
       returnAdjustment: true, linkedPartId: part.id
     });
   }
+  return leftoverExcess;
 }
 
-function applyPartReturn(part, extraRefundCap){ applyPartReturnOnOrder(draft, part, extraRefundCap); }
+function applyPartReturn(part, extraRefundCap){ return applyPartReturnOnOrder(draft, part, extraRefundCap); }
+
+/* المستخدم يسأل صراحة (انظر النقاش اللي أدى لهالميزة): زيادة دفع الزبون يلي ما غطّاها حد القطعة/
+   القطع المرتجعة (extraRefundCap) — يرجعها للزبون، أو تحتفظ فيها الطلبية دائمًا (نفس مبدأ
+   "الاحتفاظ بالنسبة المضافة" تمامًا، بس لزيادة عامة — returnKeptExcessAmount بـorderTotals).
+   linkedPartId: القطعة يلي انضافت إلها دفعة "مرتجع" بهالعملية (آخر قطعة رجعت لو إرجاع طلبية
+   كاملة) — لازم نمدّد نفس الدفعة الموجودة (مو ننشئ وحدة جديدة بنفس linkedPartId)، لأن كل أماكن
+   قراءة استرداد العميل (orderCustomerRefundStatusHtml، customerRefundsPending) بتستخدم .find()
+   يعني بتلقط دفعة وحدة بس لكل قطعة — دفعة تانية بنفس linkedPartId كانت رح تنكتم بصمت. */
+function openReturnExcessChoiceModal(excessAmount, order, linkedPart, onDone){
+  const linkedPartId = linkedPart ? linkedPart.id : null;
+  const root = document.getElementById('confirm-root');
+  root.innerHTML =
+    '<div class="modal-backdrop">' +
+      '<div class="modal-card modal-card-sm" role="alertdialog" aria-modal="true">' +
+        '<div class="modal-title">فيه زيادة دفع غير مرتبطة بسعر القطعة/الرسوم</div>' +
+        '<p class="modal-sub">المبلغ: '+fmtMoney(excessAmount)+' ريال — مو من سعر القطعة/القطع المرتجعة ولا من نسبة الخدمة/التوصيل. تُرجعها للزبون، أو تحتفظ فيها الطلبية؟</p>' +
+        '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;flex-wrap:wrap;">' +
+          '<button type="button" class="btn btn-ghost" id="excess-choice-keep-btn">الاحتفاظ بها</button>' +
+          '<button type="button" class="btn btn-primary" id="excess-choice-refund-btn">استرجاعها للزبون</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  root.querySelector('#excess-choice-keep-btn').addEventListener('click', ()=>{
+    close();
+    order.returnKeptExcessAmount = round2((Number(order.returnKeptExcessAmount)||0) + excessAmount);
+    // نخزّن حصة هالقطعة بالذات (نفس مبدأ returnKeptFeeShare) — لازم زر "تراجع عن الإرجاع"
+    // يقدر يلغي بالضبط نفس المبلغ لو حد رجّع هالقرار لاحقًا، وإلا يضل عالقًا يتيمًا للأبد
+    if(linkedPart) linkedPart.returnKeptExcessShare = excessAmount;
+    onDone();
+  });
+  root.querySelector('#excess-choice-refund-btn').addEventListener('click', ()=>{
+    close();
+    const existing = linkedPartId ? (order.customerPayments||[]).find(pay=>pay.returnAdjustment && pay.linkedPartId===linkedPartId) : null;
+    if(existing){
+      existing.amount = round2((Number(existing.amount)||0) + excessAmount);
+    } else {
+      if(!Array.isArray(order.customerPayments)) order.customerPayments = [];
+      order.customerPayments.push({
+        id: uid('pay'), amount: excessAmount, method: 'مرتجع', date: todayNumeric(),
+        returnAdjustment: true, linkedPartId: linkedPartId||null
+      });
+    }
+    onDone();
+  });
+}
 
 function bindPaymentRowEvents(){
   const root = document.getElementById('modal-root');
@@ -6233,8 +6305,14 @@ async function withdrawEditProposal(proposalId){
   await refreshEditProposals();
 }
 
+// applyEditProposal بيرجّع true/false بس (نجح/فشل) — تغييره لإرجاع شكل أغنى بيكسر كل نداءاته
+// المتعددة يلي بتفحص النتيجة كـboolean صرف. بدل هيك، أي زيادة دفع ما غطّاها حد الإرجاع (انظر
+// applyPartReturnOnOrder) بتتجمّع هون، ويقرأها proceedEditProposalDecision فورًا بعد النداء.
+let lastEditProposalLeftoverExcess = 0;
+
 function applyEditProposal(pr, orderOverride, opts){
   opts = opts || {};
+  lastEditProposalLeftoverExcess = 0;
   const order = orderOverride || appData.orders.find(o=>o.id===pr.order_id);
   if(!order) return false;
   if(pr.kind === 'part_field'){
@@ -6302,9 +6380,9 @@ function applyEditProposal(pr, orderOverride, opts){
       part.returnKeptServiceFeeShare = s.serviceFeeShare;
       order.returnKeptFeeAmount = round2((order.returnKeptFeeAmount||0) + s.feeShare);
       order.returnKeptServiceFeeAmount = round2((order.returnKeptServiceFeeAmount||0) + s.serviceFeeShare);
-      applyPartReturnOnOrder(order, part, 0);
+      lastEditProposalLeftoverExcess += applyPartReturnOnOrder(order, part, 0);
     } else {
-      applyPartReturnOnOrder(order, part, round2(s.feeShare + s.serviceFeeShare));
+      lastEditProposalLeftoverExcess += applyPartReturnOnOrder(order, part, round2(s.feeShare + s.serviceFeeShare));
     }
   } else if(pr.kind === 'order_return'){
     const activeParts = orderActiveParts(order).filter(p=>!p.returned);
@@ -6328,10 +6406,10 @@ function applyEditProposal(pr, orderOverride, opts){
         order.returnKeptFeeAmount = round2((order.returnKeptFeeAmount||0) + s.feeShare);
         order.returnKeptServiceFeeAmount = round2((order.returnKeptServiceFeeAmount||0) + s.serviceFeeShare);
         if(isLast) order.returnKeptDeliveryAmount = round2((order.returnKeptDeliveryAmount||0) + liveDelivery);
-        applyPartReturnOnOrder(order, p, 0);
+        lastEditProposalLeftoverExcess += applyPartReturnOnOrder(order, p, 0);
       } else {
         // liveDelivery مو t.deliveryFeeAmount — نفس ملاحظة proceedReturnWholeOrder
-        applyPartReturnOnOrder(order, p, round2(s.feeShare + s.serviceFeeShare + liveDelivery));
+        lastEditProposalLeftoverExcess += applyPartReturnOnOrder(order, p, round2(s.feeShare + s.serviceFeeShare + liveDelivery));
       }
     });
   } else if(pr.kind === 'return_collect'){
@@ -6475,6 +6553,7 @@ function proceedEditProposalDecision(proposalId, accept, keepFee){
             draft.returnKeptFeeAmount = order.returnKeptFeeAmount;
             draft.returnKeptServiceFeeAmount = order.returnKeptServiceFeeAmount;
             draft.returnKeptDeliveryAmount = order.returnKeptDeliveryAmount;
+            draft.returnKeptExcessAmount = order.returnKeptExcessAmount;
             draft.updatedAt = order.updatedAt;
             draftOpenedAtUpdatedAt = order.updatedAt;
             refreshPartsList();
@@ -6485,6 +6564,31 @@ function proceedEditProposalDecision(proposalId, accept, keepFee){
           }
           renderKPIs();
           renderTable();
+          // زيادة دفع غير مرتبطة بسعر أي قطعة رجعت ولا برسومها — نفس سؤال proceedSinglePartReturn/
+          // proceedReturnWholeOrder، بس هون العملية اترسلت وانحفظت فعليًا (order مو draft مفتوح)،
+          // فقرار "استرجاعها/الاحتفاظ فيها" لازم حفظ إضافي صريح بعده
+          if(round2(lastEditProposalLeftoverExcess) > 0.01){
+            const returnedParts = (order.parts||[]).filter(p=>p.returned);
+            const linkedPart = (claimed.part_id && (order.parts||[]).find(p=>p.id===claimed.part_id))
+              || (returnedParts.length ? returnedParts[returnedParts.length-1] : null);
+            await new Promise(resolve=>{
+              openReturnExcessChoiceModal(round2(lastEditProposalLeftoverExcess), order, linkedPart, async ()=>{
+                const savedExcess = await persistOrder(order);
+                if(!savedExcess){ showToast('تعذر حفظ قرار الزيادة — حاول تعديله يدويًا من داخل الطلبية', 'error'); }
+                if(draft && draft.id === order.id){
+                  draft.parts = JSON.parse(JSON.stringify(order.parts||[]));
+                  draft.customerPayments = JSON.parse(JSON.stringify(order.customerPayments||[]));
+                  draft.returnKeptExcessAmount = order.returnKeptExcessAmount;
+                  refreshPartsList();
+                  refreshPaymentsList();
+                  updateModalTotals();
+                }
+                renderKPIs();
+                renderTable();
+                resolve();
+              });
+            });
+          }
         }
       }
       try{
