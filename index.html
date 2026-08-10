@@ -7738,9 +7738,25 @@ function openWithdrawCustodyModal(onSaved){
   });
 }
 
+// ترتيب حركات المصاريف/العهدة بتاريخها الفعلي (الأحدث فوق) — بدل الاعتماد على ترتيب الإدراج
+// بالمصفوفة (.reverse() بس)، اللي ما يطابق التاريخ الفعلي لو انعدّل تاريخ حركة يدويًا بعدين،
+// أو وصلت حركات بترتيب مختلف عن ترتيب تسجيلها (مزامنة لحظية من مستخدمين مختلفين). لنفس التاريخ
+// بالضبط، الأحدث إدراجًا يضل فوق (نفس روح .reverse() القديمة).
+function sortEntriesNewestFirst(entries){
+  return entries
+    .map((entry, i)=> ({ entry, i }))
+    .sort((a,b)=>{
+      const da = parseDMY(a.entry.date), db = parseDMY(b.entry.date);
+      const ta = da ? da.getTime() : -Infinity, tb = db ? db.getTime() : -Infinity;
+      if(tb !== ta) return tb - ta;
+      return b.i - a.i;
+    })
+    .map(x=>x.entry);
+}
+
 function openExpenseHistoryModal(key, label, onClosed){
   const root = document.getElementById('modal-root');
-  const matching = (appData.treasury[key] || []).filter(entryMatchesPeriod).slice().reverse();
+  const matching = sortEntriesNewestFirst((appData.treasury[key] || []).filter(entryMatchesPeriod));
   root.innerHTML =
     '<div class="modal-backdrop" data-close-backdrop>' +
       '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
@@ -7907,7 +7923,7 @@ function confirmDeleteExpenseEntry(key, entryId){
 function refreshExpenseEntries(key){
   const list = document.querySelector('[data-entries-key="'+escapeHtml(key)+'"]');
   if(!list) return;
-  const matching = (appData.treasury[key]||[]).filter(entryMatchesPeriod).slice().reverse();
+  const matching = sortEntriesNewestFirst((appData.treasury[key]||[]).filter(entryMatchesPeriod));
   list.innerHTML = matching.length
     ? matching.map(entry=>expenseEntryRowHtml(entry,key)).join('')
     : '<div class="expense-empty-hint">ما فيه مبالغ ضمن هذه الفترة</div>';
