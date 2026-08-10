@@ -5531,6 +5531,8 @@ async function shareDoc(){
    بيانات حية بدون حقول تعديل ولا حفظ/سجل نسخ — يُعاد توليده كامل من آخر بيانات كل مرة يُفتح،
    ويشمل كل طلبيات العميل (جارية وسابقة) + أي مرتجعات لسه ما رجعت له، مو بس الوضع الحالي */
 let statementCustomerId = null;
+let statementShowPaid = true;
+let statementShowRefunds = true;
 
 function statementPdfFilename(customer){
   return 'PARTECH-كشف-حساب-' + (customer ? (customer.name||customer.phone||'عميل') : 'عميل') + '.pdf';
@@ -5557,9 +5559,12 @@ function statementOrderRowsHtml(rows){
   }).join('');
 }
 
-function customerStatementHtml(customer, ongoing, past, refunds){
+function customerStatementHtml(customer, ongoing, past, refunds, opts){
+  opts = opts || {};
+  const showPaid = opts.showPaid !== false;
+  const showRefunds = opts.showRefunds !== false;
   const totalRemaining = round2(ongoing.reduce((s,r)=> s + (r.hasChargeable!==false ? Math.max(0,r.remaining) : 0), 0));
-  const totalRefunds = round2(refunds.reduce((s,r)=>s+r.amount,0));
+  const totalRefunds = showRefunds ? round2(refunds.reduce((s,r)=>s+r.amount,0)) : 0;
   const net = round2(totalRemaining - totalRefunds);
   const label = customer.name || customer.phone || 'عميل';
   return (
@@ -5591,23 +5596,27 @@ function customerStatementHtml(customer, ongoing, past, refunds){
           '<div class="doc-customer-name-input">'+escapeHtml(label)+'</div>' +
           (customer.phone ? '<div class="doc-meta-field field-car"><span>الجوال</span><span>'+escapeHtml(customer.phone)+'</span></div>' : '') +
         '</div>' +
+        '<div class="doc-vat-toggle no-print" style="gap:18px;">' +
+          '<label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="statement-show-paid-input" '+(showPaid?'checked':'')+'><span>إظهار المسدد</span></label>' +
+          '<label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="statement-show-refunds-input" '+(showRefunds?'checked':'')+'><span>إظهار المرتجع</span></label>' +
+        '</div>' +
         '<div class="doc-totals" style="margin-bottom:18px;">' +
-          '<div class="doc-totals-row"><span>إجمالي المستحق عليه (طلبيات جارية)</span><span class="num">'+fmtNum(totalRemaining)+' ريال</span></div>' +
-          (totalRefunds>0 ? '<div class="doc-totals-row"><span>إجمالي المستحق له (مرتجعات لسه ما رجعت)</span><span class="num">'+fmtNum(totalRefunds)+' ريال</span></div>' : '') +
+          '<div class="doc-totals-row"><span>إجمالي المستحق عليه</span><span class="num">'+fmtNum(totalRemaining)+' ريال</span></div>' +
+          (showRefunds && totalRefunds>0 ? '<div class="doc-totals-row"><span>إجمالي المستحق له</span><span class="num">'+fmtNum(totalRefunds)+' ريال</span></div>' : '') +
           '<div class="doc-totals-row grand"><span>الرصيد الصافي '+(net>=0?'(عليه)':'(له)')+'</span><span class="num">'+fmtNum(Math.abs(net))+' ريال</span></div>' +
         '</div>' +
         (ongoing.length ? (
-          '<div style="font-weight:700;margin:10px 0;">طلبيات جارية (لسه ما تسدد بالكامل)</div>' +
+          '<div style="font-weight:700;margin:10px 0;">طلبيات جارية</div>' +
           '<table class="doc-table"><thead><tr><th>الطلبية</th><th>التاريخ</th><th>الإجمالي</th><th>الحالة</th></tr></thead>' +
           '<tbody>'+statementOrderRowsHtml(ongoing)+'</tbody></table>'
         ) : '') +
-        (past.length ? (
-          '<div style="font-weight:700;margin:16px 0 10px;">طلبيات سابقة (مسددة)</div>' +
+        (showPaid && past.length ? (
+          '<div style="font-weight:700;margin:16px 0 10px;">طلبيات مسددة</div>' +
           '<table class="doc-table"><thead><tr><th>الطلبية</th><th>التاريخ</th><th>الإجمالي</th><th>الحالة</th></tr></thead>' +
           '<tbody>'+statementOrderRowsHtml(past)+'</tbody></table>'
         ) : '') +
-        (refunds.length ? (
-          '<div style="font-weight:700;margin:16px 0 10px;">مبالغ مستحقة للعميل (قطع مرتجعة لسه ما ردّت)</div>' +
+        (showRefunds && refunds.length ? (
+          '<div style="font-weight:700;margin:16px 0 10px;">مرتجعات مستحقة</div>' +
           '<table class="doc-table"><thead><tr><th>الطلبية</th><th>القطعة</th><th>المبلغ</th></tr></thead><tbody>' +
           refunds.map(r=>'<tr data-open-order="'+escapeHtml(r.orderId)+'" style="cursor:pointer;"><td>'+escapeHtml(r.orderNumber||'')+(r.orderLabel?' — '+escapeHtml(r.orderLabel):'')+'</td><td>'+escapeHtml(r.description||'')+'</td><td style="text-align:center;" class="num">'+fmtNum(r.amount)+'</td></tr>').join('') +
           '</tbody></table>'
@@ -5618,10 +5627,13 @@ function customerStatementHtml(customer, ongoing, past, refunds){
   );
 }
 
-function buildStatementWhatsAppText(customer, ongoing, past, refunds){
+function buildStatementWhatsAppText(customer, ongoing, past, refunds, opts){
+  opts = opts || {};
+  const showPaid = opts.showPaid !== false;
+  const showRefunds = opts.showRefunds !== false;
   const label = customer.name || customer.phone || 'عميل';
   const totalRemaining = round2(ongoing.reduce((s,r)=> s + (r.hasChargeable!==false ? Math.max(0,r.remaining) : 0), 0));
-  const totalRefunds = round2(refunds.reduce((s,r)=>s+r.amount,0));
+  const totalRefunds = showRefunds ? round2(refunds.reduce((s,r)=>s+r.amount,0)) : 0;
   const net = round2(totalRemaining - totalRefunds);
   const lines = [];
   lines.push('*PARTECH*');
@@ -5636,19 +5648,19 @@ function buildStatementWhatsAppText(customer, ongoing, past, refunds){
     });
     lines.push('');
   }
-  if(past.length){
-    lines.push('طلبيات سابقة (مسددة): '+past.length);
+  if(showPaid && past.length){
+    lines.push('طلبيات مسددة: '+past.length);
     lines.push('');
   }
-  if(refunds.length){
-    lines.push('مبالغ مستحقة للعميل:');
+  if(showRefunds && refunds.length){
+    lines.push('مرتجعات مستحقة:');
     refunds.forEach((r,i)=>{
       lines.push((i+1)+'. '+(r.orderNumber||'')+' — '+(r.description||'')+' — '+fmtNum(r.amount)+' ريال');
     });
     lines.push('');
   }
   lines.push('إجمالي المستحق عليه: '+fmtNum(totalRemaining)+' ريال');
-  if(totalRefunds>0) lines.push('إجمالي المستحق له: '+fmtNum(totalRefunds)+' ريال');
+  if(showRefunds && totalRefunds>0) lines.push('إجمالي المستحق له: '+fmtNum(totalRefunds)+' ريال');
   lines.push('الرصيد الصافي: '+fmtNum(Math.abs(net))+' ريال '+(net>=0?'(عليه)':'(له)'));
   return lines.join('\n');
 }
@@ -5658,7 +5670,7 @@ async function copyStatementToClipboard(){
   if(!customer) return;
   const { ongoing, past } = customerOrderHistory(statementCustomerId);
   const refunds = customerRefundsPending(statementCustomerId);
-  const text = buildStatementWhatsAppText(customer, ongoing, past, refunds);
+  const text = buildStatementWhatsAppText(customer, ongoing, past, refunds, { showPaid: statementShowPaid, showRefunds: statementShowRefunds });
   const ok = await writeTextToClipboard(text);
   showToast(ok ? 'تم نسخ النص، الصقه بالواتساب' : 'تعذر النسخ التلقائي، انسخ النص يدويًا', ok ? 'ok' : 'error');
 }
@@ -5719,7 +5731,7 @@ async function shareStatement(){
     const { ongoing, past } = customerOrderHistory(openedFor);
     const refunds = customerRefundsPending(openedFor);
     const shareTitle = 'PARTECH — كشف حساب — '+(customer.name||customer.phone||'عميل');
-    const fullText = buildStatementWhatsAppText(customer, ongoing, past, refunds);
+    const fullText = buildStatementWhatsAppText(customer, ongoing, past, refunds, { showPaid: statementShowPaid, showRefunds: statementShowRefunds });
     if(fileShareSupported){
       try{
         const file = new File([blob], statementPdfFilename(customer), {type:'application/pdf'});
@@ -5799,17 +5811,28 @@ function startEditStatementOrderLabel(orderId, currentLabel, cellEl){
 function openCustomerStatementView(customerId){
   const customer = (appData.customers||[]).find(c=>c.id===customerId);
   if(!customer) return;
+  // فتح جديد كليًا (عميل مختلف، أو أول فتح) يرجّع الخيارين لوضعهما الافتراضي (إظهار الكل) —
+  // إعادة الرسم بسبب تعديل عنوان أو تبديل نفس الخيارين يجب تضل محافظة على اختيار المستخدم الحالي
+  if(statementCustomerId !== customerId){ statementShowPaid = true; statementShowRefunds = true; }
   statementCustomerId = customerId;
   const { ongoing, past } = customerOrderHistory(customerId);
   const refunds = customerRefundsPending(customerId);
   const root = document.getElementById('doc-root');
-  root.innerHTML = customerStatementHtml(customer, ongoing, past, refunds);
+  root.innerHTML = customerStatementHtml(customer, ongoing, past, refunds, { showPaid: statementShowPaid, showRefunds: statementShowRefunds });
   root.classList.add('doc-open');
   root.querySelector('#statement-close-btn').addEventListener('click', closeStatementView);
   root.querySelector('#statement-copy-btn').addEventListener('click', copyStatementToClipboard);
   root.querySelector('#statement-share-btn').addEventListener('click', shareStatement);
   root.querySelector('#statement-pdf-btn').addEventListener('click', downloadStatementPdf);
   root.querySelector('#statement-print-btn').addEventListener('click', ()=> window.print());
+  root.querySelector('#statement-show-paid-input').addEventListener('change', e=>{
+    statementShowPaid = e.target.checked;
+    openCustomerStatementView(customerId);
+  });
+  root.querySelector('#statement-show-refunds-input').addEventListener('change', e=>{
+    statementShowRefunds = e.target.checked;
+    openCustomerStatementView(customerId);
+  });
   root.querySelectorAll('[data-edit-order-label]').forEach(btn=>{
     btn.addEventListener('click', e=>{
       e.stopPropagation();
@@ -5826,6 +5849,9 @@ function openCustomerStatementView(customerId){
       openModal('edit', row.getAttribute('data-open-order'));
     });
   });
+  // إعادة الرسم (تعديل عنوان، تبديل خيار الإظهار) بتنادي هالدالة من جديد بدون المرور بـ
+  // closeStatementView — لازم نشيل أي مستمع Esc قديم أولًا حتى ما يتراكموا فوق بعض
+  document.removeEventListener('keydown', statementEscListener);
   document.addEventListener('keydown', statementEscListener);
 }
 
