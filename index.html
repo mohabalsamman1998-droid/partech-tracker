@@ -7066,9 +7066,13 @@ function updateArchivePendingBadge(){
 
 function subscribeEditProposalsRealtime(){
   if(!sb || editProposalsChannel) return;
+  let editProposalsRealtimeDebounce;
   editProposalsChannel = sb.channel('edit-proposals-changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'edit_proposals' }, ()=>{
-      refreshEditProposals();
+      // تجميع دفعة أحداث متتالية (قرارات/طلبات متعددة توصل سوا) بتحديث واحد بدل ما نعيد
+      // fetch الجدول كامل + renderTable() مرة لكل صف — نفس مبدأ debounce مربع البحث.
+      clearTimeout(editProposalsRealtimeDebounce);
+      editProposalsRealtimeDebounce = setTimeout(refreshEditProposals, 150);
     })
     .subscribe();
 }
@@ -9233,6 +9237,35 @@ let ordersChannel = null;
 let suppliersChannel = null;
 let customersChannel = null;
 
+let orderRenderCascadePending = false;
+// معالجة تعديل جماعي (N طلبية بضغطة وحدة) كانت تعيد بناء الجدول + المؤشرات + كل الشارات N مرة
+// متتالية — مرة لكل صف. نجمّع أي دفعة أحداث توصل بنفس اللحظة (حتى لو من مستخدمين مختلفين)
+// بتحديث واحد بعد ما توصل الدفعة، بدل تكرار نفس عملية البناء الثقيلة لكل صف على حدة.
+function scheduleOrderRenderCascade(){
+  if(orderRenderCascadePending) return;
+  orderRenderCascadePending = true;
+  setTimeout(()=>{
+    orderRenderCascadePending = false;
+    renderKPIs();
+    renderTable();
+    renderQuotesList();
+    updateCustomersBadge();
+    updateSuppliersBadge();
+    if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
+    // زي applyRemoteSupplierChange/applyRemoteCustomerChange بالضبط — ما نعيد بناء القائمة لو
+    // في صف تعديل مفتوح حاليًا (editingSuppliers/editingCustomers)، حتى ما نمسح كتابة لسه ما
+    // انحفظت (الحقول بتتحفظ عند blur بس، مش أول ما تتغيّر).
+    if(document.getElementById('suppliers-view').style.display !== 'none' && Object.keys(editingSuppliers).length===0){ refreshSuppliersList(); }
+    if(document.getElementById('customers-view').style.display !== 'none' && Object.keys(editingCustomers).length===0){ refreshCustomersList(); }
+    refreshArchiveViewIfOpen();
+    // صاحب الحساب لو فاتح شاشة سداد التشاليح/الجديد وقت وصول تعديل من مكان تاني — نحدّثها كمان
+    const scrapRoot = document.getElementById('scrapyard-root');
+    if(scrapRoot && scrapRoot.style.display !== 'none' && scrapyardSharedState.canManage && scrapyardCurrentScreen === 'settlement'){
+      if(!scrapyardHasOpenEdit()) loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
+    }
+  }, 120);
+}
+
 function applyRemoteOrderChange(payload){
   if(!Array.isArray(appData.orders)) appData.orders = [];
   if(payload.eventType === 'DELETE'){
@@ -9241,7 +9274,7 @@ function applyRemoteOrderChange(payload){
     appData.orders = appData.orders.filter(o=>o.id!==oldId);
     // الطلبية يلي المستخدم فاتحها حاليًا انحذفت من جلسة تانية — تركها مفتوحة كان يخلي أي طلب
     // تعديل/اقتراح تسعير لاحق يتيتّم بصمت (order_id ما إله FK، فالإدخال ينجح لكن يعلق للأبد
-    // بلا مراجع). نسكّر فورًا مع تنبيه واضح.
+    // بلا مراجع). نسكّر فورًا مع تنبيه واضح (فوري، بدون تأجيل — مو جزء من الكاسكيد المجمّع).
     if(draft && draft.id === oldId){
       closeModal();
       showToast('هذه الطلبية انحذفت من مكان تاني — سكّرنا النافذة', 'error');
@@ -9257,23 +9290,7 @@ function applyRemoteOrderChange(payload){
     const idx = appData.orders.findIndex(o=>o.id===order.id);
     if(idx>=0) appData.orders[idx] = order; else appData.orders.push(order);
   }
-  renderKPIs();
-  renderTable();
-  renderQuotesList();
-  updateCustomersBadge();
-  updateSuppliersBadge();
-  if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
-  // زي applyRemoteSupplierChange/applyRemoteCustomerChange بالضبط — ما نعيد بناء القائمة لو
-  // في صف تعديل مفتوح حاليًا (editingSuppliers/editingCustomers)، حتى ما نمسح كتابة لسه ما
-  // انحفظت (الحقول بتتحفظ عند blur بس، مش أول ما تتغيّر).
-  if(document.getElementById('suppliers-view').style.display !== 'none' && Object.keys(editingSuppliers).length===0){ refreshSuppliersList(); }
-  if(document.getElementById('customers-view').style.display !== 'none' && Object.keys(editingCustomers).length===0){ refreshCustomersList(); }
-  refreshArchiveViewIfOpen();
-  // صاحب الحساب لو فاتح شاشة سداد التشاليح/الجديد وقت وصول تعديل من مكان تاني — نحدّثها كمان
-  const scrapRoot = document.getElementById('scrapyard-root');
-  if(scrapRoot && scrapRoot.style.display !== 'none' && scrapyardSharedState.canManage && scrapyardCurrentScreen === 'settlement'){
-    if(!scrapyardHasOpenEdit()) loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
-  }
+  scheduleOrderRenderCascade();
 }
 
 function subscribeOrdersRealtime(){
@@ -12046,6 +12063,8 @@ const PRESENCE_RECHECK_MS = 8000; // how often we re-derive the visible online l
 const WHO_ONLINE_EXTRA_VISIBLE_EMAILS = ['amerpartech@gmail.com','manomahomed11223@gmail.com'];
 let presenceTimer = null;
 let presenceRecheckTimer = null;
+let presenceTimerStartTimeout = null;
+let presenceRecheckStartTimeout = null;
 let presenceEmail = null;
 let lastActivityAt = Date.now();
 let presenceCache = {}; // email -> last_seen (ms epoch), kept in sync via realtime
@@ -12066,14 +12085,23 @@ function computeOnlineList(){
     .sort((a,b)=> presenceCache[b] - presenceCache[a]);
 }
 
+let lastOnlineListFetchAt = 0;
+const ONLINE_LIST_MIN_REFRESH_GAP_MS = 3000;
+
 function refreshOnlineBadge(){
   const online = computeOnlineList();
   ['btn-who-online','btn-who-online-scrapyard'].forEach(id=>{
     const btn = document.getElementById(id);
     if(btn) btn.textContent = '👥 ' + online.length;
   });
-  // إذا نافذة "آخر ظهور" مفتوحة، حدّثها بنفس قائمة كل الموظفين (متصل + غير متصل) — بدون ما نرجّعها للشكل القديم
+  // إذا نافذة "آخر ظهور" مفتوحة، حدّثها بنفس قائمة كل الموظفين (متصل + غير متصل) — بدون ما نرجّعها للشكل القديم.
+  // هالدالة بتنستدعى من مؤقت كل 8 ثواني وكمان من كل حدث realtime لأي موظف (كل 15 ثانية له) —
+  // فبدون هالحد الأدنى بين مرة وتانية كانت النافذة تعمل fetch كامل + إعادة بناء كل ثانية لثلاث
+  // ثوانٍ لما فيه أكثر من موظف متصل. عدّاد الشارة نفسه (فوق) بيضل يتحدّث فورًا كل مرة، الفحص هون بس على الـfetch الثقيل.
   if(document.getElementById('online-users-list')){
+    const now = Date.now();
+    if(now - lastOnlineListFetchAt < ONLINE_LIST_MIN_REFRESH_GAP_MS) return;
+    lastOnlineListFetchAt = now;
     loadAllPresenceRows().then(rows=>{
       const listEl = document.getElementById('online-users-list');
       if(listEl) listEl.innerHTML = presenceListHtml(rows);
@@ -12119,9 +12147,17 @@ function startPresenceHeartbeat(email){
   startContinuousLocationReporting();
   enforceLocationRequired(email);
   if(presenceTimer) clearInterval(presenceTimer);
-  presenceTimer = setInterval(sendPresenceHeartbeat, PRESENCE_HEARTBEAT_MS);
   if(presenceRecheckTimer) clearInterval(presenceRecheckTimer);
-  presenceRecheckTimer = setInterval(refreshOnlineBadge, PRESENCE_RECHECK_MS);
+  // لازم نلغي أي بدء مؤجل من نداء سابق لسا ما نفّذ (مثلاً تبديل حساب على نفس الجهاز خلال ثوان)
+  // وإلا الـclearInterval فوق ما إله معنى — المتغيّر لسا null/قديم لأن الإنشاء المؤجل ما صار
+  // بعد، وبعدين ينفّذ نداءين setInterval مستقلين فيصير عنا مؤقت "شبح" ما حدا قادر يلغيه.
+  clearTimeout(presenceTimerStartTimeout);
+  clearTimeout(presenceRecheckStartTimeout);
+  // بدء المؤقتات بفارق عشوائي بسيط بدل نفس اللحظة تمامًا — 15 و8 ثانية كلاهما يقسم مدة
+  // مؤقت الموقع (120 ثانية) بالضبط، فبدون هالفارق كانت الثلاثة توصل نفس التكة كل دقيقتين
+  // وتزاحم بعضها (كتابة حضور + قراءة/رسم قائمة المتصلين + طلب GPS) بنفس اللحظة على كل جهاز.
+  presenceTimerStartTimeout = setTimeout(()=>{ presenceTimer = setInterval(sendPresenceHeartbeat, PRESENCE_HEARTBEAT_MS); }, 1000 + Math.random()*2000);
+  presenceRecheckStartTimeout = setTimeout(()=>{ presenceRecheckTimer = setInterval(refreshOnlineBadge, PRESENCE_RECHECK_MS); }, 2500 + Math.random()*2000);
 }
 
 /* وقت نسبي بالعربي لآخر ظهور (قبل دقيقة/ساعة/يوم...) */
@@ -12203,6 +12239,7 @@ function showWhoIsOnline(){
     if(e.target.hasAttribute('data-close-confirm')) close();
   });
   root.querySelector('#close-online-btn').addEventListener('click', close);
+  lastOnlineListFetchAt = Date.now(); // حتى ما يعيد refreshOnlineBadge نفس الـfetch لو وصل حدث realtime لحظة الفتح
   loadAllPresenceRows().then(rows=>{
     const listEl = document.getElementById('online-users-list');
     if(listEl) listEl.innerHTML = presenceListHtml(rows);
@@ -12221,6 +12258,7 @@ const LOCATION_MANDATORY_EXEMPT_EMAILS = ['homam.techno@gmail.com','sammaneng@gm
 const LOCATION_REPORT_INTERVAL_MS = 2*60*1000; // نقطة جديدة كل دقيقتين تلقائيًا
 let locationRequestChannel = null;
 let locationReportTimer = null;
+let locationReportStartTimeout = null;
 
 function recordLocationPoint(){
   if(!sb || !presenceEmail || !navigator.geolocation) return;
@@ -12249,7 +12287,11 @@ function subscribeLocationRequests(){
 function startContinuousLocationReporting(){
   if(!presenceEmail || LOCATION_SHARING_EXCLUDED_EMAILS.includes(presenceEmail)) return;
   if(locationReportTimer) clearInterval(locationReportTimer);
-  locationReportTimer = setInterval(recordLocationPoint, LOCATION_REPORT_INTERVAL_MS);
+  clearTimeout(locationReportStartTimeout); // نلغي أي بدء مؤجل من نداء سابق — راجع التعليق بـstartPresenceHeartbeat
+  // فارق عشوائي إضافي عن مؤقتَي الحضور — راجع التعليق بـstartPresenceHeartbeat
+  locationReportStartTimeout = setTimeout(()=>{
+    locationReportTimer = setInterval(recordLocationPoint, LOCATION_REPORT_INTERVAL_MS);
+  }, 4000 + Math.random()*3000);
   subscribeLocationRequests();
 }
 
@@ -12358,6 +12400,17 @@ let employeeMapStaleTimer = null;
 let employeeMapModalOpen = false;
 let employeeMapHistoryMarker = null;
 const EMPLOYEE_LOCATION_STALE_MS = 2*60*1000;
+let lastEmployeeMapFetchAt = 0;
+const EMPLOYEE_MAP_MIN_REFRESH_GAP_MS = 5000;
+// مؤقت الـ30 ثانية وحدث realtime لكل نقطة موقع جديدة بيوصلوا لنفس النتيجة (تحميل آخر موقع لكل
+// موظف + رسم العلامات) — وقت وصول نقطة فعلية غالبًا يتزامنوا. حد أدنى بينهم يمنع تكرار نفس
+// طلب الشبكة + إعادة رسم كل العلامات مرتين بلحظة وحدة.
+async function refreshEmployeeMapMarkersThrottled(){
+  const now = Date.now();
+  if(now - lastEmployeeMapFetchAt < EMPLOYEE_MAP_MIN_REFRESH_GAP_MS) return;
+  lastEmployeeMapFetchAt = now;
+  renderEmployeeMapMarkers(await loadEmployeeLocations());
+}
 
 function employeeMapMarkerIcon(email, stale, variant){
   const label = displayNameForEmail(email);
@@ -12423,9 +12476,7 @@ function pingEmployeeLocations(){
 function subscribeEmployeeMapRealtime(){
   if(!sb || employeeMapChannel) return;
   employeeMapChannel = sb.channel('employee-location-history-changes')
-    .on('postgres_changes', { event:'INSERT', schema:'public', table:'employee_location_history' }, async ()=>{
-      renderEmployeeMapMarkers(await loadEmployeeLocations());
-    })
+    .on('postgres_changes', { event:'INSERT', schema:'public', table:'employee_location_history' }, refreshEmployeeMapMarkersThrottled)
     .subscribe();
 }
 
@@ -12514,6 +12565,7 @@ async function openEmployeeMap(){
 
   const [rows, historyEmails] = await Promise.all([loadEmployeeLocations(), loadEmployeeLocationHistoryEmails()]);
   if(myToken !== employeeMapOpenToken) return; // انسكرت و/أو انفتحت وانسكرت وانفتحت من جديد وهي عم تحمّل
+  lastEmployeeMapFetchAt = Date.now(); // حتى ما يعيد أول حدث realtime/تكة مؤقت لاحقة نفس التحميل فورًا
   if(rows.length){
     renderEmployeeMapMarkers(rows);
     const pts = rows.filter(r=>r.lat!=null && r.lng!=null).map(r=>[r.lat, r.lng]);
@@ -12534,7 +12586,7 @@ async function openEmployeeMap(){
       : '<option value="">لا يوجد سجل مواقع بعد</option>';
   }
   subscribeEmployeeMapRealtime();
-  employeeMapStaleTimer = setInterval(async ()=>{ renderEmployeeMapMarkers(await loadEmployeeLocations()); }, 30000);
+  employeeMapStaleTimer = setInterval(refreshEmployeeMapMarkersThrottled, 30000);
   pingEmployeeLocations();
 }
 
