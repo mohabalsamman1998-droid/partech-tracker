@@ -12259,14 +12259,32 @@ function startContinuousLocationReporting(){
    startContinuousLocationReporting (يلي بس بيبلش الفاصل الزمني + الاستماع لطلبات "تحديث الآن"). ---------- */
 /* تعليمات تفعيل الموقع حسب الجهاز — ما فيه أي رابط JS يقدر يفتح إعدادات الصلاحيات مباشرة (كل
    المتصفحات تمنع هذا أمنيًا)، فأقرب شي فعلي مفيد هو تعليمات دقيقة حسب نظام التشغيل بدل جملة
-   عامة وحيدة تناسب الكل. */
+   عامة وحيدة تناسب الكل. وبما إنه فرق كبير هل فاتحه من الأيقونة المثبّتة (PWA) أو من رابط
+   بمتصفح عادي — مسارين مختلفين تمامًا لنفس الجهاز — منتحقق فعليًا بدل ما نفترض: display-mode
+   standalone/fullscreen (أندرويد ومعظم المتصفحات) أو navigator.standalone (سفاري القديم بالآيفون). */
+function isRunningAsInstalledApp(){
+  if(window.navigator.standalone === true) return true; // iOS Safari legacy flag
+  return !!(window.matchMedia && (
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.matchMedia('(display-mode: fullscreen)').matches ||
+    window.matchMedia('(display-mode: minimal-ui)').matches
+  ));
+}
+
 function locationHelpInstructions(){
   const ua = navigator.userAgent || '';
+  const installed = isRunningAsInstalledApp();
   if(/Android/i.test(ua)){
-    return 'من إعدادات الجهاز ⚙️ ← التطبيقات ← بارتك ← الأذونات ← الموقع ← اختر "السماح".\n\nلو ما لقيت "بارتك" بقائمة التطبيقات (يعني فاتحه من كروم مباشرة مو من الأيقونة المثبّتة على الشاشة الرئيسية): اضغط ⋮ بأعلى كروم ← معلومات الموقع (أيقونة 🔒 أو ⓘ بجانب الرابط) ← الموقع ← السماح، وبعدين حدّث الصفحة.';
+    if(installed){
+      return 'إنت فاتحه من الأيقونة المثبّتة بالشاشة الرئيسية — من إعدادات الجهاز ⚙️ ← التطبيقات (Apps) ← دوّر على "بارتك" ← الأذونات (Permissions) ← الموقع (Location) ← اختر "السماح" (Allow)، وبعدين ارجع افتح التطبيق من نفس الأيقونة.\n\nلو ما لقيت "بارتك" بقائمة التطبيقات: افتح متصفح Chrome عادي (مو الأيقونة المثبّتة) وروح لنفس الرابط، اضغط ⋮ (النقاط الثلاث) ← معلومات الموقع (أيقونة 🔒 أو ⓘ بجانب الرابط) ← الموقع ← السماح، وبعدين ارجع للأيقونة المثبّتة وجرّب من جديد.';
+    }
+    return 'إنت فاتحه من رابط بمتصفح كروم مباشرة — اضغط ⋮ (النقاط الثلاث) بأعلى كروم ← معلومات الموقع (أيقونة 🔒 أو ⓘ بجانب الرابط) ← الموقع ← السماح، وبعدين حدّث الصفحة.';
   }
   if(/iPhone|iPad|iPod/i.test(ua)){
-    return 'من إعدادات الآيفون ⚙️ ← مرّر لتحت ولاقي "بارتك" بقائمة التطبيقات ← الموقع ← اختر "أثناء استخدام التطبيق".\n\nلو فاتحه من سفاري مباشرة مو من الأيقونة المثبّتة: الإعدادات ← Safari ← الموقع ← اسمح.';
+    if(installed){
+      return 'إنت فاتحه من الأيقونة المثبّتة بالشاشة الرئيسية — من إعدادات الآيفون ⚙️ ← مرّر لتحت ولاقي "بارتك" بقائمة التطبيقات ← الموقع ← اختر "أثناء استخدام التطبيق"، وبعدين ارجع افتح التطبيق من نفس الأيقونة.\n\nلو ما لقيته بالقائمة: احذف الأيقونة وثبّتها من جديد من سفاري (زر المشاركة ← إضافة إلى الشاشة الرئيسية).';
+    }
+    return 'إنت فاتحه من رابط بسفاري مباشرة — من إعدادات الآيفون ⚙️ ← Safari ← الموقع ← اختر "اسمح"، وبعدين حدّث الصفحة.';
   }
   return 'اضغط على أيقونة 🔒 أو (ⓘ) بجانب رابط الموقع بأعلى المتصفح ← إعدادات الموقع (Site settings) ← الموقع (Location) ← اختر "السماح دائمًا"، وبعدين حدّث الصفحة.';
 }
@@ -12280,8 +12298,7 @@ function showLocationGate(retryFn){
     gate.innerHTML =
       '<div class="location-gate-card">' +
         '<div class="location-gate-icon">📍</div>' +
-        '<div class="location-gate-title">لازم توافق على مشاركة الموقع للمتابعة</div>' +
-        '<div class="location-gate-sub">هذا التطبيق يتطلب معرفة موقعك أثناء استخدامه — الموافقة نفسها لازم تصير من إعدادات الجهاز/المتصفح، ما فيها زر يفعّلها مباشرة من هون.</div>' +
+        '<div class="location-gate-title">يتطلب تفعيل الموقع</div>' +
         '<div class="location-gate-help" id="location-gate-help" style="display:none;"></div>' +
         '<button type="button" class="btn btn-ghost" id="location-gate-help-btn" style="width:100%;margin-bottom:10px;">⚙️ كيف أفعّل صلاحية الموقع؟</button>' +
         '<button type="button" class="btn btn-primary" id="location-gate-retry-btn" style="width:100%;">حاول مرة ثانية</button>' +
