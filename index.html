@@ -1516,11 +1516,64 @@ function groupSupplierOrCustomerRows(rows){
   }));
 }
 
+// promise التحميل الخلفي للطلبيات المؤرشفة — تتحدد بـloadData()، وopenArchiveView() ينتظرها
+// لو لسه ما خلصت (نادرًا، بس ممكن بنت إنترنت بطيء) حتى ما تظهر شاشة الأرشيف فاضية غلط
+let archivedOrdersHydration = null;
+
+/* archived مو عمود حقيقي بجدول orders — مخبّى جوا extra (jsonb catch-all، انظر ORDER_PROMOTED_KEYS).
+   الفلترة لازم تكون NULL-safe: أي طلبية قديمة ما انأرشفت ولا استُرجعت أبدًا ما فيها مفتاح
+   archived أصلًا بـextra (NULL)، ولازم تُحسب "نشطة" بالضبط متل false — extra->>archived.eq.false
+   لحالها كانت رح تستبعد كل التاريخ القديم يلي ما لُمس أبدًا بميزة الأرشفة. */
+const ORDERS_ACTIVE_FILTER = 'extra->archived.is.null,extra->>archived.eq.false';
+
+/* تحميل الطلبيات المؤرشفة بالخلفية بعد التحميل الأساسي مباشرة — بدون ما نحجب فتح الموقع
+   لحد ما يخلص. كل الحسابات المالية (الأرشفة موثّق أنها "بدون التأثير على أي حساب مالي"،
+   انظر archiveOrder) والتقارير وكشوفات الحساب لسه بتعتمد على appData.orders الكامل — هاي
+   الدالة فقط بتفصل *وقت* وصول البيانات المؤرشفة عن التحميل الحرج الأول، بدون ما تغيّر
+   النتيجة النهائية (appData.orders بيصير فيه نفس كل الطلبيات، نشطة+مؤرشفة، خلال ثوان). */
+async function hydrateArchivedOrders(){
+  try{
+    if(!sb) return;
+    // بنجيب كل الطلبيات هون (مو بس المؤرشفة عبر .eq('extra->>archived','true')) — فلترة بحالة
+    // الأرشفة وقت هالاستعلام بالذات كانت بتفتح ثغرة حقيقية: طلبيتين منفصلتين زمنيًا (استعلام
+    // المرحلة الأولى، وهاد الاستعلام) عن حالة archived، فطلبية انأرشفت أو استُرجعت بالفاصل
+    // الزمني بينهم كانت ممكن ما تطابق فلتر ولا مرحلة (نشطة وقت الأولى فاستُبعدت، وصارت غير
+    // مؤرشفة وقت هاي فاستُبعدت هون كمان) وتختفي كليًا من appData.orders لبقية الجلسة. جلب
+    // الكل + فلترة "موجودة عندي أصلًا؟" بس (بغض النظر عن حالة archived وقتها) بيسكّر الثغرة.
+    const { data, error } = await sb.from('orders').select('*');
+    if(error) throw error;
+    const existingIds = new Set(appData.orders.map(o=>o.id));
+    let addedAny = false;
+    (data||[]).forEach(row=>{
+      if(existingIds.has(row.id)) return; // وصلت مسبقًا (المرحلة الأولى أو realtime) — نسختنا المحلية أحدث أو تعادلها، ما نلمسها
+      appData.orders.push(orderRowToObject(row));
+      addedAny = true;
+    });
+    if(addedAny){
+      migrateLegacyCustomerPayment();
+      migrateLegacyOrderLabel();
+      updateArchivePendingBadge(); // خارج نطاق scheduleOrderRenderCascade، يحتاج استدعاء منفصل
+      // نفس آلية "شي تغيّر بالطلبيات" المستخدمة بأي حدث realtime (renderKPIs/renderTable/
+      // renderQuotesList/شارات الزبائن والموردين/شاشة الأرشيف المفتوحة...الخ) بدل قائمة يدوية
+      // منفصلة هون كانت ناقصة (فاتها renderQuotesList/updateCustomersBadge/updateSuppliersBadge)
+      // وممكن تفوت تحديث مستقبلي لنفس الكاسكيد لو ضلت مكرَّرة بمكانين.
+      scheduleOrderRenderCascade();
+    }
+  }catch(e){
+    console.error('hydrateArchivedOrders:', e);
+    showToast('تعذر تحميل باقي الطلبيات بالخلفية — بعض البيانات قد تكون ناقصة مؤقتًا، جرّب تحديث الصفحة', 'error');
+  }
+}
+
 async function loadData(){
   try{
     if(!sb) throw new Error('NO_DB');
+    // المرحلة الأولى (تحجب فتح الموقع): الطلبيات النشطة بس، بدل كل التاريخ المتراكم منذ بداية
+    // المشروع — بتخلي فتح/تحديث الموقع أسرع مع تراكم الطلبيات بمرور الوقت. المؤرشفة تلتحق
+    // بنفس appData.orders بالخلفية فورًا بعدها (hydrateArchivedOrders)، فكل الحسابات المالية
+    // تضل صحيحة كاملة خلال ثوان — بس البداية أسرع.
     const [ordersRes, treasuryRes, tasksRes, suppliersRes, customersRes] = await Promise.all([
-      sb.from('orders').select('*'),
+      sb.from('orders').select('*').or(ORDERS_ACTIVE_FILTER),
       sb.from('treasury_entries').select('*'),
       sb.from('tasks').select('*'),
       sb.from('suppliers').select('*'),
@@ -1538,6 +1591,7 @@ async function loadData(){
       suppliers: groupSupplierOrCustomerRows(suppliersRes.data),
       customers: groupSupplierOrCustomerRows(customersRes.data)
     };
+    archivedOrdersHydration = hydrateArchivedOrders(); // ما ننتظرها هون عمدًا — تشتغل بالخلفية
   }catch(e){
     appData = { orders: [], treasury: defaultTreasury(), tasks: defaultTasks(), suppliers: [], customers: [] };
     showToast('تعذر الاتصال بقاعدة البيانات — تحقق من إعداد Supabase (SUPABASE_URL / SUPABASE_ANON_KEY)', 'error');
@@ -10710,9 +10764,13 @@ function bindCustomerRowEvents(){
 }
 
 /* ---------- شاشة أرشيف الطلبيات ---------- */
-function openArchiveView(){
+async function openArchiveView(){
   hideAllSecondaryViews();
   document.getElementById('archive-view').style.display = 'block';
+  // أول فتح للأرشيف نادرًا ممكن يسبق اكتمال تحميل الطلبيات المؤرشفة بالخلفية (hydrateArchivedOrders،
+  // عادةً يخلص خلال أجزاء من الثانية بعد التحميل الأساسي) — ننتظرها هون قبل الرسم حتى ما تظهر
+  // "ما فيه طلبيات مؤرشفة" غلط لمن ما فيه شي وصل بعد، بدل الرسم فورًا وتصحيح نفسه لاحقًا.
+  if(archivedOrdersHydration) await archivedOrdersHydration;
   renderArchiveView();
 }
 
