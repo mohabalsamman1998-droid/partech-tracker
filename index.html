@@ -3422,7 +3422,7 @@ function openReturnExcessChoiceModal(excessAmount, order, linkedPart, onDone){
     // نخزّن حصة هالقطعة بالذات (نفس مبدأ returnKeptFeeShare) — لازم زر "تراجع عن الإرجاع"
     // يقدر يلغي بالضبط نفس المبلغ لو حد رجّع هالقرار لاحقًا، وإلا يضل عالقًا يتيمًا للأبد
     if(linkedPart) linkedPart.returnKeptExcessShare = excessAmount;
-    onDone();
+    onDone('keep');
   });
   root.querySelector('#excess-choice-refund-btn').addEventListener('click', ()=>{
     close();
@@ -3436,7 +3436,7 @@ function openReturnExcessChoiceModal(excessAmount, order, linkedPart, onDone){
         returnAdjustment: true, linkedPartId: linkedPartId||null
       });
     }
-    onDone();
+    onDone('refund');
   });
 }
 
@@ -5312,7 +5312,8 @@ function closeDocViewAndReturn(){
 /* Esc كان يقفل شاشة المستند بدون حفظ — أي شي انكتب بالفاتورة (اسم العميل، السيارة، VIN...)
    بيضيع بلا تحذير. صار يحفظ أولًا زي زر ✕ بالضبط. */
 async function closeDocViewSavingAndReturn(){
-  await persistDocMeta(false);
+  const saved = await persistDocMeta(false);
+  if(!saved){ showToast('تعذر حفظ التعديلات — حاول مرة تانية', 'error'); return; }
   closeDocViewAndReturn();
 }
 function docEscListener(e){ if(e.key==='Escape') closeDocViewSavingAndReturn(); }
@@ -5331,9 +5332,14 @@ function markEmptyDocFields(){
 
 function bindDocHandlers(){
   const root = document.getElementById('doc-root');
-  root.querySelector('#doc-close-btn').addEventListener('click', async ()=>{ await persistDocMeta(false); closeDocViewAndReturn(); });
-  root.querySelector('#doc-save-btn').addEventListener('click', ()=>{ persistDocMeta(true); });
-  root.querySelector('#doc-print-btn').addEventListener('click', async ()=>{ await persistDocMeta(false, true); markEmptyDocFields(); window.print(); });
+  root.querySelector('#doc-close-btn').addEventListener('click', closeDocViewSavingAndReturn);
+  root.querySelector('#doc-save-btn').addEventListener('click', async ()=>{ await persistDocMeta(true); });
+  root.querySelector('#doc-print-btn').addEventListener('click', async ()=>{
+    const saved = await persistDocMeta(false, true);
+    if(!saved){ showToast('تعذر حفظ نسخة المستند — الطباعة أُلغيت، حاول مرة تانية', 'error'); return; }
+    markEmptyDocFields();
+    window.print();
+  });
   root.querySelector('#doc-copy-btn').addEventListener('click', copyDocToClipboard);
   root.querySelector('#doc-share-btn').addEventListener('click', shareDoc);
   root.querySelector('#doc-pdf-btn').addEventListener('click', downloadDocPdf);
@@ -5370,9 +5376,14 @@ async function persistDocMeta(showToastMsg, appendHistory){
   const order = appData.orders.find(o=>o.id===docState.orderId);
   if(!order) return false;
   const field = docState.type==='invoice' ? 'invoiceDoc' : 'quoteDoc';
+  const historyField = docState.type==='invoice' ? 'invoiceDocHistory' : 'quoteDocHistory';
+  // نلقط القيم القديمة قبل أي تعديل — لو فشل الحفظ بالقاعدة (رفض RLS، انقطاع شبكة، تعارض)
+  // لازم نرجّع appData لنفس حالتها قبل هالدالة، وإلا الذاكرة تختلف عن القاعدة بصمت
+  const prevFieldValue = order[field];
+  const prevHistoryValue = Array.isArray(order[historyField]) ? order[historyField].slice() : order[historyField];
+  const prevUpdatedAt = order.updatedAt;
   order[field] = Object.assign({}, docState.data);
   if(appendHistory){
-    const historyField = docState.type==='invoice' ? 'invoiceDocHistory' : 'quoteDocHistory';
     if(!Array.isArray(order[historyField])) order[historyField] = [];
     const snapshot = Object.assign({}, docState.data);
     // لقطة فعلية من القطع/الأسعار/الرسوم وقت الإصدار — بدونها إعادة فتح فاتورة قديمة من السجل
@@ -5397,7 +5408,12 @@ async function persistDocMeta(showToastMsg, appendHistory){
   // trigger)، فحفظ بيانات المستند كان يمرّ "خفي" على فحصي التعارض بنافذة الطلبية والتسعيرة.
   order.updatedAt = new Date().toISOString();
   const saved = await persistOrder(order);
-  if(!saved) return false;
+  if(!saved){
+    order[field] = prevFieldValue;
+    order[historyField] = prevHistoryValue;
+    order.updatedAt = prevUpdatedAt;
+    return false;
+  }
   renderTable();
   if(showToastMsg) showToast('تم حفظ بيانات '+(docState.type==='invoice'?'الفاتورة':'عرض السعر'), 'ok');
   return true;
@@ -5480,7 +5496,8 @@ async function copyDocToClipboard(){
   const text = buildDocWhatsAppText(order, docState.type, docState.data);
   const ok = await writeTextToClipboard(text);
   showToast(ok ? 'تم نسخ النص، الصقه بالواتساب' : 'تعذر النسخ التلقائي، انسخ النص يدويًا', ok ? 'ok' : 'error');
-  await persistDocMeta(false, true);
+  const saved = await persistDocMeta(false, true);
+  if(!saved) showToast('تم النسخ، لكن تعذر حفظ نسخة المستند بالسجل — حاول "حفظ" يدويًا', 'error');
 }
 
 /* ---------- PDF export + native share ---------- */
@@ -5531,7 +5548,11 @@ async function downloadDocPdf(){
   };
   setBusy(true);
   try{
-    await persistDocMeta(false, true);
+    const saved = await persistDocMeta(false, true);
+    if(!saved){
+      showToast('تعذر حفظ نسخة المستند — التحميل أُلغي، حاول مرة تانية', 'error');
+      return;
+    }
     if(docState !== openedDocState) return;
     markEmptyDocFields();
     const blob = await buildDocPdfBlob();
@@ -5585,11 +5606,15 @@ async function shareDoc(){
     // نشغّلهما بالتوازي بدل التسلسل حتى يقصر إجمالي وقت الانتظار قبل navigator.share().
     // buildDocPdfBlob ملفوفة بـ catch: فشلها (مثلاً مكتبة PDF ما تحمّلت) كان بيلغي المشاركة
     // كلها عبر Promise.all، مع إن مشاركة النص لسه ممكنة تمامًا.
-    const [, blob] = await Promise.all([
+    const [saved, blob] = await Promise.all([
       persistDocMeta(false, true),
       fileShareSupported ? buildDocPdfBlob().catch(()=>null) : Promise.resolve(null)
     ]);
     if(docState !== openedDocState) return; // النافذة انسكّرت أو تحوّلت لمستند تاني أثناء الانتظار
+    if(!saved){
+      showToast('تعذر حفظ نسخة المستند — المشاركة أُلغيت، حاول مرة تانية', 'error');
+      return;
+    }
     if(fileShareSupported && !blob) fileShareSupported = false; // انزل لمشاركة النص
     // إعادة جلب الطلبية بعد الانتظار (await) — ممكن يكون وصل تعديل من جلسة تانية بهالفترة
     // القصيرة، ونص المشاركة لازم يعكس آخر نسخة مش النسخة يلي كانت وقت فتح شاشة المستند.
@@ -7053,14 +7078,54 @@ function proceedEditProposalDecision(proposalId, accept, keepFee){
             const returnedParts = (order.parts||[]).filter(p=>p.returned);
             const linkedPart = (claimed.part_id && (order.parts||[]).find(p=>p.id===claimed.part_id))
               || (returnedParts.length ? returnedParts[returnedParts.length-1] : null);
+            const excessAmountToApply = round2(lastEditProposalLeftoverExcess);
+            const linkedPartId = linkedPart ? linkedPart.id : null;
             await new Promise(resolve=>{
-              openReturnExcessChoiceModal(round2(lastEditProposalLeftoverExcess), order, linkedPart, async ()=>{
-                const savedExcess = await persistOrder(order);
-                if(!savedExcess){ showToast('تعذر حفظ قرار الزيادة — حاول تعديله يدويًا من داخل الطلبية', 'error'); }
-                if(draft && draft.id === order.id){
-                  draft.parts = JSON.parse(JSON.stringify(order.parts||[]));
-                  draft.customerPayments = JSON.parse(JSON.stringify(order.customerPayments||[]));
-                  draft.returnKeptExcessAmount = order.returnKeptExcessAmount;
+              openReturnExcessChoiceModal(excessAmountToApply, order, linkedPart, async (choice)=>{
+                // order هون نفس المرجع يلي فتح معه المودال — ممكن يصير orphaned لو مستخدم تاني
+                // حفظ تعديل عالطلبية بالفترة يلي المودال كان فاتح فيها (نفس درس إعادة الجلب قبل
+                // كل persist المستخدم بالحفظ الأول فوق). نجيب نسخة حديثة ونطبّق نفس القرار عليها
+                // بدل ما نحفظ فوق النسخة القديمة يلي بين إيدينا.
+                const { data: freshRow2 } = await sb.from('orders').select('*').eq('id', order.id).maybeSingle();
+                if(!freshRow2){
+                  showToast('تعذر حفظ قرار الزيادة — الطلبية لم تعد موجودة', 'error');
+                  renderKPIs();
+                  renderTable();
+                  resolve();
+                  return;
+                }
+                const freshOrder = orderRowToObject(freshRow2);
+                if(choice==='keep'){
+                  freshOrder.returnKeptExcessAmount = round2((Number(freshOrder.returnKeptExcessAmount)||0) + excessAmountToApply);
+                  const freshLinkedPart = linkedPartId ? (freshOrder.parts||[]).find(p=>p.id===linkedPartId) : null;
+                  if(freshLinkedPart) freshLinkedPart.returnKeptExcessShare = excessAmountToApply;
+                } else {
+                  const existing = linkedPartId ? (freshOrder.customerPayments||[]).find(pay=>pay.returnAdjustment && pay.linkedPartId===linkedPartId) : null;
+                  if(existing){
+                    existing.amount = round2((Number(existing.amount)||0) + excessAmountToApply);
+                  } else {
+                    if(!Array.isArray(freshOrder.customerPayments)) freshOrder.customerPayments = [];
+                    freshOrder.customerPayments.push({
+                      id: uid('pay'), amount: excessAmountToApply, method: 'مرتجع', date: todayNumeric(),
+                      returnAdjustment: true, linkedPartId: linkedPartId||null
+                    });
+                  }
+                }
+                const savedExcess = await persistOrder(freshOrder);
+                if(!savedExcess){
+                  showToast('تعذر حفظ قرار الزيادة — حاول تعديله يدويًا من داخل الطلبية', 'error');
+                  renderKPIs();
+                  renderTable();
+                  resolve();
+                  return;
+                }
+                const idx2 = appData.orders.findIndex(o=>o.id===freshOrder.id);
+                if(idx2>=0) appData.orders[idx2] = freshOrder; else appData.orders.push(freshOrder);
+                if(draft && draft.id === freshOrder.id){
+                  draft.parts = JSON.parse(JSON.stringify(freshOrder.parts||[]));
+                  draft.customerPayments = JSON.parse(JSON.stringify(freshOrder.customerPayments||[]));
+                  draft.returnKeptExcessAmount = freshOrder.returnKeptExcessAmount;
+                  draftOpenedAtUpdatedAt = freshOrder.updatedAt;
                   refreshPartsList();
                   refreshPaymentsList();
                   updateModalTotals();
@@ -9068,6 +9133,8 @@ function confirmImportOverwrite(parsedData){
         renderTable();
         renderQuotesList();
         updateTasksBadge();
+        updateSuppliersBadge();
+        updateCustomersBadge();
         return;
       }
       if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
