@@ -1640,11 +1640,16 @@ function computeAggregateFinancials(matchPeriodFn){
 function renderKPIs(){
   const el = document.getElementById('kpi-row');
   const f = computeAggregateFinancials();
-  const returnsOwedToUs = totalSupplierReturnReceivables();
+  // فهرس مرة وحدة بدل استدعاءين منفصلين (totalSupplierReturnReceivables + فلترة يدوية لكل مورد)
+  // كل وحد منهم كان يمسح الطلبيات كاملة لحاله — راجع تعليق supplierReturnReceivablesIndex.
+  // بنصفّي دايمًا على appData.suppliers الحاليين (زي totalSupplierReturnReceivables بالضبط) —
+  // مورد انحذف وبقيت قطعة قديمة تشير لمعرّفه ما لازم يضل يحسب هون للأبد.
+  const supplierReceivablesById = supplierReturnReceivablesIndex().bySupplier;
+  const returnsOwedToUs = round2((appData.suppliers||[]).reduce((sum,s)=> sum + (supplierReceivablesById[s.id]||0), 0));
   const custodyBalance = amerCustodyBalance();
   const dueToScrapyardNet = round2(f.dueToScrapyard - custodyBalance);
   const dueToScrapyardShown = Math.max(0, dueToScrapyardNet);
-  const suppliersWithReceivables = (appData.suppliers||[]).filter(s=>supplierReturnReceivableTotal(s.id)>0).length;
+  const suppliersWithReceivables = (appData.suppliers||[]).filter(s=>(supplierReceivablesById[s.id]||0)>0).length;
 
   const term = (label, amount)=> ({ label, amount: Math.abs(round2(amount)), negative: amount<0 });
   const confirmedBreakdown = { note: (f.unconfirmedCount>0
@@ -1789,8 +1794,8 @@ function orderPendingProposalsCount(orderId){
   return (editProposals||[]).filter(pr=>pr.order_id===orderId).length;
 }
 
-function rowHtml(order){
-  const t = orderTotals(order);
+function rowHtml(order, precomputedTotals){
+  const t = precomputedTotals || orderTotals(order);
   const highlightClass = order.confirmed ? (order.supplied ? 'row-supplied' : 'row-not-supplied') : 'row-unconfirmed';
   const pendingCount = orderPendingProposalsCount(order.id);
   return '<tr class="'+highlightClass+'">' +
@@ -1819,8 +1824,8 @@ function rowHtml(order){
   '</tr>';
 }
 
-function cardHtml(order){
-  const t = orderTotals(order);
+function cardHtml(order, precomputedTotals){
+  const t = precomputedTotals || orderTotals(order);
   const highlightClass = order.confirmed ? (order.supplied ? 'card-supplied' : 'card-not-supplied') : 'card-unconfirmed';
   const pendingCount = orderPendingProposalsCount(order.id);
   return '<div class="order-card '+highlightClass+'">' +
@@ -1860,6 +1865,28 @@ function orderNumberSortKey(order){
   return m ? parseInt(m[1],10) : 0;
 }
 
+// CSS (@media max-width:760px، راجع .orders-table/.cards-list) بتعرض وحدة بس من الاثنتين حسب
+// عرض الشاشة — كان renderTable/archiveListBodyHtml يبنوا الاثنتين معًا بكل مرة (ضعف الشغل: بناء
+// HTML، إنشاء عناصر DOM، وربط أحداث) رغم إنو نصهم دايمًا مخفي. بنبني بس النسخة الظاهرة فعليًا.
+function isNarrowLayout(){
+  return window.matchMedia('(max-width:760px)').matches;
+}
+
+/* جدول+بطاقات الطلبيات — مشتركة بين القائمة الرئيسية (renderTable) والأرشيف (archiveListBodyHtml).
+   orderTotals(order) بيتحسب هون مرة وحدة لكل طلبية ويترّرر لـrowHtml/cardHtml، بدل ما تتكرر
+   نفس الحسبة 2-3 مرات لنفس الطلبية بكل عملية رسم (كانت تُستدعى من .filter(orderMatches) وrowHtml
+   وcardHtml على نفس الطلبية بنفس اللحظة). */
+function ordersTableAndCardsHtml(orders){
+  const totalsById = {};
+  orders.forEach(o=>{ totalsById[o.id] = orderTotals(o); });
+  if(isNarrowLayout()){
+    return '<div class="cards-list">' + orders.map(o=>cardHtml(o, totalsById[o.id])).join('') + '</div>';
+  }
+  return '<table class="orders-table"><thead><tr>' +
+      '<th>تأكيد</th><th>رقم الطلب</th><th>تواصل</th><th>إجمالي البيع</th><th>التشليح</th><th>المورد</th><th>الزبون</th><th></th>' +
+    '</tr></thead><tbody>' + orders.map(o=>rowHtml(o, totalsById[o.id])).join('') + '</tbody></table>';
+}
+
 function renderTable(){
   const el = document.getElementById('table-container');
   try{
@@ -1873,11 +1900,7 @@ function renderTable(){
       return;
     }
 
-    el.innerHTML =
-      '<table class="orders-table"><thead><tr>' +
-        '<th>تأكيد</th><th>رقم الطلب</th><th>تواصل</th><th>إجمالي البيع</th><th>التشليح</th><th>المورد</th><th>الزبون</th><th></th>' +
-      '</tr></thead><tbody>' + orders.map(rowHtml).join('') + '</tbody></table>' +
-      '<div class="cards-list">' + orders.map(cardHtml).join('') + '</div>';
+    el.innerHTML = ordersTableAndCardsHtml(orders);
 
     el.querySelectorAll('[data-open]').forEach(b=>{
       b.addEventListener('click', ()=> openModal('edit', b.getAttribute('data-open')));
@@ -8489,28 +8512,31 @@ function updateTasksBadge(){
 function overdueCustomersCount(){
   const THRESHOLD_MS = 30 * 24 * 60 * 60 * 1000;
   const now = Date.now();
-  let count = 0;
-  (appData.customers||[]).forEach(c=>{
-    const isOverdue = (appData.orders||[]).some(o=>{
-      if(o.customerId !== c.id) return false;
-      if(!o.supplied) return false;
-      const t = orderTotals(o);
-      if(!t.hasChargeable || t.customerRemaining<=0) return false;
-      const refDate = o.suppliedAt || o.updatedAt;
-      if(!refDate) return false;
-      const ref = new Date(refDate).getTime();
-      if(isNaN(ref)) return false;
-      return (now - ref) >= THRESHOLD_MS;
-    });
-    if(isOverdue) count++;
+  // مرور وحيد على الطلبيات (بدل مرور على كل الطلبيات لكل عميل لحاله) — بنجمع أول ما نلاقيه
+  // مجموعة الـcustomerId يلي عندهم طلبية متأخرة، وبعدين نتحقق مين منهم لسه عميل موجود فعليًا
+  // فعلًا (نفس القيد الأصلي: طلبية لعميل محذوف ما تُحسب لأن اللف الأصلي كان على appData.customers).
+  const overdueCustomerIds = new Set();
+  (appData.orders||[]).forEach(o=>{
+    if(!o.customerId || overdueCustomerIds.has(o.customerId)) return;
+    if(!o.supplied) return;
+    const t = orderTotals(o);
+    if(!t.hasChargeable || t.customerRemaining<=0) return;
+    const refDate = o.suppliedAt || o.updatedAt;
+    if(!refDate) return;
+    const ref = new Date(refDate).getTime();
+    if(isNaN(ref)) return;
+    if((now - ref) >= THRESHOLD_MS) overdueCustomerIds.add(o.customerId);
   });
+  let count = 0;
+  (appData.customers||[]).forEach(c=>{ if(overdueCustomerIds.has(c.id)) count++; });
   return count;
 }
 
 /* عدد العملاء اللي عندهم مبلغ لازم يرجعلهم (مرتجعات بانتظار التأكيد) — يُجمع مع المتأخرين
    بالسداد بنفس الشارة، لأن الاثنين "أشياء تحتاج انتباهك بخصوص العملاء" */
 function customersWithPendingRefundsCount(){
-  return (appData.customers||[]).filter(c=> customerRefundTotal(c.id) > 0).length;
+  const idx = customerRefundsPendingIndex();
+  return (appData.customers||[]).filter(c=> (idx[c.id]||0) > 0).length;
 }
 
 /* بنمشي على الطلبيات مش على العملاء: مبلغ لازم يرجع للزبون هو دين علينا حتى لو الطلبية
@@ -8569,7 +8595,8 @@ function updateCustomersBadge(){
 
 /* عدد الموردين/التشاليح اللي عندهم مبلغ مسترجع بانتظار التحصيل */
 function suppliersWithPendingReceivablesCount(){
-  return (appData.suppliers||[]).filter(s=> supplierReturnReceivableTotal(s.id) > 0).length;
+  const idx = supplierReturnReceivablesIndex().bySupplier;
+  return (appData.suppliers||[]).filter(s=> (idx[s.id]||0) > 0).length;
 }
 
 function updateSuppliersBadge(){
@@ -9200,6 +9227,27 @@ async function togglePushSubscription(){
   else await subscribeToPush();
 }
 
+// renderTable/archiveListBodyHtml صاروا يبنوا بس نسخة الجدول أو البطاقات الظاهرة فعليًا (راجع
+// ordersTableAndCardsHtml) بدل الاثنتين معًا — لازم إعادة رسم لو تبدّل عرض الشاشة عبر النقطة
+// الفاصلة (760px) بعد آخر رسم (تدوير الجوال، أو تصغير/تكبير نافذة الكمبيوتر)، وإلا تضل القائمة
+// فاضية لحد أي تحديث تاني غير متعلق. بنتحقق فعليًا إنو النمط (ضيق/عريض) تغيّر قبل ما نعيد الرسم،
+// مو أي حدث resize (بيصير كتير أثناء السحب، وأغلبها ما بيعبر النقطة الفاصلة أصلًا).
+let lastKnownNarrowLayout = null;
+function handleOrdersLayoutBreakpointChange(){
+  const narrow = isNarrowLayout();
+  if(narrow === lastKnownNarrowLayout) return;
+  lastKnownNarrowLayout = narrow;
+  renderTable();
+  refreshArchiveViewIfOpen();
+}
+function bindOrdersLayoutResizeListener(){
+  let resizeDebounce;
+  window.addEventListener('resize', ()=>{
+    clearTimeout(resizeDebounce);
+    resizeDebounce = setTimeout(handleOrdersLayoutBreakpointChange, 150);
+  });
+}
+
 async function init(){
   document.getElementById('table-container').innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
   await loadData();
@@ -9207,6 +9255,8 @@ async function init(){
   renderFilterButtons();
   bindToolbar();
   renderTable();
+  lastKnownNarrowLayout = isNarrowLayout();
+  bindOrdersLayoutResizeListener();
   renderQuotesList();
   updateTasksBadge();
   updateCustomersBadge();
@@ -9767,9 +9817,40 @@ function supplierReturnReceivableTotal(supplierId){
   return round2(supplierReturnReceivables(supplierId).reduce((s,r)=>s+r.amount,0));
 }
 
+/* فهرس مرة وحدة: مبلغ المرتجعات المستحقة لكل مورد/تشليح، بمرور وحيد على كل الطلبيات/القطع —
+   بدل ما تتكرر supplierReturnReceivableTotal (تمر على كل الطلبيات من جديد) لكل مورد لحاله.
+   كانت totalSupplierReturnReceivables وأي شاشة تلف على كل الموردين (المؤشرات الرئيسية، شاشة
+   الموردين، ترتيب البحث) تعمل هالمسح الكامل مرة لكل مورد — أبطأ بشكل ملحوظ كل ما زاد عدد
+   الموردين/الطلبيات. النتيجة النهائية لكل مورد مطابقة تمامًا لـsupplierReturnReceivableTotal
+   (نفس صيغة التقريب: round2 لكل سطر، ثم round2 لمجموع كل مورد). */
+function supplierReturnReceivablesIndex(){
+  const bySupplierRaw = {};
+  (appData.orders||[]).forEach(o=>{
+    if(!o.confirmed) return;
+    (o.parts||[]).forEach(p=>{
+      if(!p.supplierId) return;
+      if(!p.returned || !p.returnHasReceivable || p.returnCollected) return;
+      if(!partIsIncludedInOrder(o,p)) return;
+      const amount = round2((Number(p.qty)||1)*(Number(p.costPrice)||0));
+      bySupplierRaw[p.supplierId] = (bySupplierRaw[p.supplierId]||0) + amount;
+    });
+  });
+  const bySupplier = {};
+  let grandTotal = 0;
+  Object.keys(bySupplierRaw).forEach(id=>{
+    bySupplier[id] = round2(bySupplierRaw[id]);
+    grandTotal += bySupplier[id];
+  });
+  return { bySupplier, grandTotal: round2(grandTotal) };
+}
+
 /* إجمالي المبالغ المستحقة لنا من كل الموردين والتشاليح مجتمعين (مرتجعات بانتظار التحصيل) — لمؤشر الصفحة الرئيسية */
 function totalSupplierReturnReceivables(){
-  return round2((appData.suppliers||[]).reduce((sum,s)=> sum + supplierReturnReceivableTotal(s.id), 0));
+  // زي التصميم الأصلي بالضبط: بس الموردين الموجودين فعليًا بـappData.suppliers. مورد انحذف
+  // (deleteSupplier ما بيلمس supplierId على القطع القديمة) ما لازم يضل مرتجعه محسوب بمؤشر
+  // الرئيسية للأبد بلا أي طريقة تصفّره — نفس القيد المطبّق أصلًا بـsuppliersWithPendingReceivablesCount.
+  const idx = supplierReturnReceivablesIndex().bySupplier;
+  return round2((appData.suppliers||[]).reduce((sum,s)=> sum + (idx[s.id]||0), 0));
 }
 
 function returnReceivableRowHtml(row){
@@ -9916,7 +9997,7 @@ function confirmCollectScrapyardReturn(orderId, partId, supplierId){
 
 let editingSuppliers = {};
 
-function supplierRowHtml(s){
+function supplierRowHtml(s, receivablesIdx){
   const isEditing = !!editingSuppliers[s.id];
   const extraPhones = Array.isArray(s.extraPhones) ? s.extraPhones : [];
 
@@ -9926,7 +10007,9 @@ function supplierRowHtml(s){
       s.handlesUsed ? 'قطع مستعملة (تشليح)' : null
     ].filter(Boolean).join(' + ') || 'غير محدد';
     const phones = [s.phone].concat(extraPhones).filter(Boolean).join(' / ');
-    const returnTotal = supplierReturnReceivableTotal(s.id);
+    // receivablesIdx (فهرس مبني مرة وحدة بـsuppliersItemsListHtml) بيوفّر مسح كامل للطلبيات
+    // لكل صف — بدون تمريره منرجع للحساب الفردي (مستخدَم برضو من مسارات تانية غير القائمة)
+    const returnTotal = receivablesIdx ? (receivablesIdx[s.id]||0) : supplierReturnReceivableTotal(s.id);
     return '<div class="task-item-row supplier-item-row" data-supplier-id="'+escapeHtml(s.id)+'">' +
       '<div class="supplier-row-main">' +
         '<span class="purchase-history-desc">'+escapeHtml(s.name||'بدون اسم')+'</span>' +
@@ -9989,7 +10072,8 @@ function renderSuppliersKindFilterButtons(){
   });
 }
 
-function suppliersMatchingSearch(){
+function suppliersMatchingSearch(receivablesIdx){
+  const idx = receivablesIdx || supplierReturnReceivablesIndex().bySupplier;
   const q = suppliersSearchQuery.trim().toLowerCase();
   let rows = appData.suppliers||[];
   if(suppliersKindFilter==='new') rows = rows.filter(s=>s.handlesNew);
@@ -10000,19 +10084,21 @@ function suppliersMatchingSearch(){
       return hay.includes(q);
     });
   }
-  // اللي عندهم مسترجع بانتظار التحصيل يطلعوا فوق، وبعدها الأحدث إضافة فوق
+  // اللي عندهم مسترجع بانتظار التحصيل يطلعوا فوق، وبعدها الأحدث إضافة فوق. فهرس مرة وحدة بدل
+  // ما يعيد كل مقارنة (O(n log n) مقارنة) نفس مسح الطلبيات الكامل لكل مورد من جديد.
   return [...rows].sort((a,b)=>{
-    const ap = supplierReturnReceivableTotal(a.id)>0 ? 1 : 0;
-    const bp = supplierReturnReceivableTotal(b.id)>0 ? 1 : 0;
+    const ap = (idx[a.id]||0)>0 ? 1 : 0;
+    const bp = (idx[b.id]||0)>0 ? 1 : 0;
     if(bp-ap) return bp-ap;
     return new Date(b.createdAt||0) - new Date(a.createdAt||0);
   });
 }
 
 function suppliersItemsListHtml(){
-  const rows = suppliersMatchingSearch();
+  const receivablesIdx = supplierReturnReceivablesIndex().bySupplier;
+  const rows = suppliersMatchingSearch(receivablesIdx);
   if(!rows.length) return '<div class="expense-empty-hint">'+(suppliersSearchQuery.trim() ? 'ما فيه نتائج مطابقة' : 'ما فيه موردين مضافين بعد')+'</div>';
-  return rows.map(supplierRowHtml).join('');
+  return rows.map(s=>supplierRowHtml(s, receivablesIdx)).join('');
 }
 
 function suppliersViewHtml(){
@@ -10271,6 +10357,28 @@ function customerRefundTotal(customerId){
   return round2(customerRefundsPending(customerId).reduce((s,r)=>s+r.amount,0));
 }
 
+/* فهرس مرة وحدة: مبلغ المرتجعات المستحقة لكل عميل، بمرور وحيد على كل الطلبيات/القطع — بدل ما
+   تتكرر customerRefundTotal (تمر على كل الطلبيات من جديد) لكل عميل لحاله بشاشة العملاء وترتيب
+   البحث. النتيجة لكل عميل مطابقة تمامًا لـcustomerRefundTotal (نفس صيغة التقريب). */
+function customerRefundsPendingIndex(){
+  const byCustomerRaw = {};
+  (appData.orders||[]).forEach(o=>{
+    if(!o.customerId) return;
+    if(!o.confirmed) return;
+    (o.parts||[]).forEach(p=>{
+      if(!p.returned || p.customerRefundConfirmed) return;
+      if(!partIsIncludedInOrder(o,p)) return;
+      const adjustment = (o.customerPayments||[]).find(pay=>pay.returnAdjustment && pay.linkedPartId===p.id);
+      if(!adjustment) return;
+      const amount = round2(Number(adjustment.amount)||0);
+      byCustomerRaw[o.customerId] = (byCustomerRaw[o.customerId]||0) + amount;
+    });
+  });
+  const byCustomer = {};
+  Object.keys(byCustomerRaw).forEach(id=>{ byCustomer[id] = round2(byCustomerRaw[id]); });
+  return byCustomer;
+}
+
 function customerRefundRowHtml(row){
   const pending = pendingActionProposalFor('customer_refund_confirm', row.orderId, row.partId);
   const actionHtml = pending
@@ -10290,12 +10398,13 @@ function customerRefundRowHtml(row){
 
 let editingCustomers = {};
 
-function customerRowHtml(c){
+function customerRowHtml(c, refundsIdx){
   const isEditing = !!editingCustomers[c.id];
   const stats = customerOrderStats(c.id);
 
   if(!isEditing){
-    const refundTotal = customerRefundTotal(c.id);
+    // refundsIdx (فهرس مبني مرة وحدة بـcustomersItemsListHtml) بيوفّر مسح كامل للطلبيات لكل صف
+    const refundTotal = refundsIdx ? (refundsIdx[c.id]||0) : customerRefundTotal(c.id);
     return '<div class="task-item-row customer-item-row" data-customer-id="'+escapeHtml(c.id)+'">' +
       '<div class="customer-row-main">' +
         '<span class="purchase-history-desc">'+escapeHtml(c.name||'بدون اسم')+'</span>' +
@@ -10446,7 +10555,8 @@ function openCustomerHistoryModal(customerId){
 }
 
 let customersSearchQuery = '';
-function customersMatchingSearch(){
+function customersMatchingSearch(refundsIdx){
+  const idx = refundsIdx || customerRefundsPendingIndex();
   const q = customersSearchQuery.trim().toLowerCase();
   let rows = appData.customers||[];
   if(q){
@@ -10455,19 +10565,21 @@ function customersMatchingSearch(){
       return hay.includes(q);
     });
   }
-  // اللي لازم يرجعلهم مبلغ (بانتظار التحويل) يطلعوا فوق، وبعدها الأحدث إضافة فوق
+  // اللي لازم يرجعلهم مبلغ (بانتظار التحويل) يطلعوا فوق، وبعدها الأحدث إضافة فوق. فهرس مرة
+  // وحدة بدل ما تتكرر نفس عملية مسح الطلبيات لكل عميل بكل مقارنة فرز.
   return [...rows].sort((a,b)=>{
-    const ap = customerRefundTotal(a.id)>0 ? 1 : 0;
-    const bp = customerRefundTotal(b.id)>0 ? 1 : 0;
+    const ap = (idx[a.id]||0)>0 ? 1 : 0;
+    const bp = (idx[b.id]||0)>0 ? 1 : 0;
     if(bp-ap) return bp-ap;
     return new Date(b.createdAt||0) - new Date(a.createdAt||0);
   });
 }
 
 function customersItemsListHtml(){
-  const rows = customersMatchingSearch();
+  const refundsIdx = customerRefundsPendingIndex();
+  const rows = customersMatchingSearch(refundsIdx);
   if(!rows.length) return '<div class="expense-empty-hint">'+(customersSearchQuery.trim() ? 'ما فيه نتائج مطابقة' : 'ما فيه عملاء مضافين بعد')+'</div>';
-  return rows.map(customerRowHtml).join('');
+  return rows.map(c=>customerRowHtml(c, refundsIdx)).join('');
 }
 
 function customersViewHtml(){
@@ -10630,10 +10742,7 @@ function archiveListBodyHtml(){
       '<div class="empty-sub">جرّب تغيير الفلتر أو كلمة البحث.</div>' +
     '</div>';
   }
-  return '<table class="orders-table"><thead><tr>' +
-      '<th>تأكيد</th><th>رقم الطلب</th><th>تواصل</th><th>إجمالي البيع</th><th>التشليح</th><th>المورد</th><th>الزبون</th><th></th>' +
-    '</tr></thead><tbody>' + orders.map(rowHtml).join('') + '</tbody></table>' +
-    '<div class="cards-list">' + orders.map(cardHtml).join('') + '</div>';
+  return ordersTableAndCardsHtml(orders);
 }
 
 const ARCHIVE_FILTERS = FILTERS.concat([{id:'justified', label:'📋 المبررة'}]);
