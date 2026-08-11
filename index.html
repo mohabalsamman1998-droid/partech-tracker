@@ -245,6 +245,7 @@
   /* بطاقة مستقلة لكل طلبية — تباين واضح عن خلفية القسم وعن الطلبية يلي جنبها */
   .scrapyard-order-group{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px;margin-bottom:14px;}
   .scrapyard-order-group:last-child{margin-bottom:0;}
+  .scrapyard-order-group-paid{background:var(--green-dim);border-color:var(--green);}
   .scrapyard-order-header{font-family:'Cairo',sans-serif;font-weight:800;font-size:14px;color:var(--green);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border-soft);}
   .scrapyard-order-header-clickable{cursor:pointer;}
   .scrapyard-order-header-clickable:hover{text-decoration:underline;}
@@ -11766,13 +11767,19 @@ function scrapyardOrderGroupHtml(group, canManage){
   // ما عاد يعني شي وبيصير مضلّل، فمنعرضه كـ"المبلغ تغيّر بعد التأكيد" بدل علامة صح.
   const confirmedAmount = confirmation && confirmation.confirmed_amount!=null ? Number(confirmation.confirmed_amount) : null;
   const confirmationStale = confirmedAmountIsStale(confirmedAmount, subtotal);
-  return '<div class="scrapyard-order-group">' +
+  // "تأكيد المبلغ" و"تم السداد" حالتان منفصلتان بيتشاركوا نفس الصف بجدول scrapyard_order_confirmations
+  // (نفس مفتاح order_id+kind) — لازم نفحص confirmed_amount تحديدًا لمعرفة إذا "مؤكدة" فعليًا، مو
+  // بس وجود الصف (ممكن يكون الصف موجود بس لأنه مسدد وبعده لسه ما تأكد مبلغه، أو العكس).
+  const isConfirmed = confirmedAmount != null;
+  const isPaid = !!(confirmation && confirmation.paid);
+  return '<div class="scrapyard-order-group'+(isPaid?' scrapyard-order-group-paid':'')+'">' +
     '<div class="scrapyard-order-header'+(canManage?' scrapyard-order-header-clickable':'')+'"'+(canManage?' data-open-order-scrapyard="'+escapeHtml(group.order_id)+'" title="فتح الطلبية"':'')+'>'+escapeHtml(group.order_number||'')+(group.order_label?' — '+escapeHtml(group.order_label):'')+
-      (confirmation && canManage
+      (isConfirmed && canManage
         ? (confirmationStale
             ? '<span class="scrapyard-confirmed-check" title="أكّدها عامر على مبلغ '+fmtMoney(confirmedAmount)+' — المبلغ تغيّر بعدها">⚠️</span>'
             : '<span class="scrapyard-confirmed-check" title="أكّدها عامر">✅</span>')
         : '') +
+      (isPaid && canManage ? '<span class="scrapyard-confirmed-check" title="سدّدها عامر">💰</span>' : '') +
       scrapyardDaysSinceSupplyBadgeHtml(group.supplied_at) +
     '</div>' +
     group.parts.map(p=>scrapyardPartRowHtml(p, canManage)).join('') +
@@ -11789,11 +11796,14 @@ function scrapyardOrderGroupHtml(group, canManage){
     (!canManage ?
       '<div class="scrapyard-order-actions">' +
         (addDraft ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-add-part-order="'+escapeHtml(group.order_id)+'">+ اقتراح قطعة جديدة</button>') +
-        (confirmation && !confirmationStale
+        (isConfirmed && !confirmationStale
           ? '<button type="button" class="btn btn-sm btn-confirmed-green" data-unconfirm-order="'+escapeHtml(group.order_id)+'" title="اضغط للتراجع عن التأكيد">✅ تم تأكيد المبلغ</button>'
-          : (confirmation
+          : (isConfirmed
               ? '<button type="button" class="btn btn-amber btn-sm" data-confirm-order="'+escapeHtml(group.order_id)+'" title="أكّدت '+fmtMoney(confirmedAmount)+' والمبلغ تغيّر بعدها">⚠️ المبلغ تغيّر — أكّد من جديد</button>'
               : '<button type="button" class="btn btn-ghost btn-sm" data-confirm-order="'+escapeHtml(group.order_id)+'">تأكيد المبلغ</button>')) +
+        (isPaid
+          ? '<button type="button" class="btn btn-sm btn-confirmed-green" data-unmark-paid-order="'+escapeHtml(group.order_id)+'" title="اضغط للتراجع عن السداد">✅ تم السداد</button>'
+          : '<button type="button" class="btn btn-ghost btn-sm" data-mark-paid-order="'+escapeHtml(group.order_id)+'">💰 تم السداد</button>') +
       '</div>'
       : '') +
   '</div>';
@@ -11975,9 +11985,44 @@ function unconfirmScrapyardOrder(orderId){
     confirmLabel: 'إلغاء التأكيد',
     dangerous: true,
     onConfirm: async ()=>{
-      const { error } = await sb.from('scrapyard_order_confirmations').delete().eq('order_id', orderId).eq('kind', scrapyardSharedState.activeKind);
+      // تحديث (مو حذف كامل الصف) — "تأكيد المبلغ" و"تم السداد" بيتشاركوا نفس الصف (order_id+kind)،
+      // فحذف الصف كامل كان رح يمسح حالة السداد كمان لو كانت مسجّلة سابقًا على نفس الطلبية.
+      const { error } = await sb.from('scrapyard_order_confirmations').update(
+        { confirmed_by: null, confirmed_at: null, confirmed_amount: null }
+      ).eq('order_id', orderId).eq('kind', scrapyardSharedState.activeKind);
       if(error){ console.error('unconfirmScrapyardOrder:', error); showToast('تعذر إلغاء التأكيد', 'error'); return; }
       showToast('تم إلغاء تأكيد المبلغ', 'ok');
+      await loadScrapyardData(scrapyardSharedState.activeKind);
+      renderScrapyardView();
+    }
+  });
+}
+
+async function markScrapyardOrderPaid(orderId){
+  const { error } = await sb.from('scrapyard_order_confirmations').upsert(
+    { order_id: orderId, kind: scrapyardSharedState.activeKind, paid: true,
+      paid_by: scrapyardSharedState.email, paid_at: new Date().toISOString() },
+    { onConflict: 'order_id,kind' }
+  );
+  if(error){ console.error('markScrapyardOrderPaid:', error); showToast('تعذر تسجيل السداد', 'error'); return; }
+  showToast('تم تسجيل السداد', 'ok');
+  await loadScrapyardData(scrapyardSharedState.activeKind);
+  renderScrapyardView();
+}
+
+function unmarkScrapyardOrderPaid(orderId){
+  confirmAction({
+    title: 'إلغاء تسجيل السداد؟',
+    message: 'رح ترجع الطلبية لحالة غير مسددة.',
+    confirmLabel: 'إلغاء',
+    dangerous: true,
+    onConfirm: async ()=>{
+      // تحديث بس (نفس مبدأ unconfirmScrapyardOrder) — حتى ما نمسح تأكيد المبلغ لو كان مسجّل على نفس الصف
+      const { error } = await sb.from('scrapyard_order_confirmations').update(
+        { paid: false, paid_by: null, paid_at: null }
+      ).eq('order_id', orderId).eq('kind', scrapyardSharedState.activeKind);
+      if(error){ console.error('unmarkScrapyardOrderPaid:', error); showToast('تعذر إلغاء تسجيل السداد', 'error'); return; }
+      showToast('تم إلغاء تسجيل السداد', 'ok');
       await loadScrapyardData(scrapyardSharedState.activeKind);
       renderScrapyardView();
     }
@@ -12127,6 +12172,12 @@ function bindScrapyardEvents(){
   });
   root.querySelectorAll('[data-unconfirm-order]').forEach(btn=>{
     btn.addEventListener('click', ()=> unconfirmScrapyardOrder(btn.getAttribute('data-unconfirm-order')));
+  });
+  root.querySelectorAll('[data-mark-paid-order]').forEach(btn=>{
+    btn.addEventListener('click', ()=> markScrapyardOrderPaid(btn.getAttribute('data-mark-paid-order')));
+  });
+  root.querySelectorAll('[data-unmark-paid-order]').forEach(btn=>{
+    btn.addEventListener('click', ()=> unmarkScrapyardOrderPaid(btn.getAttribute('data-unmark-paid-order')));
   });
   root.querySelectorAll('.scrapyard-supplier-select-wrap').forEach(wrap=>{
     const partId = wrap.getAttribute('data-part-id');
