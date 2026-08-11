@@ -116,7 +116,8 @@
   .location-gate-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px 26px;max-width:380px;width:100%;text-align:center;}
   .location-gate-icon{font-size:40px;margin-bottom:14px;}
   .location-gate-title{font-size:17px;font-weight:800;margin-bottom:10px;}
-  .location-gate-sub{color:var(--text-dim);font-size:13px;line-height:1.7;margin-bottom:20px;}
+  .location-gate-sub{color:var(--text-dim);font-size:13px;line-height:1.7;margin-bottom:16px;}
+  .location-gate-help{background:var(--surface-2);border:1px solid var(--border-soft);border-radius:var(--radius-sm);padding:12px 14px;color:var(--text-dim);font-size:12.5px;line-height:1.8;text-align:right;margin-bottom:14px;}
   .auth-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px 26px;max-width:380px;width:100%;text-align:center;}
   .auth-sub{color:var(--text-dim);font-size:13px;line-height:1.7;margin:10px 0 20px;}
   .auth-email-input{
@@ -12256,6 +12257,20 @@ function startContinuousLocationReporting(){
    قابل للتجاوز أبدًا) — أقصى شي ممكن هو منع الموظف من استخدام باقي التطبيق لحد ما يوافق. أول
    استدعاء ناجح لـ getCurrentPosition بيصير هو أول نقطة تسجّل بالتاريخ، فما في ازدواجية مع
    startContinuousLocationReporting (يلي بس بيبلش الفاصل الزمني + الاستماع لطلبات "تحديث الآن"). ---------- */
+/* تعليمات تفعيل الموقع حسب الجهاز — ما فيه أي رابط JS يقدر يفتح إعدادات الصلاحيات مباشرة (كل
+   المتصفحات تمنع هذا أمنيًا)، فأقرب شي فعلي مفيد هو تعليمات دقيقة حسب نظام التشغيل بدل جملة
+   عامة وحيدة تناسب الكل. */
+function locationHelpInstructions(){
+  const ua = navigator.userAgent || '';
+  if(/Android/i.test(ua)){
+    return 'من إعدادات الجهاز ⚙️ ← التطبيقات ← بارتك ← الأذونات ← الموقع ← اختر "السماح".\n\nلو ما لقيت "بارتك" بقائمة التطبيقات (يعني فاتحه من كروم مباشرة مو من الأيقونة المثبّتة على الشاشة الرئيسية): اضغط ⋮ بأعلى كروم ← معلومات الموقع (أيقونة 🔒 أو ⓘ بجانب الرابط) ← الموقع ← السماح، وبعدين حدّث الصفحة.';
+  }
+  if(/iPhone|iPad|iPod/i.test(ua)){
+    return 'من إعدادات الآيفون ⚙️ ← مرّر لتحت ولاقي "بارتك" بقائمة التطبيقات ← الموقع ← اختر "أثناء استخدام التطبيق".\n\nلو فاتحه من سفاري مباشرة مو من الأيقونة المثبّتة: الإعدادات ← Safari ← الموقع ← اسمح.';
+  }
+  return 'اضغط على أيقونة 🔒 أو (ⓘ) بجانب رابط الموقع بأعلى المتصفح ← إعدادات الموقع (Site settings) ← الموقع (Location) ← اختر "السماح دائمًا"، وبعدين حدّث الصفحة.';
+}
+
 function showLocationGate(retryFn){
   let gate = document.getElementById('location-gate');
   if(!gate){
@@ -12266,13 +12281,29 @@ function showLocationGate(retryFn){
       '<div class="location-gate-card">' +
         '<div class="location-gate-icon">📍</div>' +
         '<div class="location-gate-title">لازم توافق على مشاركة الموقع للمتابعة</div>' +
-        '<div class="location-gate-sub">هذا التطبيق يتطلب معرفة موقعك أثناء استخدامه. وافق من إعدادات الموقع بالمتصفح (أو الجوال)، وبعدين اضغط "حاول مرة ثانية".</div>' +
-        '<button type="button" class="btn btn-primary" id="location-gate-retry-btn">حاول مرة ثانية</button>' +
+        '<div class="location-gate-sub">هذا التطبيق يتطلب معرفة موقعك أثناء استخدامه — الموافقة نفسها لازم تصير من إعدادات الجهاز/المتصفح، ما فيها زر يفعّلها مباشرة من هون.</div>' +
+        '<div class="location-gate-help" id="location-gate-help" style="display:none;"></div>' +
+        '<button type="button" class="btn btn-ghost" id="location-gate-help-btn" style="width:100%;margin-bottom:10px;">⚙️ كيف أفعّل صلاحية الموقع؟</button>' +
+        '<button type="button" class="btn btn-primary" id="location-gate-retry-btn" style="width:100%;">حاول مرة ثانية</button>' +
       '</div>';
     document.body.appendChild(gate);
   }
   gate.style.display = 'flex';
   document.getElementById('location-gate-retry-btn').onclick = retryFn;
+  const helpBtn = document.getElementById('location-gate-help-btn');
+  const helpBox = document.getElementById('location-gate-help');
+  helpBtn.onclick = ()=>{
+    const showing = helpBox.style.display !== 'none';
+    if(showing){
+      helpBox.style.display = 'none';
+      helpBtn.textContent = '⚙️ كيف أفعّل صلاحية الموقع؟';
+    } else {
+      helpBox.textContent = locationHelpInstructions();
+      helpBox.style.whiteSpace = 'pre-line';
+      helpBox.style.display = 'block';
+      helpBtn.textContent = '🔼 إخفاء التعليمات';
+    }
+  };
 }
 function hideLocationGate(){
   const gate = document.getElementById('location-gate');
