@@ -257,6 +257,8 @@
   .scrapyard-note-input::placeholder{color:var(--text-faint);}
   .scrapyard-part-note-amer{font-size:13px;font-weight:700;color:var(--rust);padding-top:2px;}
   .scrapyard-part-desc{flex:1;min-width:120px;font-size:15px;font-weight:700;color:var(--text);}
+  .scrapyard-part-supplier-name{display:block;font-size:11px;font-weight:400;color:var(--text-faint);margin-top:2px;}
+  .scrapyard-part-supplier-missing{font-style:italic;}
   .scrapyard-confirmed-check{display:inline-block;margin-inline-start:8px;font-size:13px;}
   .scrapyard-days-since{display:inline-block;margin-inline-start:8px;font-size:11.5px;font-weight:700;}
   .scrapyard-part-actions{display:flex;gap:6px;min-width:96px;justify-content:flex-end;flex:0 0 auto;}
@@ -11948,6 +11950,14 @@ function scrapyardPartRowHtml(p, canManage){
     '</div>'
   );
 
+  // اسم التشليح/المورد المسند لهذي القطعة بخط صغير تحت الاسم — للتذكير السريع بدون فتح قائمة الاختيار
+  const assignedSupplier = p.supplier_id ? (scrapyardSharedState.suppliers||[]).find(s=>s.id===p.supplier_id) : null;
+  const isUsedKind = scrapyardSharedState.activeKind === 'used';
+  const supplierNameText = assignedSupplier
+    ? (assignedSupplier.name || assignedSupplier.phone || (isUsedKind ? 'تشليح' : 'مورد'))
+    : (isUsedKind ? 'ما تم اضافة تشليح' : 'ما تم اضافة مورد');
+  const supplierNameHtml = '<span class="scrapyard-part-supplier-name'+(assignedSupplier?'':' scrapyard-part-supplier-missing')+'">'+escapeHtml(supplierNameText)+'</span>';
+
   // ملاحظة على القطعة — المخوّل (صاحب الحساب) يكتبها، تظهر عند عامر بالأحمر كتنبيه. حصرًا
   // على صفوف القطع الفعلية (مو صفوف اقتراح إضافة أو مسودة إضافة قطعة جديدة، ما فيهم part_id حقيقي بعد)
   const noteHtml = canManage
@@ -11955,7 +11965,7 @@ function scrapyardPartRowHtml(p, canManage){
     : (p.note ? '<div class="scrapyard-part-note-row scrapyard-part-note-amer">⚠️ '+escapeHtml(p.note)+'</div>' : '');
 
   return '<div class="scrapyard-part-row">' +
-    '<span class="scrapyard-part-desc">'+escapeHtml(p.description||'')+'</span>' +
+    '<span class="scrapyard-part-desc">'+escapeHtml(p.description||'')+supplierNameHtml+'</span>' +
     '<span class="num scrapyard-qty-slot">×'+(p.qty||1)+'</span>' +
     '<div class="scrapyard-price-group">'+priceCells+'</div>' +
     supplierSelectHtml +
