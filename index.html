@@ -367,8 +367,9 @@
   .task-item-row{display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:8px;padding:10px 12px;min-width:0;}
   .quote-row{cursor:pointer;border-inline-start:3px solid var(--amber-line);}
   .quote-row:hover{border-color:var(--amber-line);}
-  .quote-row-number{color:var(--text-faint);font-size:12.5px;}
-  .quote-row-label{font-size:19px;font-weight:800;color:var(--amber);}
+  .quote-row-number{color:var(--text-faint);font-size:12.5px;flex-shrink:0;}
+  .quote-row-label{font-size:19px;font-weight:800;color:var(--amber);flex:1 1 auto;min-width:0;}
+  .quote-row-elapsed{color:var(--text-faint);font-size:12.5px;flex-shrink:0;white-space:nowrap;}
   .quote-row-ready{border-inline-start-color:var(--green-line);}
   .quote-row-ready .quote-row-label{color:var(--green);}
   .activity-log-row{cursor:pointer;}
@@ -3851,9 +3852,11 @@ function quotesMatchingList(){
 
 function quoteRowHtml(o){
   const ready = !!o.quoteReady;
+  const elapsed = o.createdAt ? arabicDurationLabel(new Date(o.createdAt).getTime()) : '';
   return '<div class="task-item-row quote-row'+(ready?' quote-row-ready':'')+'" data-quote-id="'+escapeHtml(o.id)+'">' +
     '<span class="quote-row-number">'+escapeHtml(o.orderNumber)+'</span>' +
     '<span class="quote-row-label">'+escapeHtml(o.orderLabel||'—')+'</span>' +
+    (elapsed ? '<span class="quote-row-elapsed" data-created-at="'+escapeHtml(o.createdAt)+'">⏱ '+escapeHtml(elapsed)+'</span>' : '') +
   '</div>';
 }
 
@@ -3861,6 +3864,17 @@ function quotesListHtml(){
   const rows = quotesMatchingList();
   if(!rows.length) return '<div class="expense-empty-hint">ما فيه طلبات تسعير بعد</div>';
   return rows.map(quoteRowHtml).join('');
+}
+
+/* عداد وقت طلبات التسعير يتحدث لحظيًا بدون إعادة رسم الصفوف (يكسر أحداث الكليك لو أعدنا الرسم) —
+   نص كل badge بس يتحدث كل دقيقة اعتمادًا على data-created-at المخزّن بالصف نفسه */
+let quoteElapsedTimer = null;
+function refreshQuoteElapsedBadges(){
+  document.querySelectorAll('.quote-row-elapsed[data-created-at]').forEach(el=>{
+    const iso = el.getAttribute('data-created-at');
+    if(!iso) return;
+    el.textContent = '⏱ '+arabicDurationLabel(new Date(iso).getTime());
+  });
 }
 
 /* تسعيرات اعتمدتها المبيعات وصارت طلبيات فعلية — كانت تختفي تمامًا من شاشة عامر فور الاعتماد
@@ -12577,6 +12591,8 @@ function startPresenceHeartbeat(email){
   enforceLocationRequired(email);
   if(presenceTimer) clearInterval(presenceTimer);
   if(presenceRecheckTimer) clearInterval(presenceRecheckTimer);
+  if(quoteElapsedTimer) clearInterval(quoteElapsedTimer);
+  quoteElapsedTimer = setInterval(refreshQuoteElapsedBadges, 60000);
   // لازم نلغي أي بدء مؤجل من نداء سابق لسا ما نفّذ (مثلاً تبديل حساب على نفس الجهاز خلال ثوان)
   // وإلا الـclearInterval فوق ما إله معنى — المتغيّر لسا null/قديم لأن الإنشاء المؤجل ما صار
   // بعد، وبعدين ينفّذ نداءين setInterval مستقلين فيصير عنا مؤقت "شبح" ما حدا قادر يلغيه.
@@ -12609,25 +12625,31 @@ function arabicDaysCountLabel(n){
   return n+' يوم';
 }
 
-/* وقت نسبي دقيق بالدقائق: قبل 30 دقيقة / قبل ساعة و30 دقيقة / قبل يوم و3 ساعات... */
-function arabicRelativeTime(ms){
+/* مدة زمنية بالعربي بدون بادئة "قبل" — مستخدمة لعداد وقت طلبات التسعير ولـarabicRelativeTime */
+function arabicDurationLabel(ms){
   const diffSec = Math.floor((Date.now() - ms) / 1000);
   const diffMin = Math.floor(diffSec / 60);
   if(diffMin < 1) return 'الآن';
-  if(diffMin < 60) return 'قبل '+arabicMinutesLabel(diffMin);
+  if(diffMin < 60) return arabicMinutesLabel(diffMin);
   const diffHour = Math.floor(diffMin / 60);
   const remMin = diffMin % 60;
   if(diffHour < 24){
-    return 'قبل '+arabicHoursLabel(diffHour)+(remMin>0 ? ' و '+arabicMinutesLabel(remMin) : '');
+    return arabicHoursLabel(diffHour)+(remMin>0 ? ' و '+arabicMinutesLabel(remMin) : '');
   }
   const diffDay = Math.floor(diffHour / 24);
   const remHour = diffHour % 24;
   if(diffDay <= 30){
-    return 'قبل '+arabicDaysCountLabel(diffDay)+(remHour>0 ? ' و '+arabicHoursLabel(remHour) : '');
+    return arabicDaysCountLabel(diffDay)+(remHour>0 ? ' و '+arabicHoursLabel(remHour) : '');
   }
   const diffMonth = Math.floor(diffDay / 30);
-  if(diffMonth === 1) return 'قبل شهر';
-  return 'قبل '+diffMonth+' أشهر';
+  if(diffMonth === 1) return 'شهر';
+  return diffMonth+' أشهر';
+}
+
+/* وقت نسبي دقيق بالدقائق: قبل 30 دقيقة / قبل ساعة و30 دقيقة / قبل يوم و3 ساعات... */
+function arabicRelativeTime(ms){
+  const label = arabicDurationLabel(ms);
+  return label === 'الآن' ? label : 'قبل '+label;
 }
 
 /* كل الموظفين (متصلين وغير متصلين) مع وقت آخر ظهور لكل وحد */
