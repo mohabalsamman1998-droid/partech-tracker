@@ -1578,18 +1578,21 @@ async function loadData(){
     // المشروع — بتخلي فتح/تحديث الموقع أسرع مع تراكم الطلبيات بمرور الوقت. المؤرشفة تلتحق
     // بنفس appData.orders بالخلفية فورًا بعدها (hydrateArchivedOrders)، فكل الحسابات المالية
     // تضل صحيحة كاملة خلال ثوان — بس البداية أسرع.
-    const [ordersRes, treasuryRes, tasksRes, suppliersRes, customersRes] = await Promise.all([
+    const [ordersRes, treasuryRes, tasksRes, suppliersRes, customersRes, custodyBalanceRes] = await Promise.all([
       sb.from('orders').select('*').or(ORDERS_ACTIVE_FILTER),
       sb.from('treasury_entries').select('*'),
       sb.from('tasks').select('*'),
       sb.from('suppliers').select('*'),
-      sb.from('customers').select('*')
+      sb.from('customers').select('*'),
+      sb.rpc('get_amer_custody_balance')
     ]);
     if(ordersRes.error) throw ordersRes.error;
     if(treasuryRes.error) throw treasuryRes.error;
     if(tasksRes.error) throw tasksRes.error;
     if(suppliersRes.error) throw suppliersRes.error;
     if(customersRes.error) throw customersRes.error;
+    // ما منوقّف تحميل باقي البيانات لو هاي فشلت (مؤشر KPI واحد بس بيتأثر) — انظر amerCustodyBalance()
+    if(!custodyBalanceRes.error) serverAmerCustodyBalance = Number(custodyBalanceRes.data) || 0;
     appData = {
       orders: (ordersRes.data||[]).map(orderRowToObject),
       treasury: groupTreasuryRows(treasuryRes.data),
@@ -8704,6 +8707,17 @@ function totalCustomerRefundsPending(){
    بدل ما يُخصم من الصندوق كل ما تُعلَّم طلبية "تم سداد التشليح"، الطلبية تُخصم من عهدة عامر بس.
    الصندوق يتأثر فقط لحظة إضافة/سداد لعهدة عامر (من هون). عجز العهدة (لو صارت سالبة) = المبلغ
    اللي لازم تسدده لعامر عشان تغطي اللي دفعه فعليًا للتشاليح ولسه ما رجعتله إياه. */
+// RLS على treasury_entries (عهدة عامر) محصورة بالمخوّلين — تفاصيل كل حركة (رقم/ملاحظة/تاريخ)
+// ما بتوصل لحساب "كامل" غير مخوّل، فـappData.treasury.amerCustody بيضل فاضي عنده وحساب
+// الرصيد المحلي بيطلع صفر غلط. الرصيد الإجمالي (رقم واحد بدون تفاصيل) مسموح للجميع عن طريق
+// get_amer_custody_balance() — بنجيبه هون كـfallback موثوق، ونفضّله دايمًا لو موجود لأنه
+// نفس الصيغة بالضبط محسوبة سيرفر-سايد بدون فلترة RLS.
+let serverAmerCustodyBalance = null;
+async function refreshServerAmerCustodyBalance(){
+  if(!sb) return;
+  const { data, error } = await sb.rpc('get_amer_custody_balance');
+  if(!error) serverAmerCustodyBalance = Number(data) || 0;
+}
 function amerCustodyTopupsTotalAll(){
   return round2((appData.treasury.amerCustody||[]).reduce((sum,entry)=> sum + (Number(entry.amount)||0), 0));
 }
@@ -8723,6 +8737,10 @@ function paidToScrapyardTotalForCustody(){
   return round2(total);
 }
 function amerCustodyBalance(){
+  // المخوّلون عندهم بيانات العهدة الخام محليًا (تحديث فوري متفائل عند إضافة حركة جديدة —
+  // نفضّله دايمًا حتى ما نستنى رحلة سيرفر). غير المخوّلين ما عندهم وصول لها أصلًا (RLS)،
+  // فبنعتمد رصيد السيرفر المجمّع (رقم واحد بدون تفاصيل الحركات).
+  if(!currentUserIsElevated && serverAmerCustodyBalance !== null) return serverAmerCustodyBalance;
   return round2(amerCustodyTopupsTotalAll() - paidToScrapyardTotalForCustody());
 }
 function amerCustodyDeficit(){
@@ -9529,6 +9547,12 @@ function applyRemoteOrderChange(payload){
     if(idx>=0) appData.orders[idx] = order; else appData.orders.push(order);
   }
   scheduleOrderRenderCascade();
+  // تغييرات الطلبيات (تسديد لعامر مثلًا) بتأثّر على رصيد العهدة عند غير المخوّلين، وهني ما
+  // بيوصلهم حدث realtime مباشر على amerCustody (RLS بيمنعه عنهم أصلًا) — فبنجدّد رصيد
+  // السيرفر يدويًا هون بدل ما يضل واقف من آخر تحميل كامل للصفحة.
+  if(!currentUserIsElevated){
+    refreshServerAmerCustodyBalance().then(()=> scheduleOrderRenderCascade());
+  }
 }
 
 function subscribeOrdersRealtime(){
