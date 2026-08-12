@@ -262,6 +262,8 @@
   .scrapyard-confirmed-check{display:inline-block;margin-inline-start:8px;font-size:13px;}
   .scrapyard-days-since{display:inline-block;margin-inline-start:8px;font-size:11.5px;font-weight:700;}
   .scrapyard-part-actions{display:flex;gap:6px;min-width:96px;justify-content:flex-end;flex:0 0 auto;}
+  .scrapyard-collect-actions{align-items:center;gap:8px;min-width:auto;}
+  .scrapyard-collect-question{font-size:12px;color:var(--text-faint);white-space:nowrap;}
   .scrapyard-qty-slot{min-width:26px;text-align:center;}
   /* صف المجموع يحجز نفس أعمدة صف القطعة (اسم | عدد | سعر | إجراءات) حتى يقع المجموع تحت الأسعار تمامًا */
   .scrapyard-order-subtotal{display:flex;align-items:center;gap:10px;padding:8px 2px 4px;margin-top:2px;border-top:1px dashed var(--border-soft);font-size:13.5px;font-weight:700;color:var(--text-dim);flex-wrap:wrap;}
@@ -7189,6 +7191,12 @@ async function refreshEditProposals(){
   // بادج كل طلبية بقائمتها (الرئيسية والأرشيف) — لازم يتحدّث لحظيًا لو وصل طلب جديد بالريل-تايم
   renderTable();
   refreshArchiveViewIfOpen();
+  // شاشة سداد التشاليح/الجديد المشتركة (عامر أو صاحب الحساب) — طلب/قرار "تأكيد تحصيل مرتجع"
+  // (return_collect) لازم يظهر لحظيًا هون كمان، نفس مبدأ سجل المورد فوق. مقصورة على 'settlement'
+  // (مو 'home') لأنه شاشة عامر الرئيسية أصلًا بتتحدّث من مصدر تاني (loadScrapyardHomeTotals)
+  if(document.getElementById('scrapyard-root') && document.getElementById('scrapyard-root').style.display !== 'none' && scrapyardCurrentScreen === 'settlement' && !scrapyardHasOpenEdit()){
+    loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
+  }
 }
 
 function updateEditProposalsBadge(){
@@ -11113,6 +11121,11 @@ async function initScrapyardView(email){
   subscribeActivityEventsRealtime();
   loadAnnouncement();
   subscribeAnnouncementRealtime();
+  // دخول عامر المباشر ما بيمر بـ init() أصلًا، فطلبات edit_proposals (زي "تأكيد تحصيل مرتجع
+  // من تشليح" بشاشة السداد) ما بتوصله بدون هالسطرين — صاحب الحساب أصلًا عندهم شغالين من init()،
+  // بس استدعاؤهم هون ثانية آمن (subscribeEditProposalsRealtime محمية من التكرار بنفسها)
+  await refreshEditProposals();
+  subscribeEditProposalsRealtime();
   // دخول عامر المباشر (دوره "scrapyard") يوديه للصفحة الرئيسية لقسم المشتريات؛
   // دخول صاحب الحساب من داخل التطبيق (زر الصندوق) يوديه لشاشة السداد مباشرة كالمعتاد
   if(scrapyardSharedState.canManage){
@@ -11571,24 +11584,78 @@ function scrapyardSupplierTotalsHtml(){
   return '<div class="section-block"><div class="section-head"><span class="section-title">المستحق لكل تشليح</span></div>' + rows + '</div>';
 }
 
-/* عرض القطع المرتجعة اللي المفروض تُحصّل قيمتها من المورد/التشليح — معلومة فقط بهذي الشاشة،
-   ما فيها زر تحصيل (هذا حصريًا بشاشة الموردين عند صاحب الحساب) */
+/* شارة طلب "تأكيد التحصيل" المعلّق — نسخة خاصة بشاشة عامر عن editProposalPendingHtml، مش نفسها:
+   data-accept-proposal/data-reject-proposal/data-withdraw-proposal هالشاشة أصلًا مستخدمة لاقتراحات
+   scrapyard_proposals (سعر/حذف/إضافة)، فاستخدام نفس الـdata attributes هون كان رح يفعّل معالج
+   القبول/الرفض الغلط (handleScrapyardProposalDecision بدل handleEditProposalDecision). */
+function scrapyardCollectPendingHtml(pr, canManage){
+  const mine = pr.submitted_by === scrapyardSharedState.email;
+  return '<span class="proposal-pending-banner">' +
+    '<span class="proposal-pending-text">⏳ بانتظار تأكيد التحصيل</span>' +
+    (canManage ? (
+      '<button type="button" class="icon-btn proposal-accept-btn" data-collect-accept="'+escapeHtml(pr.id)+'" title="تم التحصيل فعلًا">✓</button>' +
+      '<button type="button" class="icon-btn proposal-reject-btn" data-collect-reject="'+escapeHtml(pr.id)+'" title="رفض">✗</button>'
+    ) : (mine ? '<button type="button" class="icon-btn proposal-withdraw-btn" data-collect-withdraw="'+escapeHtml(pr.id)+'" title="سحب الطلب">✕</button>' : '')) +
+  '</span>';
+}
+
 function scrapyardReturnReceivablesHtml(){
   const rows = scrapyardSharedState.returnReceivables||[];
   if(!rows.length) return '';
+  const canManage = scrapyardSharedState.canManage;
   const total = round2(rows.reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0));
   const rowsHtml = rows.map(p=>{
     const supplier = (scrapyardSharedState.suppliers||[]).find(s=>s.id===p.supplier_id);
     const name = supplier ? (supplier.name||supplier.phone||'مورد') : 'غير محدد';
     const amount = round2((Number(p.cost_price)||0)*(Number(p.qty)||1));
+    const pending = pendingActionProposalFor('return_collect', p.order_id, p.part_id);
+    const actionHtml = pending
+      ? scrapyardCollectPendingHtml(pending, canManage)
+      : ('<span class="scrapyard-collect-question">هل تم تحصيل المبلغ؟</span>' +
+          '<button type="button" class="btn btn-sm '+(canManage?'btn-primary':'btn-ghost')+' scrapyard-collect-btn" data-order-id="'+escapeHtml(p.order_id)+'" data-part-id="'+escapeHtml(p.part_id)+'">' +
+            (canManage ? '✅ تم التحصيل' : '📨 طلب تأكيد التحصيل') +
+          '</button>');
     return '<div class="scrapyard-part-row">' +
       '<span class="scrapyard-part-desc">'+escapeHtml(p.description||'')+'</span>' +
       '<span class="num scrapyard-qty-slot">×'+(p.qty||1)+'</span>' +
       '<span class="num text-green">'+fmtMoney(amount)+'</span>' +
       '<span class="scrapyard-days-since muted">'+escapeHtml(name)+'</span>' +
+      '<div class="scrapyard-part-actions scrapyard-collect-actions">'+actionHtml+'</div>' +
     '</div>';
   }).join('');
   return '<div class="section-block"><div class="section-head"><span class="section-title">🔄 مرتجعات (مخصومة من الإجمالي أعلاه)</span><span class="num text-green">'+fmtMoney(total)+'</span></div>' + rowsHtml + '</div>';
+}
+
+/* تسجيل تحصيل مباشر من صاحب الحساب — بدون المرور بطلب/موافقة (هو نفسه المخوّل). نفس أثر
+   confirmCollectScrapyardReturn/الفرع المباشر بشاشة سجل المورد (openSupplierHistoryModal)، بس
+   بيحدّث شاشة السداد المشتركة نفسها بدل ما يعيد فتح مودال سجل المورد. لو صادف إنه في طلب تأكيد
+   معلّق من عامر لنفس القطعة (نادر، تزامن) منمسحه حتى ما يضل عالقًا يشير لقطعة تحصيلها خلص أصلًا. */
+function scrapyardMarkCollectedDirect(orderId, partId){
+  const order = appData.orders.find(o=>o.id===orderId);
+  if(!order) return;
+  const part = (order.parts||[]).find(p=>p.id===partId);
+  if(!part) return;
+  const isUsed = !!part.used;
+  confirmAction({
+    title: isUsed ? 'تأكيد تحصيل هذا المبلغ من التشليح؟' : 'تأكيد تحصيل هذا المبلغ من المورد؟',
+    message: isUsed
+      ? 'رح يُضاف لرصيد المشتريات. لو تبي ترجعه للصندوق، فيه "سحب من العهدة" بشاشة الصندوق.'
+      : 'رح يُضاف المبلغ تلقائيًا لصافي الصندوق.',
+    confirmLabel: 'تم التحصيل',
+    onConfirm: async ()=>{
+      const prevUpdatedAt = order.updatedAt;
+      part.returnCollected = true;
+      order.updatedAt = new Date().toISOString();
+      const saved = await persistOrder(order);
+      if(!saved){ part.returnCollected = false; order.updatedAt = prevUpdatedAt; return; }
+      const stalePending = pendingActionProposalFor('return_collect', orderId, partId);
+      if(stalePending) await sb.from('edit_proposals').delete().eq('id', stalePending.id);
+      showToast('تم تسجيل التحصيل'+(isUsed ? '، وأُضيف لرصيد المشتريات' : '، وأُضيف المبلغ للصندوق'), 'ok');
+      await refreshEditProposals();
+      await loadScrapyardData(scrapyardSharedState.activeKind);
+      renderScrapyardView();
+    }
+  });
 }
 
 function renderScrapyardView(){
@@ -12272,6 +12339,29 @@ function bindScrapyardEvents(){
   });
   root.querySelectorAll('[data-reject-proposal]').forEach(btn=>{
     btn.addEventListener('click', ()=> handleScrapyardProposalDecision(btn.getAttribute('data-reject-proposal'), false));
+  });
+
+  // مرتجعات بانتظار التحصيل — طلب/تسجيل تحصيل مباشر، وقبول/رفض/سحب طلب التحصيل المعلّق.
+  // هدول عن قصد edit_proposals (مو scrapyard_proposals متل باقي أزرار هالشاشة) — return_collect
+  // نفسه نظام موحّد مع باقي طلبات التعديل بعد التوريد، فبنستخدم نفس الدوال الجاهزة (requestReturnCollect/
+  // handleEditProposalDecision/withdrawEditProposal) بدل ما نعيد بناء نفس المنطق (claim-via-delete
+  // + استرجاع لو فشل) من الصفر هون.
+  root.querySelectorAll('.scrapyard-collect-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const orderId = btn.getAttribute('data-order-id');
+      const partId = btn.getAttribute('data-part-id');
+      if(scrapyardSharedState.canManage) scrapyardMarkCollectedDirect(orderId, partId);
+      else requestReturnCollect(orderId, partId);
+    });
+  });
+  root.querySelectorAll('[data-collect-accept]').forEach(btn=>{
+    btn.addEventListener('click', ()=> handleEditProposalDecision(btn.getAttribute('data-collect-accept'), true));
+  });
+  root.querySelectorAll('[data-collect-reject]').forEach(btn=>{
+    btn.addEventListener('click', ()=> handleEditProposalDecision(btn.getAttribute('data-collect-reject'), false));
+  });
+  root.querySelectorAll('[data-collect-withdraw]').forEach(btn=>{
+    btn.addEventListener('click', ()=> withdrawEditProposal(btn.getAttribute('data-collect-withdraw')));
   });
 
   // لصاحب الحساب — الضغط على عنوان الطلبية يفتحها مباشرة بنافذة التعديل الكاملة
