@@ -8913,6 +8913,48 @@ function exportAllDataToExcel(){
   }
   const wb = XLSX.utils.book_new();
 
+  // شيت تحليل شامل — صف واحد لكل قطعة، مجمّع فيه كل أبعاد التحليل سوا (الطلبية/السيارة، العميل،
+  // التشليح/المورد، الأسعار والربح) بدل ما يحتاج المستخدم يعمل VLOOKUP بين عدة شيتات لتحليلها
+  // ببرنامج تحليل بيانات خارجي (Excel PivotTable/Power BI/...). أول شيت بالملف عمدًا (الأهم للتحليل).
+  // مستبعدة منه طلبات التسعير (isQuote) لأنها مو صفقات فعلية بعد، مو قطع حقيقية اتباعت.
+  const analysisRows = [];
+  appData.orders.filter(o=>!o.isQuote).forEach(o=>{
+    const customer = o.customerId ? (appData.customers||[]).find(c=>c.id===o.customerId) : null;
+    (o.parts||[]).forEach(p=>{
+      const supplier = p.supplierId ? (appData.suppliers||[]).find(s=>s.id===p.supplierId) : null;
+      const qty = Number(p.qty)||1;
+      const costPrice = Number(p.costPrice)||0;
+      const hasSell = p.sellPrice!==null && p.sellPrice!==undefined && p.sellPrice!=='';
+      const sellPriceUnit = hasSell ? Number(p.sellPrice) : null;
+      const costTotal = round2(costPrice*qty);
+      const sellTotal = hasSell ? round2(sellPriceUnit*qty) : null;
+      const profit = hasSell ? round2(sellTotal-costTotal) : null;
+      analysisRows.push({
+        'رقم الطلب': o.orderNumber,
+        'الطلبية/السيارة': o.orderLabel || '',
+        'تاريخ الإنشاء': o.createdAt || '',
+        'تاريخ التوريد': o.suppliedAt || '',
+        'مؤكدة': o.confirmed ? 'نعم' : 'لا',
+        'تم التوريد': o.supplied ? 'نعم' : 'لا',
+        'العميل': customer ? (customer.name||'') : '',
+        'جوال العميل': o.customerPhone || '',
+        'وصف القطعة': p.description || '',
+        'مستعملة': p.used ? 'نعم' : 'لا',
+        'التشليح/المورد': supplier ? (supplier.name||supplier.phone||'') : '',
+        'العدد': qty,
+        'سعر الشراء (الوحدة)': costPrice,
+        'إجمالي الشراء': costTotal,
+        'سعر البيع (الوحدة)': hasSell ? sellPriceUnit : '',
+        'إجمالي البيع': hasSell ? sellTotal : '',
+        'الربح': hasSell ? profit : '',
+        'هامش الربح %': (hasSell && sellTotal>0) ? round2(profit/sellTotal*100) : '',
+        'مرتجعة': p.returned ? 'نعم' : 'لا',
+        'ضمن الطلبية': (!o.partsSelectionEnabled || p.included!==false) ? 'نعم' : 'لا'
+      });
+    });
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(analysisRows)), 'تحليل شامل');
+
   const ordersRows = appData.orders.map(o=>{
     const t = orderTotals(o);
     return {
