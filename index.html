@@ -11702,8 +11702,7 @@ function renderScrapyardView(){
     scrapyardReturnReceivablesHtml() +
     '<div class="section-block"><div class="section-head"><span class="section-title">القطع (غير المسدّدة)</span>' +
       (canManage || kind!=='used' ? '' : '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
-        '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-scrapyard-supplier">➕ تشليح جديد</button>' +
-        '<button type="button" class="btn btn-ghost btn-sm" id="btn-manage-scrapyard-suppliers">✏️ تعديل الموردين</button>' +
+        '<button type="button" class="btn btn-ghost btn-sm" id="btn-manage-scrapyard-suppliers">👥 الموردين</button>' +
       '</div>') +
     '</div>' +
       (groups.length ? groups.map(g=>scrapyardOrderGroupHtml(g, canManage)).join('') : '<div class="expense-empty-hint">ما فيه قطع غير مسدّدة حاليًا</div>') +
@@ -11804,8 +11803,11 @@ function openScrapyardSupplierManageModal(){
   root.innerHTML =
     '<div class="modal-backdrop" data-close-backdrop>' +
       '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
-        '<div class="modal-header"><div class="modal-title">تعديل الموردين (التشاليح)</div>' +
-          '<button type="button" class="icon-btn" id="scrapyard-supplier-manage-close-btn" aria-label="إغلاق">✕</button></div>' +
+        '<div class="modal-header"><div class="modal-title">الموردين (التشاليح)</div>' +
+          '<div style="display:flex;gap:8px;align-items:center;">' +
+            '<button type="button" class="btn btn-ghost btn-sm" id="scrapyard-supplier-manage-add-btn">➕ تشليح جديد</button>' +
+            '<button type="button" class="icon-btn" id="scrapyard-supplier-manage-close-btn" aria-label="إغلاق">✕</button>' +
+          '</div></div>' +
         '<div class="task-items-list" id="scrapyard-supplier-manage-list">' + scrapyardSupplierManageListHtml() + '</div>' +
       '</div>' +
     '</div>';
@@ -11815,6 +11817,18 @@ function openScrapyardSupplierManageModal(){
     if(e.target.hasAttribute('data-close-backdrop')) close();
   });
   root.querySelector('#scrapyard-supplier-manage-close-btn').addEventListener('click', close);
+  // نفس منطق onSaved الافتراضي بـopenQuickAddScrapyardSupplierModal، بس بيحدّث قائمة هالمودال
+  // المفتوحة مباشرة (refreshScrapyardSupplierManageList) بدل ما يعيد رسم شاشة السداد كاملة تحتها
+  root.querySelector('#scrapyard-supplier-manage-add-btn').addEventListener('click', ()=>{
+    openQuickAddScrapyardSupplierModal((newSupplier)=>{
+      if(!Array.isArray(scrapyardSharedState.suppliers)) scrapyardSharedState.suppliers = [];
+      scrapyardSharedState.suppliers.push({
+        id: newSupplier.id, name: newSupplier.name, phone: newSupplier.phone,
+        handles_new: false, handles_used: true, extra_phones: []
+      });
+      refreshScrapyardSupplierManageList();
+    });
+  });
   bindScrapyardSupplierManageEvents();
 }
 
@@ -12179,10 +12193,6 @@ function bindScrapyardEvents(){
   const scrapLogo = document.getElementById('scrapyard-logo-img');
   if(scrapLogo) scrapLogo.addEventListener('click', goHomeFromLogo);
   bindScrapyardThemeToggle();
-  const addSupplierBtn = document.getElementById('btn-add-scrapyard-supplier');
-  // لازم تغليف: تمرير الدالة مباشرة بيخلي onSaved يستقبل حدث الضغط (MouseEvent)، وبعدها
-  // استدعاء onSaved(newSupplier) بيرمي TypeError لأن الحدث مش دالة.
-  if(addSupplierBtn) addSupplierBtn.addEventListener('click', ()=> openQuickAddScrapyardSupplierModal());
   const manageSuppliersBtn = document.getElementById('btn-manage-scrapyard-suppliers');
   if(manageSuppliersBtn) manageSuppliersBtn.addEventListener('click', openScrapyardSupplierManageModal);
   const addCustodyTopupBtn = document.getElementById('btn-add-amer-custody-topup');
