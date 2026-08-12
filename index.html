@@ -12493,7 +12493,11 @@ async function cancelPendingScrapyardProposalsForPart(partId){
   if(!sb) return;
   const { data, error } = await sb.from('scrapyard_proposals').select('id').eq('part_id', partId);
   if(error || !data || !data.length) return;
-  const { error: delError } = await sb.from('scrapyard_proposals').delete().eq('part_id', partId);
+  // RPC بدل حذف مباشر — سياسة RLS الجديدة على scrapyard_proposals ضيّقت DELETE لصاحب
+  // الاقتراح أو المخوّلين بس (كانت مفتوحة لأي حساب "full")، فهالإلغاء التلقائي (نتيجة تعديل
+  // مشروع لأي حساب مبيعات على تصنيف القطعة، مش مراجعة/رفض فعلي للاقتراح) لازم يمر عبر
+  // دالة مخصصة بصلاحية أوسع بدل الاعتماد على صلاحية الحذف المباشرة على الجدول.
+  const { error: delError } = await sb.rpc('cancel_scrapyard_proposals_for_part', { p_part_id: partId });
   if(delError){ console.error('cancelPendingScrapyardProposalsForPart:', delError); return; }
   showToast('تم إلغاء الاقتراح المعلّق على هذه القطعة تلقائيًا بعد تغيير تصنيفها', 'ok');
   refreshScrapyardPendingCount();
