@@ -5143,6 +5143,13 @@ function round2(n){
   return Math.round((Number(n)||0)*100)/100;
 }
 
+/* الأسعار المدخلة شاملة ضريبة القيمة المضافة (15%) أصلاً — هذا استخراج (لا إضافة) لعرض قيمتها
+   فقط بالفاتورة/التسعيرة، لا يغيّر أي مبلغ فعلي. مستخدَمة بمكانين (docSheetHtml + نص واتساب
+   المستند) — كانت نفس الصيغة مكرّرة يدويًا بالمكانين قبل الاستخراج. */
+function computeVatAmount(subtotalInclVat){
+  return round2(subtotalInclVat - (subtotalInclVat/1.15));
+}
+
 let docState = null; // {orderId, type, data}
 
 function partsTableRowsHtml(order){
@@ -5198,8 +5205,7 @@ function docSheetHtml(order, type, data){
   const fee = t.feeAmount;
   const grand = t.sellTotal;
   const showVat = data.showVat !== false;
-  // الأسعار المدخلة شاملة ضريبة القيمة المضافة أصلاً — هذا استخراج (لا إضافة) لعرض قيمتها فقط، لا يغيّر أي مبلغ فعلي
-  const vatAmount = round2(subtotal - (subtotal / 1.15));
+  const vatAmount = computeVatAmount(subtotal);
 
   return (
     '<div class="doc-overlay">' +
@@ -5493,7 +5499,7 @@ function buildDocWhatsAppText(order, type, data){
   });
   lines.push('');
   if(data.showVat !== false){
-    const vatAmt = round2(t.partsSellTotal - (t.partsSellTotal/1.15));
+    const vatAmt = computeVatAmount(t.partsSellTotal);
     lines.push('قيمة الضريبة المضافة (15%): '+fmtNum(vatAmt)+' ريال');
     lines.push('مجموع سعر القطع شامل الضريبة: '+fmtNum(t.partsSellTotal)+' ريال');
   } else {
@@ -5737,13 +5743,23 @@ function statementOrderRowsHtml(rows){
   }).join('');
 }
 
+/* "المطلوب" بكشف حساب العميل — مجموع المتبقي على الطلبيات الجارية (بحد أدنى صفر لكل طلبية،
+   وباستبعاد الطلبيات غير القابلة للتحصيل hasChargeable=false) ناقص مرتجعات مستحقة له (لو معروضة).
+   استُخرجت لأنها كانت مكررة يدويًا بمكانين (عرض/طباعة الكشف + نص نسخه للواتساب). */
+function computeStatementTotals(ongoing, refunds, opts){
+  opts = opts || {};
+  const showRefunds = opts.showRefunds !== false;
+  const totalRemaining = round2(ongoing.reduce((s,r)=> s + (r.hasChargeable!==false ? Math.max(0,r.remaining) : 0), 0));
+  const totalRefunds = showRefunds ? round2((refunds||[]).reduce((s,r)=>s+r.amount,0)) : 0;
+  const net = round2(totalRemaining - totalRefunds);
+  return { totalRemaining, totalRefunds, net };
+}
+
 function customerStatementHtml(customer, ongoing, past, refunds, opts){
   opts = opts || {};
   const showPaid = opts.showPaid !== false;
   const showRefunds = opts.showRefunds !== false;
-  const totalRemaining = round2(ongoing.reduce((s,r)=> s + (r.hasChargeable!==false ? Math.max(0,r.remaining) : 0), 0));
-  const totalRefunds = showRefunds ? round2(refunds.reduce((s,r)=>s+r.amount,0)) : 0;
-  const net = round2(totalRemaining - totalRefunds);
+  const { totalRemaining, totalRefunds, net } = computeStatementTotals(ongoing, refunds, opts);
   const label = customer.name || customer.phone || 'عميل';
   return (
     '<div class="doc-overlay">' +
@@ -5813,9 +5829,7 @@ function buildStatementWhatsAppText(customer, ongoing, past, refunds, opts){
   const showPaid = opts.showPaid !== false;
   const showRefunds = opts.showRefunds !== false;
   const label = customer.name || customer.phone || 'عميل';
-  const totalRemaining = round2(ongoing.reduce((s,r)=> s + (r.hasChargeable!==false ? Math.max(0,r.remaining) : 0), 0));
-  const totalRefunds = showRefunds ? round2(refunds.reduce((s,r)=>s+r.amount,0)) : 0;
-  const net = round2(totalRemaining - totalRefunds);
+  const { totalRemaining, totalRefunds, net } = computeStatementTotals(ongoing, refunds, opts);
   const lines = [];
   lines.push('*PARTECH*');
   lines.push('كشف حساب — '+label);
@@ -11771,7 +11785,11 @@ function renderScrapyardHomeView(){
 
 /* المستحق لكل تشليح على حدة (صافي) — مبني على القطع المستعملة غير المسدّدة الظاهرة حاليًا،
    مطروح منه أي مبلغ مسترجع بانتظار التحصيل من نفس التشليح */
-function scrapyardSupplierTotalsHtml(){
+/* المستحق لكل مورد تشليح (scrapyardSharedState.parts) ناقص مرتجعاته (returnReceivables) —
+   مصدر بيانات مختلف عن supplierOwedAmount (تلك تعتمد appData.orders، هاي تعتمد الجداول
+   المجلوبة حيًا لشاشة عامر). استُخرجت من scrapyardSupplierTotalsHtml حتى تصير قابلة للاختبار
+   بمعزل عن التصيير. */
+function scrapyardSupplierTotals(){
   const totals = {};
   (scrapyardSharedState.parts||[]).forEach(p=>{
     if(!p.supplier_id) return;
@@ -11781,6 +11799,11 @@ function scrapyardSupplierTotalsHtml(){
     if(!p.supplier_id) return;
     totals[p.supplier_id] = round2((totals[p.supplier_id]||0) - (Number(p.cost_price)||0)*(Number(p.qty)||1));
   });
+  return totals;
+}
+
+function scrapyardSupplierTotalsHtml(){
+  const totals = scrapyardSupplierTotals();
   const ids = Object.keys(totals);
   if(!ids.length) return '';
   const rows = ids.map(sid=>{
