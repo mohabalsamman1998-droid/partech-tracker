@@ -1246,8 +1246,9 @@ function bindSearchableSelect(wrapEl, getOptions, onSelect, onCreateNew){
       btn.addEventListener('mousedown', e=>{
         e.preventDefault(); // قبل blur الـ input حتى ما يسكر القائمة قبل ما ياخذ الكلك
         const opt = options.find(o=>o.id===btn.getAttribute('data-id'));
-        input.value = opt ? opt.label : '';
-        input.classList.toggle('select-empty-warn', !opt);
+        const hasReal = opt && opt.id; // opt.id فاضي = خيار "تفريغ" مقصود، نعامله متل ما فيه اختيار
+        input.value = hasReal ? opt.label : '';
+        input.classList.toggle('select-empty-warn', !hasReal);
         wrapEl.setAttribute('data-selected-id', opt ? opt.id : '');
         dropdown.style.display = 'none';
         onSelect(opt ? opt.id : '');
@@ -12435,7 +12436,9 @@ function bindScrapyardEvents(){
     const partId = wrap.getAttribute('data-part-id');
     const orderId = wrap.getAttribute('data-order-id');
     bindSearchableSelect(wrap.querySelector('.searchable-select'),
-      ()=> (scrapyardSharedState.suppliers||[]).filter(s=>s.handles_used!==false).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone})),
+      ()=> [{id:'', label:'— بدون تشليح —'}].concat(
+        (scrapyardSharedState.suppliers||[]).filter(s=>s.handles_used!==false).map(s=>({id:s.id, label:s.name||s.phone||'مورد', sublabel:s.phone}))
+      ),
       async (supplierId)=>{
         const { error } = await sb.rpc('set_part_supplier', { p_order_id: orderId, p_part_id: partId, p_supplier_id: supplierId || null });
         if(error){ showToast('تعذر حفظ التشليح: ' + error.message, 'error'); return; }
