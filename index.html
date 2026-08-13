@@ -1234,7 +1234,9 @@ function bindSearchableSelect(wrapEl, getOptions, onSelect, onCreateNew){
   const renderOptions = (filterText)=>{
     const q = (filterText||'').trim().toLowerCase();
     const options = getOptions();
-    const matches = q ? options.filter(o=> o.label.toLowerCase().includes(q) || (o.sublabel||'').toLowerCase().includes(q)) : options;
+    // خيار "تفريغ" (id فاضي، متل — بدون تشليح —) لازم يضل ظاهر حتى وقت الفلترة بالكتابة —
+    // ما إلو اسم/رقم حقيقي يتوقع المستخدم يدوّره، فاستبعاده بالفلتر العادي يخفيه بلا داعي.
+    const matches = q ? options.filter(o=> !o.id || o.label.toLowerCase().includes(q) || (o.sublabel||'').toLowerCase().includes(q)) : options;
     if(matches.length){
       dropdown.innerHTML = matches.map(o=>'<button type="button" class="searchable-select-option" data-id="'+escapeHtml(o.id)+'">'+escapeHtml(o.label)+(o.sublabel?' — '+escapeHtml(o.sublabel):'')+'</button>').join('');
     } else if(q && onCreateNew){
@@ -11880,10 +11882,13 @@ function scrapyardSupplierManageListHtml(){
   if(term){
     const normPhone = v => (v||'').replace(/[^0-9]/g,'');
     const termDigits = normPhone(term);
+    // صف تحت التعديل حاليًا لازم يضل ظاهر حتى لو ما عاد يطابق البحث (اسم/رقم لسه متعدَّل بالحقل
+    // ولسه ما انحفظ) — غير هيك التعديل يضيع بصمت لو الصف اختفى من القائمة بينما المستخدم يكتب.
     rows = rows.filter(s=>{
+      if(editingScrapyardSuppliers[s.id]) return true;
       const nameMatch = (s.name||'').toLowerCase().includes(term);
       const phones = [s.phone].concat(Array.isArray(s.extra_phones) ? s.extra_phones : []).filter(Boolean);
-      const phoneMatch = termDigits && phones.some(ph=>normPhone(ph).includes(termDigits));
+      const phoneMatch = termDigits.length>=3 && phones.some(ph=>normPhone(ph).includes(termDigits));
       return nameMatch || phoneMatch;
     });
   }
@@ -11903,9 +11908,7 @@ function openScrapyardSupplierManageModal(){
             '<button type="button" class="btn btn-ghost btn-sm" id="scrapyard-supplier-manage-add-btn">➕ تشليح جديد</button>' +
             '<button type="button" class="icon-btn" id="scrapyard-supplier-manage-close-btn" aria-label="إغلاق">✕</button>' +
           '</div></div>' +
-        '<div style="padding:12px 16px 0;">' +
-          '<input type="text" id="scrapyard-supplier-manage-search" class="search-input" style="margin-bottom:0;" placeholder="🔍 ابحث بالاسم أو رقم الجوال...">' +
-        '</div>' +
+        '<input type="text" id="scrapyard-supplier-manage-search" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث بالاسم أو رقم الجوال...">' +
         '<div class="task-items-list" id="scrapyard-supplier-manage-list">' + scrapyardSupplierManageListHtml() + '</div>' +
       '</div>' +
     '</div>';
