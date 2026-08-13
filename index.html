@@ -7724,12 +7724,18 @@ function accountsActivityForDate(isoDate){
   });
 
   const sum = arr => round2(arr.reduce((s,r)=> s + (Number(r.amount)||0), 0));
+  // تسديد "تشليح" (عامر) ما يمثّل خروج كاش جديد من الصندوق — الكاش طلع فعليًا لحظة شحن العهدة
+  // (عهدة المشتريات)، وعامر بس يصرف من رصيد معه أصلًا. فلحساب صافي حركة اليوم منستخدم تسديد
+  // المورد المباشر فقط (supplierPaymentsDirect)، بينما القائمة/المجموع الكامل (كل الأنواع) يضل
+  // معروض بالقسم نفسه للمعلومة/التتبع فقط، مو داخل بالصافي.
+  const supplierPaymentsDirect = supplierPayments.filter(r=>r.kind==='مورد');
   return {
     customerPayments, customerRefunds, supplierPayments, expenses, support, custody,
     totals: {
       customerPayments: sum(customerPayments),
       customerRefunds: sum(customerRefunds),
       supplierPayments: sum(supplierPayments),
+      supplierPaymentsDirect: sum(supplierPaymentsDirect),
       expenses: sum(expenses),
       support: sum(support),
       custody: sum(custody)
@@ -8037,7 +8043,9 @@ function accountsActivityModalHtml(){
   ).join('');
   const supplierRowsHtml = a.supplierPayments.map(r=>
     '<div class="purchase-history-row">' + accountsActivityRowHtml(
-      r.orderNumber+(r.orderLabel?' — '+r.orderLabel:''), 'تسديد '+r.kind, r.amount, 'text-rust'
+      r.orderNumber+(r.orderLabel?' — '+r.orderLabel:''),
+      'تسديد '+r.kind+(r.kind==='تشليح'?' (من عهدة المشتريات — مو داخل بالصافي)':''),
+      r.amount, 'text-rust'
     ) + '</div>'
   ).join('');
   const expensesRowsHtml = a.expenses.map(r=>
@@ -8056,7 +8064,7 @@ function accountsActivityModalHtml(){
   // التزام برد المبلغ، بس الكاش ما يطلع من الصندوق فعليًا إلا لحظة "تم رد المبلغ للزبون"
   // (customerRefundConfirmed)، وهاي كمان بلا تاريخ مسجّل حاليًا (نفس فجوة سداد المورد/التشليح).
   // فنعرض القسم للمعلومة بس ما ندخله بصافي حركة اليوم حتى ما نوهم إنه كاش طلع فعليًا.
-  const netTotal = round2(a.totals.customerPayments - a.totals.supplierPayments - a.totals.expenses + a.totals.support - a.totals.custody);
+  const netTotal = round2(a.totals.customerPayments - a.totals.supplierPaymentsDirect - a.totals.expenses + a.totals.support - a.totals.custody);
   const hasAnything = a.customerPayments.length || a.customerRefunds.length || a.supplierPayments.length || a.expenses.length || a.support.length || a.custody.length;
 
   return '<div class="modal-backdrop" data-close-backdrop>' +
@@ -8078,7 +8086,7 @@ function accountsActivityModalHtml(){
       accountsActivitySectionHtml('💸 المصاريف', a.expenses, a.totals.expenses, 'text-rust', expensesRowsHtml) +
       accountsActivitySectionHtml('🤝 دعم الصندوق الخارجي', a.support, a.totals.support, 'text-green', supportRowsHtml) +
       accountsActivitySectionHtml('🔧 عهدة المشتريات', a.custody, a.totals.custody, 'text-rust', custodyRowsHtml) +
-      '<p class="modal-sub" style="margin-top:14px;">تسديد المورد/التشليح يظهر هون بس من تاريخ إضافة هذا التقرير فصاعدًا — الطلبيات المسدّدة قبله ما إلها تاريخ سداد مسجّل. مرتجعات الزبائن هون مو خارجة من صافي حركة اليوم — الكاش ما يطلع فعليًا إلا لحظة تأكيد الرد من شاشة الطلبية/العميل.</p>' +
+      '<p class="modal-sub" style="margin-top:14px;">تسديد المورد/التشليح يظهر هون بس من تاريخ إضافة هذا التقرير فصاعدًا — الطلبيات المسدّدة قبله ما إلها تاريخ سداد مسجّل. مرتجعات الزبائن هون مو خارجة من صافي حركة اليوم — الكاش ما يطلع فعليًا إلا لحظة تأكيد الرد من شاشة الطلبية/العميل. تسديد "تشليح" مو داخل بصافي اليوم كمان — الكاش طلع فعليًا لحظة شحن عهدة المشتريات، وتسديد عامر للتشليح بس صرف من رصيد معه أصلًا (لو تشحن وتسدد بنفس اليوم، الصافي بيعكس الـ900 مرة وحدة بس، مو مرتين).</p>' +
     '</div>' +
   '</div>';
 }
