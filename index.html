@@ -11871,14 +11871,28 @@ function scrapyardSupplierEditRowHtml(s){
   '</div>';
 }
 
+let scrapyardSupplierManageSearchTerm = '';
+
 function scrapyardSupplierManageListHtml(){
-  const rows = (scrapyardSharedState.suppliers||[]).filter(s=>s.handles_used!==false);
-  if(!rows.length) return '<div class="expense-empty-hint">ما فيه موردين مضافين بعد</div>';
+  let rows = (scrapyardSharedState.suppliers||[]).filter(s=>s.handles_used!==false);
+  const term = scrapyardSupplierManageSearchTerm.trim().toLowerCase();
+  if(term){
+    const normPhone = v => (v||'').replace(/[^0-9]/g,'');
+    const termDigits = normPhone(term);
+    rows = rows.filter(s=>{
+      const nameMatch = (s.name||'').toLowerCase().includes(term);
+      const phones = [s.phone].concat(Array.isArray(s.extra_phones) ? s.extra_phones : []).filter(Boolean);
+      const phoneMatch = termDigits && phones.some(ph=>normPhone(ph).includes(termDigits));
+      return nameMatch || phoneMatch;
+    });
+  }
+  if(!rows.length) return '<div class="expense-empty-hint">'+(term ? 'ما فيه نتائج مطابقة' : 'ما فيه موردين مضافين بعد')+'</div>';
   return rows.map(scrapyardSupplierEditRowHtml).join('');
 }
 
 function openScrapyardSupplierManageModal(){
   editingScrapyardSuppliers = {};
+  scrapyardSupplierManageSearchTerm = '';
   const root = document.getElementById('modal-root');
   root.innerHTML =
     '<div class="modal-backdrop" data-close-backdrop>' +
@@ -11888,6 +11902,9 @@ function openScrapyardSupplierManageModal(){
             '<button type="button" class="btn btn-ghost btn-sm" id="scrapyard-supplier-manage-add-btn">➕ تشليح جديد</button>' +
             '<button type="button" class="icon-btn" id="scrapyard-supplier-manage-close-btn" aria-label="إغلاق">✕</button>' +
           '</div></div>' +
+        '<div style="padding:8px 16px 0;">' +
+          '<input type="text" id="scrapyard-supplier-manage-search" placeholder="🔍 بحث بالاسم أو رقم الجوال" class="form-input" style="width:100%;box-sizing:border-box;">' +
+        '</div>' +
         '<div class="task-items-list" id="scrapyard-supplier-manage-list">' + scrapyardSupplierManageListHtml() + '</div>' +
       '</div>' +
     '</div>';
@@ -11897,6 +11914,13 @@ function openScrapyardSupplierManageModal(){
     if(e.target.hasAttribute('data-close-backdrop')) close();
   });
   root.querySelector('#scrapyard-supplier-manage-close-btn').addEventListener('click', close);
+  const searchInput = root.querySelector('#scrapyard-supplier-manage-search');
+  if(searchInput){
+    searchInput.addEventListener('input', e=>{
+      scrapyardSupplierManageSearchTerm = e.target.value;
+      refreshScrapyardSupplierManageList();
+    });
+  }
   // نفس منطق onSaved الافتراضي بـopenQuickAddScrapyardSupplierModal، بس بيحدّث قائمة هالمودال
   // المفتوحة مباشرة (refreshScrapyardSupplierManageList) بدل ما يعيد رسم شاشة السداد كاملة تحتها
   root.querySelector('#scrapyard-supplier-manage-add-btn').addEventListener('click', ()=>{
