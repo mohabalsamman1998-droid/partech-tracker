@@ -805,6 +805,12 @@
   .doc-billto-label{display:block;font-size:10px;color:#999;font-weight:700;margin-bottom:5px;}
   .doc-customer-name-input{display:block;width:100%;box-sizing:border-box;border:none;background:transparent;font-family:'Cairo',sans-serif;font-weight:500;font-size:16px;color:#171717;padding:2px 0;text-align:right;direction:rtl;min-height:1.3em;}
   .doc-customer-name-input:focus{outline:none;border-bottom:1px solid #85F745;}
+  /* حقول تعديل عنوان الطلبية/اسم العميل بكشف حساب العميل — بلا حدود متل باقي حقول doc-sheet
+     القابلة للتعديل (identity/customer-name/meta)، بدل ما تطلع بشكل input المتصفح الافتراضي */
+  .statement-label-edit-input{border:none;background:transparent;font-size:12.5px;color:#171717;font-family:'Tajawal',sans-serif;padding:0;}
+  .statement-label-edit-input:focus{outline:none;border-bottom:1px solid #85F745;}
+  .statement-customer-name-edit-input{border:none;background:transparent;font-family:'Cairo',sans-serif;font-weight:500;font-size:16px;color:#171717;padding:2px 0;}
+  .statement-customer-name-edit-input:focus{outline:none;border-bottom:1px solid #85F745;}
   .doc-billto-extra{display:flex;flex-wrap:wrap;gap:6px 22px;margin-top:9px;}
   .doc-cr-line{margin-top:4px;}
   .doc-meta-field{display:flex;align-items:baseline;gap:5px;}
@@ -4246,7 +4252,8 @@ function quoteModalHtml(d){
           partsControlsHtml +
         '</div>' +
         '<div class="section-block section-sales">' +
-          '<div class="totals-row">' +
+          '<div class="section-head"><span class="section-title">ملخص التكلفة</span></div>' +
+          '<div class="totals-row" style="grid-template-columns:1fr;">' +
             '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="quote-total-cost-display">0 ر.س</span></div>' +
           '</div>' +
         '</div>' +
@@ -5705,7 +5712,7 @@ function statementOrderRowsHtml(rows){
     return '<tr data-open-order="'+escapeHtml(r.orderId)+'" style="cursor:pointer;">' +
       '<td><span class="statement-order-label-cell" data-label-cell="'+escapeHtml(r.orderId)+'">' +
         '<span class="statement-order-label-text">'+escapeHtml(r.orderNumber||'')+(r.orderLabel?' — '+escapeHtml(r.orderLabel):'')+'</span> ' +
-        '<button type="button" class="icon-btn no-print" data-edit-order-label="'+escapeHtml(r.orderId)+'" title="تعديل عنوان الطلبية" aria-label="تعديل عنوان الطلبية" style="padding:1px 5px;font-size:12px;">✏️</button>' +
+        '<button type="button" class="icon-btn no-print" data-edit-order-label="'+escapeHtml(r.orderId)+'" title="تعديل عنوان الطلبية" aria-label="تعديل عنوان الطلبية">✏️</button>' +
       '</span></td>' +
       '<td style="text-align:center;">'+isoToDisplayDate(r.date)+'</td>' +
       '<td style="text-align:center;" class="num">'+(r.hasChargeable===false?'—':fmtNum(r.total))+'</td>' +
@@ -5750,7 +5757,7 @@ function customerStatementHtml(customer, ongoing, past, refunds, opts){
           '<span class="doc-billto-label">العميل</span>' +
           '<div class="doc-customer-name-input" data-customer-name-cell="'+escapeHtml(customer.id)+'">' +
             '<span class="statement-customer-name-text">'+escapeHtml(label)+'</span> ' +
-            '<button type="button" class="icon-btn no-print" data-edit-customer-name title="تعديل اسم العميل" aria-label="تعديل اسم العميل" style="padding:1px 5px;font-size:12px;">✏️</button>' +
+            '<button type="button" class="icon-btn no-print" data-edit-customer-name title="تعديل اسم العميل" aria-label="تعديل اسم العميل">✏️</button>' +
           '</div>' +
           (customer.phone ? '<div class="doc-meta-field field-car"><span>الجوال</span><span>'+escapeHtml(customer.phone)+'</span></div>' : '') +
         '</div>' +
@@ -5944,7 +5951,7 @@ async function saveStatementOrderLabel(orderId, newLabel){
 function startEditStatementOrderLabel(orderId, currentLabel, cellEl){
   cellEl.innerHTML =
     '<input type="text" class="statement-label-edit-input" value="'+escapeHtml(currentLabel||'')+'" style="width:150px;max-width:100%;">' +
-    '<button type="button" class="icon-btn" data-save-order-label="'+escapeHtml(orderId)+'" title="حفظ" aria-label="حفظ" style="padding:1px 5px;">💾</button>';
+    '<button type="button" class="icon-btn" data-save-order-label="'+escapeHtml(orderId)+'" title="حفظ" aria-label="حفظ">💾</button>';
   const input = cellEl.querySelector('.statement-label-edit-input');
   input.focus();
   input.select();
@@ -5980,7 +5987,7 @@ async function saveStatementCustomerName(customerId, newName){
 function startEditStatementCustomerName(customerId, currentName, cellEl){
   cellEl.innerHTML =
     '<input type="text" class="statement-customer-name-edit-input" value="'+escapeHtml(currentName||'')+'" style="width:200px;max-width:100%;">' +
-    '<button type="button" class="icon-btn no-print" data-save-customer-name title="حفظ" aria-label="حفظ" style="padding:1px 5px;">💾</button>';
+    '<button type="button" class="icon-btn no-print" data-save-customer-name title="حفظ" aria-label="حفظ">💾</button>';
   const input = cellEl.querySelector('.statement-customer-name-edit-input');
   input.focus();
   input.select();
@@ -8034,32 +8041,32 @@ function accountsActivityModalHtml(){
   const a = accountsActivityForDate(iso);
 
   const paymentsRowsHtml = a.customerPayments.map(r=>
-    '<div class="purchase-history-row">' + accountsActivityRowHtml(
+    '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(
       r.orderNumber+(r.orderLabel?' — '+r.orderLabel:''),
       r.method==='cash'?'كاش':(r.method==='card'?'شبكة':''),
       r.amount, 'text-green'
     ) + '</div>'
   ).join('');
   const refundsRowsHtml = a.customerRefunds.map(r=>
-    '<div class="purchase-history-row">' + accountsActivityRowHtml(
+    '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(
       r.orderNumber+(r.orderLabel?' — '+r.orderLabel:''), 'مرتجع', r.amount, 'text-amber'
     ) + '</div>'
   ).join('');
   const supplierRowsHtml = a.supplierPayments.map(r=>
-    '<div class="purchase-history-row">' + accountsActivityRowHtml(
+    '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(
       r.orderNumber+(r.orderLabel?' — '+r.orderLabel:''),
       'تسديد '+r.kind+(r.kind==='تشليح'?' (من عهدة المشتريات — مو داخل بالصافي)':''),
       r.amount, 'text-rust'
     ) + '</div>'
   ).join('');
   const expensesRowsHtml = a.expenses.map(r=>
-    '<div class="purchase-history-row">' + accountsActivityRowHtml(r.label, r.note, r.amount, 'text-rust') + '</div>'
+    '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.label, r.note, r.amount, 'text-rust') + '</div>'
   ).join('');
   const supportRowsHtml = a.support.map(r=>
-    '<div class="purchase-history-row">' + accountsActivityRowHtml('دعم الصندوق من الخارج', r.note, r.amount, 'text-green') + '</div>'
+    '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml('دعم الصندوق من الخارج', r.note, r.amount, 'text-green') + '</div>'
   ).join('');
   const custodyRowsHtml = a.custody.map(r=>
-    '<div class="purchase-history-row">' + accountsActivityRowHtml(
+    '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(
       (r.amount<0?'سحب من عهدة المشتريات':'سداد لعهدة المشتريات'), r.note, r.amount, (r.amount<0?'text-green':'text-rust')
     ) + '</div>'
   ).join('');
@@ -11641,7 +11648,7 @@ function renderScrapyardHomeView(){
       '<div class="task-items-list" id="scrapyard-quotes-items-list">'+quotesListHtml()+'</div>' +
     '</div>' +
     '<div id="scrapyard-home-approved-section" style="'+(scrapyardHomeOpenSection==='approved'?'':'display:none;')+'">' +
-      '<input type="text" id="approved-quotes-search-input" class="search-input" style="margin-bottom:12px;width:100%;" placeholder="🔍 ابحث برقم الطلبية أو وصف القطعة..." value="'+escapeHtml(approvedQuotesSearchQuery)+'">' +
+      '<input type="text" id="approved-quotes-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث برقم الطلبية أو وصف القطعة..." value="'+escapeHtml(approvedQuotesSearchQuery)+'">' +
       '<div class="task-items-list" id="scrapyard-approved-quotes-items-list">'+approvedQuotesListHtml()+'</div>' +
     '</div>' +
     '<div id="scrapyard-home-tasks-section" style="'+(scrapyardHomeOpenSection==='tasks'?'':'display:none;')+'">' +
