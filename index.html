@@ -6108,6 +6108,10 @@ const EXPENSE_CATEGORIES = [
 ];
 let treasuryPeriodFilter = 'all';
 let editingExpenseEntries = {};
+// معرّفات مسودات "سجل جديد" (زر +) لسه ما انحفظت بالقاعدة — تُشال من appData وقت إغلاق
+// نافذة السجل لو ضلت هيك، غير هيك كل فتح/إغلاق تالي بيضيف مسودة فاضية فوق المتروكة (انظر
+// [[feedback_partech_rebind_and_persist_result]])
+let unsavedDraftEntryIds = new Set();
 let treasuryFilterOpen = false;
 let extraIndicatorsOpen = false;
 let expensesBlockOpen = false;
@@ -8379,6 +8383,7 @@ function bindTreasuryAddButtons(){
       const newEntry = {id: uid('exp'), amount:'', date: todayNumeric(), note:''};
       appData.treasury[key].push(newEntry);
       editingExpenseEntries[newEntry.id] = true;
+      unsavedDraftEntryIds.add(newEntry.id);
       openExpenseHistoryModal(key, label);
     });
   });
@@ -8461,7 +8466,19 @@ function openExpenseHistoryModal(key, label, onClosed){
       '</div>' +
     '</div>';
   root.classList.add('modal-open');
-  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); (onClosed||renderTreasuryView)(); };
+  const close = ()=>{
+    // مسودة "سجل جديد" (زر +) ما انحفظت — تُشال هون قبل الإغلاق، غير هيك تضل بـappData وتظهر
+    // مرة ثانية (مع مسودة جديدة فوقها) بأول فتح تالي لنفس السجل
+    if(Array.isArray(appData.treasury[key])){
+      appData.treasury[key] = appData.treasury[key].filter(e=>{
+        if(!unsavedDraftEntryIds.has(e.id)) return true;
+        delete editingExpenseEntries[e.id];
+        unsavedDraftEntryIds.delete(e.id);
+        return false;
+      });
+    }
+    root.innerHTML=''; root.classList.remove('modal-open'); (onClosed||renderTreasuryView)();
+  };
   root.querySelector('[data-close-backdrop]').addEventListener('click', e=>{
     if(e.target.hasAttribute('data-close-backdrop')) close();
   });
@@ -8567,6 +8584,7 @@ function bindExpenseEntryEvents(key){
         // "تم حفظ المبلغ" — نرجّع القيم القديمة ونبقي الصف بوضع التعديل لإعادة المحاولة.
         if(!saved){ Object.assign(liveEntry, prev); refreshExpenseEntries(key); return; }
         delete editingExpenseEntries[entryId];
+        unsavedDraftEntryIds.delete(entryId); // انحفظت فعليًا بالقاعدة — ما تُشال بعد هيك لو ضلت بوضع تعديل وقفلت النافذة
         refreshExpenseEntries(key);
         showToast('تم حفظ المبلغ', 'ok');
       });
@@ -8588,6 +8606,15 @@ function bindExpenseEntryEvents(key){
       noteInput.addEventListener('input', e=>{ entry.note = e.target.value; });
     }
     row.querySelector('.expense-entry-remove-btn').addEventListener('click', ()=>{
+      // مسودة "سجل جديد" ما انحفظت أصلًا بالقاعدة — تُشال محليًا بدون تأكيد حذف/نداء حذف حقيقي
+      // (ما فيه إشي بالقاعدة أصلًا يُحذف)، بعكس عنصر محفوظ فعليًا يمر بـconfirmDeleteExpenseEntry
+      if(unsavedDraftEntryIds.has(entryId)){
+        appData.treasury[key] = (appData.treasury[key]||[]).filter(e=>e.id!==entryId);
+        delete editingExpenseEntries[entryId];
+        unsavedDraftEntryIds.delete(entryId);
+        refreshExpenseEntries(key);
+        return;
+      }
       confirmDeleteExpenseEntry(key, entryId);
     });
   });
@@ -12317,6 +12344,7 @@ function bindScrapyardEvents(){
     const newEntry = {id: uid('exp'), amount:'', date: todayNumeric(), note:''};
     appData.treasury.amerCustody.push(newEntry);
     editingExpenseEntries[newEntry.id] = true;
+    unsavedDraftEntryIds.add(newEntry.id);
     openExpenseHistoryModal('amerCustody', 'عهدة المشتريات', ()=>{
       scrapyardSharedState.custodyBalance = amerCustodyBalance();
       renderScrapyardView();
