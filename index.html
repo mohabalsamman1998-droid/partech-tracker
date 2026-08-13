@@ -12958,6 +12958,19 @@ let employeeMapHistoryMarker = null;
 const EMPLOYEE_LOCATION_STALE_MS = 2*60*1000;
 let lastEmployeeMapFetchAt = 0;
 const EMPLOYEE_MAP_MIN_REFRESH_GAP_MS = 5000;
+const EMPLOYEE_MAP_TIME_PRESETS = [
+  {minutes:0, label:'الآن'},
+  {minutes:15, label:'قبل ١٥ د'},
+  {minutes:30, label:'قبل نص ساعة'},
+  {minutes:60, label:'قبل ساعة'},
+  {minutes:180, label:'قبل ٣ ساعات'}
+];
+/* input[type=datetime-local] بده القيمة كنص محلي "YYYY-MM-DDTHH:mm" — لو استخدمنا toISOString()
+   عادي بترجع UTC فينزاح الوقت المعروض عن التوقيت المحلي فعليًا. */
+function dateToDatetimeLocalValue(d){
+  const pad = n => String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+}
 // مؤقت الـ30 ثانية وحدث realtime لكل نقطة موقع جديدة بيوصلوا لنفس النتيجة (تحميل آخر موقع لكل
 // موظف + رسم العلامات) — وقت وصول نقطة فعلية غالبًا يتزامنوا. حد أدنى بينهم يمنع تكرار نفس
 // طلب الشبكة + إعادة رسم كل العلامات مرتين بلحظة وحدة.
@@ -13097,6 +13110,9 @@ async function openEmployeeMap(){
           '<input type="datetime-local" id="employee-map-history-time" class="employee-map-history-time">' +
           '<button type="button" class="btn btn-ghost btn-sm" id="employee-map-history-search-btn">🕐 الموقع</button>' +
         '</div>' +
+        '<div class="filter-chips" id="employee-map-history-presets" style="margin-top:8px;">' +
+          EMPLOYEE_MAP_TIME_PRESETS.map(p=>'<button type="button" class="chip'+(p.minutes===0?' chip-active':'')+'" data-history-minutes-ago="'+p.minutes+'">'+p.label+'</button>').join('') +
+        '</div>' +
         '<div id="employee-map-history-result" class="muted" style="margin-top:6px;font-size:12.5px;"></div>' +
       '</div>' +
     '</div>';
@@ -13108,6 +13124,25 @@ async function openEmployeeMap(){
   root.querySelector('#employee-map-refresh-btn').addEventListener('click', pingEmployeeLocations);
   root.querySelector('#employee-map-history-search-btn').addEventListener('click', handleEmployeeMapHistorySearch);
   document.addEventListener('keydown', employeeMapEscListener);
+
+  const historyTimeInput = document.getElementById('employee-map-history-time');
+  if(historyTimeInput){
+    historyTimeInput.value = dateToDatetimeLocalValue(new Date());
+    // تعديل يدوي بالحقل ما عاد يطابق أي زر سريع بالضرورة — نشيل التفعيل حتى ما يبين زر "نشط"
+    // بينما القيمة الفعلية صارت غير قيمته
+    historyTimeInput.addEventListener('input', ()=>{
+      root.querySelectorAll('[data-history-minutes-ago]').forEach(c=>c.classList.remove('chip-active'));
+    });
+  }
+  root.querySelectorAll('[data-history-minutes-ago]').forEach(chip=>{
+    chip.addEventListener('click', ()=>{
+      root.querySelectorAll('[data-history-minutes-ago]').forEach(c=>c.classList.remove('chip-active'));
+      chip.classList.add('chip-active');
+      const minutesAgo = Number(chip.getAttribute('data-history-minutes-ago'))||0;
+      if(historyTimeInput) historyTimeInput.value = dateToDatetimeLocalValue(new Date(Date.now() - minutesAgo*60000));
+      handleEmployeeMapHistorySearch();
+    });
+  });
 
   employeeMapMarkers = {};
   employeeMapInstance = L.map('employee-map-wrap');
