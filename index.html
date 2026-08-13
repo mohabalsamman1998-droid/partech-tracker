@@ -2778,8 +2778,11 @@ function subscribeAnnouncementRealtime(){
 async function saveAnnouncementField(audience, audienceRole, newText, saved){
   const now = new Date().toISOString();
   const changed = (announcementTexts[audience]||'') !== newText;
-  const { error } = await sb.from('announcement').update({ text: newText || null, updated_by: presenceEmail, updated_at: now }).eq('id', audience);
+  const { data, error } = await sb.from('announcement').update({ text: newText || null, updated_by: presenceEmail, updated_at: now }).eq('id', audience).select('id');
   if(error){ showToast('تعذر حفظ الإعلان', 'error'); return; }
+  // نفس ملاحظة persistSupplier/deleteTreasuryEntry — تحديث محظور بـRLS (is_elevated فقط) بيرجع
+  // بدون خطأ وبصف فاضي، وبدونها كنا نظن الحفظ نجح ونحدّث الواجهة محليًا بدون ما ينحفظ فعليًا
+  if(!data || !data.length){ showToast('تعذر حفظ الإعلان — ما عندك صلاحية', 'error'); return; }
   announcementTexts[audience] = newText || null;
   announcementSenders[audience] = presenceEmail;
   renderAnnouncementBanner();
@@ -2799,6 +2802,9 @@ async function saveAnnouncementField(audience, audienceRole, newText, saved){
 }
 
 function openAnnouncementEditor(){
+  // زر الفتح مخفي عن غير المخوّلين بالواجهة بس — RLS هي الحماية الحقيقية (announcement_update_elevated
+  // is_elevated فقط)، بس هالفحص هون يمنع فتح المحرر أصلًا لو انفتح مباشرة (نفس مبدأ openTreasuryView)
+  if(!hasElevatedAccess()){ showToast('غير متاح', 'error'); return; }
   const root = document.getElementById('confirm-root');
   root.innerHTML =
     '<div class="modal-backdrop" data-close-confirm>' +
@@ -9899,13 +9905,19 @@ function subscribeSuppliersRealtime(){
 async function persistSupplier(supplier){
   try{
     if(!sb) throw new Error('NO_DB');
-    const { error } = await sb.from('suppliers').upsert({
+    const { data, error } = await sb.from('suppliers').upsert({
       id: supplier.id, name: supplier.name||'', phone: supplier.phone||'', notes: supplier.notes||'',
       extra_phones: Array.isArray(supplier.extraPhones) ? supplier.extraPhones : [],
       handles_new: supplier.handlesNew !== false,
       handles_used: supplier.handlesUsed !== false
-    });
+    }).select('id');
     if(error) throw error;
+    // upsert لصف قائم أصلًا يلي RLS منعت تعديله (مو إضافة جديدة) بيرجع بدون خطأ وبصف فاضي —
+    // نفس ملاحظة deleteSupplier، لازم نفحص الصف فعليًا رجع مو بس غياب الخطأ
+    if(!data || !data.length){
+      showToast('تعذر حفظ المورد — ما عندك صلاحية، أو انحذف من مكان تاني', 'error');
+      return false;
+    }
     return true;
   }catch(e){
     showToast('تعذر حفظ المورد: ' + (e && e.message ? e.message : ''), 'error');
@@ -9970,8 +9982,13 @@ function subscribeCustomersRealtime(){
 async function persistCustomer(customer){
   try{
     if(!sb) throw new Error('NO_DB');
-    const { error } = await sb.from('customers').upsert({ id: customer.id, name: customer.name||'', phone: customer.phone||'', notes: customer.notes||'' });
+    const { data, error } = await sb.from('customers').upsert({ id: customer.id, name: customer.name||'', phone: customer.phone||'', notes: customer.notes||'' }).select('id');
     if(error) throw error;
+    // نفس ملاحظة persistSupplier/deleteCustomer — تعديل صف قائم يلي RLS منعته بيرجع بدون خطأ وبصف فاضي
+    if(!data || !data.length){
+      showToast('تعذر حفظ العميل — ما عندك صلاحية، أو انحذف من مكان تاني', 'error');
+      return false;
+    }
     return true;
   }catch(e){
     showToast('تعذر حفظ العميل: ' + (e && e.message ? e.message : ''), 'error');
@@ -10028,6 +10045,27 @@ function supplierOwedAmount(supplierId){
     });
   });
   return round2(total);
+}
+
+/* فهرس مرة وحدة: المستحق لكل مورد بمرور وحيد على كل الطلبيات/القطع — نفس مبدأ
+   supplierReturnReceivablesIndex، بدل ما تتكرر supplierOwedAmount (تمر على كل الطلبيات من جديد)
+   لكل مورد لحاله. النتيجة لكل مورد مطابقة تمامًا لـsupplierOwedAmount (round2 بالنهاية بس). */
+function supplierOwedIndex(){
+  const bySupplierRaw = {};
+  (appData.orders||[]).forEach(o=>{
+    if(!o.supplied) return;
+    (o.parts||[]).forEach(p=>{
+      if(!p.supplierId) return;
+      if(p.returned) return;
+      if(!partIsIncludedInOrder(o,p)) return;
+      const paid = p.used ? o.paidToAmer : o.paidToSupplier;
+      if(paid) return;
+      bySupplierRaw[p.supplierId] = (bySupplierRaw[p.supplierId]||0) + (Number(p.qty)||1) * (Number(p.costPrice)||0);
+    });
+  });
+  const bySupplier = {};
+  Object.keys(bySupplierRaw).forEach(id=>{ bySupplier[id] = round2(bySupplierRaw[id]); });
+  return bySupplier;
 }
 
 function isoToDisplayDate(iso){
@@ -10270,7 +10308,7 @@ function confirmCollectScrapyardReturn(orderId, partId, supplierId){
 
 let editingSuppliers = {};
 
-function supplierRowHtml(s, receivablesIdx){
+function supplierRowHtml(s, receivablesIdx, owedIdx){
   const isEditing = !!editingSuppliers[s.id];
   const extraPhones = Array.isArray(s.extraPhones) ? s.extraPhones : [];
 
@@ -10280,10 +10318,10 @@ function supplierRowHtml(s, receivablesIdx){
       s.handlesUsed ? 'قطع مستعملة (تشليح)' : null
     ].filter(Boolean).join(' + ') || 'غير محدد';
     const phones = [s.phone].concat(extraPhones).filter(Boolean).join(' / ');
-    // receivablesIdx (فهرس مبني مرة وحدة بـsuppliersItemsListHtml) بيوفّر مسح كامل للطلبيات
-    // لكل صف — بدون تمريره منرجع للحساب الفردي (مستخدَم برضو من مسارات تانية غير القائمة)
+    // receivablesIdx/owedIdx (فهارس مبنية مرة وحدة بـsuppliersItemsListHtml) بتوفّر مسح كامل
+    // للطلبيات لكل صف — بدون تمريرهم نرجع للحساب الفردي (مستخدَم برضو من مسارات تانية غير القائمة)
     const returnTotal = receivablesIdx ? (receivablesIdx[s.id]||0) : supplierReturnReceivableTotal(s.id);
-    const owedAmount = supplierOwedAmount(s.id);
+    const owedAmount = owedIdx ? (owedIdx[s.id]||0) : supplierOwedAmount(s.id);
     return '<div class="task-item-row supplier-item-row" data-supplier-id="'+escapeHtml(s.id)+'">' +
       '<div class="supplier-row-main">' +
         '<span class="purchase-history-desc">'+escapeHtml(s.name||'بدون اسم')+'</span>' +
@@ -10303,7 +10341,8 @@ function supplierRowHtml(s, receivablesIdx){
     '<div class="supplier-row-main">' +
       '<input type="text" class="supplier-name-input" placeholder="اسم المورد" value="'+escapeHtml(s.name||'')+'">' +
       '<input type="tel" class="supplier-phone-input" placeholder="رقم الجوال" value="'+escapeHtml(s.phone||'')+'">' +
-      '<span class="num '+(supplierOwedAmount(s.id)>0?'text-rust':'text-green')+'">'+fmtMoney(supplierOwedAmount(s.id))+'</span>' +
+      (()=>{ const owedAmount = owedIdx ? (owedIdx[s.id]||0) : supplierOwedAmount(s.id);
+        return '<span class="num '+(owedAmount>0?'text-rust':'text-green')+'">'+fmtMoney(owedAmount)+'</span>'; })() +
       '<button type="button" class="icon-btn supplier-add-phone-btn" title="إضافة رقم آخر" aria-label="إضافة رقم">➕</button>' +
       '<button type="button" class="btn btn-sm expense-add-entry-btn supplier-save-btn">💾 حفظ</button>' +
       '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' +
@@ -10370,9 +10409,10 @@ function suppliersMatchingSearch(receivablesIdx){
 
 function suppliersItemsListHtml(){
   const receivablesIdx = supplierReturnReceivablesIndex().bySupplier;
+  const owedIdx = supplierOwedIndex();
   const rows = suppliersMatchingSearch(receivablesIdx);
   if(!rows.length) return '<div class="expense-empty-hint">'+(suppliersSearchQuery.trim() ? 'ما فيه نتائج مطابقة' : 'ما فيه موردين مضافين بعد')+'</div>';
-  return rows.map(s=>supplierRowHtml(s, receivablesIdx)).join('');
+  return rows.map(s=>supplierRowHtml(s, receivablesIdx, owedIdx)).join('');
 }
 
 function suppliersViewHtml(){
@@ -10442,9 +10482,13 @@ function bindSuppliersViewEvents(){
     updateSuppliersBadge();
   });
   const searchInput = document.getElementById('suppliers-search-input');
+  let suppliersDebounceTimer;
   searchInput.addEventListener('input', e=>{
-    suppliersSearchQuery = e.target.value;
-    refreshSuppliersList();
+    clearTimeout(suppliersDebounceTimer);
+    const val = e.target.value;
+    // كل حرف كان يعيد مسح كل الطلبيات لكل مورد ظاهر (supplierOwedIndex/receivablesIndex) —
+    // نفس مبدأ debounce بحث الطلبيات الرئيسي (150ms) بدل إعادة الحساب الكامل بكل ضغطة
+    suppliersDebounceTimer = setTimeout(()=>{ suppliersSearchQuery = val; refreshSuppliersList(); }, 150);
   });
   bindSupplierRowEvents();
 }
@@ -10607,6 +10651,23 @@ function customerOrderStats(customerId){
   return { count, remaining: round2(remaining) };
 }
 
+/* فهرس مرة وحدة: {count, remaining} لكل عميل بمرور وحيد على كل الطلبيات — نفس مبدأ
+   customerRefundsPendingIndex، بدل ما تتكرر customerOrderStats (تمر على كل الطلبيات من جديد)
+   لكل عميل لحاله بشاشة العملاء وترتيب البحث. النتيجة لكل عميل مطابقة تمامًا لـcustomerOrderStats. */
+function customerStatsIndex(){
+  const byCustomer = {};
+  (appData.orders||[]).forEach(o=>{
+    if(!o.customerId) return;
+    if(!o.supplied) return;
+    if(!byCustomer[o.customerId]) byCustomer[o.customerId] = { count: 0, remaining: 0 };
+    byCustomer[o.customerId].count++;
+    const t = orderTotals(o);
+    if(t.hasChargeable) byCustomer[o.customerId].remaining += t.customerRemaining;
+  });
+  Object.keys(byCustomer).forEach(id=>{ byCustomer[id].remaining = round2(byCustomer[id].remaining); });
+  return byCustomer;
+}
+
 /* قطع رجعها العميل ودفع ثمنها مسبقًا — لازم إرجاع مبلغها له، ما تُخصم من الصندوق إلا بعد تأكيد صريح */
 function customerRefundsPending(customerId){
   const rows = [];
@@ -10672,9 +10733,9 @@ function customerRefundRowHtml(row){
 
 let editingCustomers = {};
 
-function customerRowHtml(c, refundsIdx){
+function customerRowHtml(c, refundsIdx, statsIdx){
   const isEditing = !!editingCustomers[c.id];
-  const stats = customerOrderStats(c.id);
+  const stats = statsIdx ? (statsIdx[c.id]||{count:0,remaining:0}) : customerOrderStats(c.id);
 
   if(!isEditing){
     // refundsIdx (فهرس مبني مرة وحدة بـcustomersItemsListHtml) بيوفّر مسح كامل للطلبيات لكل صف
@@ -10851,9 +10912,10 @@ function customersMatchingSearch(refundsIdx){
 
 function customersItemsListHtml(){
   const refundsIdx = customerRefundsPendingIndex();
+  const statsIdx = customerStatsIndex();
   const rows = customersMatchingSearch(refundsIdx);
   if(!rows.length) return '<div class="expense-empty-hint">'+(customersSearchQuery.trim() ? 'ما فيه نتائج مطابقة' : 'ما فيه عملاء مضافين بعد')+'</div>';
-  return rows.map(c=>customerRowHtml(c, refundsIdx)).join('');
+  return rows.map(c=>customerRowHtml(c, refundsIdx, statsIdx)).join('');
 }
 
 function customersViewHtml(){
@@ -10906,9 +10968,12 @@ function bindCustomersViewEvents(){
     updateCustomersBadge();
   });
   const searchInput = document.getElementById('customers-search-input');
+  let customersDebounceTimer;
   searchInput.addEventListener('input', e=>{
-    customersSearchQuery = e.target.value;
-    refreshCustomersList();
+    clearTimeout(customersDebounceTimer);
+    const val = e.target.value;
+    // نفس مبدأ debounce بحث الموردين — كل حرف كان يعيد مسح كل الطلبيات لكل عميل ظاهر
+    customersDebounceTimer = setTimeout(()=>{ customersSearchQuery = val; refreshCustomersList(); }, 150);
   });
   bindCustomerRowEvents();
 }
