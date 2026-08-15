@@ -1186,6 +1186,9 @@ let archiveFilter = 'all';
 let archiveSearch = '';
 let draft = null;
 let draftOpenedAtUpdatedAt = null; // updatedAt الطلبية وقت فتح المودال — لفحص التعارض عند الحفظ
+// لو المودال انفتح من فوق شاشة تانية (مثلاً سداد التشاليح) وبدها تتحدّث/تضل ظاهرة تحته بعد ما
+// يسكّر — بدل ما نطلّع المستخدم منها قبل ما نفتح المودال. تُستهلك مرة وحدة جوا closeModal.
+let modalCloseCallback = null;
 
 function uid(prefix){
   return (prefix||'id') + '-' + Math.random().toString(36).slice(2,9) + Date.now().toString(36).slice(-4);
@@ -2653,7 +2656,10 @@ function openModal(mode, orderId){
     };
   } else {
     const found = appData.orders.find(o=>o.id===orderId);
-    if(!found){ showToast('هذه الطلبية غير موجودة (يمكن انحذفت)', 'error'); return; }
+    // المودال ما رح ينفتح فعليًا — لو كان استدعاء الفتح جهّز modalCloseCallback قبل هالسطر (زي
+    // فتح الطلبية من شاشة سداد التشاليح)، لازم نفضّيه هون وإلا يضل معلّق ويشتغل غلط لاحقًا مع
+    // أول إغلاق مودال ثاني بمكان تاني بالتطبيق ما إله علاقة بيه.
+    if(!found){ modalCloseCallback = null; showToast('هذه الطلبية غير موجودة (يمكن انحذفت)', 'error'); return; }
     draft = JSON.parse(JSON.stringify(found));
     draft.isNew = false;
   }
@@ -2680,6 +2686,11 @@ function closeModal(){
   pendingEditProposalsCancellation = false;
   pendingPartProposalPurges.clear(); // نفس المبدأ — الحذف/الإرجاع المباشر ما صار فعليًا بدون حفظ
   document.removeEventListener('keydown', escListener);
+  if(modalCloseCallback){
+    const cb = modalCloseCallback;
+    modalCloseCallback = null;
+    cb();
+  }
 }
 
 function escListener(e){ if(e.key==='Escape') closeModal(); }
@@ -4931,6 +4942,13 @@ function confirmDelete(orderId){
       await purgeEditProposalsForOrder(orderId);
       renderKPIs();
       renderTable();
+      // حذف طلبية من داخل نافذتها المفتوحة فوق شاشة سداد التشاليح (closeModal فيها بيرجّع الشاشة
+      // فورًا قبل ما الحذف يخلص، انظر modalCloseCallback) بيسيب الطلبية المحذوفة ظاهرة بالقائمة
+      // لحد تحديث لاحق — نحدّثها هون صراحة لو هي الشاشة الظاهرة حاليًا
+      const scrapRoot = document.getElementById('scrapyard-root');
+      if(scrapRoot && scrapRoot.style.display !== 'none' && scrapyardCurrentScreen === 'settlement'){
+        loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
+      }
       showToast('تم حذف الطلبية', 'ok');
     }
   });
@@ -12632,11 +12650,12 @@ function bindScrapyardEvents(){
     btn.addEventListener('click', ()=> withdrawEditProposal(btn.getAttribute('data-collect-withdraw')));
   });
 
-  // لصاحب الحساب — الضغط على عنوان الطلبية يفتحها مباشرة بنافذة التعديل الكاملة
+  // لصاحب الحساب — الضغط على عنوان الطلبية يفتحها مباشرة بنافذة التعديل الكاملة، فوق شاشة
+  // السداد نفسها (بدون طلوع لشاشة التطبيق الرئيسية) — وترجع شاشة السداد محدّثة بعد ما يسكّرها
   root.querySelectorAll('[data-open-order-scrapyard]').forEach(el=>{
     el.addEventListener('click', ()=>{
       const orderId = el.getAttribute('data-open-order-scrapyard');
-      closeScrapyardSharedView();
+      modalCloseCallback = ()=>{ loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView); };
       openModal('edit', orderId);
     });
   });
