@@ -13482,6 +13482,65 @@ function getAuthErrorFromUrl(){
   }catch(e){ return null; }
 }
 
+/* ---------- تحديث فوري عند رجوع التطبيق للواجهة ----------
+   الاتصال اللحظي (Realtime) بينقطع بصمت وهو بالخلفية لفترة (خصوصًا PWA على الجوال — نظام
+   التشغيل بيعلّق التنفيذ وقتاعات الشبكة)، وما فيه أي آلية تلقائية تكتشف الانقطاع وتعيد
+   الاتصال أو تجيب أحدث بيانات — لهيك كانت الطريقة الوحيدة لرؤية تحديثات وصلت بالخلفية هي
+   إغلاق التطبيق فعليًا وإعادة فتحه (تحميل صفحة جديد بالكامل عبر init()). هالدالة بتسوي نفس
+   إعادة تحميل البيانات فور ما التبويب/التطبيق يرجع للواجهة (تبديل تطبيقات على الجوال، رجوع
+   من الخلفية، أو حتى مجرد رجوع نت بعد انقطاعه) بدل ما ينتظر المستخدم يعيد فتحه يدويًا. */
+let resumeRefreshInFlight = false;
+let lastResumeRefreshAt = 0;
+async function refreshOnResume(){
+  if(!shownForEmail || resumeRefreshInFlight) return;
+  const now = Date.now();
+  // visibilitychange/pageshow/online ممكن ينطلقوا سوا بنفس اللحظة عند الرجوع — منع تكرار التحميل
+  if(now - lastResumeRefreshAt < 4000) return;
+  lastResumeRefreshAt = now;
+  resumeRefreshInFlight = true;
+  try{
+    if(currentUserRole === 'scrapyard'){
+      if(document.getElementById('scrapyard-root').style.display === 'none') return;
+      if(scrapyardCurrentScreen === 'settlement'){
+        if(!scrapyardHasOpenEdit()) await loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
+      } else if(scrapyardCurrentScreen === 'home'){
+        await loadScrapyardHomeTotals().then(renderScrapyardHomeView);
+      }
+      refreshActivityEvents();
+      loadAnnouncement();
+      return;
+    }
+    await loadData();
+    renderKPIs();
+    renderTable();
+    renderQuotesList();
+    updateTasksBadge();
+    updateCustomersBadge();
+    updateSuppliersBadge();
+    refreshScrapyardPendingCount();
+    refreshEditProposals();
+    refreshActivityEvents();
+    loadAnnouncement();
+    if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
+    const tasksView = document.getElementById('tasks-view');
+    if(tasksView && tasksView.style.display !== 'none'){
+      if(activeTaskCategory){ if(document.getElementById('task-items-list')) refreshTaskItemsList(activeTaskCategory); }
+      else renderTasksView();
+    }
+    if(document.getElementById('suppliers-view').style.display !== 'none' && Object.keys(editingSuppliers).length===0){ refreshSuppliersList(); }
+    if(document.getElementById('customers-view').style.display !== 'none' && Object.keys(editingCustomers).length===0){ refreshCustomersList(); }
+    refreshArchiveViewIfOpen();
+    const scrapRoot = document.getElementById('scrapyard-root');
+    if(scrapRoot && scrapRoot.style.display !== 'none' && scrapyardSharedState.canManage && scrapyardCurrentScreen === 'settlement'){
+      if(!scrapyardHasOpenEdit()) await loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
+    }
+  }catch(e){ console.error('refreshOnResume:', e); }
+  finally{ resumeRefreshInFlight = false; }
+}
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'visible') refreshOnResume(); });
+window.addEventListener('pageshow', (e)=>{ if(e.persisted) refreshOnResume(); }); // رجوع من bfcache (زر رجوع بسفاري)
+window.addEventListener('online', refreshOnResume); // رجوع نت بعد انقطاعه
+
 async function bootstrapAuth(){
   bindAuthGate();
   if(!sb){
