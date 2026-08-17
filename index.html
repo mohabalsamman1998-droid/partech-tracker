@@ -3803,6 +3803,9 @@ async function onSaveOrder(){
   }
   if(editProposalsCancellationSnapshot){
     await cancelPendingSuppliedGatedProposalsForOrder(savingOrder.id);
+    // نفس شرط القفل "الطلبية موردة" ينطبق على اقتراحات شاشة سداد التشاليح/الموردون (scrapyard_proposals)
+    // كمان — إلغاء "تم التوريد" هون بيتيمها بنفس الطريقة (انظر تعليق cancelPendingScrapyardProposalsForOrder)
+    await cancelPendingScrapyardProposalsForOrder(savingOrder.id);
   }
   if(partProposalPurgesSnapshot.size){
     for(const partId of partProposalPurgesSnapshot){
@@ -4985,6 +4988,13 @@ function confirmToggleConfirmation(orderId){
       order.updatedAt = new Date().toISOString();
       const saved = await persistOrder(order);
       if(!saved){ Object.assign(order, prev); renderTable(); return; } // رجّع الحالة بالذاكرة لتطابق القاعدة
+      // نفس مبدأ toggle "تم التوريد" جوا المودال بالضبط (انظر تعليق cancelPendingSuppliedGatedProposalsForOrder)
+      // — لو التوريد رجع اتلغى من هون، أي طلب تعديل أو اقتراح تسعير معلّق شرط قفله "الطلبية موردة"
+      // بيصير يتيم وما رح يوصله حتى فرصة يظهر لصاحب الحساب يقبله/يرفضه، فنلغيه فورًا بدل ما يعلق للأبد
+      if(willResetSupply){
+        await cancelPendingSuppliedGatedProposalsForOrder(orderId);
+        await cancelPendingScrapyardProposalsForOrder(orderId);
+      }
       renderKPIs();
       renderTable();
       showToast(willConfirm ? 'تم تأكيد الطلبية' : 'تم إلغاء تأكيد الطلبية', 'ok');
@@ -12724,6 +12734,21 @@ async function cancelPendingScrapyardProposalsForPart(partId){
   const { error: delError } = await sb.rpc('cancel_scrapyard_proposals_for_part', { p_part_id: partId });
   if(delError){ console.error('cancelPendingScrapyardProposalsForPart:', delError); return; }
   showToast('تم إلغاء الاقتراح المعلّق على هذه القطعة تلقائيًا بعد تغيير تصنيفها', 'ok');
+  refreshScrapyardPendingCount();
+}
+
+/* لما طلبية توريدها ينلغى (إلغاء تأكيد الطلبية، أو إلغاء "تم التوريد" من داخلها) — أي اقتراح
+   سعر/إضافة/حذف معلّق من عامر على قطعها بيصير يتيم: شاشة السداد أصلًا بترسم الاقتراحات فوق
+   قطع الطلبيات الموردة بس (ownerScrapyardPartsFromAppData بيفلتر o.supplied)، فالطلبية بتختفي
+   من الشاشة ومعها أي فرصة يوصل الاقتراح لصاحب الحساب يقبله/يرفضه — بس شارة "سداد التشاليح/الموردون"
+   تضل عالقة على "1" للأبد لأن الصف نفسه لسه موجود بالقاعدة. نفس مبدأ cancelPendingScrapyardProposalsForPart
+   بالضبط، بس بمستوى الطلبية كاملة عن طريق order_id. */
+async function cancelPendingScrapyardProposalsForOrder(orderId){
+  if(!sb) return;
+  const { data, error } = await sb.from('scrapyard_proposals').select('id').eq('order_id', orderId);
+  if(error || !data || !data.length) return;
+  const { error: delError } = await sb.rpc('cancel_scrapyard_proposals_for_order', { p_order_id: orderId });
+  if(delError){ console.error('cancelPendingScrapyardProposalsForOrder:', delError); return; }
   refreshScrapyardPendingCount();
 }
 
