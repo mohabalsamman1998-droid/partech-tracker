@@ -1353,6 +1353,12 @@ function computeCustomerPaidAmountForBox(order){
   }, 0);
 }
 
+// دون هالسقف، فرق أقل من ريال واحد (نواتج نسب عمولة/خدمة عشرية، مثلاً 14% على 1389 = بقية 0.46)
+// يُحسب "متبقي على الزبون" رغم إنه أصلًا بيظهر "0 ر.س" بكل شاشة (fmtMoney بيقرّب دايمًا لأقرب
+// ريال صحيح) — قرار مهاب 2026-08-19: أي متبقي أقل من ريال = مسدد بالكامل، بكل الشاشات بلا استثناء
+// (سجل العميل، شارة الطلبية، مستحق من الزبائن بالخزينة، كشف الحساب...).
+const CUSTOMER_REMAINING_TOLERANCE = 1;
+
 function orderTotals(order){
   let costTotal = 0, costToScrapyard = 0, costToSupplier = 0, partsSellTotal = 0, pricedCount = 0, sellEligibleCount = 0;
   const activeParts = orderActiveParts(order);
@@ -1409,7 +1415,7 @@ function orderTotals(order){
   // "المتبقي" يتصفّر عالغلط متل حالة "لسه ما تسعّرت" العادية (اللي فيها فعليًا ما فيه شي مستحق)
   const hasChargeable = hasSell || (returnKeptFeeAmount+returnKeptServiceFeeAmount+returnKeptDeliveryAmount+returnKeptExcessAmount) > 0.01;
   const customerRemaining = hasChargeable ? round2(sellTotal - customerPaidAmount) : 0;
-  const customerFullyPaid = hasChargeable && customerRemaining <= 0.01;
+  const customerFullyPaid = hasChargeable && customerRemaining < CUSTOMER_REMAINING_TOLERANCE;
   const profit = sellTotal - costTotal;
   // الربح المحصّل = أي مبلغ دفعه الزبون زيادة عن تكلفة القطع (استرداد التكلفة أولًا، ثم الزائد ربح محصّل).
   // مثال: تكلفة 1000، بيع 2000 (ربح 1000)، دُفع 1750 → محصّل = 1750-1000 = 750، غير محصّل = 1000-750 = 250.
@@ -1709,7 +1715,7 @@ function computeAggregateFinancials(matchPeriodFn){
     // نفس مبدأ dueToScrapyard/dueToSuppliers فوق — ونفس شرط waitingCustomerPayment الأصلي
     // بـorderStatusFlags (كان already يشترط order.supplied، بعكس هالمجموع اللي كان يزيد فور
     // التأكيد بس): قبل التوريد المتبقي على الزبون لسه مو "مستحق تحصيله" فعليًا بنفس منطق الدين.
-    if(o.supplied && t.hasChargeable && t.customerRemaining>0){ dueFromCustomers += t.customerRemaining; dueFromCustomersCount++; }
+    if(o.supplied && t.hasChargeable && !t.customerFullyPaid){ dueFromCustomers += t.customerRemaining; dueFromCustomersCount++; }
     customerReceiptsTotal += t.customerPaidAmountForBox;
     if(t.hasChargeable){
       collectedProfit += t.collectedProfit;
@@ -3622,12 +3628,12 @@ function updateModalTotals(){
   const remainEl = document.getElementById('customer-remaining-display');
   const remainLabelEl = document.getElementById('customer-remaining-label');
   if(remainEl){
-    const isExcess = t.hasChargeable && t.customerRemaining < -0.01;
+    const isExcess = t.hasChargeable && t.customerRemaining < -CUSTOMER_REMAINING_TOLERANCE;
     if(remainLabelEl) remainLabelEl.textContent = isExcess ? 'زيادة' : 'المتبقي عليه';
     remainEl.textContent = t.hasChargeable ? fmtMoney(isExcess ? Math.abs(t.customerRemaining) : Math.max(t.customerRemaining,0)) : (t.allPartsReturned?'مرتجعة':(t.noActiveParts?'بدون قطع محددة':'لم يُسعّر بعد'));
     remainEl.classList.remove('text-green','text-amber');
-    remainEl.classList.toggle('text-green', t.hasChargeable && t.customerRemaining<=0.01 && !isExcess);
-    remainEl.classList.toggle('text-amber', t.hasChargeable && (t.customerRemaining>0.01 || isExcess));
+    remainEl.classList.toggle('text-green', t.hasChargeable && t.customerFullyPaid && !isExcess);
+    remainEl.classList.toggle('text-amber', t.hasChargeable && (!t.customerFullyPaid || isExcess));
   }
   const paidEl = document.getElementById('total-paid-display');
   if(paidEl) paidEl.textContent = fmtMoney(t.customerPaidAmount);
@@ -5757,7 +5763,7 @@ function statementOrderRowsHtml(rows){
   return rows.map(r=>{
     const statusHtml = r.hasChargeable===false
       ? '<span class="num text-amber">بانتظار تسعير</span>'
-      : (r.remaining>0.01
+      : (r.remaining>=CUSTOMER_REMAINING_TOLERANCE
         ? '<span class="num text-rust">'+fmtNum(r.remaining)+'</span>'
         : '<span class="num text-green">مسدد</span>');
     // الصف كله قابل للضغط لفتح الطلبية (data-open-order)، وزر ✏️ يفتح تعديل سريع لعنوان الطلبية
@@ -5869,7 +5875,7 @@ function buildStatementWhatsAppText(customer, ongoing, past, refunds, opts){
   if(ongoing.length){
     lines.push('طلبيات جارية:');
     ongoing.forEach((r,i)=>{
-      const status = r.hasChargeable===false ? 'بانتظار تسعير' : (r.remaining>0.01 ? (fmtNum(r.remaining)+' ريال متبقي') : 'مسدد');
+      const status = r.hasChargeable===false ? 'بانتظار تسعير' : (r.remaining>=CUSTOMER_REMAINING_TOLERANCE ? (fmtNum(r.remaining)+' ريال متبقي') : 'مسدد');
       lines.push((i+1)+'. '+(r.orderNumber||'')+(r.orderLabel?' — '+r.orderLabel:'')+' ('+isoToDisplayDate(r.date)+') — '+status);
     });
     lines.push('');
@@ -8779,7 +8785,7 @@ function overdueCustomersCount(){
     if(!o.customerId || overdueCustomerIds.has(o.customerId)) return;
     if(!o.supplied) return;
     const t = orderTotals(o);
-    if(!t.hasChargeable || t.customerRemaining<=0) return;
+    if(!t.hasChargeable || t.customerFullyPaid) return;
     const refDate = o.suppliedAt || o.updatedAt;
     if(!refDate) return;
     const ref = new Date(refDate).getTime();
@@ -10691,7 +10697,7 @@ function customerOrderStats(customerId){
     if(!o.supplied) return; // قبل اتمام التوريد ما تُحسب على العميل — بس الربط محفوظ لغرض التحليل لاحقًا
     count++;
     const t = orderTotals(o);
-    if(t.hasChargeable) remaining += t.customerRemaining;
+    if(t.hasChargeable && !t.customerFullyPaid) remaining += t.customerRemaining;
   });
   return { count, remaining: round2(remaining) };
 }
@@ -10707,7 +10713,7 @@ function customerStatsIndex(){
     if(!byCustomer[o.customerId]) byCustomer[o.customerId] = { count: 0, remaining: 0 };
     byCustomer[o.customerId].count++;
     const t = orderTotals(o);
-    if(t.hasChargeable) byCustomer[o.customerId].remaining += t.customerRemaining;
+    if(t.hasChargeable && !t.customerFullyPaid) byCustomer[o.customerId].remaining += t.customerRemaining;
   });
   Object.keys(byCustomer).forEach(id=>{ byCustomer[id].remaining = round2(byCustomer[id].remaining); });
   return byCustomer;
@@ -10829,9 +10835,9 @@ function customerOrderHistory(customerId){
     };
     // طلبية توردت بس لسه ما تسعّرت للبيع (ولا فيها مبلغ محتفظ فيه من إرجاع سابق) لسه محتاجة
     // متابعة — تُحسب "جارية"، مش "سابقة (مسددة)" — كانت تختفي عن متابعة العميل النشطة غلط.
-    // customerFullyPaid (مو customerRemaining>0 مباشرة) — فيها سماحية 0.01 لبواقي التقريب
-    // العشرية، كانت طلبية متبقيها كسر تقريبي زي 0.005 (يظهر "0 ر.س" بعد التقريب بـfmtMoney)
-    // تُصنَّف "جارية" غلط رغم إنها مسددة فعليًا.
+    // customerFullyPaid (مو customerRemaining>0 مباشرة) — فيها سماحية CUSTOMER_REMAINING_TOLERANCE
+    // (ريال واحد)، كانت طلبية متبقيها كسر عشري حقيقي زي 0.46 (ناتج نسبة عمولة، يظهر "0 ر.س" بعد
+    // التقريب بـfmtMoney لأنه أقل من ريال) تُصنَّف "جارية" غلط رغم إنها مسددة عمليًا حسب سياسة مهاب.
     (!t.customerFullyPaid ? ongoing : past).push(row);
   });
   const byDateDesc = (a,b)=> new Date(b.date||0) - new Date(a.date||0);
@@ -10840,10 +10846,11 @@ function customerOrderHistory(customerId){
 }
 
 function orderHistoryRowHtml(row){
-  // >0.01 (مو >0) — نفس سماحية customerFullyPaid، تلافيًا لبواقي تقريب عشرية بتظهر "0 ر.س" بلون أحمر
+  // نفس سماحية customerFullyPaid (CUSTOMER_REMAINING_TOLERANCE) — تلافيًا لبقية تقريب/رسوم أقل من
+  // ريال بتظهر "0 ر.س" بلون أحمر لصف "سابقة (مسددة)"
   const amountHtml = row.hasChargeable===false
     ? '<span class="num text-amber">بانتظار تسعير</span>'
-    : '<span class="num '+(row.remaining>0.01?'text-rust':'text-green')+'">'+fmtMoney(row.remaining>0.01?row.remaining:row.total)+'</span>';
+    : '<span class="num '+(row.remaining>=CUSTOMER_REMAINING_TOLERANCE?'text-rust':'text-green')+'">'+fmtMoney(row.remaining>=CUSTOMER_REMAINING_TOLERANCE?row.remaining:row.total)+'</span>';
   return '<button type="button" class="purchase-history-row" data-open-order="'+escapeHtml(row.orderId)+'">' +
     '<div class="purchase-history-row-main">' +
       '<span class="purchase-history-desc">'+escapeHtml(row.orderNumber||'')+(row.orderLabel?' — '+escapeHtml(row.orderLabel):'')+'</span>' +
