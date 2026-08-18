@@ -1622,7 +1622,14 @@ async function loadData(){
     if(suppliersRes.error) throw suppliersRes.error;
     if(customersRes.error) throw customersRes.error;
     // ما منوقّف تحميل باقي البيانات لو هاي فشلت (مؤشر KPI واحد بس بيتأثر) — انظر amerCustodyBalance()
-    if(!custodyBalanceRes.error) serverAmerCustodyBalance = Number(custodyBalanceRes.data) || 0;
+    if(!custodyBalanceRes.error){
+      serverAmerCustodyBalance = Number(custodyBalanceRes.data) || 0;
+    } else {
+      // بلا إعادة محاولة، serverAmerCustodyBalance تضل null للجلسة كلها لغير المخوّل (ما فيه
+      // بيانات عهدة محلية عنده أصلًا بسبب RLS)، فـamerCustodyBalance() بتسقط لحساب محلي يرجّع
+      // صفر مضمون (مش القيمة الحقيقية) لحد ما يصادف حدث realtime غير مرتبط يصححها بالصدفة.
+      refreshServerAmerCustodyBalance().then(renderKPIs);
+    }
     appData = {
       orders: (ordersRes.data||[]).map(orderRowToObject),
       treasury: groupTreasuryRows(treasuryRes.data),
@@ -8880,9 +8887,16 @@ function totalCustomerRefundsPending(){
 // get_amer_custody_balance() — بنجيبه هون كـfallback موثوق، ونفضّله دايمًا لو موجود لأنه
 // نفس الصيغة بالضبط محسوبة سيرفر-سايد بدون فلترة RLS.
 let serverAmerCustodyBalance = null;
+// كل حدث orders (أو treasury_entries، انظر applyRemoteTreasuryChange) لغير المخوّلين بيطلق نداء
+// مستقل هون بدون أي علاقة بترتيب الطلبات — رد لطلب أقدم ممكن يوصل متأخر (تأخر شبكة عشوائي)
+// بعد رد لطلب أحدث، فيكتب فوقه بقيمة أقدم من الحقيقة. رقم تسلسل بسيط: نتجاهل أي رد ما عاد يمثّل
+// آخر طلب اتبعت وقت وصوله (لا آخر رد وصل).
+let amerCustodyBalanceRequestSeq = 0;
 async function refreshServerAmerCustodyBalance(){
   if(!sb) return;
+  const mySeq = ++amerCustodyBalanceRequestSeq;
   const { data, error } = await sb.rpc('get_amer_custody_balance');
+  if(mySeq !== amerCustodyBalanceRequestSeq) return; // فيه طلب أحدث اتبعت بعده، تجاهل هالرد المتأخر
   if(!error) serverAmerCustodyBalance = Number(data) || 0;
 }
 function amerCustodyTopupsTotalAll(){
@@ -9837,6 +9851,13 @@ function applyRemoteTreasuryChange(payload){
   } else if(scrapyardCurrentScreen === 'settlement' && scrapyardSharedState.activeKind === 'used' && !scrapyardHasOpenEdit()){
     // رصيد العهدة بيتغيّر بتعديل حركة صندوق — شاشة التسوية كانت تضل تعرض الرصيد القديم
     loadScrapyardData('used').then(renderScrapyardView);
+  }
+  // نفس مبدأ applyRemoteOrderChange بالضبط — RLS بتسمح بقراءة treasury_entries لعامر (role='scrapyard')
+  // برضو (مو المخوّلين بس)، وهو نفسه غير مخوّل (currentUserIsElevated=false) فبيعتمد serverAmerCustodyBalance
+  // الكاش مثل أي حساب "full" عادي. كان الكاش عنده ما يتحدّث إلا بالصدفة عبر حدث orders غير مرتبط —
+  // مع إنه هو بالضبط المستخدم الأكثر تأثرًا برصيد العهدة، وأقرب حدث ممكن يغيّره فعليًا.
+  if(!currentUserIsElevated){
+    refreshServerAmerCustodyBalance().then(scheduleOrderRenderCascade);
   }
 }
 
@@ -11415,7 +11436,7 @@ const SETTLEMENT_KINDS = {
   new:  { title:'سداد الجديد',   homeLabel:'🧾 سداد الجديد',   rpc:'get_new_parts_supplier',   paidField:'paidToSupplier' }
 };
 
-let scrapyardSharedState = { email:'', canManage:false, activeKind:'used', parts:[], returnReceivables:[], proposals:[], confirmations:[], partsByKind:{used:[],new:[]}, tasks:[], suppliers:[], custodyBalance:0, custodyEntryCount:0 };
+let scrapyardSharedState = { email:'', canManage:false, activeKind:'used', parts:[], returnReceivables:[], proposals:[], confirmations:[], partsByKind:{used:[],new:[]}, returnReceivablesByKind:{used:[],new:[]}, tasks:[], suppliers:[], custodyBalance:0, custodyEntryCount:0 };
 let scrapyardCurrentScreen = null; // 'home' | 'settlement' — يحدّد هل نحدّث الشاشة تلقائيًا عند وصول تغيير لحظي
                                     // ("طلبات التسعير"/"المهام" صارت أقسام مطوية بالرئيسية، انظر scrapyardHomeOpenSection)
 
@@ -11521,7 +11542,7 @@ async function loadScrapyardHomeTotals(){
   // (get_scrapyard_home_quotes) بيرجّع طلبات التسعير بس وبيصفّر sellPrice من كل قطعة، بدل
   // sb.from('orders').select('*') يلي كان يجيب كل الطلبيات المسموح لعامر يشوفها بكل أعمدتها —
   // بما فيها سعر البيع وهامش الربح لطلبيات حقيقية — لجهازه مباشرة رغم إن الواجهة ما بتعرضهم له.
-  const [usedRes, newRes, tasksRes, suppliersRes, ordersRes, approvedRes, customersRes, custodyRes] = await Promise.all([
+  const [usedRes, newRes, tasksRes, suppliersRes, ordersRes, approvedRes, customersRes, custodyRes, usedReturnsRes, newReturnsRes] = await Promise.all([
     sb.rpc('get_scrapyard_used_parts'),
     sb.rpc('get_new_parts_supplier'),
     sb.rpc('get_purchases_tasks'),
@@ -11529,7 +11550,12 @@ async function loadScrapyardHomeTotals(){
     sb.rpc('get_scrapyard_home_quotes'),
     sb.rpc('get_scrapyard_approved_quotes'), // تسعيرات سابقة اعتُمدت وصارت طلبيات — نفس تقليم الحقول الحساسة
     sb.from('customers').select('*'),
-    sb.from('treasury_entries').select('id').eq('category','amerCustody')
+    sb.from('treasury_entries').select('id').eq('category','amerCustody'),
+    // نفس RPC يلي شاشة السداد الفعلية (loadScrapyardData) بتستخدمها لطرح المرتجعات المستحقة —
+    // بدونها usedTotal/newTotal هون بيطلعوا مجموع خام يخالف "إجمالي المستحق للسداد" المعروض
+    // بنفس اللحظة بشاشة السداد (انظر renderScrapyardHomeView)
+    sb.rpc('get_scrapyard_return_receivables', { p_kind: 'used' }),
+    sb.rpc('get_scrapyard_return_receivables', { p_kind: 'new' })
   ]);
   if(usedRes.error) console.error('get_scrapyard_used_parts:', usedRes.error);
   if(newRes.error) console.error('get_new_parts_supplier:', newRes.error);
@@ -11539,8 +11565,14 @@ async function loadScrapyardHomeTotals(){
   if(approvedRes.error) console.error('get_scrapyard_approved_quotes:', approvedRes.error);
   if(customersRes.error) console.error('customers:', customersRes.error);
   if(custodyRes.error) console.error('treasury_entries (amerCustody):', custodyRes.error);
+  if(usedReturnsRes.error) console.error('get_scrapyard_return_receivables(used):', usedReturnsRes.error);
+  if(newReturnsRes.error) console.error('get_scrapyard_return_receivables(new):', newReturnsRes.error);
   scrapyardSharedState.partsByKind.used = usedRes.error ? [] : (usedRes.data || []);
   scrapyardSharedState.partsByKind.new = newRes.error ? [] : (newRes.data || []);
+  scrapyardSharedState.returnReceivablesByKind = {
+    used: usedReturnsRes.error ? [] : (usedReturnsRes.data || []),
+    new: newReturnsRes.error ? [] : (newReturnsRes.data || [])
+  };
   scrapyardSharedState.tasks = tasksRes.error ? [] : (tasksRes.data || []);
   scrapyardSharedState.suppliers = suppliersRes.error ? [] : (suppliersRes.data || []);
   appData.suppliers = suppliersRes.error ? [] : groupSupplierOrCustomerRows(suppliersRes.data);
@@ -11552,7 +11584,7 @@ async function loadScrapyardHomeTotals(){
   scrapyardSharedState.custodyEntryCount = custodyRes.error ? 0 : (custodyRes.data||[]).length;
   // لو فشل أي من مصادر المستحقات، الشاشة كانت بتعرض "0 ر.س" بدون أي رسالة — يعني عامر يقرأ
   // "ما في مستحقات" وهي فعليًا "ما قدرنا نحمّل". منعلّم الفشل حتى تعرضه الشاشة كخطأ.
-  scrapyardSharedState.homeLoadFailed = !!(usedRes.error || newRes.error || tasksRes.error || ordersRes.error || approvedRes.error);
+  scrapyardSharedState.homeLoadFailed = !!(usedRes.error || newRes.error || tasksRes.error || ordersRes.error || approvedRes.error || usedReturnsRes.error || newReturnsRes.error);
   if(scrapyardSharedState.homeLoadFailed){
     showToast('تعذر تحميل بعض البيانات — الأرقام تحت ممكن تكون ناقصة. تحقق من الاتصال وحدّث الصفحة', 'error');
   }
@@ -11805,8 +11837,14 @@ function refreshScrapyardQuotesListIfOpen(){
 function renderScrapyardHomeView(){
   scrapyardCurrentScreen = 'home';
   const root = document.getElementById('scrapyard-root');
-  const usedTotal = (scrapyardSharedState.partsByKind.used||[]).reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0);
-  const newTotal = (scrapyardSharedState.partsByKind.new||[]).reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0);
+  // ناقص مرتجعات بانتظار التحصيل — نفس صيغة renderScrapyardView's total بالحرف (rawTotal-returns،
+  // بلا حد أدنى صفر) عشان يطابق "إجمالي المستحق للسداد" المعروض بشاشة السداد الفعلية لنفس النوع
+  // بنفس اللحظة تمامًا، بدل ما يخالفه برقم مختلف (كان الخلل الأصلي) أو بمعالجة سالب مختلفة عنه
+  const returnsByKind = scrapyardSharedState.returnReceivablesByKind || { used: [], new: [] };
+  const usedReturnsTotal = (returnsByKind.used||[]).reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0);
+  const newReturnsTotal = (returnsByKind.new||[]).reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0);
+  const usedTotal = round2((scrapyardSharedState.partsByKind.used||[]).reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0) - usedReturnsTotal);
+  const newTotal = round2((scrapyardSharedState.partsByKind.new||[]).reduce((s,p)=> s + (Number(p.cost_price)||0)*(Number(p.qty)||1), 0) - newReturnsTotal);
   const pendingTasks = (scrapyardSharedState.tasks||[]).filter(t=>!t.done).length;
   const pendingQuotes = quotesMatchingList().filter(o=>!o.quoteReady).length;
   const settlementUnseen = scrapyardCustodyUnseenCount() + scrapyardPartsUnseenCount();
