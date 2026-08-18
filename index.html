@@ -4986,7 +4986,14 @@ function confirmDelete(orderId){
 }
 
 /* ---------- confirm / unconfirm order (two-step) ---------- */
+// confirmAction بيقفل نافذة التأكيد فورًا (close()) وقبل ما ينتظر onConfirm الـasync يخلص —
+// يعني زر الصف الأصلي يرجع قابل للضغط أثناء ما persistOrder لسه بالطريق. ضغطة تانية سريعة (نيّتها
+// تراجع فوري، أو بس نفاد صبر) بتفتح نافذة تأكيد جديدة بعكس الاتجاه (order.confirmed أصلًا انقلبت
+// محليًا بالضغطة الأولى بشكل متفائل)، فتطلق طلبي persistOrder متضاربين بلا أي قفل بينهم — نتيجة
+// أيّهم يوصل السيرفر أخيرًا بتفوز بغض النظر عن ترتيب نية المستخدم الفعلي (lost update).
+const pendingConfirmToggleIds = new Set();
 function confirmToggleConfirmation(orderId){
+  if(pendingConfirmToggleIds.has(orderId)) return; // عملية سابقة لنفس الطلبية لسه ما خلصت
   const order = appData.orders.find(o=>o.id===orderId);
   if(!order) return;
   const willConfirm = !order.confirmed;
@@ -5000,30 +5007,35 @@ function confirmToggleConfirmation(orderId){
     cancelLabel: 'تراجع',
     confirmLabel: willConfirm ? 'تأكيد الطلبية' : 'إلغاء التأكيد',
     onConfirm: async ()=>{
-      // إعادة الجلب هون (مو الاعتماد على order يلي جُلبت قبل فتح نافذة التأكيد) — لو وصل تعديل
-      // لحظي من مستخدم تاني أثناء انتظار ضغطة المستخدم، appData.orders[idx] بيصير عنصر جديد
-      // كليًا (applyRemoteOrderChange)، والمرجع القديم يضل معزول عنه، وحفظه بيرجّع تعديل التاني.
-      const order = appData.orders.find(o=>o.id===orderId);
-      if(!order) return;
-      const prev = { confirmed: order.confirmed, supplied: order.supplied, suppliedAt: order.suppliedAt, updatedAt: order.updatedAt };
-      order.confirmed = willConfirm;
-      if(willResetSupply){
-        order.supplied = false;
-        order.suppliedAt = null;
+      pendingConfirmToggleIds.add(orderId);
+      try{
+        // إعادة الجلب هون (مو الاعتماد على order يلي جُلبت قبل فتح نافذة التأكيد) — لو وصل تعديل
+        // لحظي من مستخدم تاني أثناء انتظار ضغطة المستخدم، appData.orders[idx] بيصير عنصر جديد
+        // كليًا (applyRemoteOrderChange)، والمرجع القديم يضل معزول عنه، وحفظه بيرجّع تعديل التاني.
+        const order = appData.orders.find(o=>o.id===orderId);
+        if(!order) return;
+        const prev = { confirmed: order.confirmed, supplied: order.supplied, suppliedAt: order.suppliedAt, updatedAt: order.updatedAt };
+        order.confirmed = willConfirm;
+        if(willResetSupply){
+          order.supplied = false;
+          order.suppliedAt = null;
+        }
+        order.updatedAt = new Date().toISOString();
+        const saved = await persistOrder(order);
+        if(!saved){ Object.assign(order, prev); renderTable(); return; } // رجّع الحالة بالذاكرة لتطابق القاعدة
+        // نفس مبدأ toggle "تم التوريد" جوا المودال بالضبط (انظر تعليق cancelPendingSuppliedGatedProposalsForOrder)
+        // — لو التوريد رجع اتلغى من هون، أي طلب تعديل أو اقتراح تسعير معلّق شرط قفله "الطلبية موردة"
+        // بيصير يتيم وما رح يوصله حتى فرصة يظهر لصاحب الحساب يقبله/يرفضه، فنلغيه فورًا بدل ما يعلق للأبد
+        if(willResetSupply){
+          await cancelPendingSuppliedGatedProposalsForOrder(orderId);
+          await cancelPendingScrapyardProposalsForOrder(orderId);
+        }
+        renderKPIs();
+        renderTable();
+        showToast(willConfirm ? 'تم تأكيد الطلبية' : 'تم إلغاء تأكيد الطلبية', 'ok');
+      } finally {
+        pendingConfirmToggleIds.delete(orderId);
       }
-      order.updatedAt = new Date().toISOString();
-      const saved = await persistOrder(order);
-      if(!saved){ Object.assign(order, prev); renderTable(); return; } // رجّع الحالة بالذاكرة لتطابق القاعدة
-      // نفس مبدأ toggle "تم التوريد" جوا المودال بالضبط (انظر تعليق cancelPendingSuppliedGatedProposalsForOrder)
-      // — لو التوريد رجع اتلغى من هون، أي طلب تعديل أو اقتراح تسعير معلّق شرط قفله "الطلبية موردة"
-      // بيصير يتيم وما رح يوصله حتى فرصة يظهر لصاحب الحساب يقبله/يرفضه، فنلغيه فورًا بدل ما يعلق للأبد
-      if(willResetSupply){
-        await cancelPendingSuppliedGatedProposalsForOrder(orderId);
-        await cancelPendingScrapyardProposalsForOrder(orderId);
-      }
-      renderKPIs();
-      renderTable();
-      showToast(willConfirm ? 'تم تأكيد الطلبية' : 'تم إلغاء تأكيد الطلبية', 'ok');
     }
   });
 }
@@ -11672,9 +11684,16 @@ let scrapyardProposalSending = new Set();
 /* شاشة عامر بتنبني من الصفر (root.innerHTML) مع أي حدث لحظي. مسوّدات الأسعار/الإضافة محفوظة
    بمتغيرات فوق فبترجع بعد إعادة البناء، لكن تعديل بيانات المورد بيتخزّن على كائن بـ
    scrapyardSharedState.suppliers يلي loadScrapyardData بتستبدله بمصفوفة جديدة كليًا — يعني
-   الكتابة بتضيع. لهيك بنأجّل أي إعادة تحميل لحظية طول ما في صف تعديل مورد مفتوح. */
+   الكتابة بتضيع. لهيك بنأجّل أي إعادة تحميل لحظية طول ما في صف تعديل مورد مفتوح.
+   نفس المبدأ لملاحظة قطعة (data-scrapyard-note) قيد الكتابة حاليًا — حقلها يحفظ بحدث change
+   (بعد blur)، فإعادة البناء وسط الكتابة بتستبدل عنصر الإدخال بالكامل قبل ما change يطلق أصلًا،
+   وأي نص لسه ما انحفظ يضيع بصمت. نفحص document.activeElement مباشرة (مو حالة مخزّنة يدويًا)
+   لأنه أبسط ومستحيل ينسى تحديثه. */
 function scrapyardHasOpenEdit(){
-  return Object.keys(editingScrapyardSuppliers||{}).length > 0;
+  if(Object.keys(editingScrapyardSuppliers||{}).length > 0) return true;
+  const active = document.activeElement;
+  if(active && active.matches && active.matches('[data-scrapyard-note]')) return true;
+  return false;
 }
 
 /* مجموع جديد للطلبية بعد اقتراح سعر جديد (سواء وهو عم يُكتب أو بعد إرساله) — null لو ما فيه أي تغيير مقترح */
@@ -11937,11 +11956,18 @@ function scrapyardMarkCollectedDirect(orderId, partId){
       : 'رح يُضاف المبلغ تلقائيًا لصافي الصندوق.',
     confirmLabel: 'تم التحصيل',
     onConfirm: async ()=>{
-      const prevUpdatedAt = order.updatedAt;
-      part.returnCollected = true;
-      order.updatedAt = new Date().toISOString();
-      const saved = await persistOrder(order);
-      if(!saved){ part.returnCollected = false; order.updatedAt = prevUpdatedAt; return; }
+      // إعادة الجلب هون (مو الاعتماد على order/part يلي جُلبوا قبل فتح نافذة التأكيد) — نفس مبدأ
+      // confirmToggleConfirmation: appData.orders[idx] ممكن يصير عنصر جديد كليًا (applyRemoteOrderChange)
+      // لو وصل تعديل لحظي من مستخدم تاني أثناء انتظار ضغطة المستخدم، والمرجع القديم يضل معزول عنه
+      const freshOrder = appData.orders.find(o=>o.id===orderId);
+      if(!freshOrder) return;
+      const freshPart = (freshOrder.parts||[]).find(p=>p.id===partId);
+      if(!freshPart || freshPart.returnCollected) return; // اتحصّلت أصلًا بالفترة الفاصلة
+      const prevUpdatedAt = freshOrder.updatedAt;
+      freshPart.returnCollected = true;
+      freshOrder.updatedAt = new Date().toISOString();
+      const saved = await persistOrder(freshOrder);
+      if(!saved){ freshPart.returnCollected = false; freshOrder.updatedAt = prevUpdatedAt; return; }
       const stalePending = pendingActionProposalFor('return_collect', orderId, partId);
       if(stalePending) await sb.from('edit_proposals').delete().eq('id', stalePending.id);
       showToast('تم تسجيل التحصيل'+(isUsed ? '، وأُضيف لرصيد المشتريات' : '، وأُضيف المبلغ للصندوق'), 'ok');
