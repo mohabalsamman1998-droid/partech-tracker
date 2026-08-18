@@ -11931,10 +11931,16 @@ function scrapyardSupplierTotals(){
     if(!p.supplier_id) return;
     totals[p.supplier_id] = round2((totals[p.supplier_id]||0) + (Number(p.cost_price)||0)*(Number(p.qty)||1));
   });
+  // نطرح مرتجع مورد بس لو أصلًا عنده قطع غير مسددة (ظهر بالحلقة فوق) — غير هيك بيصير "مستحق"
+  // سالب لمورد سدد كل شي وباقي بس مرتجع مستحق لنا منه (مو عليه)، وهاد مالوش مكان تحت عنوان
+  // "المستحق لكل تشليح" (المرتجع نفسه معروض بقسمه المخصص returnReceivables، بلا داعي نكرره هون سالب).
+  // ونحد النتيجة النهائية بصفر كأدنى قيمة برضو — لو مورد عنده مستحق 100 بس مرتجعه 300، الصافي
+  // -200 لسه ما إله مكان تحت "مستحق لكل تشليح" (هو صار الطرف المستحق له، مو العكس).
   (scrapyardSharedState.returnReceivables||[]).forEach(p=>{
-    if(!p.supplier_id) return;
-    totals[p.supplier_id] = round2((totals[p.supplier_id]||0) - (Number(p.cost_price)||0)*(Number(p.qty)||1));
+    if(!p.supplier_id || totals[p.supplier_id]===undefined) return;
+    totals[p.supplier_id] = round2(totals[p.supplier_id] - (Number(p.cost_price)||0)*(Number(p.qty)||1));
   });
+  Object.keys(totals).forEach(sid=>{ totals[sid] = Math.max(0, totals[sid]); });
   return totals;
 }
 
