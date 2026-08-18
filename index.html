@@ -10829,7 +10829,10 @@ function customerOrderHistory(customerId){
     };
     // طلبية توردت بس لسه ما تسعّرت للبيع (ولا فيها مبلغ محتفظ فيه من إرجاع سابق) لسه محتاجة
     // متابعة — تُحسب "جارية"، مش "سابقة (مسددة)" — كانت تختفي عن متابعة العميل النشطة غلط.
-    (!t.hasChargeable || t.customerRemaining>0 ? ongoing : past).push(row);
+    // customerFullyPaid (مو customerRemaining>0 مباشرة) — فيها سماحية 0.01 لبواقي التقريب
+    // العشرية، كانت طلبية متبقيها كسر تقريبي زي 0.005 (يظهر "0 ر.س" بعد التقريب بـfmtMoney)
+    // تُصنَّف "جارية" غلط رغم إنها مسددة فعليًا.
+    (!t.customerFullyPaid ? ongoing : past).push(row);
   });
   const byDateDesc = (a,b)=> new Date(b.date||0) - new Date(a.date||0);
   ongoing.sort(byDateDesc); past.sort(byDateDesc);
@@ -10837,9 +10840,10 @@ function customerOrderHistory(customerId){
 }
 
 function orderHistoryRowHtml(row){
+  // >0.01 (مو >0) — نفس سماحية customerFullyPaid، تلافيًا لبواقي تقريب عشرية بتظهر "0 ر.س" بلون أحمر
   const amountHtml = row.hasChargeable===false
     ? '<span class="num text-amber">بانتظار تسعير</span>'
-    : '<span class="num '+(row.remaining>0?'text-rust':'text-green')+'">'+fmtMoney(row.remaining>0?row.remaining:row.total)+'</span>';
+    : '<span class="num '+(row.remaining>0.01?'text-rust':'text-green')+'">'+fmtMoney(row.remaining>0.01?row.remaining:row.total)+'</span>';
   return '<button type="button" class="purchase-history-row" data-open-order="'+escapeHtml(row.orderId)+'">' +
     '<div class="purchase-history-row-main">' +
       '<span class="purchase-history-desc">'+escapeHtml(row.orderNumber||'')+(row.orderLabel?' — '+escapeHtml(row.orderLabel):'')+'</span>' +
