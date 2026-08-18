@@ -5869,7 +5869,10 @@ function customerStatementHtml(customer, ongoing, past, refunds, opts){
         '<div class="doc-totals" style="margin-bottom:18px;">' +
           '<div class="doc-totals-row"><span>مستحق</span><span class="num">'+fmtNum(totalRemaining)+' ريال</span></div>' +
           (showRefunds && totalRefunds>0 ? '<div class="doc-totals-row"><span>مرتجعات</span><span class="num">'+fmtNum(totalRefunds)+' ريال</span></div>' : '') +
-          '<div class="doc-totals-row grand"><span>المطلوب</span><span class="num">'+fmtNum(Math.abs(net))+' ريال</span></div>' +
+          // net ممكن يطلع سالب لو المرتجعات المستحقة أكبر من المتبقي (مثلاً طلبية مسددة بالكامل
+          // ومعها مرتجع لسه ما تأكّد رده) — عرض Math.abs(net) بعنوان ثابت "المطلوب" كان يخلي
+          // العميل يبدو مديون رغم إن بارتك هي المدينة له، خصوصًا خطير هون لأنه مستند يُرسل للعميل مباشرة
+          '<div class="doc-totals-row grand"><span'+(net<-0.01?' class="text-green"':'')+'>'+(net<-0.01?'رصيد لصالحكم':'المطلوب منكم')+'</span><span class="num'+(net<-0.01?' text-green':'')+'">'+fmtNum(Math.abs(net))+' ريال</span></div>' +
         '</div>' +
         (ongoing.length ? (
           '<div class="doc-section-title" style="font-weight:700;margin:10px 0;">طلبيات جارية</div>' +
@@ -5925,7 +5928,9 @@ function buildStatementWhatsAppText(customer, ongoing, past, refunds, opts){
   }
   lines.push('مستحق: '+fmtNum(totalRemaining)+' ريال');
   if(showRefunds && totalRefunds>0) lines.push('مرتجعات: '+fmtNum(totalRefunds)+' ريال');
-  lines.push('المطلوب: '+fmtNum(Math.abs(net))+' ريال');
+  // نفس ملاحظة customerStatementHtml — net ممكن يطلع سالب (مرتجع مستحق أكبر من المتبقي)، ولازم
+  // العنوان يوضّح الاتجاه بالنص نفسه (رسالة واتساب بلا ألوان أصلًا)
+  lines.push((net<-0.01?'رصيد لصالحكم':'المطلوب منكم')+': '+fmtNum(Math.abs(net))+' ريال');
   return lines.join('\n');
 }
 
@@ -8126,9 +8131,12 @@ function expenseCategoryRowHtml(c, i){
 let accountsActivityDate = ''; // ISO yyyy-mm-dd — تتصفّر لتاريخ اليوم كل ما تُفتح النافذة من جديد
 
 function accountsActivityRowHtml(mainText, subText, amount, colorClass){
+  // إشارة صريحة (-) للمبالغ السالبة — نفس نمط accountsActivitySectionHtml لمجموع القسم. أنواع
+  // الصفوف العادية (دفعات، مصاريف...) دايمًا موجبة فأمان بلا أثر عليها، بس ضرورية لقيود دعم/عهدة
+  // اللي بالتصميم ممكن تكون سالبة (سحب/تصحيح) — كانت تظهر "300 ر.س" مطابقة شكليًا لقيد موجب حقيقي.
   return '<div class="purchase-history-row-main">' +
       '<span class="purchase-history-desc">'+escapeHtml(mainText)+'</span>' +
-      '<span class="num '+colorClass+'">'+fmtMoney(Math.abs(amount))+'</span>' +
+      '<span class="num '+colorClass+'">'+(amount<0?'-':'')+fmtMoney(Math.abs(amount))+'</span>' +
     '</div>' +
     (subText ? '<div class="purchase-history-row-sub"><span>'+escapeHtml(subText)+'</span></div>' : '');
 }
@@ -8170,7 +8178,9 @@ function accountsActivityModalHtml(){
     '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.label, r.note, r.amount, 'text-rust') + '</div>'
   ).join('');
   const supportRowsHtml = a.support.map(r=>
-    '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml('دعم الصندوق من الخارج', r.note, r.amount, 'text-green') + '</div>'
+    // قيد دعم ممكن يكون سالب (سحب/تصحيح لدعم مسجّل سابقًا، انظر تعليق colorClass بـexpenseEntryRowHtml)
+    // — لون ثابت أخضر كان يعرضه مطابق شكليًا لدعم حقيقي موجب، بعكس صف العهدة تحته اللي يبدّل حسب الإشارة
+    '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml('دعم الصندوق من الخارج', r.note, r.amount, r.amount<0?'text-rust':'text-green') + '</div>'
   ).join('');
   const custodyRowsHtml = a.custody.map(r=>
     '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(
@@ -8202,8 +8212,8 @@ function accountsActivityModalHtml(){
       accountsActivitySectionHtml('🔄 مرتجعات الزبائن (رجعت قطعتها اليوم — بانتظار رد المبلغ)', a.customerRefunds, a.totals.customerRefunds, 'text-amber', refundsRowsHtml) +
       accountsActivitySectionHtml('📤 تسديد للموردين/التشاليح', a.supplierPayments, a.totals.supplierPayments, 'text-rust', supplierRowsHtml) +
       accountsActivitySectionHtml('💸 المصاريف', a.expenses, a.totals.expenses, 'text-rust', expensesRowsHtml) +
-      accountsActivitySectionHtml('🤝 دعم الصندوق الخارجي', a.support, a.totals.support, 'text-green', supportRowsHtml) +
-      accountsActivitySectionHtml('🔧 عهدة المشتريات', a.custody, a.totals.custody, 'text-rust', custodyRowsHtml) +
+      accountsActivitySectionHtml('🤝 دعم الصندوق الخارجي', a.support, a.totals.support, a.totals.support<0?'text-rust':'text-green', supportRowsHtml) +
+      accountsActivitySectionHtml('🔧 عهدة المشتريات', a.custody, a.totals.custody, a.totals.custody<0?'text-green':'text-rust', custodyRowsHtml) +
       '<p class="modal-sub" style="margin-top:14px;">تسديد المورد/التشليح يظهر هون بس من تاريخ إضافة هذا التقرير فصاعدًا — الطلبيات المسدّدة قبله ما إلها تاريخ سداد مسجّل. مرتجعات الزبائن هون مو خارجة من صافي حركة اليوم — الكاش ما يطلع فعليًا إلا لحظة تأكيد الرد من شاشة الطلبية/العميل. تسديد "تشليح" مو داخل بصافي اليوم كمان — الكاش طلع فعليًا لحظة شحن عهدة المشتريات، وتسديد عامر للتشليح بس صرف من رصيد معه أصلًا (لو تشحن وتسدد بنفس اليوم، الصافي بيعكس الـ900 مرة وحدة بس، مو مرتين).</p>' +
     '</div>' +
   '</div>';
@@ -8679,7 +8689,12 @@ function bindExpenseEntryEvents(key){
         const amt = Number(entry.amount);
         // amt<=0 كان يرفض أي تعديل (حتى تصحيح تاريخ/ملاحظة بس) على حركات "عهدة عامر"/الدعم
         // الخارجي، يلي بالتصميم بتتخزن كمبلغ سالب (سحب/خصم) — المرفوض فعليًا هو الفاضي أو صفر بس.
-        if(entry.amount==='' || isNaN(amt) || amt===0){ showToast('أدخل مبلغًا صحيحًا', 'error'); return; }
+        // بس هالتخفيف كان ينطبق بالغلط على فئات المصاريف العادية كمان (توصيل، رواتب...) يلي
+        // لازم تبقى موجبة دائمًا (نفس isSupport بـexpenseEntryRowHtml) — مبلغ سالب فيها كان يُحفظ
+        // بصمت ويخفّض المجموع بدل يزيده، ويظهر بتقرير حركة الحسابات كمصروف عادي (accountsActivityRowHtml
+        // بيعرض Math.abs) بلا أي إشارة إنه قيد سالب.
+        const isSupport = key==='support' || key==='amerCustody';
+        if(entry.amount==='' || isNaN(amt) || amt===0 || (!isSupport && amt<0)){ showToast('أدخل مبلغًا صحيحًا', 'error'); return; }
         // نعيد جلب العنصر الحي من appData الحالي وقت الحفظ (لا نعتمد على المرجع القديم)
         // لأن appData ممكن يكون انستبدل بالكامل بتحديث لحظي من مستخدم ثاني أثناء ما كنا نعدّل.
         const liveEntry = (appData.treasury[key]||[]).find(e=>e.id===entryId);
