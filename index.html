@@ -10650,10 +10650,15 @@ function suppliersMatchingSearch(receivablesIdx){
   const idx = receivablesIdx || supplierReturnReceivablesIndex().bySupplier;
   const q = suppliersSearchQuery.trim().toLowerCase();
   let rows = appData.suppliers||[];
-  if(suppliersKindFilter==='new') rows = rows.filter(s=>s.handlesNew);
-  else if(suppliersKindFilter==='used') rows = rows.filter(s=>s.handlesUsed);
+  // صف قيد التعديل حاليًا ما لازم يختفي بمجرد ما اسمه/رقمه ما عاد يطابق بحث/فلتر جديد وقت ما
+  // المستخدم يكتب فيه — نفس مبدأ applyRemoteSupplierChange (Object.keys(editingSuppliers).length===0)
+  // بالضبط، بس هون مطبّق على مسار البحث/الفلتر (كان ناقص قبل، الحماية كانت بالتحديث اللحظي بس)
+  const isEditing = s => !!editingSuppliers[s.id];
+  if(suppliersKindFilter==='new') rows = rows.filter(s=>isEditing(s) || s.handlesNew);
+  else if(suppliersKindFilter==='used') rows = rows.filter(s=>isEditing(s) || s.handlesUsed);
   if(q){
     rows = rows.filter(s=>{
+      if(isEditing(s)) return true;
       const hay = [s.name, s.phone].concat(Array.isArray(s.extraPhones)?s.extraPhones:[]).join(' ').toLowerCase();
       return hay.includes(q);
     });
@@ -10800,7 +10805,15 @@ function bindSupplierRowEvents(){
 
     const saveBtn = row.querySelector('.supplier-save-btn');
     if(saveBtn){
-      saveBtn.addEventListener('click', ()=>{
+      saveBtn.addEventListener('click', async ()=>{
+        // كنس أي حقول "رقم إضافي" أُضيفت وتُركت فاضية بدون تعبئة — نفس مبدأ unsavedDraftEntryIds
+        // بمكان تاني (تسريب/تكدّس صفوف فاضية لو ما اتنضّفت عند إغلاق التعديل)
+        const s = freshSupplier();
+        if(Array.isArray(s.extraPhones) && s.extraPhones.some(ph=>!ph || !ph.trim())){
+          const prev = { extraPhones: s.extraPhones.slice() };
+          s.extraPhones = s.extraPhones.filter(ph=>ph && ph.trim());
+          await persistFieldOrRevert(s, prev, persistSupplier, refreshSuppliersList);
+        }
         delete editingSuppliers[sid];
         refreshSuppliersList();
       });
@@ -10822,20 +10835,31 @@ function bindSupplierRowEvents(){
     const phoneInput = row.querySelector('.supplier-phone-input');
     if(phoneInput){
       phoneInput.addEventListener('change', async e=>{
-        const s = freshSupplier(); const prev = { phone: s.phone };
-        s.phone = e.target.value;
+        const s = freshSupplier();
+        const newPhone = e.target.value;
+        // نفس فحص الإضافة (findDuplicateSupplier) — كان مفقود هون، فتعديل رقم مورد موجود
+        // ليطابق رقم مورد تاني بالغلط كان يُحفظ بصمت بلا أي تنبيه
+        const dup = findDuplicateSupplier(s.name, newPhone);
+        if(dup && dup.id !== s.id){
+          showToast('رقم الجوال هذا مستخدم أصلًا لمورد آخر: '+(dup.name||dup.phone||'مورد'), 'error');
+          refreshSuppliersList();
+          return;
+        }
+        const prev = { phone: s.phone };
+        s.phone = newPhone;
         await persistFieldOrRevert(s, prev, persistSupplier, refreshSuppliersList);
       });
     }
     const addPhoneBtn = row.querySelector('.supplier-add-phone-btn');
     if(addPhoneBtn){
-      addPhoneBtn.addEventListener('click', async ()=>{
+      addPhoneBtn.addEventListener('click', ()=>{
+        // ما نحفظ فورًا — سلسلة فاضية كانت تنحفظ بالقاعدة قبل ما المستخدم يكتب فيها أي شي (لو
+        // انشغل وما رجع يعبّيها). حقل الرقم نفسه (.supplier-extra-phone-input أسفل) إله معالج
+        // change يحفظ لحاله أول ما ياخذ قيمة فعلية — هون بس نضيف الحقل الفاضي محليًا للعرض.
         const s = freshSupplier();
         if(!Array.isArray(s.extraPhones)) s.extraPhones = [];
-        const prev = { extraPhones: s.extraPhones.slice() };
         s.extraPhones.push('');
         refreshSuppliersList();
-        await persistFieldOrRevert(s, prev, persistSupplier, refreshSuppliersList);
       });
     }
     const handlesNewCheck = row.querySelector('.supplier-handles-new-check');
@@ -11160,8 +11184,11 @@ function customersMatchingSearch(refundsIdx){
   const idx = refundsIdx || customerRefundsPendingIndex();
   const q = customersSearchQuery.trim().toLowerCase();
   let rows = appData.customers||[];
+  // نفس ملاحظة suppliersMatchingSearch بالضبط — صف قيد التعديل ما لازم يختفي بمجرد ما ما عاد
+  // يطابق بحث جديد وقت ما المستخدم يكتب فيه
   if(q){
     rows = rows.filter(c=>{
+      if(editingCustomers[c.id]) return true;
       const hay = [c.name, c.phone].join(' ').toLowerCase();
       return hay.includes(q);
     });
@@ -11265,8 +11292,18 @@ function bindCustomerRowEvents(){
     const phoneInput = row.querySelector('.customer-phone-input');
     if(phoneInput){
       phoneInput.addEventListener('change', async e=>{
-        const c = freshCustomer(); const prev = { phone: c.phone };
-        c.phone = e.target.value;
+        const c = freshCustomer();
+        const newPhone = e.target.value;
+        // نفس فحص الإضافة (findDuplicateCustomer) — كان مفقود هون، فتعديل رقم عميل موجود
+        // ليطابق رقم عميل تاني بالغلط كان يُحفظ بصمت بلا أي تنبيه
+        const dup = findDuplicateCustomer(c.name, newPhone);
+        if(dup && dup.id !== c.id){
+          showToast('رقم الجوال هذا مستخدم أصلًا لعميل آخر: '+(dup.name||dup.phone||'عميل'), 'error');
+          refreshCustomersList();
+          return;
+        }
+        const prev = { phone: c.phone };
+        c.phone = newPhone;
         await persistFieldOrRevert(c, prev, persistCustomer, refreshCustomersList);
       });
     }
@@ -11456,6 +11493,10 @@ function showAuthGate(msg, msgType){
   const scrapRoot = document.getElementById('scrapyard-root');
   if(scrapRoot) scrapRoot.style.display = 'none';
   hideLocationGate(); // ما نخلي حجب الموقع يحجب شاشة الدخول نفسها لو انتهت الجلسة وهو ظاهر
+  // فقدان جلسة لاإرادي (بدون تسجيل خروج صريح عبر reload كامل) كان يسيب مؤقتات presence/تتبع
+  // الموقع وقنواتها شغالة بالخلفية باسم المستخدم القديم — آمن نستدعيها هون دايمًا (كل التنظيف
+  // بالداخل no-op لو أصلًا ما كان في شي شغال، زي أول تحميل للصفحة قبل أي دخول)
+  teardownPresenceAndLocationResources();
   shownForEmail = null;
   scrapyardSharedState.canManage = false;
   currentUserIsElevated = false;
@@ -11724,7 +11765,10 @@ async function loadScrapyardHomeTotals(){
   scrapyardSharedState.custodyEntryCount = custodyRes.error ? 0 : (custodyRes.data||[]).length;
   // لو فشل أي من مصادر المستحقات، الشاشة كانت بتعرض "0 ر.س" بدون أي رسالة — يعني عامر يقرأ
   // "ما في مستحقات" وهي فعليًا "ما قدرنا نحمّل". منعلّم الفشل حتى تعرضه الشاشة كخطأ.
-  scrapyardSharedState.homeLoadFailed = !!(usedRes.error || newRes.error || tasksRes.error || ordersRes.error || approvedRes.error || usedReturnsRes.error || newReturnsRes.error);
+  // إصلاح 2026-08-19: كانت تتجاهل suppliersRes/customersRes/custodyRes رغم إنها ضمن نفس
+  // Promise.all وأخطاؤها مسجّلة بـconsole.error فوق — فشل تحميل العملاء مثلًا كان يخلي طلبات
+  // التسعير تظهر بلا اسم عميل بدون أي toast يوضّح إنه فشل تحميل مؤقت، مو بيانات ناقصة فعليًا
+  scrapyardSharedState.homeLoadFailed = !!(usedRes.error || newRes.error || tasksRes.error || ordersRes.error || approvedRes.error || usedReturnsRes.error || newReturnsRes.error || suppliersRes.error || customersRes.error || custodyRes.error);
   if(scrapyardSharedState.homeLoadFailed){
     showToast('تعذر تحميل بعض البيانات — الأرقام تحت ممكن تكون ناقصة. تحقق من الاتصال وحدّث الصفحة', 'error');
   }
@@ -13470,6 +13514,31 @@ function subscribeEmployeeMapRealtime(){
     .subscribe();
 }
 
+/* تسجيل خروج صريح (handleLogout) بينضّف كل شي أوتوماتيكيًا عن طريق window.location.reload()
+   الكامل — بس فقدان الجلسة اللاإرادي (session=null من onAuthStateChange، بلا أي فعل من
+   المستخدم: انتهاء صلاحية refresh token، أو مهاب يلغي صلاحية بريد موظف من allowed_emails
+   أثناء جلسته) بيوديه على showAuthGate() مباشرة بدون reload، وهيك مؤقتات presence/تتبع الموقع
+   وقنوات الـrealtime المرتبطة فيهن كانت تضل شغالة بالخلفية باسم المستخدم القديم — presenceEmail
+   ما بينصفّر أبدًا — رغم إن شاشة الدخول ظاهرة قدامه وكأنه "خرج". */
+function teardownPresenceAndLocationResources(){
+  clearInterval(presenceTimer); presenceTimer = null;
+  clearInterval(presenceRecheckTimer); presenceRecheckTimer = null;
+  clearTimeout(presenceTimerStartTimeout); presenceTimerStartTimeout = null;
+  clearTimeout(presenceRecheckStartTimeout); presenceRecheckStartTimeout = null;
+  clearInterval(quoteElapsedTimer); quoteElapsedTimer = null;
+  clearInterval(locationReportTimer); locationReportTimer = null;
+  clearTimeout(locationReportStartTimeout); locationReportStartTimeout = null;
+  ['mousemove','keydown','mousedown','touchstart','scroll'].forEach(evt=>{
+    document.removeEventListener(evt, markActivity);
+  });
+  if(sb){
+    if(presenceChannel){ sb.removeChannel(presenceChannel); presenceChannel = null; }
+    if(locationRequestChannel){ sb.removeChannel(locationRequestChannel); locationRequestChannel = null; }
+    if(employeeMapChannel){ sb.removeChannel(employeeMapChannel); employeeMapChannel = null; }
+  }
+  presenceEmail = null;
+}
+
 let employeeMapOpenToken = 0;
 
 function closeEmployeeMap(){
@@ -13692,7 +13761,12 @@ function handleLogout(){
     confirmLabel: 'تسجيل خروج',
     dangerous: true,
     onConfirm: async ()=>{
-      await sb.auth.signOut();
+      // scope:'local' يمسح الجلسة من localStorage مباشرة بلا اعتماد على نجاح نداء شبكة لإبطال
+      // الجلسة سيرفر-سايد (signOut() الافتراضي بيرجع {error} بصمت لو فشل النداء، وبهالحالة
+      // localStorage ما بينمسح، فـreload() كان يعيد تسجيل نفس المستخدم دخول تلقائيًا — خطير
+      // بالذات على جهاز مشترك بإشارة ضعيفة، الموظف يفكر إنه خرج وهو لسه داخل فعليًا).
+      const { error } = await sb.auth.signOut({ scope: 'local' });
+      if(error){ showToast('تعذر تسجيل الخروج، حاول مرة ثانية: ' + (error.message||''), 'error'); return; }
       window.location.reload();
     }
   });
