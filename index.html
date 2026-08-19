@@ -1885,7 +1885,10 @@ function customerPaymentCellHtml(t, compact){
 
 function profitColorClass(t){
   if(!t.hasChargeable) return '';
-  if(t.profit<0) return 'text-rust';
+  // t.profit = sellTotal-costTotal — الأحمر (خسارة) بيسرّب إشارة إنه في تكلفة مورد/تشليح أكبر من
+  // سعر البيع لغير المخوّل (مبيعات ما لازم تشوف معلومات المورد/التكلفة بأي حالة). حالة السداد
+  // (أخضر=مسدد بالكامل/كهرماني=لسه) مو معلومة تكلفة، فتضل زي ما هي حتى لغير المخوّل.
+  if(t.profit<0) return hasElevatedAccess() ? 'text-rust' : (t.customerFullyPaid ? 'text-green' : 'text-amber');
   return t.customerFullyPaid ? 'text-green' : 'text-amber';
 }
 
@@ -1912,9 +1915,11 @@ function rowHtml(order, precomputedTotals){
     '<td class="num">'+(t.hasChargeable? '<span class="'+profitColorClass(t)+'">'+fmtMoney(t.sellTotal)+'</span>' : '<span class="muted">'+(t.allPartsReturned?'مرتجعة':(t.noActiveParts?'بدون قطع محددة':'لم يُسعّر بعد'))+'</span>')+'</td>' +
     // (order.paidToAmer || order.supplied): لو لسه ما اتوردت وما انسددت، مافي دين حقيقي بعد
     // (نفس مبدأ waitingAmerPayment/waitingSupplierPayment) فما نعرض "غير مسدد" مضلّلة — بس لو
-    // فيه سداد مسبق فعلي (دفعة مقدّمة قبل التوريد) نضلّ نعرضه "مسدد"، هذا معلومة صحيحة مو دين
-    '<td>'+((order.paidToAmer || order.supplied) && t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد '+fmtMoney(t.costToScrapyard),'غير مسدد '+fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>')+'</td>' +
-    '<td>'+((order.paidToSupplier || order.supplied) && t.costToSupplier>0 ? stampBadge(order.paidToSupplier,'مسدد '+fmtMoney(t.costToSupplier),'غير مسدد '+fmtMoney(t.costToSupplier)) : '<span class="muted">—</span>')+'</td>' +
+    // فيه سداد مسبق فعلي (دفعة مقدّمة قبل التوريد) نضلّ نعرضه "مسدد"، هذا معلومة صحيحة مو دين.
+    // مبلغ التكلفة الفعلي وحالة سداد المورد/التشليح معلومة مشتريات حساسة — ممنوعة عن المبيعات
+    // بأي حالة (نفس القاعدة المطبّقة داخل مودال الطلبية وشاشة الموردين)، كانت ناقصة هون بالغلط.
+    '<td>'+(hasElevatedAccess() && (order.paidToAmer || order.supplied) && t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد '+fmtMoney(t.costToScrapyard),'غير مسدد '+fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>')+'</td>' +
+    '<td>'+(hasElevatedAccess() && (order.paidToSupplier || order.supplied) && t.costToSupplier>0 ? stampBadge(order.paidToSupplier,'مسدد '+fmtMoney(t.costToSupplier),'غير مسدد '+fmtMoney(t.costToSupplier)) : '<span class="muted">—</span>')+'</td>' +
     '<td>'+(order.confirmed ? customerPaymentCellHtml(t, true) : '<span class="muted">—</span>')+'</td>' +
     '<td class="row-actions">' +
       '<button class="icon-btn" data-open="'+escapeHtml(order.id)+'">فتح</button>' +
@@ -1945,9 +1950,10 @@ function cardHtml(order, precomputedTotals){
     '</div>' +
     '<div class="order-card-row"><span>إجمالي البيع</span><span class="num '+(t.hasChargeable?profitColorClass(t):'')+'">'+(t.hasChargeable?fmtMoney(t.sellTotal):(t.allPartsReturned?'مرتجعة':(t.noActiveParts?'بدون قطع محددة':'لم يُسعّر بعد')))+'</span></div>' +
     '<div class="order-card-badges">' +
-      // نفس مبدأ rowHtml فوق: ما نعرض "غير مسدد" قبل التوريد الفعلي إلا لو فيه سداد مسبق فعلي
-      ((order.paidToAmer || order.supplied) && t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد للتشليح '+fmtMoney(t.costToScrapyard),'غير مسدد للتشليح '+fmtMoney(t.costToScrapyard)) : '') +
-      ((order.paidToSupplier || order.supplied) && t.costToSupplier>0 ? stampBadge(order.paidToSupplier,'مسدد للمورد '+fmtMoney(t.costToSupplier),'غير مسدد للمورد '+fmtMoney(t.costToSupplier)) : '') +
+      // نفس مبدأ rowHtml فوق: ما نعرض "غير مسدد" قبل التوريد الفعلي إلا لو فيه سداد مسبق فعلي،
+      // ومبلغ/حالة سداد المورد أو التشليح ممنوعة عن المبيعات بأي حالة (نفس القاعدة بمودال الطلبية)
+      (hasElevatedAccess() && (order.paidToAmer || order.supplied) && t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد للتشليح '+fmtMoney(t.costToScrapyard),'غير مسدد للتشليح '+fmtMoney(t.costToScrapyard)) : '') +
+      (hasElevatedAccess() && (order.paidToSupplier || order.supplied) && t.costToSupplier>0 ? stampBadge(order.paidToSupplier,'مسدد للمورد '+fmtMoney(t.costToSupplier),'غير مسدد للمورد '+fmtMoney(t.costToSupplier)) : '') +
       // نفس شروط orderStatusFlags.waitingPricing — بدون الحارسين كانت طلبية كل قطعها مرتجعة
       // (أو بلا قطع محددة) تطلّع "بانتظار التسعير" بالبطاقات بينما صفوف الجدول ما بتعتبرها كذلك
       (!t.hasSell && !t.allPartsReturned && !t.noActiveParts ? '<span class="stamp stamp-amber">بانتظار التسعير</span>' : (order.confirmed ? customerPaymentCellHtml(t, false) : '')) +
@@ -4174,6 +4180,11 @@ function quotePartRowHtml(p, i){
   const qtyVal = (p.qty===''||p.qty==null) ? 1 : p.qty;
   const readOnly = quoteModalRole==='purchasing';
   const ro = readOnly ? ' readonly' : '';
+  // وصف فاضي ما فيه شي يُحمى أصلًا (بعكس وصف كتبته المبيعات فعلًا) — لو ضل readonly دايمًا لعامر
+  // بغض النظر عن المحتوى، قطعة أضافها عامر نفسه (بأزرار +جديد/+مستعمل المتاحة للدورين) توصل بوصف
+  // فاضي ما يقدر يكتب فيه أبدًا، فتُحذف بصمت عند الحفظ (cleanedQuoteParts بتفلتر الوصف الفاضي)
+  // أو يُرفض الحفظ كليًا لو كانت آخر قطعة. المبيعات تضل تقدر تعدّل دايمًا بغض النظر (readOnly=false).
+  const descRo = (readOnly && p.description) ? ' readonly' : '';
   const undetermined = p.used===null; // "جديد أو مستعمل" — لسه ما تحدد، عامر يحسمها
 
   // زر واحد يتبدّل بالضغط (نفس نمط زر المبيعات) — عامر يقدر يبدّل نوع أي قطعة بأي وقت
@@ -4208,8 +4219,9 @@ function quotePartRowHtml(p, i){
     '<div class="part-desc-wrap">' +
       '<div class="part-desc-row">' +
         '<span class="part-index-badge">'+((i!=null?i:0)+1)+'</span>' +
-        // وصف القطعة تكتبه المبيعات — عامر بيسعّر بس، فيكون للقراءة عنده (كان يقدر يفضّيه)
-        '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="'+escapeHtml(p.description)+'"'+ro+'>' +
+        // وصف القطعة تكتبه المبيعات — عامر بيسعّر بس، فيكون للقراءة عنده لو أصلًا فيه وصف (كان
+        // يقدر يفضّيه)، بس يضل قابل للكتابة لو فاضي (قطعة أضافها هو بنفسه، انظر ملاحظة descRo فوق)
+        '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="'+escapeHtml(p.description)+'"'+descRo+'>' +
       '</div>' +
       salesNotesHtml +
       purchasingNotesHtml +
@@ -4234,7 +4246,9 @@ function bindQuotePartRowEvents(){
     const part = quoteDraft.parts.find(p=>p.id===pid);
     if(!part) return;
     const descInput = row.querySelector('.part-desc-input');
-    if(descInput && !readOnly) descInput.addEventListener('input', e=>{ part.description = e.target.value; });
+    // نفس شرط descRo بـquotePartRowHtml بالضبط — الحقل قابل للكتابة (وبالتالي محتاج مستمع) لو
+    // المستخدم مو بدور "مشتريات"، أو كان بدور مشتريات بس الوصف فاضي أصلًا (قطعة أضافها هو بنفسه)
+    if(descInput && (!readOnly || !part.description)) descInput.addEventListener('input', e=>{ part.description = e.target.value; });
     const whatsappBtn = row.querySelector('[data-whatsapp-part]');
     if(whatsappBtn) whatsappBtn.addEventListener('click', ()=> openWhatsAppForPart(part));
     const toggleUsedBtn = row.querySelector('[data-toggle-used]');
@@ -5093,6 +5107,10 @@ function confirmToggleConfirmation(orderId){
         }
         renderKPIs();
         renderTable();
+        // renderTable() بتحدّث بس #table-container (القائمة الرئيسية) — لو الطلبية مؤرشفة وزر
+        // التبديل هذا اتضغط من شاشة الأرشيف نفسها (bindArchiveRowEvents بيربط نفس الدالة)،
+        // #archive-table-container يضل يعرض الحالة القديمة رغم إنه الحفظ نجح فعليًا بالقاعدة
+        refreshArchiveViewIfOpen();
         showToast(willConfirm ? 'تم تأكيد الطلبية' : 'تم إلغاء تأكيد الطلبية', 'ok');
       } finally {
         pendingConfirmToggleIds.delete(orderId);
@@ -5571,16 +5589,25 @@ async function persistDocMeta(showToastMsg, appendHistory){
     const snapshot = Object.assign({}, docState.data);
     // لقطة فعلية من القطع/الأسعار/الرسوم وقت الإصدار — بدونها إعادة فتح فاتورة قديمة من السجل
     // بعد ما تتعدّل الطلبية كانت تعرض قطع/أرقام الطلبية الحالية مع بيانات العميل/التاريخ القديمة،
-    // فتطلع فاتورة "مستعادة" بأرقام غلط لو انطبعت/انشوركت من جديد (انظر docSheetHtml)
-    const st = orderTotals(order);
-    snapshot.partsSnapshot = orderActiveParts(order).filter(p=>!p.returned).map(p=>(
-      { name: partDisplayName(p), qty: Number(p.qty)||1, sellPrice: Number(p.sellPrice)||0 }
-    ));
-    snapshot.totalsSnapshot = {
-      partsSellTotal: st.partsSellTotal, feePercent: st.feePercent, feeEnabled: st.feeEnabled, feeAmount: st.feeAmount,
-      serviceFeeEnabled: st.serviceFeeEnabled, serviceFeeAmount: st.serviceFeeAmount, serviceFeePercent: st.serviceFeePercent,
-      deliveryFeeEnabled: st.deliveryFeeEnabled, deliveryFeeAmount: st.deliveryFeeAmount, sellTotal: st.sellTotal
-    };
+    // فتطلع فاتورة "مستعادة" بأرقام غلط لو انطبعت/انشوركت من جديد (انظر docSheetHtml).
+    // بس لو docState.data نفسها أصلًا نسخة مستعادة من 📜 السجل (فيها partsSnapshot/totalsSnapshot
+    // جاهزين — انظر openDocHistory)، لازم نحافظ عليهم كما هم بدل إعادة حسابهم من الطلبية الحيّة —
+    // غير هيك بيصير سجل هجين: بيانات هوية قديمة (رقم/تاريخ/عميل) مع أرقام مالية حيّة (اللي
+    // مختلفة عن اللي ظهر فعليًا بالشاشة والـPDF المُصدَّر لحظة الإصدار الحالي).
+    if(Array.isArray(docState.data.partsSnapshot) && docState.data.totalsSnapshot){
+      snapshot.partsSnapshot = docState.data.partsSnapshot;
+      snapshot.totalsSnapshot = docState.data.totalsSnapshot;
+    } else {
+      const st = orderTotals(order);
+      snapshot.partsSnapshot = orderActiveParts(order).filter(p=>!p.returned).map(p=>(
+        { name: partDisplayName(p), qty: Number(p.qty)||1, sellPrice: Number(p.sellPrice)||0 }
+      ));
+      snapshot.totalsSnapshot = {
+        partsSellTotal: st.partsSellTotal, feePercent: st.feePercent, feeEnabled: st.feeEnabled, feeAmount: st.feeAmount,
+        serviceFeeEnabled: st.serviceFeeEnabled, serviceFeeAmount: st.serviceFeeAmount, serviceFeePercent: st.serviceFeePercent,
+        deliveryFeeEnabled: st.deliveryFeeEnabled, deliveryFeeAmount: st.deliveryFeeAmount, sellTotal: st.sellTotal
+      };
+    }
     const last = order[historyField][order[historyField].length-1];
     const lastData = last ? Object.assign({}, last, {_historyId:undefined, _savedAt:undefined}) : null;
     if(!last || JSON.stringify(lastData)!==JSON.stringify(snapshot)){
@@ -13219,9 +13246,17 @@ function isRunningAsInstalledApp(){
   ));
 }
 
-function locationHelpInstructions(){
+// reason='unavailable' — الجهاز رفض الطلب لسبب غير رفض صلاحية صريح (الأشيع: خدمة الموقع مطفأة
+// من إعدادات النظام نفسه، لا إذن المتصفح) — نفس تعليمات "اسمح بالإذن" ما تحل المشكلة هون، الإذن
+// أصلًا ممنوح، المطلوب تفعيل الخدمة من مستوى النظام
+function locationHelpInstructions(reason){
   const ua = navigator.userAgent || '';
   const installed = isRunningAsInstalledApp();
+  if(reason === 'unavailable'){
+    if(/Android/i.test(ua)) return 'افتح إعدادات الجهاز ← الموقع (Location) ← فعّلها من المفتاح العلوي، وبعدين حدّث الصفحة.';
+    if(/iPhone|iPad|iPod/i.test(ua)) return 'افتح إعدادات الآيفون ⚙️ ← الخصوصية والأمان ← خدمات الموقع ← فعّلها من المفتاح العلوي، وبعدين حدّث الصفحة.';
+    return 'تأكد إن خدمة تحديد الموقع مفعّلة على جهازك من إعدادات النظام (مش بس إذن المتصفح)، وبعدين حدّث الصفحة.';
+  }
   if(/Android/i.test(ua)){
     if(installed){
       return 'إنت فاتحه من الأيقونة المثبّتة بالشاشة الرئيسية — من إعدادات الجهاز ⚙️ ← التطبيقات (Apps) ← دوّر على "بارتك" ← الأذونات (Permissions) ← الموقع (Location) ← اختر "السماح" (Allow)، وبعدين ارجع افتح التطبيق من نفس الأيقونة.\n\nلو ما لقيت "بارتك" بقائمة التطبيقات: افتح متصفح Chrome عادي (مو الأيقونة المثبّتة) وروح لنفس الرابط، اضغط ⋮ (النقاط الثلاث) ← معلومات الموقع (أيقونة 🔒 أو ⓘ بجانب الرابط) ← الموقع ← السماح، وبعدين ارجع للأيقونة المثبّتة وجرّب من جديد.';
@@ -13237,7 +13272,7 @@ function locationHelpInstructions(){
   return 'اضغط على أيقونة 🔒 أو (ⓘ) بجانب رابط الموقع بأعلى المتصفح ← إعدادات الموقع (Site settings) ← الموقع (Location) ← اختر "السماح دائمًا"، وبعدين حدّث الصفحة.';
 }
 
-function showLocationGate(retryFn){
+function showLocationGate(retryFn, reason){
   let gate = document.getElementById('location-gate');
   if(!gate){
     gate = document.createElement('div');
@@ -13246,7 +13281,7 @@ function showLocationGate(retryFn){
     gate.innerHTML =
       '<div class="location-gate-card">' +
         '<div class="location-gate-icon">📍</div>' +
-        '<div class="location-gate-title">يتطلب تفعيل الموقع</div>' +
+        '<div class="location-gate-title" id="location-gate-title">يتطلب تفعيل الموقع</div>' +
         '<div class="location-gate-help" id="location-gate-help" style="display:none;"></div>' +
         '<button type="button" class="btn btn-ghost" id="location-gate-help-btn" style="width:100%;margin-bottom:10px;">⚙️ كيف أفعّل صلاحية الموقع؟</button>' +
         '<button type="button" class="btn btn-primary" id="location-gate-retry-btn" style="width:100%;">حاول مرة ثانية</button>' +
@@ -13254,16 +13289,20 @@ function showLocationGate(retryFn){
     document.body.appendChild(gate);
   }
   gate.style.display = 'flex';
+  // "unavailable" — الإذن أصلًا ممنوح، بس خدمة الموقع مطفأة من إعدادات النظام؛ عنوان/تعليمات
+  // مختلفة عن حالة "رفض صلاحية المتصفح" الاعتيادية حتى ما يعيد الموظف يفحص إذن ممنوح أصلًا
+  document.getElementById('location-gate-title').textContent = reason==='unavailable' ? 'خدمة الموقع مطفأة على جهازك' : 'يتطلب تفعيل الموقع';
   document.getElementById('location-gate-retry-btn').onclick = retryFn;
   const helpBtn = document.getElementById('location-gate-help-btn');
   const helpBox = document.getElementById('location-gate-help');
+  helpBtn.textContent = reason==='unavailable' ? '⚙️ كيف أفعّل خدمة الموقع؟' : '⚙️ كيف أفعّل صلاحية الموقع؟';
   helpBtn.onclick = ()=>{
     const showing = helpBox.style.display !== 'none';
     if(showing){
       helpBox.style.display = 'none';
-      helpBtn.textContent = '⚙️ كيف أفعّل صلاحية الموقع؟';
+      helpBtn.textContent = reason==='unavailable' ? '⚙️ كيف أفعّل خدمة الموقع؟' : '⚙️ كيف أفعّل صلاحية الموقع؟';
     } else {
-      helpBox.textContent = locationHelpInstructions();
+      helpBox.textContent = locationHelpInstructions(reason);
       helpBox.style.whiteSpace = 'pre-line';
       helpBox.style.display = 'block';
       helpBtn.textContent = '🔼 إخفاء التعليمات';
@@ -13288,9 +13327,12 @@ function enforceLocationRequired(email){
         });
       }catch(e){ console.error('enforceLocationRequired insert:', e); }
     }, (err)=>{
-      // PERMISSION_DENIED بس — مو مشكلة إشارة/GPS مؤقتة. همام/بشار مستثنون من الحجب نفسه
-      // (LOCATION_MANDATORY_EXEMPT_EMAILS) — لو رفضوا الصلاحية يكملوا استخدام التطبيق عادي.
-      if(err.code === 1 && !LOCATION_MANDATORY_EXEMPT_EMAILS.includes(email)) showLocationGate(attempt);
+      // إصلاح 2026-08-19: كان الحجب مقصور على PERMISSION_DENIED (code 1) بس — إطفاء خدمة الموقع
+      // من إعدادات الجهاز نفسه (مو رفض إذن بالمتصفح) بيرجّع POSITION_UNAVAILABLE (code 2) عادة،
+      // وما كان يفعّل الحجب إطلاقًا رغم إنه الهدف المعلن للميزة هو حجب إجباري بلا أي تجاوز ممكن.
+      // همام/بشار مستثنون من الحجب نفسه (LOCATION_MANDATORY_EXEMPT_EMAILS) بغض النظر عن السبب.
+      if(LOCATION_MANDATORY_EXEMPT_EMAILS.includes(email)) return;
+      showLocationGate(attempt, err.code === 1 ? 'denied' : 'unavailable');
     }, { enableHighAccuracy:false, timeout:15000 });
   }
   attempt();
