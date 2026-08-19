@@ -47,7 +47,7 @@
     --border-soft:#E3E9E3;
     --text:#12180F;
     --text-dim:#465043;
-    --text-faint:#77837A;
+    --text-faint:#63706A;
     --green:#0C8F51;
     --green-ink:#FFFFFF;
     --green-dim:rgba(12,143,81,.12);
@@ -382,6 +382,9 @@
   .doc-history-row{cursor:pointer;}
   .doc-history-row:hover{border-color:var(--text-faint);}
   .task-item-check{width:20px;height:20px;accent-color:var(--green);cursor:pointer;flex-shrink:0;}
+  /* الصندوق المرئي 20-22px بس (تصميم مقصود) — هالغلاف يوسّع منطقة اللمس الفعلية لحوالي 36px
+     بدون ما يغيّر الشكل الظاهر، عبر padding موجب ومارجن سالب مساوٍ يلغي أثره على تخطيط الصف */
+  .task-item-check-wrap{display:flex;flex-shrink:0;padding:8px;margin:-8px;cursor:pointer;}
   .task-item-text{flex:1;min-width:0;overflow-wrap:break-word;font-size:14px;}
   .task-item-done{opacity:.55;}
   .task-item-done .task-item-text{text-decoration:line-through;color:var(--text-faint);}
@@ -801,16 +804,16 @@
   .doc-co-info{font-size:11.5px;color:#555;line-height:1.7;}
   .doc-identity-col{display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:160px;}
   .doc-type-badge{font-family:'Cairo',sans-serif;font-weight:800;font-size:15px;color:#171717;}
-  .doc-type-badge-en{font-size:10px;color:#999;letter-spacing:.06em;font-weight:700;margin-bottom:2px;}
+  .doc-type-badge-en{font-size:10px;color:#707070;letter-spacing:.06em;font-weight:700;margin-bottom:2px;}
   .doc-identity-row{display:flex;align-items:center;gap:8px;font-size:12px;}
-  .doc-identity-label{color:#888;font-weight:700;white-space:nowrap;}
+  .doc-identity-label{color:#707070;font-weight:700;white-space:nowrap;}
   .doc-identity-input{border:none;background:transparent;color:#171717;font-family:'Cairo',sans-serif;font-weight:700;font-size:13px;width:100px;padding:2px 0;}
   .doc-identity-input[readonly]{opacity:.72;cursor:default;}
   .doc-identity-input:focus{outline:none;border-bottom:1px solid #85F745;}
 
   /* bill-to — plain text, no card/box, just a hairline rule underneath */
   .doc-billto{margin:18px 0 16px;padding-bottom:12px;border-bottom:1px solid #E4E4E4;}
-  .doc-billto-label{display:block;font-size:10px;color:#999;font-weight:700;margin-bottom:5px;}
+  .doc-billto-label{display:block;font-size:10px;color:#707070;font-weight:700;margin-bottom:5px;}
   .doc-customer-name-input{display:block;width:100%;box-sizing:border-box;border:none;background:transparent;font-family:'Cairo',sans-serif;font-weight:500;font-size:16px;color:#171717;padding:2px 0;text-align:right;direction:rtl;min-height:1.3em;}
   .doc-customer-name-input:focus{outline:none;border-bottom:1px solid #85F745;}
   /* حقول تعديل عنوان الطلبية/اسم العميل بكشف حساب العميل — بلا حدود متل باقي حقول doc-sheet
@@ -824,7 +827,7 @@
   .doc-billto-extra{display:flex;flex-wrap:wrap;gap:6px 22px;margin-top:9px;}
   .doc-cr-line{margin-top:4px;}
   .doc-meta-field{display:flex;align-items:baseline;gap:5px;}
-  .doc-meta-field span:first-child{color:#999;font-weight:700;font-size:10.5px;white-space:nowrap;}
+  .doc-meta-field span:first-child{color:#707070;font-weight:700;font-size:10.5px;white-space:nowrap;}
   .doc-meta-field input{border:none;background:transparent;font-size:12.5px;color:#171717;font-family:'Tajawal',sans-serif;padding:0;width:150px;}
   .doc-meta-field input:focus{outline:none;}
 
@@ -1071,7 +1074,7 @@
       <div class="corner-mini-bar">
         <button id="btn-push-toggle" class="corner-mini-btn" title="تفعيل إشعارات الجوال">🔕</button>
         <button id="btn-theme-toggle" class="corner-mini-btn" title="تبديل الوضع الليلي/النهاري">🌞</button>
-        <button id="btn-who-online" class="corner-mini-btn">👥</button>
+        <button id="btn-who-online" class="corner-mini-btn" title="من متصل الآن" aria-label="من متصل الآن">👥</button>
         <button id="btn-announcement" class="corner-mini-btn" title="إعلان للموظفين" style="display:none;">📢</button>
         <button id="btn-employee-map" class="corner-mini-btn" title="مواقع الموظفين" style="display:none;">🗺️</button>
         <button id="btn-activity-log" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge" class="tasks-badge"></span></button>
@@ -1826,7 +1829,10 @@ function normalizeArabicSearch(s){
   return (s||'').toLowerCase().replace(/[أإآ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه');
 }
 
-function orderMatchesFilterAndSearch(order, filter, search){
+// customerIndex اختياري (Map مبنية مسبقًا id→عميل) — تفادي .find() خطي على appData.customers
+// لكل طلبية أثناء الفلترة (كان يعمل O(عدد الطلبيات × عدد العملاء) بكل ضغطة بحث). لو ما انمرر،
+// بيرجع لنفس السلوك القديم (find مباشر) — الاستدعاءات المباشرة بره حلقة .filter() لسه صحيحة.
+function orderMatchesFilterAndSearch(order, filter, search, customerIndex){
   const f = orderStatusFlags(order);
   if(filter==='unconfirmed' && order.confirmed) return false;
   if(filter==='confirmed' && !order.confirmed) return false;
@@ -1849,7 +1855,7 @@ function orderMatchesFilterAndSearch(order, filter, search){
     // بيوحّد صيغ الهمزة/الألف المقصورة/التاء المربوطة حتى ما يفوت تطابق بسبب اختلاف الكتابة.
     const words = normalizeArabicSearch(search.trim()).split(/\s+/).filter(Boolean);
     if(words.length){
-      const customer = order.customerId ? (appData.customers||[]).find(c=>c.id===order.customerId) : null;
+      const customer = order.customerId ? (customerIndex ? customerIndex.get(order.customerId) : (appData.customers||[]).find(c=>c.id===order.customerId)) : null;
       const haystack = normalizeArabicSearch([
         order.orderNumber||'',
         order.orderLabel||'',
@@ -1863,14 +1869,14 @@ function orderMatchesFilterAndSearch(order, filter, search){
   return true;
 }
 
-function orderMatches(order){
-  return orderMatchesFilterAndSearch(order, currentFilter, currentSearch);
+function buildCustomerByIdIndex(){
+  const map = new Map();
+  (appData.customers||[]).forEach(c=>{ if(c && c.id) map.set(c.id, c); });
+  return map;
 }
 
-/* نفس منطق فلتر/بحث قائمة الطلبيات العادية، بس بحالة مستقلة (archiveFilter/archiveSearch)
-   عشان فتح فلتر داخل الأرشيف ما يأثر على فلتر القائمة الرئيسية والعكس. */
-function archiveOrderMatches(order){
-  return orderMatchesFilterAndSearch(order, archiveFilter, archiveSearch);
+function orderMatches(order){
+  return orderMatchesFilterAndSearch(order, currentFilter, currentSearch);
 }
 
 /* ---------- table ---------- */
@@ -2004,7 +2010,10 @@ function ordersTableAndCardsHtml(orders){
 function renderTable(){
   const el = document.getElementById('table-container');
   try{
-    const orders = appData.orders.filter(o=>!o.isQuote).filter(o=>!o.archived).filter(orderMatches).sort((a,b)=> orderNumberSortKey(b) - orderNumberSortKey(a));
+    const custIdx = buildCustomerByIdIndex();
+    const orders = appData.orders.filter(o=>!o.isQuote).filter(o=>!o.archived)
+      .filter(o=>orderMatchesFilterAndSearch(o, currentFilter, currentSearch, custIdx))
+      .sort((a,b)=> orderNumberSortKey(b) - orderNumberSortKey(a));
 
     if(orders.length===0){
       el.innerHTML = '<div class="empty-state">' +
@@ -2751,6 +2760,21 @@ function orderModalStillOpen(draftId){
    نفس عملية الحفظ/الاعتماد مرتين بالتوازي (بتنتج INSERT مكرر بنفس الـid ورسالة خطأ مضلّلة "رقم
    الطلبية صار مستخدم" رغم إن الحفظ الأول نجح فعليًا). نفس نمط disabled=true الموجود أصلًا بأزرار
    إضافة العميل/المورد/تشليح — بس معمّم كـhelper واحد بدل تكراره بكل مكان. */
+/* رسائل خطأ الحفظ الافتراضية كانت تلصق e.message خام (نص Postgrest/JS إنجليزي تقني، مثلاً
+   "Failed to fetch" أو "JWT expired") مباشرة بتوست عربي — موظف ما يقرأ إنجليزي ما يفهم السبب
+   ولا يقدر يبلّغه. نترجم الحالات الشائعة المعروفة، ونرجع رسالة عربية عامة لأي شي تاني بدل
+   النص الخام. */
+function friendlyErrorText(e){
+  const code = e && e.code;
+  const msg = String((e && e.message) || e || '');
+  if(code === '23505') return 'قيمة مستخدمة أصلًا بسجل آخر (تعارض تكرار)';
+  if(msg === 'NO_DB') return 'الاتصال بقاعدة البيانات غير متاح حاليًا';
+  if(/fetch|network|Network|timeout|Timeout/.test(msg)) return 'تحقق من اتصال الإنترنت وحاول مرة تانية';
+  if(/JWT|session|Session/.test(msg)) return 'انتهت صلاحية الجلسة — سجّل دخول من جديد';
+  if(/permission|policy|RLS|denied/i.test(msg)) return 'ما عندك صلاحية على هالعملية';
+  return 'خطأ غير متوقع — لو تكرر بلّغ الدعم الفني';
+}
+
 function bindBusyButton(btn, handler){
   if(!btn) return;
   btn.addEventListener('click', async ()=>{
@@ -4795,7 +4819,7 @@ async function persistScrapyardQuotePricing(order, quoteReady){
     }
     return true;
   }catch(e){
-    showToast('تعذر حفظ التسعيرة: ' + (e && e.message ? e.message : ''), 'error');
+    showToast('تعذر حفظ التسعيرة: ' + friendlyErrorText(e), 'error');
     return false;
   }
 }
@@ -5555,8 +5579,10 @@ function markEmptyDocFields(){
 function bindDocHandlers(){
   const root = document.getElementById('doc-root');
   root.querySelector('#doc-close-btn').addEventListener('click', closeDocViewSavingAndReturn);
-  root.querySelector('#doc-save-btn').addEventListener('click', async ()=>{ await persistDocMeta(true); });
-  root.querySelector('#doc-print-btn').addEventListener('click', async ()=>{
+  // كانت بلا حماية ضغط مزدوج — نقرتان متتاليتان سريعتان ترسلان طلبي حفظ متوازيين وتفتحان
+  // نافذتي طباعة متداخلتين (bindBusyButton الحل الجاهز المستخدم بمكان تاني بالتطبيق أصلًا)
+  bindBusyButton(root.querySelector('#doc-save-btn'), async ()=>{ await persistDocMeta(true); });
+  bindBusyButton(root.querySelector('#doc-print-btn'), async ()=>{
     const saved = await persistDocMeta(false, true);
     if(!saved){ showToast('تعذر حفظ نسخة المستند — الطباعة أُلغيت، حاول مرة تانية', 'error'); return; }
     markEmptyDocFields();
@@ -8101,11 +8127,18 @@ function treasuryTotals(){
     extraIndicatorsExpenses += categoryTotal;
     if(categoryTotal>0) extraIndicatorsExpensesByCategory.push({ label: c.label, amount: categoryTotal });
   });
-  const custodyDeficit = amerCustodyDeficit();
-  const custodyBalance = amerCustodyBalance();
   const supportAllTime = treasurySupportTotal(()=>true);
   const custodyTopupsAllTime = amerCustodyTopupsTotalAll();
+  // إصلاح 2026-08-19 (فحص ثانٍ، أداء): amerCustodyDeficit()/amerCustodyBalance()/
+  // paidToScrapyardTotalForCustody() الثلاثة كانوا يُستدعوا هون منفصلين، وكل استدعاء يمرّ مرور
+  // كامل تاني على appData.orders لنفس النتيجة بالضبط — 3 مرات بدل مرة وحدة. نحسبها هون مرة
+  // وحدة، ونشتق custodyBalance/custodyDeficit محليًا بنفس منطق الدالتين الأصليتين بالضبط
+  // (بما فيه فرع غير المخوّلين اللي يعتمد serverAmerCustodyBalance بدون أي حساب محلي).
   const paidToScrapyardForCustody = paidToScrapyardTotalForCustody();
+  const custodyBalance = (!currentUserIsElevated && serverAmerCustodyBalance !== null)
+    ? serverAmerCustodyBalance
+    : round2(custodyTopupsAllTime - paidToScrapyardForCustody);
+  const custodyDeficit = round2(Math.max(0, -custodyBalance));
   const supplierReturnReceivables = totalSupplierReturnReceivables();
   const customerRefundsPending = totalCustomerRefundsPending();
   // صافي الصندوق = نقدي حقيقي: كل ما دفعه الزبائن + دعم خارجي، ناقص كل ما دُفع فعليًا للموردين + كل ما سُدد لعهدة عامر، ناقص مصاريف الصندوق (all-time)
@@ -9138,7 +9171,7 @@ function bindTasksMenuEvents(){
 
 function taskItemRowHtml(item){
   return '<div class="task-item-row '+(item.done?'task-item-done':'')+'" data-task-id="'+escapeHtml(item.id)+'">' +
-    '<input type="checkbox" class="task-item-check" '+(item.done?'checked':'')+' aria-label="تم الإنجاز">' +
+    '<label class="task-item-check-wrap"><input type="checkbox" class="task-item-check" '+(item.done?'checked':'')+' aria-label="تم الإنجاز"></label>' +
     '<span class="task-item-text">'+escapeHtml(item.text)+'</span>' +
     '<button type="button" class="task-item-remove-btn" aria-label="حذف المهمة">✕</button>' +
   '</div>';
@@ -9533,7 +9566,7 @@ function confirmImportOverwrite(parsedData){
         if(hasCustomersInFile) await replaceAllCustomers(appData.customers);
       }catch(e){
         appData = previousAppData;
-        showToast('تعذر استبدال البيانات: ' + (e && e.message ? e.message : '') + ' — جاري إعادة التحميل من قاعدة البيانات', 'error');
+        showToast('تعذر استبدال البيانات: ' + friendlyErrorText(e) + ' — جاري إعادة التحميل من قاعدة البيانات', 'error');
         try{ await loadData(); }catch(e2){ /* loadData بتعرض خطأها لحالها */ }
         if(document.getElementById('treasury-view').style.display !== 'none'){ renderTreasuryView(); }
         renderKPIs();
@@ -9731,7 +9764,7 @@ async function subscribeToPush(){
     updatePushButtonUi(true);
     showToast('تفعّلت الإشعارات على هذا الجهاز', 'ok');
   }catch(e){
-    showToast('تعذر تفعيل الإشعارات: ' + (e && e.message ? e.message : ''), 'error');
+    showToast('تعذر تفعيل الإشعارات: ' + friendlyErrorText(e), 'error');
   }
 }
 
@@ -9907,7 +9940,7 @@ async function persistOrder(order, isNew){
     if(e && e.code === '23505'){
       showToast('رقم الطلبية '+order.orderNumber+' صار مستخدم لطلبية أخرى (على الأغلب حُفظت طلبيتان بنفس اللحظة) — أغلق النافذة وافتحها من جديد', 'error');
     } else {
-      showToast('تعذر حفظ الطلبية: ' + (e && e.message ? e.message : ''), 'error');
+      showToast('تعذر حفظ الطلبية: ' + friendlyErrorText(e), 'error');
     }
     return false;
   }
@@ -9926,7 +9959,7 @@ async function deleteOrder(id){
     }
     return true;
   }catch(e){
-    showToast('تعذر حذف الطلبية: ' + (e && e.message ? e.message : ''), 'error');
+    showToast('تعذر حذف الطلبية: ' + friendlyErrorText(e), 'error');
     return false;
   }
 }
@@ -10020,7 +10053,7 @@ async function persistTreasuryEntry(entry, category){
     if(error) throw error;
     return true;
   }catch(e){
-    showToast('تعذر حفظ المصروف: ' + (e && e.message ? e.message : ''), 'error');
+    showToast('تعذر حفظ المصروف: ' + friendlyErrorText(e), 'error');
     return false;
   }
 }
@@ -10039,7 +10072,7 @@ async function deleteTreasuryEntry(id){
     }
     return true;
   }catch(e){
-    showToast('تعذر حذف المصروف: ' + (e && e.message ? e.message : ''), 'error');
+    showToast('تعذر حذف المصروف: ' + friendlyErrorText(e), 'error');
     return false;
   }
 }
@@ -10101,7 +10134,7 @@ async function persistTaskItem(item, category){
     if(error) throw error;
     return true;
   }catch(e){
-    showToast('تعذر حفظ المهمة: ' + (e && e.message ? e.message : ''), 'error');
+    showToast('تعذر حفظ المهمة: ' + friendlyErrorText(e), 'error');
     return false;
   }
 }
@@ -10118,7 +10151,7 @@ async function deleteTaskItem(id){
     }
     return true;
   }catch(e){
-    showToast('تعذر حذف المهمة: ' + (e && e.message ? e.message : ''), 'error');
+    showToast('تعذر حذف المهمة: ' + friendlyErrorText(e), 'error');
     return false;
   }
 }
@@ -10183,7 +10216,7 @@ async function persistSupplier(supplier){
     }
     return true;
   }catch(e){
-    showToast('تعذر حفظ المورد: ' + (e && e.message ? e.message : ''), 'error');
+    showToast('تعذر حفظ المورد: ' + friendlyErrorText(e), 'error');
     return false;
   }
 }
@@ -10200,7 +10233,7 @@ async function deleteSupplier(id){
     }
     return true;
   }catch(e){
-    showToast('تعذر حذف المورد: ' + (e && e.message ? e.message : ''), 'error');
+    showToast('تعذر حذف المورد: ' + friendlyErrorText(e), 'error');
     return false;
   }
 }
@@ -10254,7 +10287,7 @@ async function persistCustomer(customer){
     }
     return true;
   }catch(e){
-    showToast('تعذر حفظ العميل: ' + (e && e.message ? e.message : ''), 'error');
+    showToast('تعذر حفظ العميل: ' + friendlyErrorText(e), 'error');
     return false;
   }
 }
@@ -10271,7 +10304,7 @@ async function deleteCustomer(id){
     }
     return true;
   }catch(e){
-    showToast('تعذر حذف العميل: ' + (e && e.message ? e.message : ''), 'error');
+    showToast('تعذر حذف العميل: ' + friendlyErrorText(e), 'error');
     return false;
   }
 }
@@ -11387,7 +11420,8 @@ function archiveListBodyHtml(){
       '<div class="empty-sub">الطلبيات اللي تؤرشفها من قائمة الطلبيات بتظهر هون.</div>' +
     '</div>';
   }
-  const orders = allArchived.filter(archiveOrderMatches);
+  const archiveCustIdx = buildCustomerByIdIndex();
+  const orders = allArchived.filter(o=>orderMatchesFilterAndSearch(o, archiveFilter, archiveSearch, archiveCustIdx));
   if(orders.length===0){
     return '<div class="empty-state">' +
       '<div class="empty-title">لا توجد طلبيات مؤرشفة مطابقة</div>' +
@@ -13737,7 +13771,7 @@ function bindAuthGate(){
       showAuthGate('تم إرسال رمز الدخول إلى ' + email + ' — افتح بريدك وأدخل الرمز تحت.', 'ok');
       codeInput.focus();
     }catch(e){
-      showAuthGate('تعذر إرسال رمز الدخول: ' + (e && e.message ? e.message : ''), 'error');
+      showAuthGate('تعذر إرسال رمز الدخول: ' + friendlyErrorText(e), 'error');
     }finally{
       sendBtn.disabled = false;
       sendBtn.textContent = 'إرسال رمز الدخول';
@@ -13758,7 +13792,7 @@ function bindAuthGate(){
       // لو رجعت تنادى بعدين (مثلاً بريد غير مصرّح له بعد نجاح التحقق).
       pendingAuthEmail = '';
     }catch(e){
-      showAuthGate('رمز غير صحيح أو منتهي الصلاحية: ' + (e && e.message ? e.message : ''), 'error');
+      showAuthGate('رمز غير صحيح أو منتهي الصلاحية: ' + friendlyErrorText(e), 'error');
     }finally{
       verifyBtn.disabled = false;
       verifyBtn.textContent = 'تأكيد الرمز';
