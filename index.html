@@ -1462,7 +1462,9 @@ function orderStatusFlags(order){
     waitingAmerPayment: order.confirmed && order.supplied && t.costToScrapyard>0 && !order.paidToAmer,
     waitingSupplierPayment: order.confirmed && order.supplied && t.costToSupplier>0 && !order.paidToSupplier,
     waitingSupply: order.confirmed && !order.supplied,
-    waitingPricing: !t.hasSell && !t.allPartsReturned && !t.noActiveParts,
+    // fullyPriced (مش hasSell) — طلبية فيها قطعة مسعّرة وقطعة تانية لسه لأ لازم تضل "بانتظار
+    // التسعير" هي كمان، مش تختفي من الفلتر/الشارة لمجرد إن قطعة وحدة تسعّرت (كانت تُستبعد بصمت)
+    waitingPricing: !t.fullyPriced && !t.allPartsReturned && !t.noActiveParts,
     waitingCustomerPayment: order.confirmed && order.supplied && t.hasChargeable && !t.customerFullyPaid,
     // fullyPriced أصلًا يشترط sellEligibleCount>0 — طلبية رجعت قطعها كلها ما عندها ولا قطعة
     // مؤهلة للتسعير أصلًا (sellEligibleCount=0)، فما توصل "مكتملة" أبدًا حتى لو استقر عليها مبلغ
@@ -1958,7 +1960,7 @@ function cardHtml(order, precomputedTotals){
       (hasElevatedAccess() && (order.paidToSupplier || order.supplied) && t.costToSupplier>0 ? stampBadge(order.paidToSupplier,'مسدد للمورد '+fmtMoney(t.costToSupplier),'غير مسدد للمورد '+fmtMoney(t.costToSupplier)) : '') +
       // نفس شروط orderStatusFlags.waitingPricing — بدون الحارسين كانت طلبية كل قطعها مرتجعة
       // (أو بلا قطع محددة) تطلّع "بانتظار التسعير" بالبطاقات بينما صفوف الجدول ما بتعتبرها كذلك
-      (!t.hasSell && !t.allPartsReturned && !t.noActiveParts ? '<span class="stamp stamp-amber">بانتظار التسعير</span>' : (order.confirmed ? customerPaymentCellHtml(t, false) : '')) +
+      (!t.fullyPriced && !t.allPartsReturned && !t.noActiveParts ? '<span class="stamp stamp-amber">بانتظار التسعير</span>' : (order.confirmed ? customerPaymentCellHtml(t, false) : '')) +
     '</div>' +
     '<div class="order-card-actions">' +
       '<button class="icon-btn" data-open="'+escapeHtml(order.id)+'">فتح</button>' +
@@ -2333,7 +2335,7 @@ function feeFieldRowHtml(d){
   const deliveryFeeToggleHtml = deliveryFeeEnabledUi!=null ? deliveryFeeEnabledUi : '<input type="checkbox" id="order-delivery-fee-toggle" '+(d.deliveryFeeEnabled?'checked':'')+'>';
 
   return '<div id="order-fee-fields-wrap">' +
-    '<label class="toggle-row">'+feeToggleHtml+'<span>احتساب نسبة رسوم خدمة وتوصيل</span></label>' +
+    '<label class="toggle-row">'+feeToggleHtml+'<span>احتساب نسبة رسوم خدمة وتوصيل (منفصلة عن مربع "أجور التوصيل" تحت — فعّل الاثنين لو فيه توصيل فعلي بالإضافة للنسبة)</span></label>' +
     '<div class="fee-percent-row" id="order-fee-percent-row" style="'+(d.feeEnabled?'':'display:none;')+'"><span>النسبة</span>'+feePercentInputHtml+'<span>%</span><span class="fee-amount-preview" id="fee-amount-preview"></span></div>' +
     (feePercentUi==null ? '<div class="fee-percent-row" id="order-fee-amount-row" style="'+(d.feeEnabled?'':'display:none;')+'"><span>أو المبلغ مباشرة</span><input type="number" min="0" step="0.5" id="order-fee-amount-input" class="num" placeholder="0"><span>ر.س</span></div>' : '') +
     '<label class="toggle-row">'+serviceFeeToggleHtml+'<span>احتساب نسبة رسوم خدمات</span></label>' +
@@ -10828,7 +10830,9 @@ function bindSupplierRowEvents(){
     if(nameInput){
       nameInput.addEventListener('change', async e=>{
         const s = freshSupplier(); const prev = { name: s.name };
-        s.name = e.target.value;
+        const trimmed = e.target.value.trim();
+        if(!trimmed){ showToast('اسم المورد ما يصير يكون فاضي', 'error'); s.name = prev.name; refreshSuppliersList(); return; }
+        s.name = trimmed;
         await persistFieldOrRevert(s, prev, persistSupplier, refreshSuppliersList);
       });
     }
@@ -11285,7 +11289,9 @@ function bindCustomerRowEvents(){
     if(nameInput){
       nameInput.addEventListener('change', async e=>{
         const c = freshCustomer(); const prev = { name: c.name };
-        c.name = e.target.value;
+        const trimmed = e.target.value.trim();
+        if(!trimmed){ showToast('اسم العميل ما يصير يكون فاضي', 'error'); c.name = prev.name; refreshCustomersList(); return; }
+        c.name = trimmed;
         await persistFieldOrRevert(c, prev, persistCustomer, refreshCustomersList);
       });
     }
@@ -11802,31 +11808,33 @@ function markScrapyardPartsSeen(){
   localStorage.setItem('amerPartsSeenCount', String(scrapyardUnpaidPartsCount()));
 }
 
+let scrapyardDataLoadSeq = 0;
 async function loadScrapyardData(kind){
-  // ما منثبّت النوع الجديد إلا بعد نجاح التحميل — كان الفشل يترك الشاشة على نوع وبيانات نوع تاني
+  // إصلاح 2026-08-19 (فحص ثانٍ): تبديل سريع بين زرّي سداد المستعمل/الجديد كان يخلط البيانات —
+  // نداء أقدم (لسه بمنتصف الطريق) بيرجع بعد نداء أحدث ويكتب فوق نتيجته (عنوان النوع الجديد
+  // مع أرقام/قطع النوع القديم)، لأن كل حقول scrapyardSharedState كانت تُكتب فور وصول كل جزء
+  // بلا أي فحص ترتيب. الحل: نحسب كل النتيجة بمتغيّر محلي أولًا، ونثبّتها بـscrapyardSharedState
+  // دفعة وحدة بس لو ما تجاوزنا نداء أحدث بمنتصف الطريق (mySeq لسه هو الأحدث).
+  const mySeq = ++scrapyardDataLoadSeq;
   const previousKind = scrapyardSharedState.activeKind;
-  // المسوّدات مفهرسة بـ order_id/part_id بس، فمسودة "إضافة قطعة" مكتوبة على شاشة المستعمل
-  // كانت تظهر (وتدخل بالمجموع) على شاشة الجديد لنفس الطلبية. نفضّيها عند تبديل النوع.
-  if(previousKind && previousKind !== kind){
-    scrapyardAddDrafts = {};
-    scrapyardPriceDrafts = {};
-    scrapyardEditOpenFor = {};
-  }
-  scrapyardSharedState.activeKind = kind;
+  let result;
   try{
     if(scrapyardSharedState.canManage){
-      scrapyardSharedState.parts = ownerScrapyardPartsFromAppData(kind);
-      scrapyardSharedState.returnReceivables = ownerScrapyardReturnReceivablesFromAppData(kind);
-      scrapyardSharedState.custodyBalance = kind==='used' ? amerCustodyBalance() : 0;
+      const parts = ownerScrapyardPartsFromAppData(kind);
+      const returnReceivables = ownerScrapyardReturnReceivablesFromAppData(kind);
+      const custodyBalance = kind==='used' ? amerCustodyBalance() : 0;
       const [proposalsRes, confirmationsRes, suppliersRes] = await Promise.all([
         sb.from('scrapyard_proposals').select('*').eq('kind', kind).order('created_at', {ascending:false}),
         sb.from('scrapyard_order_confirmations').select('*').eq('kind', kind),
         sb.from('suppliers').select('*')
       ]);
       if(proposalsRes.error) throw proposalsRes.error;
-      scrapyardSharedState.proposals = proposalsRes.data || [];
-      scrapyardSharedState.confirmations = confirmationsRes.data || [];
-      scrapyardSharedState.suppliers = suppliersRes.error ? [] : (suppliersRes.data || []);
+      result = {
+        parts, returnReceivables, custodyBalance,
+        proposals: proposalsRes.data || [],
+        confirmations: confirmationsRes.data || [],
+        suppliers: suppliersRes.error ? [] : (suppliersRes.data || [])
+      };
     } else {
       const custodyPromise = kind==='used' ? sb.rpc('get_amer_custody_balance') : Promise.resolve({ data: 0 });
       const [partsRes, returnReceivablesRes, proposalsRes, confirmationsRes, suppliersRes, custodyRes] = await Promise.all([
@@ -11838,14 +11846,17 @@ async function loadScrapyardData(kind){
         custodyPromise
       ]);
       if(partsRes.error) throw partsRes.error;
-      scrapyardSharedState.parts = partsRes.data || [];
-      scrapyardSharedState.returnReceivables = returnReceivablesRes.error ? [] : (returnReceivablesRes.data || []);
-      scrapyardSharedState.proposals = proposalsRes.data || [];
-      scrapyardSharedState.confirmations = confirmationsRes.data || [];
-      scrapyardSharedState.suppliers = suppliersRes.error ? [] : (suppliersRes.data || []);
-      scrapyardSharedState.custodyBalance = custodyRes.error ? 0 : (Number(custodyRes.data)||0);
+      result = {
+        parts: partsRes.data || [],
+        returnReceivables: returnReceivablesRes.error ? [] : (returnReceivablesRes.data || []),
+        proposals: proposalsRes.data || [],
+        confirmations: confirmationsRes.data || [],
+        suppliers: suppliersRes.error ? [] : (suppliersRes.data || []),
+        custodyBalance: custodyRes.error ? 0 : (Number(custodyRes.data)||0)
+      };
     }
   }catch(e){
+    if(mySeq !== scrapyardDataLoadSeq) return false; // نداء أحدث تجاوزنا أصلًا — ما نلمس حالته
     scrapyardSharedState.activeKind = previousKind || kind;
     // نفضّي البيانات بدل ما نترك بيانات النوع القديم معروضة تحت عنوان النوع الجديد
     scrapyardSharedState.parts = [];
@@ -11856,7 +11867,15 @@ async function loadScrapyardData(kind){
     showToast('تعذر تحميل بيانات '+SETTLEMENT_KINDS[kind].title+' — تحقق من الاتصال وحاول مرة تانية', 'error');
     return false;
   }
-  scrapyardSharedState.loadFailed = false;
+  if(mySeq !== scrapyardDataLoadSeq) return false; // نداء أحدث خلص (نجاح أو فشل) — نتيجتنا صارت قديمة
+  Object.assign(scrapyardSharedState, result, { activeKind: kind, loadFailed: false });
+  // المسوّدات مفهرسة بـ order_id/part_id بس، فمسودة "إضافة قطعة" مكتوبة على شاشة المستعمل
+  // كانت تظهر (وتدخل بالمجموع) على شاشة الجديد لنفس الطلبية. نفضّيها عند تبديل النوع.
+  if(previousKind && previousKind !== kind){
+    scrapyardAddDrafts = {};
+    scrapyardPriceDrafts = {};
+    scrapyardEditOpenFor = {};
+  }
   return true;
 }
 
@@ -12299,6 +12318,10 @@ function openQuickAddScrapyardSupplierModal(onSaved){
     const name = document.getElementById('quick-scrapyard-name-input').value.trim();
     const phone = document.getElementById('quick-scrapyard-phone-input').value.trim();
     if(!name && !phone){ showToast('اكتب اسم أو رقم جوال على الأقل', 'error'); return; }
+    // كان فحص التكرار (findDuplicateSupplier) مفقود بالكامل هون — الوحيد بين كل نقاط إضافة
+    // مورد/تشليح بالتطبيق — فإضافة تشليح موجود أصلًا بغلطة إملائية كانت تمر بصمت وتنشئ صف مكرر
+    const dup = findDuplicateSupplier(name, phone);
+    if(dup){ showToast('تشليح موجود مسبقًا بنفس الاسم أو الرقم: '+(dup.name||dup.phone||'تشليح'), 'error'); return; }
     scrapyardSaveBtn.disabled = true; // يمنع نقرتين سريعتين من إنشاء تشليحين مكررين قبل ما أول طلب يخلص
     const newSupplier = { id: uid('sup'), name, phone, notes:'', extraPhones: [], handlesNew: false, handlesUsed: true };
     const saved = await persistSupplier(newSupplier);
@@ -12469,6 +12492,7 @@ function bindScrapyardSupplierManageEvents(){
     const saveBtn = row.querySelector('.scrapyard-supplier-save-btn');
     if(saveBtn){
       saveBtn.addEventListener('click', async ()=>{
+        if(!(supplier.name||'').trim()){ showToast('اسم المورد ما يصير يكون فاضي', 'error'); return; }
         const saved = await persistSupplier({
           id: supplier.id, name: supplier.name, phone: supplier.phone,
           extraPhones: Array.isArray(supplier.extra_phones) ? supplier.extra_phones.filter(Boolean) : [],
@@ -13535,6 +13559,21 @@ function teardownPresenceAndLocationResources(){
     if(presenceChannel){ sb.removeChannel(presenceChannel); presenceChannel = null; }
     if(locationRequestChannel){ sb.removeChannel(locationRequestChannel); locationRequestChannel = null; }
     if(employeeMapChannel){ sb.removeChannel(employeeMapChannel); employeeMapChannel = null; }
+    // إصلاح 2026-08-19 (فحص ثانٍ): كان هالتابع (رغم استدعاءه من showAuthGate عند أي فقدان جلسة
+    // لاإرادي) يشيل بس 3 قنوات presence/location — 10 قنوات تانية (بيانات فعلية: طلبيات، صندوق،
+    // مهام، موردين، عملاء، مقترحات تعديل، إعلان، سجل نشاط...) كانت تضل شغالة بالخلفية باسم
+    // المستخدم اللي راحت جلسته، وتمنع إعادة الاشتراك النظيف لمستخدم لاحق بنفس الجهاز (كل دالة
+    // subscribeXRealtime تتحقق من المتغيّر بs return مبكر لو موجود أصلًا).
+    if(ordersChannel){ sb.removeChannel(ordersChannel); ordersChannel = null; }
+    if(treasuryChannel){ sb.removeChannel(treasuryChannel); treasuryChannel = null; }
+    if(tasksChannel){ sb.removeChannel(tasksChannel); tasksChannel = null; }
+    if(suppliersChannel){ sb.removeChannel(suppliersChannel); suppliersChannel = null; }
+    if(customersChannel){ sb.removeChannel(customersChannel); customersChannel = null; }
+    if(announcementChannel){ sb.removeChannel(announcementChannel); announcementChannel = null; }
+    if(scrapyardProposalsChannel){ sb.removeChannel(scrapyardProposalsChannel); scrapyardProposalsChannel = null; }
+    if(editProposalsChannel){ sb.removeChannel(editProposalsChannel); editProposalsChannel = null; }
+    if(activityEventsChannel){ sb.removeChannel(activityEventsChannel); activityEventsChannel = null; }
+    if(scrapyardAppDataChannel){ sb.removeChannel(scrapyardAppDataChannel); scrapyardAppDataChannel = null; }
   }
   presenceEmail = null;
 }
