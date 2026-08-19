@@ -1836,8 +1836,10 @@ function orderMatchesFilterAndSearch(order, filter, search){
   if(filter==='waitingCustomer' && !f.waitingCustomerPayment) return false;
   if(filter==='complete' && !f.complete) return false;
   // فيلتر خاص بالأرشيف بس (مو ضمن FILTERS المشتركة) — الطلبيات المؤرشفة غير المؤكدة يلي
-  // انسجّل إلها سبب عدم نجاح
-  if(filter==='justified' && !order.unsuccessfulReason) return false;
+  // انسجّل إلها سبب عدم نجاح. !order.confirmed هون يطابق شرط ظهور زر "📋 سبب الفشل" بالضبط
+  // (rowHtml/cardHtml) — طلبية تأكّدت بعد ما تعلّمت بسبب (confirmToggleConfirmation بتمسح
+  // السبب بهالحالة أصلًا، بس هاد فحص دفاعي إضافي لو انحفظ سبب بأي مسار تاني بالمستقبل)
+  if(filter==='justified' && (!order.unsuccessfulReason || order.confirmed)) return false;
   if(search){
     // بحث ذكي: يشمل رقم الطلبية ووصفها (اسم الزبون/نوع السيارة) ورقم الجوال واسم الزبون
     // المسجّل (لو الطلبية مربوطة بعميل محفوظ) ووصف كل القطع. بيقسّم البحث لكلمات، وأي طلبية
@@ -4255,9 +4257,13 @@ function bindQuotePartRowEvents(){
     if(toggleUsedBtn){
       toggleUsedBtn.addEventListener('click', ()=>{
         part.used = part.used===null ? true : !part.used;
-        // المورد/التشليح حقل مشتريات حصريًا (عامر بس بيشوفه ويختاره) — المبيعات لازم ما تلمسه.
-        // كان التصفير بينفّذ للدورين، فتبديل المبيعات لتصنيف القطعة كان بيمسح اختيار عامر بصمت.
-        if(readOnly) part.supplierId = null;
+        // إصلاح 2026-08-19: كان التصفير مقصور على readOnly (عامر) بس — نيّته منع مسح اختيار
+        // عامر بضغطة المبيعات، بس نتيجته الفعلية إن المبيعات تبدّل النوع وتخلي مورد النوع القديم
+        // مرتبط بالقطعة بنوعها الجديد (مورد جديد فقط مرتبط بقطعة صارت مستعملة مثلًا) — بيانات
+        // (نوع، مورد) متضاربة تنحفظ بالقاعدة، والمبيعات أصلًا ما تشوف حقل المورد لتلاحظ التعارض.
+        // المورد المرتبط بتصنيف قديم غير صالح بغض النظر مين بدّل النوع — نفس مبدأ الطلبية الحقيقية
+        // (bindPartRowEvents، بلا أي شرط دور على التصفير).
+        part.supplierId = null;
         refreshQuotePartsList();
       });
     }
@@ -4863,13 +4869,17 @@ function normalizePhoneForWhatsapp(phone){
 
 /* يمنع تكرار العميل (نفس الاسم أو نفس رقم الجوال بعد توحيد صيغته) قبل إضافته —
    يتجاهل حقول فاضية حتى ما يتصادم عملاء بدون اسم/رقم مع بعض. */
+// إصلاح 2026-08-19: كان OR بين تطابق الاسم أو الجوال — يعني اسم متطابق (شائع جدًا بأسماء زي
+// "خالد"/"محمد") بيمنع الإضافة حتى لو الجوالين مختلفين كليًا، رغم إن جوال مختلف دليل قاطع إنهم
+// شخصان مختلفان. القاعدة الصح: لو عندنا جوالين نقارنهم فعليًا (الجديد + سجل قائم)، هما يحسمان
+// وحدهم — الاسم ما إله رأي بهالحالة. الاسم بيتفحص بس لو ما قدرنا نقارن جوالات (أحدهما فاضي).
 function findDuplicateCustomer(name, phone){
   const n = (name||'').trim().toLowerCase();
   const p = (phone||'').trim() ? normalizePhoneForWhatsapp(phone) : '';
   return (appData.customers||[]).find(c=>{
-    if(n && (c.name||'').trim().toLowerCase()===n) return true;
-    if(p && (c.phone||'').trim() && normalizePhoneForWhatsapp(c.phone)===p) return true;
-    return false;
+    const cPhone = (c.phone||'').trim() ? normalizePhoneForWhatsapp(c.phone) : '';
+    if(p && cPhone) return p === cPhone;
+    return !!(n && (c.name||'').trim().toLowerCase()===n);
   });
 }
 
@@ -4877,9 +4887,9 @@ function findDuplicateSupplier(name, phone){
   const n = (name||'').trim().toLowerCase();
   const p = (phone||'').trim() ? normalizePhoneForWhatsapp(phone) : '';
   return (appData.suppliers||[]).find(s=>{
-    if(n && (s.name||'').trim().toLowerCase()===n) return true;
-    if(p && (s.phone||'').trim() && normalizePhoneForWhatsapp(s.phone)===p) return true;
-    return false;
+    const sPhone = (s.phone||'').trim() ? normalizePhoneForWhatsapp(s.phone) : '';
+    if(p && sPhone) return p === sPhone;
+    return !!(n && (s.name||'').trim().toLowerCase()===n);
   });
 }
 
@@ -5089,11 +5099,20 @@ function confirmToggleConfirmation(orderId){
         // كليًا (applyRemoteOrderChange)، والمرجع القديم يضل معزول عنه، وحفظه بيرجّع تعديل التاني.
         const order = appData.orders.find(o=>o.id===orderId);
         if(!order) return;
-        const prev = { confirmed: order.confirmed, supplied: order.supplied, suppliedAt: order.suppliedAt, updatedAt: order.updatedAt };
+        const prev = { confirmed: order.confirmed, supplied: order.supplied, suppliedAt: order.suppliedAt, updatedAt: order.updatedAt,
+          unsuccessfulReason: order.unsuccessfulReason, unsuccessfulReasonDetails: order.unsuccessfulReasonDetails };
         order.confirmed = willConfirm;
         if(willResetSupply){
           order.supplied = false;
           order.suppliedAt = null;
+        }
+        // طلبية اتعلّمت "سبب عدم نجاح" (بالأرشيف عادة) وبعدين تأكّدت مباشرة من نفس الصف (القطعة
+        // توفرت مثلًا) — السبب ما عاد له معنى، وزر "📋 سبب الفشل" أصلًا بيختفي فورًا (شرطه
+        // !order.confirmed) فما تضل طريقة بالواجهة لمسحه إلا بإلغاء التأكيد يدويًا لاحقًا. وبدون
+        // مسحه، فلتر "📋 المبررة" بالأرشيف يستمر يعرض طلبية مؤكدة فعليًا ضمن "غير الناجحة".
+        if(willConfirm && order.unsuccessfulReason){
+          order.unsuccessfulReason = null;
+          order.unsuccessfulReasonDetails = '';
         }
         order.updatedAt = new Date().toISOString();
         const saved = await persistOrder(order);
@@ -6647,7 +6666,10 @@ function formatProposalFieldValue(field, value){
   return fmtMoney(Number(value)||0);
 }
 
-function paymentMethodLabel(method){ return method==='cash' ? 'كاش' : (method==='card' ? 'شبكة' : '—'); }
+// دفعات returnAdjustment تُنشأ بـmethod:'مرتجع' حرفيًا (applyPartReturnOnOrder وغيرها) — بدون
+// حالة صريحة هون كانت تطلع "—" مطابقة شكليًا لأي قيمة غير معروفة، بدل تسمية واضحة تفرّقها عن
+// دفعة كاش/شبكة حقيقية (كانت المشكلة الفعلية بتصدير Excel، انظر exportAllDataToExcel)
+function paymentMethodLabel(method){ return method==='cash' ? 'كاش' : (method==='card' ? 'شبكة' : (method==='مرتجع' ? 'مرتجع' : '—')); }
 
 function editProposalPendingHtml(pr){
   const mine = pr.submitted_by === presenceEmail;
@@ -9146,6 +9168,10 @@ function bindTaskCategoryEvents(key){
   const addBtn = document.getElementById('add-task-btn');
   const input = document.getElementById('new-task-input');
   const addTask = async ()=>{
+    // زر الإضافة يتعطّل أثناء الحفظ (تحت)، بس مستمع Enter بالحقل كان يستدعي addTask() مباشرة
+    // بلا أي فحص لحالته — ضغطة Enter ثانية سريعة (أو تكرار مفتاح) خلال نافذة زمن الشبكة كانت
+    // تقرأ نفس input.value (ما يترفرغ إلا بعد نجاح الحفظ) وتُنشئ صفًا مكررًا مستقلًا بالكامل.
+    if(addBtn.disabled) return;
     const text = input.value.trim();
     if(!text) return;
     if(!Array.isArray(appData.tasks[key])) appData.tasks[key] = [];
@@ -9330,7 +9356,10 @@ function exportAllDataToExcel(){
       paymentsRows.push({
         'رقم الطلب': o.orderNumber,
         'المبلغ': p.amount,
-        'الطريقة': p.method==='cash' ? 'كاش' : (p.method==='card' ? 'شبكة' : ''),
+        // paymentMethodLabel المركزية (مو تكرار يدوي) — دفعة returnAdjustment (method:'مرتجع')
+        // كانت تُصدَّر بعمود طريقة فاضٍ، مطابقة شكليًا لدفعة كاش/شبكة حقيقية بمبلغ موجب، فأي
+        // تحليل خارجي (PivotTable) يجمعها ضمن التحصيل الفعلي بدل طرحها
+        'الطريقة': paymentMethodLabel(p.method),
         'التاريخ': p.date || ''
       });
     });
