@@ -3244,6 +3244,10 @@ function proceedReturnWholeOrder(activeParts, keepFee){
           totalLeftoverExcess = applyPartReturn(p, round2(s.feeShare + s.serviceFeeShare + liveDelivery));
         }
         pendingPartProposalPurges.add(p.id);
+        // قطعة رجعت مباشرة (مخوّل) — أي اقتراح سداد معلّق من عامر (scrapyard_proposals) على نفس
+        // القطعة صار يتيمًا ويشير لقطعة انرجعت، نفس مبدأ pendingScrapyardCancellations المستخدم
+        // أصلًا لتبديل تصنيف مستعمل/جديد — يُنفَّذ فعليًا بس عند حفظ الطلبية (انظر تعريف المجموعة)
+        pendingScrapyardCancellations.add(p.id);
       });
       refreshPartsList();
       refreshPaymentsList();
@@ -3307,6 +3311,9 @@ function openPartActionChoice(part){
         onConfirm: ()=>{
           draft.parts = draft.parts.filter(p=>p.id!==part.id);
           pendingPartProposalPurges.add(part.id);
+          // قطعة اتحذفت مباشرة (مخوّل) — نفس ملاحظة proceedReturnWholeOrder: أي اقتراح سداد
+          // معلّق من عامر على نفس القطعة صار يتيمًا (يشير لقطعة ما عادت موجودة)
+          pendingScrapyardCancellations.add(part.id);
           refreshPartsList();
         }
       });
@@ -3360,6 +3367,9 @@ function proceedSinglePartReturn(part, hasReceivable, keepFee){
         leftoverExcess = applyPartReturn(part, round2(s.feeShare + s.serviceFeeShare));
       }
       pendingPartProposalPurges.add(part.id);
+      // نفس ملاحظة proceedReturnWholeOrder/openPartActionChoice — قطعة رجعت مباشرة (مخوّل) بتيتّم
+      // أي اقتراح سداد معلّق من عامر عليها
+      pendingScrapyardCancellations.add(part.id);
       refreshPartsList();
       refreshPaymentsList();
       // زيادة دفع غير مرتبطة بسعر هالقطعة/رسومها — نسأل المستخدم صراحة بدل ما تختفي بصمت
@@ -6340,6 +6350,9 @@ function applyScrapyardProposal(pr){
     if(!part) return false;
     part.costPrice = Math.max(0, Number(pr.cost_price)||0);
   } else if(pr.action === 'delete'){
+    // نفس فحص فرع 'edit' فوق — بدونه القطعة اللي انحذفت مباشرة (مخوّل) بالفترة الفاصلة بتخلي
+    // الـfilter no-op صامت، والدالة ترجع true وكأن الحذف صار فعليًا رغم إنه ما تغيّر شي
+    if(!(order.parts||[]).some(p=>p.id===pr.part_id)) return false;
     order.parts = (order.parts||[]).filter(p=>p.id!==pr.part_id);
   } else if(pr.action === 'add'){
     order.parts = order.parts || [];
@@ -6630,6 +6643,10 @@ async function sendFieldEditRequest(fieldKey, partId){
   const key = composeKey(fieldKey, partId);
   if(editProposalSending.has(key)) return;
   if(pendingFieldProposal(fieldKey, partId)) return;
+  // طلب استبعاد/حذف/إرجاع معلّق على نفس القطعة — قبوله بيخلي هالطلب يفشل تطبيقه دايمًا (القطعة
+  // اتحذفت/اترجعت)، ويضل عالق للأبد لحد رفض يدوي صريح. نفس فحص hasAnyPendingPartAction اللي
+  // requestPartExclude/requestPartDelete/requestPartReturn تتفحّص ضد بعضها فيه أصلًا.
+  if(partId && hasAnyPendingPartAction(partId)){ showToast('في طلب حذف/استبعاد/إرجاع معلّق على هذه القطعة — لازم يتحسم أولًا', 'error'); return; }
   const root = document.getElementById('modal-root');
   const selector = '.field-request-input[data-field="'+fieldKey+'"]'+(partId?'[data-part-id="'+partId+'"]':':not([data-part-id])');
   const input = root.querySelector(selector);
@@ -6766,10 +6783,22 @@ async function purgeEditProposalsForPart(orderId, partId){
   await refreshEditProposals();
 }
 
+/* نفس purgeEditProposalsForPart بس لعدة قطع دفعة وحدة (إرجاع طلبية كاملة order_return) — استعلام
+   وحيد بدل حلقة نداءات متتالية */
+async function purgeEditProposalsForParts(orderId, partIds){
+  if(!partIds || !partIds.length) return;
+  const { error } = await sb.from('edit_proposals').delete().eq('order_id', orderId).in('part_id', partIds);
+  if(error) console.error('purgeEditProposalsForParts:', error);
+  await refreshEditProposals();
+}
+
 /* حقول boolean (تصنيف مستعمل/غير مستعمل، تفعيل نسب الرسوم) — إرسال فوري لعكس القيمة الحالية
    بدل صندوق كتابة (composeFieldHtml)، نفس مبدأ requestPartExclude بس عام لأي حقل boolean */
 function requestBooleanFieldChange(fieldKey, partId, currentValue){
   if(pendingFieldProposal(fieldKey, partId)) return;
+  // نفس فحص hasAnyPendingPartAction بـsendFieldEditRequest فوق — حذف/استبعاد/إرجاع معلّق على
+  // نفس القطعة بيخلي أي طلب حقل تاني عليها يفشل تطبيقه دايمًا ويضل عالق للأبد
+  if(partId && hasAnyPendingPartAction(partId)){ showToast('في طلب حذف/استبعاد/إرجاع معلّق على هذه القطعة — لازم يتحسم أولًا', 'error'); return; }
   // تبديل "مستعمل/غير مستعمل" بيصفّر supplierId كـ side effect عند applyEditProposal — لو فيه
   // طلب تعديل مورد معلّق بنفس الوقت على نفس القطعة، قبول الاثنين (بأي ترتيب) بيلغي واحد منهم بصمت
   if(fieldKey==='used' && partId && pendingFieldProposal('supplierId', partId)){
@@ -6869,6 +6898,7 @@ function requestPartReturn(part){
    ما في داعي لخطوة تركيب/إرسال منفصلة متل الحقول النصية. يرسل الطلب فورًا لحظة الاختيار. */
 async function requestPartSupplierChange(part, newSupplierId){
   if(pendingFieldProposal('supplierId', part.id)){ showToast('في طلب تعديل مورد معلّق أصلًا لهذه القطعة', 'error'); refreshPartsList(); return; }
+  if(hasAnyPendingPartAction(part.id)){ showToast('في طلب حذف/استبعاد/إرجاع معلّق على هذه القطعة — لازم يتحسم أولًا', 'error'); refreshPartsList(); return; }
   // نفس ملاحظة requestBooleanFieldChange فوق — تعديل "مستعمل/غير مستعمل" معلّق بنفس الوقت
   // بيصفّر المورد كـ side effect عند القبول، فتعايش الطلبين ممكن يلغي واحد منهم بصمت
   if(pendingFieldProposal('used', part.id)){
@@ -7192,6 +7222,16 @@ function proceedEditProposalDecision(proposalId, accept, keepFee){
           }
           const idx = appData.orders.findIndex(o=>o.id===order.id);
           if(idx>=0) appData.orders[idx] = order; else appData.orders.push(order);
+          // طلب حذف/إرجاع قطعة (أو إرجاع طلبية كاملة) مقبول — أي طلب تعديل معلّق تاني على نفس
+          // القطعة/القطع صار ميت لا محالة (applyEditProposal بترفض تطبيق أي طلب على قطعة محذوفة/
+          // مرتجعة دائمًا)، فينضّف فورًا حتى ما يضل عالق للأبد يحتاج رفض يدوي صريح — نفس مبدأ
+          // purgeEditProposalsForPart المطبّق أصلًا بمسار الحذف/الإرجاع المباشر (غير طلبات التعديل)
+          if(claimed.kind === 'part_delete' || claimed.kind === 'part_return'){
+            await purgeEditProposalsForPart(order.id, claimed.part_id);
+          } else if(claimed.kind === 'order_return'){
+            const returnedPartIds = (order.parts||[]).filter(p=>p.returned).map(p=>p.id);
+            await purgeEditProposalsForParts(order.id, returnedPartIds);
+          }
           // لو الطلبية المتأثرة مفتوحة حاليًا بالنافذة، لازم نزامن draft معها فورًا — غير هيك حفظ
           // لاحق من draft القديم بيلغي التعديل يلي لسا انطبق (نفس درس draftOpenedAtUpdatedAt)
           if(draft && draft.id === order.id){
