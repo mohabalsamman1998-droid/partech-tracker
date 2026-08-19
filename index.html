@@ -2432,7 +2432,13 @@ function refreshOrderCustomerBlock(){
    "➕ عميل جديد" (يتربط مرة وحدة بـattachModalHandlers) ولخيار "إضافة كعميل جديد" جوا القائمة
    المنسدلة (يتربط من جديد كل refreshOrderCustomerBlock)، وكلاهما لازم يحترم fieldGated() لحظيًا */
 function orderQuickAddCustomer(prefill){
+  // نلتقط هوية الطلبية المفتوحة *وقت فتح نافذة إضافة العميل* — لو انسكّرت نافذة الطلبية أو
+  // اتحوّلت لطلبية تانية أثناء ما نافذة إضافة العميل مفتوحة فوقها (احتمال أضعف بعد إصلاح
+  // escListener، بس مو مستحيل — حذف الطلبية من مكان تاني مثلًا)، ما لازم نكتب على draft فاضي
+  // ولا نربط العميل الجديد بطلبية غلط بصمت (نفس درس bindOrderRefundConfirmButton).
+  const openedForDraftId = draft ? draft.id : null;
   openQuickAddCustomerModal((newCustomer)=>{
+    if(!draft || draft.id !== openedForDraftId) return;
     if(fieldGated()){ requestOrderCustomerChange(newCustomer.id); return; }
     draft.customerId = newCustomer.id;
     draft.customerPhone = newCustomer.phone || '';
@@ -2712,7 +2718,18 @@ function closeModal(){
   }
 }
 
-function escListener(e){ if(e.key==='Escape') closeModal(); }
+// نافذة فرعية (#confirm-root — إضافة عميل جديد، تخيير زيادة الدفع، أي confirmAction...) ممكن
+// تكون مفتوحة فوق نافذة الطلبية. Esc غير مشروط كان يقفل نافذة الطلبية تحتها (draft=null) بينما
+// الفرعية تضل ظاهرة بلا بيانات خلفها — أي زر فيها بعدين يقرأ draft.parts فيرمي خطأ JS (نافذة
+// "زيادة الدفع" ما فيها زر إلغاء أصلًا، مصممة تفرض قرار صريح)، أو (إضافة عميل جديد) العميل
+// الجديد ينربط بصمت بطلبية تانية فُتحت بعدين. لو فيه نافذة فرعية ظاهرة، Esc ما يلمس نافذة
+// الطلبية إطلاقًا — المستخدم لازم يتعامل مع الفرعية أولًا (أزرارها الخاصة، أو الخلفية لو قابلة للإغلاق).
+function escListener(e){
+  if(e.key!=='Escape') return;
+  const confirmRoot = document.getElementById('confirm-root');
+  if(confirmRoot && confirmRoot.classList.contains('modal-open')) return;
+  closeModal();
+}
 
 /* بعد أي await جوا onSaveOrder، النافذة ممكن تكون انسكّرت (✕/Esc/برّا) أو تحوّلت لطلبية تانية —
    draft صار null أو صار يشاور على غيرها. نفس مبدأ quoteModalStillOpen بالضبط. */
@@ -3254,7 +3271,14 @@ function proceedReturnWholeOrder(activeParts, keepFee){
       totalLeftoverExcess = round2(totalLeftoverExcess);
       if(totalLeftoverExcess > 0.01){
         const lastReturnedPart = activeParts[activeParts.length-1];
-        openReturnExcessChoiceModal(totalLeftoverExcess, draft, lastReturnedPart, ()=>{ refreshPartsList(); refreshPaymentsList(); });
+        const excessOpenedForDraftId = draft.id;
+        // نافذة الزيادة ما فيها زر إلغاء (تفرض قرار صريح)، بس ممكن تنسكّر برمجيًا (لا بضغطة
+        // المستخدم) لو وصل حدث لحظي بحذف نفس الطلبية أثناء ما هي مفتوحة — draft بيصير null
+        // وrefreshPartsList/refreshPaymentsList بترمي (بتقرأ draft.parts مباشرة)
+        openReturnExcessChoiceModal(totalLeftoverExcess, draft, lastReturnedPart, ()=>{
+          if(!draft || draft.id !== excessOpenedForDraftId) return;
+          refreshPartsList(); refreshPaymentsList();
+        });
       }
     }
   });
@@ -3374,7 +3398,13 @@ function proceedSinglePartReturn(part, hasReceivable, keepFee){
       refreshPaymentsList();
       // زيادة دفع غير مرتبطة بسعر هالقطعة/رسومها — نسأل المستخدم صراحة بدل ما تختفي بصمت
       if(leftoverExcess > 0.01){
-        openReturnExcessChoiceModal(leftoverExcess, draft, part, ()=>{ refreshPartsList(); refreshPaymentsList(); });
+        const excessOpenedForDraftId = draft.id;
+        // نفس ملاحظة proceedReturnWholeOrder — نافذة الزيادة ممكن تنسكّر برمجيًا (حذف لحظي
+        // لنفس الطلبية) بينما هي مفتوحة، فdraft يصير null وrefreshPartsList/refreshPaymentsList بترمي
+        openReturnExcessChoiceModal(leftoverExcess, draft, part, ()=>{
+          if(!draft || draft.id !== excessOpenedForDraftId) return;
+          refreshPartsList(); refreshPaymentsList();
+        });
       }
     }
   });
@@ -4413,7 +4443,14 @@ function closeQuoteModal(){
   document.removeEventListener('keydown', quoteEscListener);
 }
 
-function quoteEscListener(e){ if(e.key==='Escape') closeQuoteModal(); }
+// نفس ملاحظة escListener بنافذة الطلبية بالضبط — نافذة فرعية (#confirm-root) ممكن تكون مفتوحة
+// فوق نافذة التسعيرة (مثلًا إضافة عميل جديد)، وEsc غير مشروط كان يقفل نافذة التسعيرة تحتها
+function quoteEscListener(e){
+  if(e.key!=='Escape') return;
+  const confirmRoot = document.getElementById('confirm-root');
+  if(confirmRoot && confirmRoot.classList.contains('modal-open')) return;
+  closeQuoteModal();
+}
 
 function attachQuoteModalHandlers(){
   const root = document.getElementById('modal-root');
@@ -4427,7 +4464,10 @@ function attachQuoteModalHandlers(){
   if(!isPurchasing){
     root.querySelector('#quote-label-input').addEventListener('input', e=>{ quoteDraft.orderLabel = e.target.value; });
     const quoteQuickAddCustomer = (prefill)=>{
+      // نفس ملاحظة orderQuickAddCustomer بالضبط — نلتقط هوية التسعيرة وقت فتح نافذة إضافة العميل
+      const openedForQuoteId = quoteDraft ? quoteDraft.id : null;
       openQuickAddCustomerModal((newCustomer)=>{
+        if(!quoteDraft || quoteDraft.id !== openedForQuoteId) return;
         quoteDraft.customerId = newCustomer.id;
         quoteDraft.customerPhone = newCustomer.phone || '';
         const wrap = document.querySelector('#quote-customer-select .searchable-select');
@@ -4503,7 +4543,11 @@ function attachQuoteModalHandlers(){
         onConfirm: async ()=>{
           const deleted = await deleteOrder(id);
           if(!deleted) return; // deleteOrder عرضت سبب الفشل — لا تقفل ولا تشيلها من القائمة
-          closeQuoteModal();
+          // نفس فحص quoteModalStillOpen يلي كل مسارات الحفظ التانية (saveQuoteDraft/onApproveQuote/
+          // onSaveQuotePricing...) بتستخدمه — بدونه، لو المستخدم فتح تسعيرة تانية أثناء انتظار
+          // الحذف (confirmAction بتقفل نافذة التأكيد فورًا قبل ما تنتظر onConfirm)، closeQuoteModal
+          // كانت تمسح #modal-root بالكامل حتى لو صار يعرض تسعيرة تانية غير المحذوفة
+          if(quoteModalStillOpen(id)) closeQuoteModal();
           appData.orders = appData.orders.filter(o=>o.id!==id);
           renderQuotesList();
           renderKPIs();
