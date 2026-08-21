@@ -2285,9 +2285,11 @@ function bindPartAddControls(){
 function orderActionButtonsHtml(d){
   if(d.isNew) return '';
   const deleteProposal = pendingOrderActionProposal('order_delete');
+  // نفس منطق orderDeleteGated بالضبط (د بس مش draft العام هون) — انظر تعليقها
+  const deleteGated = !!(d.confirmed || d.supplied) && !hasElevatedAccess();
   const deleteBtnHtml = deleteProposal
     ? '<span class="order-action-pending-wrap">'+editProposalPendingHtml(deleteProposal)+'</span>'
-    : '<button type="button" class="btn btn-sm btn-danger-ghost" id="modal-delete-btn">حذف الطلبية</button>';
+    : '<button type="button" class="btn btn-sm btn-danger-ghost" id="modal-delete-btn">'+(deleteGated?'طلب حذف الطلبية':'حذف الطلبية')+'</button>';
 
   // الإرجاع معناه "قطعة استُلمت من المورد/التشليح ثم رجعت" — قبل "تم التوريد" أصلًا ما فيه شي
   // استُلم بعد، فما يصير كلامه إرجاع
@@ -2306,7 +2308,7 @@ function bindOrderActionButtons(){
   const delBtn = root.querySelector('#modal-delete-btn');
   if(delBtn){
     delBtn.addEventListener('click', ()=>{
-      if(!hasElevatedAccess()){ requestOrderDelete(); return; }
+      if(orderDeleteGated()){ requestOrderDelete(); return; }
       const id = draft.id;
       closeModal();
       confirmDelete(id);
@@ -5119,39 +5121,29 @@ function confirmReminder(message){
 }
 
 /* ---------- delete ---------- */
-async function performOrderDelete(orderId){
-  const deleted = await deleteOrder(orderId);
-  if(!deleted) return; // deleteOrder عرضت سبب الفشل — لا تشيلها من القائمة ولا تقول "تم"
-  appData.orders = appData.orders.filter(o=>o.id!==orderId);
-  await purgeEditProposalsForOrder(orderId);
-  renderKPIs();
-  renderTable();
-  // حذف طلبية من داخل نافذتها المفتوحة فوق شاشة سداد التشاليح (closeModal فيها بيرجّع الشاشة
-  // فورًا قبل ما الحذف يخلص، انظر modalCloseCallback) بيسيب الطلبية المحذوفة ظاهرة بالقائمة
-  // لحد تحديث لاحق — نحدّثها هون صراحة لو هي الشاشة الظاهرة حاليًا
-  const scrapRoot = document.getElementById('scrapyard-root');
-  if(scrapRoot && scrapRoot.style.display !== 'none' && scrapyardCurrentScreen === 'settlement'){
-    loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
-  }
-  showToast('تم حذف الطلبية', 'ok');
-}
-
 function confirmDelete(orderId){
   const order = appData.orders.find(o=>o.id===orderId);
-  // طلبية ناقصها التأكيد أو التوريد ما فيها أي التزام مالي أو أرقام دخلت مؤشرات/تقارير فعليًا
-  // بعد (dueToScrapyard/dueToSuppliers/waitingAmerPayment وغيرها كلها مشروطة بـsupplied، انظر
-  // [[feedback_partech_supplied_gate_consistency]]) — فحذفها مباشرة بدون مربع تأكيد إضافي
-  // (طلب مهاب 2026-08-21). التأكيد يضل مطلوب بس للطلبية المؤكدة والموردة الاثنين معًا.
-  if(order && (!order.confirmed || !order.supplied)){
-    performOrderDelete(orderId);
-    return;
-  }
   confirmAction({
     title: 'حذف الطلبية '+(order?order.orderNumber:'')+'؟',
     message: 'هذا الإجراء نهائي ولا يمكن التراجع عنه.',
     confirmLabel: 'تأكيد الحذف',
     dangerous: true,
-    onConfirm: ()=> performOrderDelete(orderId)
+    onConfirm: async ()=>{
+      const deleted = await deleteOrder(orderId);
+      if(!deleted) return; // deleteOrder عرضت سبب الفشل — لا تشيلها من القائمة ولا تقول "تم"
+      appData.orders = appData.orders.filter(o=>o.id!==orderId);
+      await purgeEditProposalsForOrder(orderId);
+      renderKPIs();
+      renderTable();
+      // حذف طلبية من داخل نافذتها المفتوحة فوق شاشة سداد التشاليح (closeModal فيها بيرجّع الشاشة
+      // فورًا قبل ما الحذف يخلص، انظر modalCloseCallback) بيسيب الطلبية المحذوفة ظاهرة بالقائمة
+      // لحد تحديث لاحق — نحدّثها هون صراحة لو هي الشاشة الظاهرة حاليًا
+      const scrapRoot = document.getElementById('scrapyard-root');
+      if(scrapRoot && scrapRoot.style.display !== 'none' && scrapyardCurrentScreen === 'settlement'){
+        loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
+      }
+      showToast('تم حذف الطلبية', 'ok');
+    }
   });
 }
 
@@ -6692,6 +6684,12 @@ function composeKey(fieldKey, partId){ return (partId||'order') + '::' + fieldKe
 /* بعد "تم التوريد"، غير المخوّلين ما يقدروا يعدّلوا مباشرة — لازم طلب. المخوّلين وغير الطلبيات
    الموردة يضلوا بنفس السلوك القديم (تعديل حر). */
 function fieldGated(){ return !!(draft && draft.supplied) && !hasElevatedAccess(); }
+
+// حذف الطلبية بوابة مختلفة عن fieldGated (اللي بتفحص التوريد بس): غير المخوّل (زي عبد الرحمن)
+// يقدر يحذف الطلبية مباشرة بس وهي لسه غير مؤكدة وغير موردة معًا (ما دخلت أي مؤشر "طلبيات مؤكدة"
+// ولا صار فيها أي التزام مالي فعلي). أي طلبية تأكّدت أو اتوردت (أي وحدة منهم) لازم تمر بطلب حذف
+// زي باقي التعديلات المخوّلة. (طلب مهاب 2026-08-21)
+function orderDeleteGated(){ return !!(draft && (draft.confirmed || draft.supplied)) && !hasElevatedAccess(); }
 
 function pendingFieldProposal(fieldKey, partId){
   if(!draft) return null;
