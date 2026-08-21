@@ -3855,6 +3855,15 @@ async function onSaveOrder(){
     }));
   if(cleanedParts.length===0){ showToast('لازم تضيف وصف لقطعة وحدة على الأقل', 'error'); return false; }
 
+  // تذكير غير مانع للحفظ (مو تحقق إلزامي زي رقم الطلب/وصف القطعة) — حقل المورد أصلًا ما يظهر
+  // إلا للمخوّلين، فالتذكير ما له معنى لغير المخوّل (ما يقدر يشوف الحقل أصلًا ليتصرف بالتذكير)
+  if(hasElevatedAccess()){
+    const activeCleanedParts = draft.partsSelectionEnabled ? cleanedParts.filter(p=>p.included!==false) : cleanedParts;
+    if(activeCleanedParts.some(p=>!p.supplierId)){
+      showToast('تذكير: في قطعة أو أكثر بدون مورد محدد', 'error');
+    }
+  }
+
   const paymentsMissingMethod = (draft.customerPayments||[]).some(p=>
     !p.returnAdjustment && p.amount!=='' && p.amount!=null && Number(p.amount)>0 && !p.method
   );
