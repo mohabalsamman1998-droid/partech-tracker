@@ -3855,11 +3855,14 @@ async function onSaveOrder(){
     }));
   if(cleanedParts.length===0){ showToast('لازم تضيف وصف لقطعة وحدة على الأقل', 'error'); return false; }
 
-  // تذكير غير مانع للحفظ — للمبيعات (دور 'full' غير المخوّل، مثل عبد الرحمن) بس، مو لمهاب/همام/
+  // تذكير مانع لحظيًا — للمبيعات (دور 'full' غير المخوّل، مثل عبد الرحمن) بس، مو لمهاب/همام/
   // بشار. العميل بالطلبية اختياري فعليًا (نفس فحص المشتريات/المورد بشاشة عامر، انظر
-  // onSaveQuotePricing) — التذكير بس ينبّه، ما يمنع الحفظ.
+  // onSaveQuotePricing)، فالحفظ نفسه ما بيترفض — بس لازم يقرأ التذكير ويضغط "تأكيد" قبل ما يكمل
+  // (بدل توست عادي كان ممكن يفوته). نفس ملاحظة escListener فوق: نافذة التذكير فرعية.
   if(currentUserRole==='full' && !hasElevatedAccess() && !draft.customerId){
-    showToast('تذكير: ما حددت عميل لهذه الطلبية', 'error');
+    document.removeEventListener('keydown', escListener);
+    await confirmReminder('ما حددت عميل لهذه الطلبية.');
+    document.addEventListener('keydown', escListener);
   }
 
   const paymentsMissingMethod = (draft.customerPayments||[]).some(p=>
@@ -4838,11 +4841,15 @@ async function onSaveQuotePricing(){
   const cleanedParts = cleanedQuoteParts();
   if(cleanedParts.length===0){ showToast('لازم تضيف وصف لقطعة وحدة على الأقل', 'error'); return; }
 
-  // تذكير غير مانع للحفظ — للمشتريات (عامر) بس. قطعة لسه ما تحدد نوعها (used===null) مستثناة،
-  // حقل المورد أصلًا ما يظهر له لحد ما يحسم النوع أول (نفس شرط supplierFieldHtml بـquotePartRowHtml)
+  // تذكير مانع لحظيًا — للمشتريات (عامر) بس. قطعة لسه ما تحدد نوعها (used===null) مستثناة،
+  // حقل المورد أصلًا ما يظهر له لحد ما يحسم النوع أول (نفس شرط supplierFieldHtml بـquotePartRowHtml).
+  // الحفظ نفسه ما بيترفض — بس لازم يقرأ التذكير ويضغط "تأكيد" قبل ما يكمل (بدل توست عادي كان
+  // ممكن يفوته). نفس ملاحظة quoteEscListener بـcheckQuoteSaveConflict فوق: نافذة التذكير فرعية.
   if(currentUserRole==='scrapyard' && !hasElevatedAccess()){
     if(cleanedParts.some(p=>p.used!==null && !p.supplierId)){
-      showToast('تذكير: في قطعة أو أكثر بدون مورد محدد', 'error');
+      document.removeEventListener('keydown', quoteEscListener);
+      await confirmReminder('في قطعة أو أكثر بدون مورد محدد.');
+      document.addEventListener('keydown', quoteEscListener);
     }
   }
 
@@ -4879,7 +4886,9 @@ async function onSaveAndSendQuotePricing(){
   // نفس تذكير onSaveQuotePricing — انظر تعليقها
   if(currentUserRole==='scrapyard' && !hasElevatedAccess()){
     if(cleanedParts.some(p=>p.used!==null && !p.supplierId)){
-      showToast('تذكير: في قطعة أو أكثر بدون مورد محدد', 'error');
+      document.removeEventListener('keydown', quoteEscListener);
+      await confirmReminder('في قطعة أو أكثر بدون مورد محدد.');
+      document.addEventListener('keydown', quoteEscListener);
     }
   }
 
@@ -5077,7 +5086,7 @@ function confirmAction(opts){
         '<div class="modal-title">'+escapeHtml(opts.title||'')+'</div>' +
         (opts.message ? '<p class="modal-sub">'+escapeHtml(opts.message)+'</p>' : '') +
         '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' +
-          '<button type="button" class="btn btn-ghost" id="confirm-action-cancel-btn">'+escapeHtml(opts.cancelLabel||'إلغاء')+'</button>' +
+          (opts.onlyConfirm ? '' : '<button type="button" class="btn btn-ghost" id="confirm-action-cancel-btn">'+escapeHtml(opts.cancelLabel||'إلغاء')+'</button>') +
           '<button type="button" class="btn '+(opts.dangerous?'btn-danger':'btn-primary')+'" id="confirm-action-ok-btn">'+escapeHtml(opts.confirmLabel||'تأكيد')+'</button>' +
         '</div>' +
       '</div>' +
@@ -5085,10 +5094,28 @@ function confirmAction(opts){
   root.classList.add('modal-open');
   const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
   root.querySelector('[data-close-confirm]').addEventListener('click', e=>{
+    // onlyConfirm = مربع تذكير لازم يُقرأ صراحة: الضغط برّا المربع ما يسكّره، لازم يضغط زر التأكيد
+    if(opts.onlyConfirm) return;
     if(e.target.hasAttribute('data-close-confirm')){ close(); if(opts.onCancel) opts.onCancel(); }
   });
-  root.querySelector('#confirm-action-cancel-btn').addEventListener('click', ()=>{ close(); if(opts.onCancel) opts.onCancel(); });
+  const cancelBtn = root.querySelector('#confirm-action-cancel-btn');
+  if(cancelBtn) cancelBtn.addEventListener('click', ()=>{ close(); if(opts.onCancel) opts.onCancel(); });
   root.querySelector('#confirm-action-ok-btn').addEventListener('click', ()=>{ close(); if(opts.onConfirm) opts.onConfirm(); });
+}
+
+// مربع تذكير مانع: زر "تأكيد" واحد بس، ما بينقفل إلا بالضغط عليه (onlyConfirm فوق) — يرجّع وعد
+// يتحقق لما المستخدم يقرأ التذكير ويأكّده صراحة. يُستخدم قبل حفظ فيه نقص غير مانع للحفظ بذاته
+// (عميل غير محدد، مورد غير محدد...) حتى ما يفوت المستخدم التنبيه زي ما كان ممكن يصير بتوست عادي.
+function confirmReminder(message){
+  return new Promise(resolve=>{
+    confirmAction({
+      title: 'تذكير',
+      message,
+      confirmLabel: 'تأكيد',
+      onlyConfirm: true,
+      onConfirm: ()=> resolve(true)
+    });
+  });
 }
 
 /* ---------- delete ---------- */
