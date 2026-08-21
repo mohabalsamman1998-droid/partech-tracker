@@ -5119,29 +5119,39 @@ function confirmReminder(message){
 }
 
 /* ---------- delete ---------- */
+async function performOrderDelete(orderId){
+  const deleted = await deleteOrder(orderId);
+  if(!deleted) return; // deleteOrder عرضت سبب الفشل — لا تشيلها من القائمة ولا تقول "تم"
+  appData.orders = appData.orders.filter(o=>o.id!==orderId);
+  await purgeEditProposalsForOrder(orderId);
+  renderKPIs();
+  renderTable();
+  // حذف طلبية من داخل نافذتها المفتوحة فوق شاشة سداد التشاليح (closeModal فيها بيرجّع الشاشة
+  // فورًا قبل ما الحذف يخلص، انظر modalCloseCallback) بيسيب الطلبية المحذوفة ظاهرة بالقائمة
+  // لحد تحديث لاحق — نحدّثها هون صراحة لو هي الشاشة الظاهرة حاليًا
+  const scrapRoot = document.getElementById('scrapyard-root');
+  if(scrapRoot && scrapRoot.style.display !== 'none' && scrapyardCurrentScreen === 'settlement'){
+    loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
+  }
+  showToast('تم حذف الطلبية', 'ok');
+}
+
 function confirmDelete(orderId){
   const order = appData.orders.find(o=>o.id===orderId);
+  // طلبية ناقصها التأكيد أو التوريد ما فيها أي التزام مالي أو أرقام دخلت مؤشرات/تقارير فعليًا
+  // بعد (dueToScrapyard/dueToSuppliers/waitingAmerPayment وغيرها كلها مشروطة بـsupplied، انظر
+  // [[feedback_partech_supplied_gate_consistency]]) — فحذفها مباشرة بدون مربع تأكيد إضافي
+  // (طلب مهاب 2026-08-21). التأكيد يضل مطلوب بس للطلبية المؤكدة والموردة الاثنين معًا.
+  if(order && (!order.confirmed || !order.supplied)){
+    performOrderDelete(orderId);
+    return;
+  }
   confirmAction({
     title: 'حذف الطلبية '+(order?order.orderNumber:'')+'؟',
     message: 'هذا الإجراء نهائي ولا يمكن التراجع عنه.',
     confirmLabel: 'تأكيد الحذف',
     dangerous: true,
-    onConfirm: async ()=>{
-      const deleted = await deleteOrder(orderId);
-      if(!deleted) return; // deleteOrder عرضت سبب الفشل — لا تشيلها من القائمة ولا تقول "تم"
-      appData.orders = appData.orders.filter(o=>o.id!==orderId);
-      await purgeEditProposalsForOrder(orderId);
-      renderKPIs();
-      renderTable();
-      // حذف طلبية من داخل نافذتها المفتوحة فوق شاشة سداد التشاليح (closeModal فيها بيرجّع الشاشة
-      // فورًا قبل ما الحذف يخلص، انظر modalCloseCallback) بيسيب الطلبية المحذوفة ظاهرة بالقائمة
-      // لحد تحديث لاحق — نحدّثها هون صراحة لو هي الشاشة الظاهرة حاليًا
-      const scrapRoot = document.getElementById('scrapyard-root');
-      if(scrapRoot && scrapRoot.style.display !== 'none' && scrapyardCurrentScreen === 'settlement'){
-        loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
-      }
-      showToast('تم حذف الطلبية', 'ok');
-    }
+    onConfirm: ()=> performOrderDelete(orderId)
   });
 }
 
