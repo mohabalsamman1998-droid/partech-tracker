@@ -5395,10 +5395,6 @@ function computeVatAmount(subtotalInclVat){
 }
 
 let docState = null; // {orderId, type, data}
-// نفس مبدأ modalCloseCallback بالضبط — بيتفعّل لما الفاتورة تُفتح من مكان غير نافذة تعديل الطلبية
-// (زي صف بكشف الحساب)، حتى إغلاقها يرجّع المستخدم لمكانه بدل ما يرجّعه دايمًا لنافذة تعديل
-// الطلبية (سلوك closeDocViewAndReturn الافتراضي). انظر openCustomerStatementView.
-let docCloseCallback = null;
 
 function partsTableRowsHtml(order){
   return orderActiveParts(order).filter(p=>!p.returned).map(p=>{
@@ -5510,13 +5506,9 @@ function docSheetHtml(order, type, data){
 
 function openDocumentView(orderId, type){
   const order = appData.orders.find(o=>o.id===orderId);
-  // المستند ما رح ينفتح فعليًا — لو كان استدعاء الفتح جهّز docCloseCallback قبل هالسطر (زي فتح
-  // الفاتورة من صف بكشف الحساب)، لازم نفضّيه هون وإلا يضل معلّق ويشتغل غلط لاحقًا مع أول إغلاق
-  // مستند تاني ما إله علاقة فيه. نفس مبدأ modalCloseCallback بالضبط.
-  if(!order){ docCloseCallback = null; return; }
+  if(!order) return;
   const t = orderTotals(order);
   if(order.parts.length===0 || !t.fullyPriced){
-    docCloseCallback = null;
     showToast('لازم تسعّر كل القطع قبل إصدار '+(type==='invoice'?'الفاتورة':'عرض السعر'), 'error');
     return;
   }
@@ -5612,12 +5604,6 @@ function closeDocView(){
 function closeDocViewAndReturn(){
   const orderId = docState ? docState.orderId : null;
   closeDocView();
-  if(docCloseCallback){
-    const cb = docCloseCallback;
-    docCloseCallback = null;
-    cb();
-    return;
-  }
   if(orderId) openModal('edit', orderId);
 }
 /* Esc كان يقفل شاشة المستند بدون حفظ — أي شي انكتب بالفاتورة (اسم العميل، السيارة، VIN...)
@@ -6357,16 +6343,9 @@ function openCustomerStatementView(customerId){
   root.querySelectorAll('[data-open-order]').forEach(row=>{
     row.addEventListener('click', ()=>{
       // ضغطة زر ✏️ أو صندوق تعديل العنوان (input/💾) بتوقف وصول الحدث هون بـstopPropagation
-      // (انظر ربطها فوق) — فما لازم فحص إضافي هون، أي ضغطة توصل لهذا المستوى تعني فتح الفاتورة
-      const orderId = row.getAttribute('data-open-order');
-      // فتح الفاتورة المرتبطة مباشرة (مو نافذة تعديل الطلبية) — كشف الحساب أصلًا مستند للعرض/
-      // المشاركة، فطبيعي الانتقال منه لمستند تاني (الفاتورة) بدل شاشة تعديل بيانات. closeStatementView()
-      // لازم تسبق (بتصفّر statementCustomerId وتشيل statementEscListener — بدونها بيتراكم فوق
-      // docEscListener وEsc بيقفل الفاتورة وكشف الحساب معًا بتضارب). docCloseCallback بيرجّعنا لكشف
-      // الحساب لما الفاتورة تنسكّر، نفس مبدأ modalCloseCallback بالضبط.
-      docCloseCallback = ()=> openCustomerStatementView(customerId);
+      // (انظر ربطها فوق) — فما لازم فحص إضافي هون، أي ضغطة توصل لهذا المستوى تعني فتح الطلبية
       closeStatementView();
-      openDocumentView(orderId, 'invoice');
+      openModal('edit', row.getAttribute('data-open-order'));
     });
   });
   // إعادة الرسم (تعديل عنوان، تبديل خيار الإظهار) بتنادي هالدالة من جديد بدون المرور بـ
