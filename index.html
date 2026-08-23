@@ -863,6 +863,11 @@
   .doc-footer-note-input div:last-child{margin-bottom:0;}
   .doc-footer-note-input:focus{outline:none;}
 
+  /* فواتير مرفقة بكشف الحساب ("إرفاق الفواتير") — كل فاتورة تبدأ بصفحة جديدة عند الطباعة/PDF،
+     وخط فاصل واضح على الشاشة (بدون تقسيم صفحات) حتى تبان منفصلة عن بعضها وعن جدول الكشف فوقها */
+  .doc-attached-invoice{page-break-before:always;break-before:page;margin-top:26px;padding-top:22px;border-top:2px dashed #ccc;}
+  .doc-attached-invoice-label{font-family:'Cairo',sans-serif;font-weight:700;font-size:12px;color:#707070;margin-bottom:14px;}
+
   @media print{
     /* visibility:hidden بتخفي الشكل بس وبتحتفظ بمساحة العنصر — فطباعة من قائمة المتصفح كانت
        تطلّع صفحات فاضية للتطبيق قبل/بعد المستند. display:none بتشيلها من التخطيط كليًا. */
@@ -5508,6 +5513,65 @@ function docSheetHtml(order, type, data){
   );
 }
 
+/* نسخة غير تفاعلية من نفس محتوى docSheetHtml (بدون توّلبار ولا حقول قابلة للتعديل ولا id مكررة)
+   — تُستخدم لإرفاق فاتورة كل طلبية داخل ورقة كشف الحساب (#doc-sheet) نفسها عند تفعيل "إرفاق
+   الفواتير" (انظر customerStatementHtml). تعرض آخر بيانات محفوظة لفاتورة الطلبية (order.invoiceDoc)
+   لو موجودة وإلا افتراضية فاضية — نفس منطق الدمج بـopenDocumentView بالضبط. طلبية لسه ما اكتملت
+   تسعيرتها (نفس شرط openDocumentView) ما إلها فاتورة فعلية بعد، فبترجع فاضية وتُستثنى بصمت. */
+function attachedInvoiceHtml(order){
+  const liveTotals = orderTotals(order);
+  if(order.parts.length===0 || !liveTotals.fullyPriced) return '';
+  const data = Object.assign(
+    { number: order.orderNumber, date: todayNumeric(), customerName:'', carModel:'', vin:'', customerCR:'', footerNote: defaultFooterNoteFor('invoice'), showVat: false },
+    order.invoiceDoc || {}
+  );
+  const t = data.totalsSnapshot || liveTotals;
+  const subtotal = t.partsSellTotal;
+  const feePercent = t.feePercent;
+  const feeEnabled = t.feeEnabled;
+  const fee = t.feeAmount;
+  const grand = t.sellTotal;
+  const showVat = data.showVat !== false;
+  const vatAmount = computeVatAmount(subtotal);
+  return (
+    '<div class="doc-attached-invoice">' +
+      '<div class="doc-attached-invoice-label no-print">🧾 فاتورة مرفقة — طلبية '+escapeHtml(order.orderNumber)+'</div>' +
+      '<div class="doc-header-band">' +
+        '<div class="doc-brand-col">' +
+          '<img class="doc-logo-img" src="'+PARTECH_LOGO_DATA_URI+'" alt="PARTECH">' +
+          '<div class="doc-co-info">س.ت: 1009069725 &nbsp;·&nbsp; ج: 0581206709</div>' +
+        '</div>' +
+        '<div class="doc-identity-col">' +
+          '<div class="doc-type-badge">فاتورة نقدية</div>' +
+          '<div class="doc-type-badge-en">CASH INVOICE</div>' +
+          '<div class="doc-identity-row"><span class="doc-identity-label">رقم المستند</span><span class="num">'+escapeHtml(data.number)+'</span></div>' +
+          '<div class="doc-identity-row"><span class="doc-identity-label">التاريخ</span><span class="num">'+escapeHtml(data.date)+'</span></div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="doc-billto">' +
+        '<span class="doc-billto-label">العميل</span>' +
+        '<div class="doc-customer-name-input">'+escapeHtml(data.customerName)+'</div>' +
+        (data.customerCR ? '<div class="doc-meta-field field-cr doc-cr-line"><span>ر.ض العميل</span><span>'+escapeHtml(data.customerCR)+'</span></div>' : '') +
+        '<div class="doc-billto-extra">' +
+          (data.carModel ? '<div class="doc-meta-field field-car"><span>السيارة</span><span>'+escapeHtml(data.carModel)+'</span></div>' : '') +
+          (data.vin ? '<div class="doc-meta-field field-vin"><span>رقم الهيكل VIN</span><span>'+escapeHtml(data.vin)+'</span></div>' : '') +
+        '</div>' +
+      '</div>' +
+      '<table class="doc-table"><thead><tr><th>البيـان</th><th>العدد</th><th>السعر الإفرادي</th><th>السعر الإجمالي</th></tr></thead>' +
+      '<tbody>'+(Array.isArray(data.partsSnapshot) ? partsTableRowsHtmlFromSnapshot(data.partsSnapshot) : partsTableRowsHtml(order))+'</tbody></table>' +
+      '<div class="doc-totals">' +
+        (showVat ? '<div class="doc-totals-row"><span>قيمة الضريبة المضافة (15%)</span><span class="num">'+fmtNum(vatAmount)+' ريال</span></div>' : '') +
+        (showVat ? '<div class="doc-totals-row"><span>مجموع سعر القطع شامل الضريبة</span><span class="num">'+fmtNum(subtotal)+' ريال</span></div>' : '') +
+        (feeEnabled ? '<div class="doc-totals-row"><span>رسوم خدمات وتوصيل ('+feePercent+'%)</span><span class="num">'+fmtNum(fee)+' ريال</span></div>' : '') +
+        (t.serviceFeeEnabled && t.serviceFeeAmount>0 ? '<div class="doc-totals-row"><span>رسوم خدمات ('+t.serviceFeePercent+'%)</span><span class="num">'+fmtNum(t.serviceFeeAmount)+' ريال</span></div>' : '') +
+        (t.deliveryFeeEnabled && t.deliveryFeeAmount>0 ? '<div class="doc-totals-row"><span>أجور التوصيل</span><span class="num">'+fmtNum(t.deliveryFeeAmount)+' ريال</span></div>' : '') +
+        '<div class="doc-totals-row grand"><span>الإجمالي المستحق</span><span class="num">'+fmtNum(grand)+' ريال</span></div>' +
+      '</div>' +
+      '<div class="doc-footer-note-input">'+footerNoteLinesHtml(data.footerNote)+'</div>' +
+    '</div>'
+  );
+}
+
 function openDocumentView(orderId, type){
   const order = appData.orders.find(o=>o.id===orderId);
   // المستند ما رح ينفتح فعليًا — لو كان استدعاء الفتح جهّز docCloseCallback قبل هالسطر (زي فتح
@@ -5981,6 +6045,7 @@ async function shareDoc(){
 let statementCustomerId = null;
 let statementShowPaid = true;
 let statementShowRefunds = true;
+let statementAttachInvoices = false;
 
 function statementPdfFilename(customer){
   // اسم الملف لازم ASCII بالكامل (بدون عربي ولا مسافات) — اسم عربي كان يطلع مشفّر/معطوب
@@ -6028,8 +6093,20 @@ function customerStatementHtml(customer, ongoing, past, refunds, opts){
   opts = opts || {};
   const showPaid = opts.showPaid !== false;
   const showRefunds = opts.showRefunds !== false;
+  const attachInvoices = !!opts.attachInvoices;
   const { totalRemaining, totalRefunds, net } = computeStatementTotals(ongoing, refunds, opts);
   const label = customer.name || customer.phone || 'عميل';
+  // فواتير الطلبيات الظاهرة فعليًا بالكشف بس (جارية دايمًا + سابقة لو showPaid) — نفس الطلبيات
+  // المعروضة بالجدولين فوق، لا أكثر ولا أقل. attachedInvoiceHtml بترجع فاضية لو الطلبية لسه ما
+  // اكتملت تسعيرتها، فبتُستثنى بصمت بدون حاجة لفلترة إضافية هون.
+  const attachedInvoicesHtml = attachInvoices
+    ? (ongoing.concat(showPaid ? past : []))
+        .map(r=>{
+          const order = (appData.orders||[]).find(o=>o.id===r.orderId);
+          return order ? attachedInvoiceHtml(order) : '';
+        })
+        .join('')
+    : '';
   return (
     '<div class="doc-overlay">' +
       '<div class="doc-toolbar no-print">' +
@@ -6062,9 +6139,10 @@ function customerStatementHtml(customer, ongoing, past, refunds, opts){
           '</div>' +
           (customer.phone ? '<div class="doc-meta-field field-car"><span>الجوال</span><span>'+escapeHtml(customer.phone)+'</span></div>' : '') +
         '</div>' +
-        '<div class="doc-vat-toggle no-print" style="gap:18px;">' +
+        '<div class="doc-vat-toggle no-print" style="gap:18px;flex-wrap:wrap;">' +
           '<label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="statement-show-paid-input" '+(showPaid?'checked':'')+'><span>إظهار المسدد</span></label>' +
           '<label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="statement-show-refunds-input" '+(showRefunds?'checked':'')+'><span>إظهار المرتجع</span></label>' +
+          '<label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="statement-attach-invoices-input" '+(attachInvoices?'checked':'')+'><span>إرفاق الفواتير</span></label>' +
         '</div>' +
         '<div class="doc-totals" style="margin-bottom:18px;">' +
           '<div class="doc-totals-row"><span>مستحق</span><span class="num">'+fmtNum(totalRemaining)+' ريال</span></div>' +
@@ -6091,6 +6169,7 @@ function customerStatementHtml(customer, ongoing, past, refunds, opts){
           '</tbody></table>'
         ) : '') +
         (!ongoing.length && !past.length ? '<p class="add-part-locked-hint">ما فيه طلبيات مسجّلة لهذا العميل بعد</p>' : '') +
+        attachedInvoicesHtml +
       '</div>' +
     '</div>'
   );
@@ -6316,14 +6395,15 @@ function startEditStatementCustomerName(customerId, currentName, cellEl){
 function openCustomerStatementView(customerId){
   const customer = (appData.customers||[]).find(c=>c.id===customerId);
   if(!customer) return;
-  // فتح جديد كليًا (عميل مختلف، أو أول فتح) يرجّع الخيارين لوضعهما الافتراضي (إظهار الكل) —
-  // إعادة الرسم بسبب تعديل عنوان أو تبديل نفس الخيارين يجب تضل محافظة على اختيار المستخدم الحالي
-  if(statementCustomerId !== customerId){ statementShowPaid = true; statementShowRefunds = true; }
+  // فتح جديد كليًا (عميل مختلف، أو أول فتح) يرجّع الخيارات لوضعها الافتراضي (إظهار الكل، بدون
+  // إرفاق فواتير) — إعادة الرسم بسبب تعديل عنوان أو تبديل نفس الخيارات يجب تضل محافظة على اختيار
+  // المستخدم الحالي
+  if(statementCustomerId !== customerId){ statementShowPaid = true; statementShowRefunds = true; statementAttachInvoices = false; }
   statementCustomerId = customerId;
   const { ongoing, past } = customerOrderHistory(customerId);
   const refunds = customerRefundsPending(customerId);
   const root = document.getElementById('doc-root');
-  root.innerHTML = customerStatementHtml(customer, ongoing, past, refunds, { showPaid: statementShowPaid, showRefunds: statementShowRefunds });
+  root.innerHTML = customerStatementHtml(customer, ongoing, past, refunds, { showPaid: statementShowPaid, showRefunds: statementShowRefunds, attachInvoices: statementAttachInvoices });
   root.classList.add('doc-open');
   root.querySelector('#statement-close-btn').addEventListener('click', closeStatementView);
   root.querySelector('#statement-copy-btn').addEventListener('click', copyStatementToClipboard);
@@ -6336,6 +6416,10 @@ function openCustomerStatementView(customerId){
   });
   root.querySelector('#statement-show-refunds-input').addEventListener('change', e=>{
     statementShowRefunds = e.target.checked;
+    openCustomerStatementView(customerId);
+  });
+  root.querySelector('#statement-attach-invoices-input').addEventListener('change', e=>{
+    statementAttachInvoices = e.target.checked;
     openCustomerStatementView(customerId);
   });
   const editNameBtn = root.querySelector('[data-edit-customer-name]');
