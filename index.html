@@ -602,6 +602,20 @@
   .used-badge{align-self:flex-start;font-size:10px;font-weight:700;color:var(--amber);background:var(--amber-dim);border:1px solid var(--amber-line);border-radius:4px;padding:1px 8px;cursor:pointer;font-family:'Tajawal',sans-serif;}
   .used-badge:hover{filter:brightness(1.1);}
   .used-badge-off{color:var(--text-faint);background:var(--surface-2);border-color:var(--border-soft);}
+  /* حالة نظافة القطعة المستعملة — بادج للقراءة بنافذة الطلبية العادية (كل الأدوار)، وأزرار دائرية
+     قابلة للضغط (عامر بس) بشاشة تسعير المشتريات. نفس ألوان --green/--amber/--rust القياسية بالتطبيق. */
+  .part-condition-badge{align-self:flex-start;font-size:10px;font-weight:700;border-radius:4px;padding:1px 8px;font-family:'Tajawal',sans-serif;}
+  .part-condition-badge.part-condition-clean{color:var(--green);background:var(--green-dim);border:1px solid var(--green-line);}
+  .part-condition-badge.part-condition-clean-notes{color:var(--amber);background:var(--amber-dim);border:1px solid var(--amber-line);}
+  .part-condition-badge.part-condition-dirty{color:var(--rust);background:var(--rust-dim);border:1px solid var(--rust-line);}
+  .mini-label-condition{color:var(--text-dim);}
+  .part-condition-group{display:flex;gap:6px;align-items:center;height:34px;}
+  .part-condition-swatch{width:19px;height:19px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0;opacity:.4;transition:opacity .15s,transform .15s;flex-shrink:0;}
+  .part-condition-swatch:hover{opacity:.75;}
+  .part-condition-swatch.part-condition-selected{opacity:1;border-color:var(--text);transform:scale(1.1);}
+  .part-condition-swatch.part-condition-clean{background:var(--green);}
+  .part-condition-swatch.part-condition-clean-notes{background:var(--amber);}
+  .part-condition-swatch.part-condition-dirty{background:var(--rust);}
   .part-price-group{display:flex;gap:8px;flex-wrap:wrap;flex:1 1 auto;}
   .mini-label{display:flex;flex-direction:column;gap:4px;font-size:10.5px;color:var(--text-faint);font-weight:700;}
   .mini-label-cost{color:var(--rust);}
@@ -2569,6 +2583,7 @@ function partRowHtml(p, i){
         descHtml +
       '</div>' +
       usedBadgeHtml +
+      partConditionBadgeHtml(p) +
     '</div>' +
     '<div class="part-price-group">' +
       '<label class="mini-label">العدد'+qtyHtml+'</label>' +
@@ -4215,6 +4230,33 @@ function bindQuotePartAddControls(){
   });
 }
 
+/* حالة نظافة القطعة المستعملة — يحددها المشتريات (عامر) إلزاميًا قبل الحفظ (انظر onSaveQuotePricing)،
+   وتظهر للمبيعات بعدين بنافذة الطلبية العادية للقراءة بس (طلب مهاب 2026-08-26). قطعة جديدة
+   (used===false) ما إلها حالة نظافة أصلًا — المفهوم خاص بالمستعمل حصرًا. */
+const PART_CONDITION_OPTIONS = [
+  { value:'clean',       label:'نظيف تماما',       cls:'part-condition-clean' },
+  { value:'clean_notes', label:'نظيف مع ملاحظات', cls:'part-condition-clean-notes' },
+  { value:'dirty',       label:'غير نظيف',         cls:'part-condition-dirty' }
+];
+function partConditionMeta(condition){
+  return PART_CONDITION_OPTIONS.find(o=>o.value===condition) || null;
+}
+// بادج للقراءة بس — نافذة الطلبية العادية (partRowHtml)، كل الأدوار (مبيعات ومخوّلين)
+function partConditionBadgeHtml(p){
+  if(!p.used || !p.condition) return '';
+  const meta = partConditionMeta(p.condition);
+  return meta ? '<span class="part-condition-badge '+meta.cls+'">'+escapeHtml(meta.label)+'</span>' : '';
+}
+// أزرار دائرية ملوّنة قابلة للضغط (عامر بس) — انظر bindQuotePartRowEvents لربط data-set-condition
+function partConditionSwatchesHtml(p){
+  return '<div class="part-condition-group" role="radiogroup" aria-label="حالة القطعة">' +
+    PART_CONDITION_OPTIONS.map(opt=>
+      '<button type="button" class="part-condition-swatch '+opt.cls+(p.condition===opt.value?' part-condition-selected':'')+'" ' +
+        'data-set-condition="'+opt.value+'" title="'+escapeHtml(opt.label)+'" aria-label="'+escapeHtml(opt.label)+'" aria-pressed="'+(p.condition===opt.value)+'"></button>'
+    ).join('') +
+  '</div>';
+}
+
 function quotePartRowHtml(p, i){
   const costVal = (p.costPrice===''||p.costPrice==null) ? '' : p.costPrice;
   const qtyVal = (p.qty===''||p.qty==null) ? 1 : p.qty;
@@ -4243,6 +4285,15 @@ function quotePartRowHtml(p, i){
     '</label>'
   );
 
+  // حالة النظافة خاصة بالمستعمل حصرًا (p.used===true بالضبط، مو أي قطعة "محسومة النوع" زي حقل
+  // المورد فوق) — القطعة الجديدة مفهوم النظافة ما ينطبق عليها أصلًا. عامر يحددها هون (أزرار قابلة
+  // للضغط جنب المورد وسعر الشراء). المبيعات تشوفها للقراءة بس، بنفس مكان بادج usedBadgeHtml تحت
+  // الوصف — قبل حتى ما تعتمد التسعيرة وتصير طلبية (نفس مبدأ partConditionBadgeHtml بـpartRowHtml).
+  const conditionFieldHtml = (readOnly && p.used===true) ? (
+    '<label class="mini-label mini-label-condition">حالة القطعة'+partConditionSwatchesHtml(p)+'</label>'
+  ) : '';
+  const conditionBadgeForSalesHtml = readOnly ? '' : partConditionBadgeHtml(p);
+
   // ملاحظات المبيعات: قابلة للتعديل عند المبيعات، وللقراءة فقط عند عامر (يشوفها بس)
   // بدون بادئة "ملاحظة المبيعات:" — النص يظهر فورًا كما هو (طلب صريح، مو تسمية تلقائية)
   const salesNotesHtml = readOnly
@@ -4266,11 +4317,13 @@ function quotePartRowHtml(p, i){
       salesNotesHtml +
       purchasingNotesHtml +
       usedBadgeHtml +
+      conditionBadgeForSalesHtml +
     '</div>' +
     '<div class="part-price-group">' +
       '<label class="mini-label">العدد<input type="number" min="1" step="1" class="part-qty-input num" value="'+escapeHtml(qtyVal)+'"'+ro+'></label>' +
       '<label class="mini-label mini-label-cost">سعر الشراء<input type="number" min="0" step="0.01" class="part-cost-input num" value="'+escapeHtml(costVal)+'"></label>' +
       supplierFieldHtml +
+      conditionFieldHtml +
     '</div>' +
     '<button type="button" class="btn btn-sm part-whatsapp-btn" data-whatsapp-part="'+escapeHtml(p.id)+'" aria-label="إرسال صورة القطعة بجروب العمليات">📷 صورة</button>' +
     // زر الحذف متاح لعامر (المشتريات) كمان — قطعة ما قدر يوفّرها أو غير مطلوبة بعد المراجعة
@@ -4318,6 +4371,12 @@ function bindQuotePartRowEvents(){
     } else {
       const purchasingNotesInput = row.querySelector('.part-purchasing-notes-input');
       if(purchasingNotesInput) purchasingNotesInput.addEventListener('input', e=>{ part.purchasingNotes = e.target.value; });
+      row.querySelectorAll('[data-set-condition]').forEach(btn=>{
+        btn.addEventListener('click', ()=>{
+          part.condition = btn.getAttribute('data-set-condition');
+          refreshQuotePartsList();
+        });
+      });
     }
     // الحذف متاح للدورين الاثنين الآن — refreshQuotePartsList بتحدّث المجموع لحالها
     const removeBtn = row.querySelector('[data-remove-quote-part]');
@@ -4820,7 +4879,8 @@ async function persistScrapyardQuotePricing(order, quoteReady){
         costPrice: Math.max(0, Number(p.costPrice)||0),
         supplierId: p.supplierId || null,
         purchasingNotes: p.purchasingNotes || '',
-        used: p.used===null ? null : !!p.used
+        used: p.used===null ? null : !!p.used,
+        condition: p.condition || null
       })),
       p_quote_ready: !!quoteReady
     });
@@ -4848,6 +4908,13 @@ async function onSaveQuotePricing(){
   // أصلًا ما يظهر له لحد ما يحسم النوع أول (نفس شرط supplierFieldHtml بـquotePartRowHtml).
   if(cleanedParts.some(p=>p.used!==null && !p.supplierId)){
     showToast('لازم تحدد المورد لكل قطعة قبل الحفظ', 'error');
+    return;
+  }
+
+  // إلزامي دائمًا لكل قطعة مستعملة تحديدًا (used===true بالضبط) — القطعة الجديدة ما إلها حالة
+  // نظافة أصلًا (انظر conditionFieldHtml)
+  if(cleanedParts.some(p=>p.used===true && !p.condition)){
+    showToast('لازم تحدد حالة كل قطعة مستعملة (نظيف تماما / نظيف مع ملاحظات / غير نظيف) قبل الحفظ', 'error');
     return;
   }
 
@@ -4881,9 +4948,13 @@ async function onSaveAndSendQuotePricing(){
   const cleanedParts = cleanedQuoteParts();
   if(cleanedParts.length===0){ showToast('لازم تضيف وصف لقطعة وحدة على الأقل', 'error'); return; }
 
-  // نفس شرط onSaveQuotePricing — انظر تعليقها
+  // نفس شروط onSaveQuotePricing — انظر تعليقها
   if(cleanedParts.some(p=>p.used!==null && !p.supplierId)){
     showToast('لازم تحدد المورد لكل قطعة قبل الحفظ', 'error');
+    return;
+  }
+  if(cleanedParts.some(p=>p.used===true && !p.condition)){
+    showToast('لازم تحدد حالة كل قطعة مستعملة (نظيف تماما / نظيف مع ملاحظات / غير نظيف) قبل الحفظ', 'error');
     return;
   }
 
