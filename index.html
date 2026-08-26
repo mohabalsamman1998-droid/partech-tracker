@@ -4843,16 +4843,12 @@ async function onSaveQuotePricing(){
   const cleanedParts = cleanedQuoteParts();
   if(cleanedParts.length===0){ showToast('لازم تضيف وصف لقطعة وحدة على الأقل', 'error'); return; }
 
-  // تذكير مانع لحظيًا — للمشتريات (عامر) بس. قطعة لسه ما تحدد نوعها (used===null) مستثناة،
-  // حقل المورد أصلًا ما يظهر له لحد ما يحسم النوع أول (نفس شرط supplierFieldHtml بـquotePartRowHtml).
-  // الحفظ نفسه ما بيترفض — بس لازم يقرأ التذكير ويضغط "تأكيد" قبل ما يكمل (بدل توست عادي كان
-  // ممكن يفوته). نفس ملاحظة quoteEscListener بـcheckQuoteSaveConflict فوق: نافذة التذكير فرعية.
-  if(currentUserRole==='scrapyard' && !hasElevatedAccess()){
-    if(cleanedParts.some(p=>p.used!==null && !p.supplierId)){
-      document.removeEventListener('keydown', quoteEscListener);
-      await confirmReminder('في قطعة أو أكثر بدون مورد محدد.');
-      document.addEventListener('keydown', quoteEscListener);
-    }
+  // إلزامي دائمًا (صار حظر فعلي 2026-08-26 — كان تذكير غير مانع بس، انظر [[feedback_partech_faseal_terminology_and_return_pattern]]
+  // لتاريخ التعديلات على هالميزة). قطعة لسه ما تحدد نوعها (used===null) مستثناة، حقل المورد
+  // أصلًا ما يظهر له لحد ما يحسم النوع أول (نفس شرط supplierFieldHtml بـquotePartRowHtml).
+  if(cleanedParts.some(p=>p.used!==null && !p.supplierId)){
+    showToast('لازم تحدد المورد لكل قطعة قبل الحفظ', 'error');
+    return;
   }
 
   quoteDraft.parts = cleanedParts;
@@ -4885,13 +4881,10 @@ async function onSaveAndSendQuotePricing(){
   const cleanedParts = cleanedQuoteParts();
   if(cleanedParts.length===0){ showToast('لازم تضيف وصف لقطعة وحدة على الأقل', 'error'); return; }
 
-  // نفس تذكير onSaveQuotePricing — انظر تعليقها
-  if(currentUserRole==='scrapyard' && !hasElevatedAccess()){
-    if(cleanedParts.some(p=>p.used!==null && !p.supplierId)){
-      document.removeEventListener('keydown', quoteEscListener);
-      await confirmReminder('في قطعة أو أكثر بدون مورد محدد.');
-      document.addEventListener('keydown', quoteEscListener);
-    }
+  // نفس شرط onSaveQuotePricing — انظر تعليقها
+  if(cleanedParts.some(p=>p.used!==null && !p.supplierId)){
+    showToast('لازم تحدد المورد لكل قطعة قبل الحفظ', 'error');
+    return;
   }
 
   quoteDraft.parts = cleanedParts;
