@@ -4241,11 +4241,16 @@ const PART_CONDITION_OPTIONS = [
 function partConditionMeta(condition){
   return PART_CONDITION_OPTIONS.find(o=>o.value===condition) || null;
 }
-// بادج للقراءة بس — نافذة الطلبية العادية (partRowHtml)، كل الأدوار (مبيعات ومخوّلين)
-function partConditionBadgeHtml(p){
-  if(!p.used || !p.condition) return '';
-  const meta = partConditionMeta(p.condition);
+// بادج مبني من قيمة condition مباشرة — لمكان استدعاء أصلًا متأكد إنها قطعة مستعملة (زي شاشة
+// سداد التشاليح، مفلترة used=true من مصدرها أصلًا) وما عندها حقل p.used بشكل الصف نفسه
+function partConditionBadgeFromValue(condition){
+  const meta = partConditionMeta(condition);
   return meta ? '<span class="part-condition-badge '+meta.cls+'">'+escapeHtml(meta.label)+'</span>' : '';
+}
+// بادج للقراءة بس — نافذة الطلبية العادية (partRowHtml) وشاشة تسعير المبيعات (quotePartRowHtml)،
+// كل الأدوار (مبيعات ومخوّلين). p هون كائن قطعة كامل (فيه p.used)
+function partConditionBadgeHtml(p){
+  return (!p.used || !p.condition) ? '' : partConditionBadgeFromValue(p.condition);
 }
 // أزرار دائرية ملوّنة قابلة للضغط (عامر بس) — انظر bindQuotePartRowEvents لربط data-set-condition
 function partConditionSwatchesHtml(p){
@@ -11855,7 +11860,7 @@ function ownerScrapyardPartsFromAppData(kind){
       if(p.returned) return; // القطعة المرتجعة لها مسارها المنفصل (مرتجعات)، مو ضمن قائمة "غير المسدّدة"
       if(!partIsIncludedInOrder(o,p)) return; // قطعة مستبعدة يدويًا من الطلبية — ما تُحسب
       if(!!p.used === wantUsed){
-        list.push({ order_id:o.id, order_number:o.orderNumber, order_label:o.orderLabel, supplied_at:o.suppliedAt||null, part_id:p.id, description:p.description, qty:p.qty, cost_price:p.costPrice, supplier_id:p.supplierId||null, note:p.scrapyardNote||'' });
+        list.push({ order_id:o.id, order_number:o.orderNumber, order_label:o.orderLabel, supplied_at:o.suppliedAt||null, part_id:p.id, description:p.description, qty:p.qty, cost_price:p.costPrice, supplier_id:p.supplierId||null, note:p.scrapyardNote||'', condition:p.condition||null });
       }
     });
   });
@@ -11880,7 +11885,7 @@ function ownerScrapyardReturnReceivablesFromAppData(kind){
       if(!p.returned || !p.returnHasReceivable || p.returnCollected) return;
       if(!!p.used !== wantUsed) return;
       if(!partIsIncludedInOrder(o,p)) return; // قطعة مستبعدة يدويًا من الطلبية — ما تُحسب
-      list.push({ order_id:o.id, order_number:o.orderNumber, order_label:o.orderLabel, part_id:p.id, description:p.description, qty:p.qty, cost_price:p.costPrice, supplier_id:p.supplierId||null });
+      list.push({ order_id:o.id, order_number:o.orderNumber, order_label:o.orderLabel, part_id:p.id, description:p.description, qty:p.qty, cost_price:p.costPrice, supplier_id:p.supplierId||null, condition: wantUsed ? (p.condition||null) : null });
     });
   });
   return list;
@@ -12361,8 +12366,10 @@ function scrapyardReturnReceivablesHtml(){
           '<button type="button" class="btn btn-sm '+(canManage?'btn-primary':'btn-ghost')+' scrapyard-collect-btn" data-order-id="'+escapeHtml(p.order_id)+'" data-part-id="'+escapeHtml(p.part_id)+'">' +
             (canManage ? '✅ تم التحصيل' : '📨 طلب تأكيد التحصيل') +
           '</button>');
+    // حالة نظافة القطعة — مفهوم خاص بالمستعمل حصرًا، نفس شرط scrapyardPartRowHtml بالضبط
+    const conditionBadgeHtml = scrapyardSharedState.activeKind==='used' ? partConditionBadgeFromValue(p.condition) : '';
     return '<div class="scrapyard-part-row">' +
-      '<span class="scrapyard-part-desc">'+escapeHtml(p.description||'')+'</span>' +
+      '<span class="scrapyard-part-desc">'+escapeHtml(p.description||'')+conditionBadgeHtml+'</span>' +
       '<span class="num scrapyard-qty-slot">×'+(p.qty||1)+'</span>' +
       '<span class="num text-green">'+fmtMoney(amount)+'</span>' +
       '<span class="scrapyard-days-since muted">'+escapeHtml(name)+'</span>' +
@@ -12822,6 +12829,9 @@ function scrapyardPartRowHtml(p, canManage){
     : (isUsedKind ? 'ما تم اضافة تشليح' : 'ما تم اضافة مورد');
   const supplierNameHtml = '<span class="scrapyard-part-supplier-name'+(assignedSupplier?'':' scrapyard-part-supplier-missing')+'">'+escapeHtml(supplierNameText)+'</span>';
 
+  // حالة نظافة القطعة — مفهوم خاص بالمستعمل حصرًا (isUsedKind، نفس partConditionBadgeHtml)
+  const conditionBadgeHtml = isUsedKind ? partConditionBadgeFromValue(p.condition) : '';
+
   // ملاحظة على القطعة — المخوّل (صاحب الحساب) يكتبها، تظهر عند عامر بالأحمر كتنبيه. حصرًا
   // على صفوف القطع الفعلية (مو صفوف اقتراح إضافة أو مسودة إضافة قطعة جديدة، ما فيهم part_id حقيقي بعد)
   const noteHtml = canManage
@@ -12829,7 +12839,7 @@ function scrapyardPartRowHtml(p, canManage){
     : (p.note ? '<div class="scrapyard-part-note-row scrapyard-part-note-amer">⚠️ '+escapeHtml(p.note)+'</div>' : '');
 
   return '<div class="scrapyard-part-row">' +
-    '<span class="scrapyard-part-desc">'+escapeHtml(p.description||'')+supplierNameHtml+'</span>' +
+    '<span class="scrapyard-part-desc">'+escapeHtml(p.description||'')+supplierNameHtml+conditionBadgeHtml+'</span>' +
     '<span class="num scrapyard-qty-slot">×'+(p.qty||1)+'</span>' +
     '<div class="scrapyard-price-group">'+priceCells+'</div>' +
     supplierSelectHtml +
