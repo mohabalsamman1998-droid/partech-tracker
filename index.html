@@ -157,14 +157,20 @@
   .employee-map-history-select{flex:1;min-width:120px;}
   .employee-map-history-time{flex:1 1 100%;min-width:0;}
   .attendance-chart-date-row .employee-map-history-time{flex:1;min-width:130px;}
-  .attendance-chart-axis-row{display:flex;gap:10px;align-items:center;margin-top:16px;}
-  .attendance-chart-axis-spacer{width:64px;flex-shrink:0;}
-  .attendance-chart-axis{flex:1;min-width:0;display:flex;justify-content:space-between;font-size:10.5px;color:var(--text-faint);direction:ltr;}
+  /* الرسم كامل (محور + صفوف) عمدًا LTR رغم إن الصفحة RTL — لأنه بيحتاج تمرير أفقي (٤٩ علامة نصف
+     ساعة) وscrollLeft:0 بحاوية RTL بيعرض آخر اليوم مو أوله بمتصفحات Chromium، يلخبط كل منطق
+     التمرير والـsticky. عزل هالجزء كوحدة LTR مستقلة (زي أي أداة رسم بياني/تقويم) أبسط وأصح. */
+  .attendance-chart-scroll{direction:ltr;overflow-x:auto;overflow-y:hidden;margin-top:16px;-webkit-overflow-scrolling:touch;}
+  .attendance-chart-scroll-inner{min-width:1300px;}
+  .attendance-chart-axis-row{display:flex;gap:10px;align-items:center;}
+  .attendance-chart-axis-spacer{width:64px;flex-shrink:0;position:sticky;left:0;z-index:1;background:var(--surface);}
+  .attendance-chart-axis{flex:1;min-width:0;display:flex;justify-content:space-between;font-size:10.5px;color:var(--text-faint);}
+  .attendance-chart-axis span{white-space:nowrap;}
   .attendance-chart-rows{margin-top:4px;}
   .attendance-chart-row{display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--border-soft);}
   .attendance-chart-row:last-child{border-bottom:none;}
-  .attendance-chart-name{width:64px;flex-shrink:0;font-size:12.5px;font-weight:700;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .attendance-chart-track{position:relative;flex:1;min-width:0;height:22px;background:var(--surface-2);border-radius:6px;direction:ltr;}
+  .attendance-chart-name{width:64px;flex-shrink:0;font-size:12.5px;font-weight:700;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;position:sticky;left:0;z-index:1;background:var(--surface);}
+  .attendance-chart-track{position:relative;flex:1;min-width:0;height:22px;background:var(--surface-2);border-radius:6px;}
   .attendance-chart-bar{position:absolute;top:2px;height:18px;min-width:6px;background:var(--green);border-radius:4px;cursor:pointer;border:none;padding:0;transition:filter .1s;}
   .attendance-chart-bar:hover,.attendance-chart-bar:focus-visible{filter:brightness(1.15);outline:none;}
   .attendance-chart-bar.attendance-chart-bar-selected{box-shadow:0 0 0 2px var(--green-line);}
@@ -13982,8 +13988,15 @@ function attendanceSessionDurationLabel(startMs, endMs){
   return arabicHoursLabel(h) + (m>0 ? ' و '+arabicMinutesLabel(m) : '');
 }
 
+/* علامة كل نصف ساعة (٤٩ علامة من ٠٠:٠٠ لـ٢٤:٠٠) — أدق من كل ٤ ساعات، لهيك الرسم صار يحتاج
+   تمرير أفقي (attendance-chart-scroll) حتى تنعرض كل العلامات بمسافة مقروءة بينها */
 function attendanceChartAxisHtml(){
-  return '<div class="attendance-chart-axis">' + [0,4,8,12,16,20,24].map(h=>'<span>'+String(h).padStart(2,'0')+':00</span>').join('') + '</div>';
+  const marks = [];
+  for(let m=0; m<=24*60; m+=30) marks.push(m);
+  return '<div class="attendance-chart-axis">' + marks.map(m=>{
+    const h = Math.floor(m/60), mm = m%60;
+    return '<span>'+String(h).padStart(2,'0')+':'+String(mm).padStart(2,'0')+'</span>';
+  }).join('') + '</div>';
 }
 
 function attendanceChartRowsHtml(sessionsByEmail, dayStartMs, nowMs){
@@ -14006,6 +14019,21 @@ function attendanceChartRowsHtml(sessionsByEmail, dayStartMs, nowMs){
       '<div class="attendance-chart-track">'+barsHtml+nowLine+'</div>' +
     '</div>';
   }).join('');
+}
+
+/* يمرّر حاوية الرسم أفقيًا حتى توسّط لحظة زمنية معيّنة بالعرض المرئي — مستخدمة لتوسيط "الآن"
+   تلقائيًا عند فتح يوم اليوم، بدل ما يضطر المستخدم يمرّر يدويًا كل مرة لين يوصلها. */
+function scrollAttendanceChartToTime(targetMs, dayStartMs){
+  const scrollEl = document.querySelector('.attendance-chart-scroll');
+  const inner = document.querySelector('.attendance-chart-scroll-inner');
+  const track = document.querySelector('.attendance-chart-track');
+  const name = document.querySelector('.attendance-chart-name');
+  if(!scrollEl || !inner || !track || !name || !scrollEl.clientWidth) return; // النافذة لسا ما اتقاست (تبويب بالخلفية مثلًا) — نتركها بموضعها الافتراضي بدل حساب خاطئ
+  const dayMs = 24*60*60*1000;
+  const frac = Math.min(1, Math.max(0, (targetMs - dayStartMs) / dayMs));
+  const nameColWidth = name.offsetWidth + (parseFloat(getComputedStyle(name.parentElement).gap) || 0);
+  const targetX = nameColWidth + frac * track.offsetWidth;
+  scrollEl.scrollLeft = Math.max(0, Math.min(inner.offsetWidth - scrollEl.clientWidth, targetX - scrollEl.clientWidth/2));
 }
 
 function showAttendanceSessionDetail(email, startIso, endIso, count){
@@ -14080,6 +14108,9 @@ async function renderAttendanceChartRows(){
   const isToday = dayStr === dateToDateInputValue(new Date());
   const rowsEl2 = document.getElementById('attendance-chart-rows');
   if(rowsEl2) rowsEl2.innerHTML = attendanceChartRowsHtml(sessionsByEmail, dayStartMs, isToday ? Date.now() : null);
+  // الرسم صار يحتاج تمرير أفقي (٤٩ علامة نصف ساعة) — لو تركناه بموضعه الافتراضي (أول اليوم)
+  // المستخدم لازم يمرّر يدويًا لحد ما يوصل "الآن"، فنمرّر تلقائيًا لتوسيطه أول ما تفتح النافذة
+  if(isToday) scrollAttendanceChartToTime(Date.now(), dayStartMs);
   const nextBtn = document.getElementById('attendance-chart-next-btn');
   if(nextBtn) nextBtn.disabled = isToday;
   const todayBtn = document.getElementById('attendance-chart-today-btn');
@@ -14128,8 +14159,10 @@ async function openAttendanceChart(){
           '<button type="button" class="btn btn-ghost btn-sm" id="attendance-chart-next-btn">التالي ▶</button>' +
           '<button type="button" class="btn btn-ghost btn-sm" id="attendance-chart-today-btn">اليوم</button>' +
         '</div>' +
-        '<div class="attendance-chart-axis-row"><div class="attendance-chart-axis-spacer"></div>' + attendanceChartAxisHtml() + '</div>' +
-        '<div class="attendance-chart-rows" id="attendance-chart-rows"><div class="muted" style="padding:10px 0;">جاري التحميل…</div></div>' +
+        '<div class="attendance-chart-scroll"><div class="attendance-chart-scroll-inner">' +
+          '<div class="attendance-chart-axis-row"><div class="attendance-chart-axis-spacer"></div>' + attendanceChartAxisHtml() + '</div>' +
+          '<div class="attendance-chart-rows" id="attendance-chart-rows"><div class="muted" style="padding:10px 0;">جاري التحميل…</div></div>' +
+        '</div></div>' +
         '<div class="attendance-chart-detail" id="attendance-chart-detail" style="display:none;"></div>' +
       '</div>' +
     '</div>';
