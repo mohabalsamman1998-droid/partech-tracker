@@ -157,11 +157,11 @@
   .employee-map-history-select{flex:1;min-width:120px;}
   .employee-map-history-time{flex:1 1 100%;min-width:0;}
   .attendance-chart-date-row .employee-map-history-time{flex:1;min-width:130px;}
-  /* الرسم كامل (محور + صفوف) عمدًا LTR رغم إن الصفحة RTL — لأنه بيحتاج تمرير أفقي (٤٩ علامة نصف
-     ساعة) وscrollLeft:0 بحاوية RTL بيعرض آخر اليوم مو أوله بمتصفحات Chromium، يلخبط كل منطق
-     التمرير والـsticky. عزل هالجزء كوحدة LTR مستقلة (زي أي أداة رسم بياني/تقويم) أبسط وأصح. */
+  /* الرسم كامل (محور + صفوف) عمدًا LTR رغم إن الصفحة RTL — لأنه بيحتاج تمرير أفقي (٢٥ علامة كل
+     ساعة بنظام ١٢ ساعة) وscrollLeft:0 بحاوية RTL بيعرض آخر اليوم مو أوله بمتصفحات Chromium، يلخبط
+     كل منطق التمرير والـsticky. عزل هالجزء كوحدة LTR مستقلة (زي أي أداة رسم بياني/تقويم) أبسط وأصح. */
   .attendance-chart-scroll{direction:ltr;overflow-x:auto;overflow-y:hidden;margin-top:16px;-webkit-overflow-scrolling:touch;}
-  .attendance-chart-scroll-inner{min-width:1300px;}
+  .attendance-chart-scroll-inner{min-width:1500px;}
   .attendance-chart-axis-row{display:flex;gap:10px;align-items:center;}
   .attendance-chart-axis-spacer{width:64px;flex-shrink:0;position:sticky;left:0;z-index:1;background:var(--surface);}
   .attendance-chart-axis{flex:1;min-width:0;display:flex;justify-content:space-between;font-size:10.5px;color:var(--text-faint);}
@@ -13926,6 +13926,7 @@ async function openEmployeeMap(){
    فجوتها الزمنية صغيرة، من أول نقطة (من) لآخر نقطة (الى). خيار "عرض الموقع بهذه الفترة" يفتح
    خريطة الموظفين ويرسم مسار نقاط تلك الجلسة بالذات. ---------- */
 const ATTENDANCE_SESSION_GAP_MS = 15*60*1000; // فجوة أكبر من كذا بين نقطتين متتاليتين = خروج فعلي، مو مجرد انقطاع مؤقت بالتسجيل (كل ~دقيقتين)
+const ATTENDANCE_CHART_DEFAULT_VIEW_HOUR = 7; // بداية ساعات الدوام الفعلية (٧ص–٦م) — الرسم يفتح محاذي عليها دايمًا بدل أول اليوم
 let attendanceChartModalOpen = false;
 let attendanceChartOpenToken = 0;
 let attendanceChartDate = '';
@@ -13988,15 +13989,14 @@ function attendanceSessionDurationLabel(startMs, endMs){
   return arabicHoursLabel(h) + (m>0 ? ' و '+arabicMinutesLabel(m) : '');
 }
 
-/* علامة كل نصف ساعة (٤٩ علامة من ٠٠:٠٠ لـ٢٤:٠٠) — أدق من كل ٤ ساعات، لهيك الرسم صار يحتاج
-   تمرير أفقي (attendance-chart-scroll) حتى تنعرض كل العلامات بمسافة مقروءة بينها */
+/* علامة كل ساعة (٢٥ علامة من ١٢ص لـ١٢ص اليوم التالي) بنظام ١٢ ساعة (ص/م) — نفس صياغة fmtHm
+   المستخدمة بباقي الرسم (تفاصيل الجلسة، تلميح الشريط) حتى يكون التوقيت متسق بكل مكان. الرسم صار
+   يحتاج تمرير أفقي (attendance-chart-scroll) حتى تنعرض كل العلامات بمسافة مقروءة بينها */
 function attendanceChartAxisHtml(){
+  const refDayMs = new Date(2024,0,1,0,0).getTime(); // مرجع تعسفي — يهمنا وقت اليوم فقط مو التاريخ نفسه
   const marks = [];
-  for(let m=0; m<=24*60; m+=30) marks.push(m);
-  return '<div class="attendance-chart-axis">' + marks.map(m=>{
-    const h = Math.floor(m/60), mm = m%60;
-    return '<span>'+String(h).padStart(2,'0')+':'+String(mm).padStart(2,'0')+'</span>';
-  }).join('') + '</div>';
+  for(let m=0; m<=24*60; m+=60) marks.push(m);
+  return '<div class="attendance-chart-axis">' + marks.map(m=>'<span>'+fmtHm(refDayMs + m*60000)+'</span>').join('') + '</div>';
 }
 
 function attendanceChartRowsHtml(sessionsByEmail, dayStartMs, nowMs){
@@ -14021,19 +14021,18 @@ function attendanceChartRowsHtml(sessionsByEmail, dayStartMs, nowMs){
   }).join('');
 }
 
-/* يمرّر حاوية الرسم أفقيًا حتى توسّط لحظة زمنية معيّنة بالعرض المرئي — مستخدمة لتوسيط "الآن"
-   تلقائيًا عند فتح يوم اليوم، بدل ما يضطر المستخدم يمرّر يدويًا كل مرة لين يوصلها. */
+/* يمرّر حاوية الرسم أفقيًا حتى تحاذي لحظة زمنية معيّنة بداية العرض المرئي (يمين عمود الاسم
+   المثبّت مباشرة) — مو توسيطها. مستخدمة لفتح الرسم دايمًا على بداية ساعات الدوام الفعلية
+   (ATTENDANCE_CHART_DEFAULT_VIEW_HOUR) بدل أول اليوم أو مكان عشوائي، بدل ما يضطر المستخدم
+   يمرّر يدويًا كل مرة لين يوصلها. */
 function scrollAttendanceChartToTime(targetMs, dayStartMs){
   const scrollEl = document.querySelector('.attendance-chart-scroll');
   const inner = document.querySelector('.attendance-chart-scroll-inner');
   const track = document.querySelector('.attendance-chart-track');
-  const name = document.querySelector('.attendance-chart-name');
-  if(!scrollEl || !inner || !track || !name || !scrollEl.clientWidth) return; // النافذة لسا ما اتقاست (تبويب بالخلفية مثلًا) — نتركها بموضعها الافتراضي بدل حساب خاطئ
+  if(!scrollEl || !inner || !track || !scrollEl.clientWidth) return; // النافذة لسا ما اتقاست (تبويب بالخلفية مثلًا) — نتركها بموضعها الافتراضي بدل حساب خاطئ
   const dayMs = 24*60*60*1000;
   const frac = Math.min(1, Math.max(0, (targetMs - dayStartMs) / dayMs));
-  const nameColWidth = name.offsetWidth + (parseFloat(getComputedStyle(name.parentElement).gap) || 0);
-  const targetX = nameColWidth + frac * track.offsetWidth;
-  scrollEl.scrollLeft = Math.max(0, Math.min(inner.offsetWidth - scrollEl.clientWidth, targetX - scrollEl.clientWidth/2));
+  scrollEl.scrollLeft = Math.max(0, Math.min(inner.offsetWidth - scrollEl.clientWidth, frac * track.offsetWidth));
 }
 
 function showAttendanceSessionDetail(email, startIso, endIso, count){
@@ -14108,9 +14107,9 @@ async function renderAttendanceChartRows(){
   const isToday = dayStr === dateToDateInputValue(new Date());
   const rowsEl2 = document.getElementById('attendance-chart-rows');
   if(rowsEl2) rowsEl2.innerHTML = attendanceChartRowsHtml(sessionsByEmail, dayStartMs, isToday ? Date.now() : null);
-  // الرسم صار يحتاج تمرير أفقي (٤٩ علامة نصف ساعة) — لو تركناه بموضعه الافتراضي (أول اليوم)
-  // المستخدم لازم يمرّر يدويًا لحد ما يوصل "الآن"، فنمرّر تلقائيًا لتوسيطه أول ما تفتح النافذة
-  if(isToday) scrollAttendanceChartToTime(Date.now(), dayStartMs);
+  // الرسم صار يحتاج تمرير أفقي (٢٥ علامة كل ساعة) — نفتحه دايمًا محاذي على بداية الدوام الفعلي
+  // (٧ص) بدل أول اليوم أو "الآن"، لأنه المدى المهم فعليًا بغض النظر عن اليوم المعروض أو وقت الفتح
+  scrollAttendanceChartToTime(dayStartMs + ATTENDANCE_CHART_DEFAULT_VIEW_HOUR*3600000, dayStartMs);
   const nextBtn = document.getElementById('attendance-chart-next-btn');
   if(nextBtn) nextBtn.disabled = isToday;
   const todayBtn = document.getElementById('attendance-chart-today-btn');
