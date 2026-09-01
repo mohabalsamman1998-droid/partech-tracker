@@ -156,6 +156,23 @@
   .employee-map-history-select,.employee-map-history-time{background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:6px;font-family:inherit;font-size:13px;}
   .employee-map-history-select{flex:1;min-width:120px;}
   .employee-map-history-time{flex:1 1 100%;min-width:0;}
+  .attendance-chart-date-row .employee-map-history-time{flex:1;min-width:130px;}
+  .attendance-chart-axis-row{display:flex;gap:10px;align-items:center;margin-top:16px;}
+  .attendance-chart-axis-spacer{width:64px;flex-shrink:0;}
+  .attendance-chart-axis{flex:1;min-width:0;display:flex;justify-content:space-between;font-size:10.5px;color:var(--text-faint);direction:ltr;}
+  .attendance-chart-rows{margin-top:4px;}
+  .attendance-chart-row{display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--border-soft);}
+  .attendance-chart-row:last-child{border-bottom:none;}
+  .attendance-chart-name{width:64px;flex-shrink:0;font-size:12.5px;font-weight:700;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .attendance-chart-track{position:relative;flex:1;min-width:0;height:22px;background:var(--surface-2);border-radius:6px;direction:ltr;}
+  .attendance-chart-bar{position:absolute;top:2px;height:18px;min-width:6px;background:var(--green);border-radius:4px;cursor:pointer;border:none;padding:0;transition:filter .1s;}
+  .attendance-chart-bar:hover,.attendance-chart-bar:focus-visible{filter:brightness(1.15);outline:none;}
+  .attendance-chart-bar.attendance-chart-bar-selected{box-shadow:0 0 0 2px var(--green-line);}
+  .attendance-chart-now-line{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--rust);border-radius:1px;pointer-events:none;}
+  .attendance-chart-empty-row{font-size:11.5px;color:var(--text-faint);position:absolute;top:50%;transform:translateY(-50%);inset-inline-start:8px;}
+  .attendance-chart-detail{margin-top:14px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:var(--radius-sm);}
+  .attendance-chart-detail-name{font-size:13.5px;font-weight:800;margin-bottom:4px;}
+  .attendance-chart-detail-range{font-size:12.5px;color:var(--text-dim);margin-bottom:10px;}
   .tasks-badge{
     display:none;align-items:center;justify-content:center;
     position:absolute;top:-7px;inset-inline-end:-7px;
@@ -1091,6 +1108,7 @@
         <button id="btn-who-online" class="corner-mini-btn" title="من متصل الآن" aria-label="من متصل الآن">👥</button>
         <button id="btn-announcement" class="corner-mini-btn" title="إعلان للموظفين" style="display:none;">📢</button>
         <button id="btn-employee-map" class="corner-mini-btn" title="مواقع الموظفين" style="display:none;">🗺️</button>
+        <button id="btn-attendance-chart" class="corner-mini-btn" title="حضور الموظفين" style="display:none;">📊</button>
         <button id="btn-activity-log" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge" class="tasks-badge"></span></button>
       </div>
     </div>
@@ -9776,6 +9794,8 @@ function bindToolbar(){
   if(announcementBtn) announcementBtn.addEventListener('click', openAnnouncementEditor);
   const employeeMapBtn = document.getElementById('btn-employee-map');
   if(employeeMapBtn) employeeMapBtn.addEventListener('click', openEmployeeMap);
+  const attendanceChartBtn = document.getElementById('btn-attendance-chart');
+  if(attendanceChartBtn) attendanceChartBtn.addEventListener('click', openAttendanceChart);
   document.getElementById('btn-logout').addEventListener('click', handleLogout);
   document.getElementById('btn-toggle-filters').addEventListener('click', ()=>{
     const el = document.getElementById('filter-buttons');
@@ -11778,6 +11798,8 @@ async function showAppIfAllowed(session){
     if(whoOnlineBtn) whoOnlineBtn.style.display = (currentUserIsElevated || WHO_ONLINE_EXTRA_VISIBLE_EMAILS.includes(email)) ? '' : 'none';
     const employeeMapBtnVis = document.getElementById('btn-employee-map');
     if(employeeMapBtnVis) employeeMapBtnVis.style.display = currentUserIsElevated ? '' : 'none';
+    const attendanceChartBtnVis = document.getElementById('btn-attendance-chart');
+    if(attendanceChartBtnVis) attendanceChartBtnVis.style.display = currentUserIsElevated ? '' : 'none';
     // "🏭 الموردين" بيانات مشتريات حصرية (اسم/هاتف/مستحق/تاريخ شراء) — نفس مبدأ الصندوق/الإعلان،
     // كان ناقص من هالقائمة بالغلط فيضل ظاهر لأي حساب مبيعات عادي
     const suppliersBtn = document.getElementById('btn-open-suppliers');
@@ -13625,6 +13647,7 @@ let employeeMapChannel = null;
 let employeeMapStaleTimer = null;
 let employeeMapModalOpen = false;
 let employeeMapHistoryMarker = null;
+let employeeMapHistoryPath = null; // خط المسار المرسوم من 📊 حضور الموظفين (اختيار فترة جلسة معيّنة)
 const EMPLOYEE_LOCATION_STALE_MS = 2*60*1000;
 let lastEmployeeMapFetchAt = 0;
 const EMPLOYEE_MAP_MIN_REFRESH_GAP_MS = 5000;
@@ -13773,6 +13796,7 @@ function closeEmployeeMap(){
   if(employeeMapInstance){ employeeMapInstance.remove(); employeeMapInstance = null; }
   employeeMapMarkers = {};
   employeeMapHistoryMarker = null;
+  employeeMapHistoryPath = null;
 }
 function employeeMapEscListener(e){ if(e.key==='Escape') closeEmployeeMap(); }
 
@@ -13889,6 +13913,251 @@ async function openEmployeeMap(){
   subscribeEmployeeMapRealtime();
   employeeMapStaleTimer = setInterval(refreshEmployeeMapMarkersThrottled, 30000);
   pingEmployeeLocations();
+}
+
+/* ---------- 📊 حضور الموظفين (خط بياني/Gantt يومي) — مبني فوق نفس بيانات
+   employee_location_history: كل موظف له صف، وكل "ظهور" (جلسة) عبارة عن مجموعة نقاط GPS متتالية
+   فجوتها الزمنية صغيرة، من أول نقطة (من) لآخر نقطة (الى). خيار "عرض الموقع بهذه الفترة" يفتح
+   خريطة الموظفين ويرسم مسار نقاط تلك الجلسة بالذات. ---------- */
+const ATTENDANCE_SESSION_GAP_MS = 15*60*1000; // فجوة أكبر من كذا بين نقطتين متتاليتين = خروج فعلي، مو مجرد انقطاع مؤقت بالتسجيل (كل ~دقيقتين)
+let attendanceChartModalOpen = false;
+let attendanceChartOpenToken = 0;
+let attendanceChartDate = '';
+let attendanceChartSelectedSession = null;
+let attendanceChartSelectedBarEl = null;
+
+function dateToDateInputValue(d){ return dateToDatetimeLocalValue(d).slice(0,10); }
+
+async function loadEmployeeLocationHistoryForDay(dayStr){
+  if(!sb || !dayStr) return [];
+  const start = new Date(dayStr+'T00:00:00');
+  const end = new Date(start.getTime() + 24*60*60*1000);
+  const { data, error } = await sb.from('employee_location_history')
+    .select('email, lat, lng, recorded_at')
+    .gte('recorded_at', start.toISOString()).lt('recorded_at', end.toISOString())
+    .order('email', { ascending:true }).order('recorded_at', { ascending:true });
+  if(error){ console.error('loadEmployeeLocationHistoryForDay:', error); return []; }
+  return (data||[]).filter(row => !LOCATION_SHARING_EXCLUDED_EMAILS.includes(row.email));
+}
+
+/* بيحوّل نقاط GPS الخام (مرتّبة سلفًا email ثم recorded_at تصاعديًا) لجلسات ظهور: نقاط متتالية
+   فجوتها الزمنية ≤ ATTENDANCE_SESSION_GAP_MS بتصير جلسة وحدة (من أول نقطة لآخر نقطة)، وأي فجوة
+   أكبر (يعني الموظف سكّر التطبيق أو طلع فعليًا) بتبدأ جلسة جديدة منفصلة. */
+function sessionizeLocationHistoryRows(rows){
+  const byEmail = {};
+  (rows||[]).forEach(r=>{
+    if(!r || r.email==null || r.recorded_at==null) return;
+    (byEmail[r.email] = byEmail[r.email] || []).push(r);
+  });
+  const sessions = {};
+  Object.keys(byEmail).forEach(email=>{
+    const list = [];
+    let cur = null;
+    byEmail[email].forEach(r=>{
+      const t = new Date(r.recorded_at).getTime();
+      if(cur && (t - cur.endMs) <= ATTENDANCE_SESSION_GAP_MS){
+        cur.endMs = t; cur.end = r.recorded_at; cur.count++;
+      } else {
+        cur = { startMs:t, endMs:t, start:r.recorded_at, end:r.recorded_at, count:1 };
+        list.push(cur);
+      }
+    });
+    sessions[email] = list;
+  });
+  return sessions;
+}
+
+function attendanceChartEmployeeEmails(){
+  return Object.keys(EMAIL_DISPLAY_NAMES).filter(e => !LOCATION_SHARING_EXCLUDED_EMAILS.includes(e));
+}
+
+function fmtHm(ms){
+  return new Date(ms).toLocaleTimeString('ar-SY', { hour:'2-digit', minute:'2-digit' });
+}
+
+function attendanceSessionDurationLabel(startMs, endMs){
+  const diffMin = Math.max(1, Math.round((endMs-startMs)/60000));
+  if(diffMin < 60) return arabicMinutesLabel(diffMin);
+  const h = Math.floor(diffMin/60), m = diffMin%60;
+  return arabicHoursLabel(h) + (m>0 ? ' و '+arabicMinutesLabel(m) : '');
+}
+
+function attendanceChartAxisHtml(){
+  return '<div class="attendance-chart-axis">' + [0,4,8,12,16,20,24].map(h=>'<span>'+String(h).padStart(2,'0')+':00</span>').join('') + '</div>';
+}
+
+function attendanceChartRowsHtml(sessionsByEmail, dayStartMs, nowMs){
+  const dayMs = 24*60*60*1000;
+  const nowPct = (nowMs!=null) ? Math.min(100, Math.max(0, (nowMs-dayStartMs)/dayMs*100)) : null;
+  return attendanceChartEmployeeEmails().map(email=>{
+    const sessions = sessionsByEmail[email] || [];
+    const barsHtml = sessions.length
+      ? sessions.map(s=>{
+          const leftPct = Math.max(0, Math.min(100, (s.startMs-dayStartMs)/dayMs*100));
+          const widthPct = Math.max(0.6, Math.min(100-leftPct, (s.endMs-s.startMs)/dayMs*100));
+          return '<button type="button" class="attendance-chart-bar" style="left:'+leftPct.toFixed(3)+'%;width:'+widthPct.toFixed(3)+'%;" ' +
+            'data-attendance-email="'+escapeHtml(email)+'" data-attendance-start="'+s.start+'" data-attendance-end="'+s.end+'" data-attendance-count="'+s.count+'" ' +
+            'title="'+fmtHm(s.startMs)+' – '+fmtHm(s.endMs)+'" aria-label="'+escapeHtml(displayNameForEmail(email))+' '+fmtHm(s.startMs)+' – '+fmtHm(s.endMs)+'"></button>';
+        }).join('')
+      : '<div class="attendance-chart-empty-row">لا يوجد ظهور</div>';
+    const nowLine = nowPct!=null ? '<div class="attendance-chart-now-line" style="left:'+nowPct.toFixed(3)+'%;"></div>' : '';
+    return '<div class="attendance-chart-row">' +
+      '<div class="attendance-chart-name">'+escapeHtml(displayNameForEmail(email))+'</div>' +
+      '<div class="attendance-chart-track">'+barsHtml+nowLine+'</div>' +
+    '</div>';
+  }).join('');
+}
+
+function showAttendanceSessionDetail(email, startIso, endIso, count){
+  const detailEl = document.getElementById('attendance-chart-detail');
+  if(!detailEl) return;
+  attendanceChartSelectedSession = { email, startIso, endIso };
+  const startMs = new Date(startIso).getTime(), endMs = new Date(endIso).getTime();
+  const pointsLabel = count===1 ? 'نقطة واحدة' : (count===2 ? 'نقطتين' : (count>=3 && count<=10 ? count+' نقاط' : count+' نقطة'));
+  detailEl.style.display = '';
+  detailEl.innerHTML =
+    '<div class="attendance-chart-detail-name">'+escapeHtml(displayNameForEmail(email))+'</div>' +
+    '<div class="attendance-chart-detail-range">من '+fmtHm(startMs)+' إلى '+fmtHm(endMs)+' — '+attendanceSessionDurationLabel(startMs,endMs)+' ('+pointsLabel+')</div>' +
+    '<button type="button" class="btn btn-ghost btn-sm" id="attendance-chart-show-path-btn">🗺️ عرض الموقع بهذه الفترة</button>';
+  const btn = document.getElementById('attendance-chart-show-path-btn');
+  if(btn) btn.addEventListener('click', ()=> showAttendanceSessionPathOnMap(email, startIso, endIso));
+}
+
+async function showAttendanceSessionPathOnMap(email, startIso, endIso){
+  closeAttendanceChart();
+  await openEmployeeMap();
+  if(!employeeMapInstance || !sb) return;
+  const { data, error } = await sb.from('employee_location_history')
+    .select('lat, lng, recorded_at').eq('email', email)
+    .gte('recorded_at', startIso).lte('recorded_at', endIso)
+    .order('recorded_at', { ascending:true });
+  const resultEl = document.getElementById('employee-map-history-result');
+  if(error || !data || !data.length){
+    if(resultEl) resultEl.textContent = 'تعذر تحميل مسار هذه الفترة';
+    return;
+  }
+  if(employeeMapHistoryMarker){ employeeMapInstance.removeLayer(employeeMapHistoryMarker); employeeMapHistoryMarker = null; }
+  if(employeeMapHistoryPath){ employeeMapInstance.removeLayer(employeeMapHistoryPath); employeeMapHistoryPath = null; }
+  const latlngs = data.map(p=>[p.lat, p.lng]);
+  const pathColor = getComputedStyle(document.documentElement).getPropertyValue('--green').trim() || '#22D07A';
+  employeeMapHistoryPath = L.polyline(latlngs, { color: pathColor, weight:3, opacity:.85 }).addTo(employeeMapInstance);
+  employeeMapHistoryMarker = L.marker(latlngs[latlngs.length-1], { icon: employeeMapMarkerIcon(email, false, 'history') }).addTo(employeeMapInstance);
+  employeeMapInstance.fitBounds(L.latLngBounds(latlngs), { padding:[40,40], maxZoom:16 });
+  if(resultEl) resultEl.textContent = 'مسار '+displayNameForEmail(email)+' من '+fmtHm(new Date(startIso).getTime())+' إلى '+fmtHm(new Date(endIso).getTime())+' — '+data.length+' نقطة';
+}
+
+function bindAttendanceChartInteractions(root){
+  const rowsEl = root.querySelector('#attendance-chart-rows');
+  if(!rowsEl) return;
+  rowsEl.addEventListener('click', e=>{
+    const bar = e.target.closest('.attendance-chart-bar');
+    if(!bar) return;
+    if(attendanceChartSelectedBarEl) attendanceChartSelectedBarEl.classList.remove('attendance-chart-bar-selected');
+    bar.classList.add('attendance-chart-bar-selected');
+    attendanceChartSelectedBarEl = bar;
+    showAttendanceSessionDetail(
+      bar.getAttribute('data-attendance-email'),
+      bar.getAttribute('data-attendance-start'),
+      bar.getAttribute('data-attendance-end'),
+      Number(bar.getAttribute('data-attendance-count'))||1
+    );
+  });
+}
+
+async function renderAttendanceChartRows(){
+  const myToken = ++attendanceChartOpenToken;
+  const rowsEl = document.getElementById('attendance-chart-rows');
+  if(rowsEl) rowsEl.innerHTML = '<div class="muted" style="padding:10px 0;">جاري التحميل…</div>';
+  const detailEl = document.getElementById('attendance-chart-detail');
+  if(detailEl){ detailEl.style.display = 'none'; detailEl.innerHTML = ''; }
+  attendanceChartSelectedSession = null;
+  attendanceChartSelectedBarEl = null;
+  const dayStr = attendanceChartDate;
+  const rows = await loadEmployeeLocationHistoryForDay(dayStr);
+  if(myToken !== attendanceChartOpenToken || !attendanceChartModalOpen) return; // تسكّرت النافذة أو تغيّر اليوم أثناء التحميل
+  const sessionsByEmail = sessionizeLocationHistoryRows(rows);
+  const dayStartMs = new Date(dayStr+'T00:00:00').getTime();
+  const isToday = dayStr === dateToDateInputValue(new Date());
+  const rowsEl2 = document.getElementById('attendance-chart-rows');
+  if(rowsEl2) rowsEl2.innerHTML = attendanceChartRowsHtml(sessionsByEmail, dayStartMs, isToday ? Date.now() : null);
+  const nextBtn = document.getElementById('attendance-chart-next-btn');
+  if(nextBtn) nextBtn.disabled = isToday;
+  const todayBtn = document.getElementById('attendance-chart-today-btn');
+  if(todayBtn) todayBtn.disabled = isToday;
+}
+
+function shiftAttendanceChartDate(deltaDays){
+  const cur = new Date(attendanceChartDate+'T00:00:00');
+  cur.setDate(cur.getDate()+deltaDays);
+  const next = dateToDateInputValue(cur);
+  if(next > dateToDateInputValue(new Date())) return; // ما نسمح نتصفح تاريخ مستقبلي
+  attendanceChartDate = next;
+  const dateInput = document.getElementById('attendance-chart-date-input');
+  if(dateInput) dateInput.value = attendanceChartDate;
+  renderAttendanceChartRows();
+}
+
+function closeAttendanceChart(){
+  attendanceChartOpenToken++; // يبطل أي متابعة async معلّقة (تحميل يوم سابق لسا ما خلص)
+  const root = document.getElementById('confirm-root');
+  root.innerHTML = '';
+  root.classList.remove('modal-open');
+  attendanceChartModalOpen = false;
+  attendanceChartSelectedSession = null;
+  attendanceChartSelectedBarEl = null;
+  document.removeEventListener('keydown', attendanceChartEscListener);
+}
+function attendanceChartEscListener(e){ if(e.key==='Escape') closeAttendanceChart(); }
+
+async function openAttendanceChart(){
+  if(!hasElevatedAccess()) return;
+  if(attendanceChartModalOpen) return;
+  attendanceChartModalOpen = true;
+  attendanceChartSelectedSession = null;
+  attendanceChartSelectedBarEl = null;
+  attendanceChartDate = dateToDateInputValue(new Date());
+  const root = document.getElementById('confirm-root');
+  root.innerHTML =
+    '<div class="modal-backdrop" data-close-confirm>' +
+      '<div class="modal-card" role="dialog" aria-modal="true">' +
+        '<div class="modal-header"><div><div class="modal-title">📊 حضور الموظفين</div><div class="modal-sub">فترات الظهور على الموقع (من والى) — محسوبة من نقاط تتبع الموقع</div></div>' +
+          '<button class="icon-btn" id="attendance-chart-close-btn" aria-label="إغلاق">✕</button></div>' +
+        '<div class="employee-map-history-row attendance-chart-date-row">' +
+          '<button type="button" class="btn btn-ghost btn-sm" id="attendance-chart-prev-btn">◀ السابق</button>' +
+          '<input type="date" id="attendance-chart-date-input" class="employee-map-history-time">' +
+          '<button type="button" class="btn btn-ghost btn-sm" id="attendance-chart-next-btn">التالي ▶</button>' +
+          '<button type="button" class="btn btn-ghost btn-sm" id="attendance-chart-today-btn">اليوم</button>' +
+        '</div>' +
+        '<div class="attendance-chart-axis-row"><div class="attendance-chart-axis-spacer"></div>' + attendanceChartAxisHtml() + '</div>' +
+        '<div class="attendance-chart-rows" id="attendance-chart-rows"><div class="muted" style="padding:10px 0;">جاري التحميل…</div></div>' +
+        '<div class="attendance-chart-detail" id="attendance-chart-detail" style="display:none;"></div>' +
+      '</div>' +
+    '</div>';
+  root.classList.add('modal-open');
+  root.querySelector('[data-close-confirm]').addEventListener('click', e=>{
+    if(e.target.hasAttribute('data-close-confirm')) closeAttendanceChart();
+  });
+  root.querySelector('#attendance-chart-close-btn').addEventListener('click', closeAttendanceChart);
+  document.addEventListener('keydown', attendanceChartEscListener);
+  const dateInput = document.getElementById('attendance-chart-date-input');
+  if(dateInput){
+    dateInput.value = attendanceChartDate;
+    dateInput.max = dateToDateInputValue(new Date());
+    dateInput.addEventListener('change', ()=>{
+      if(!dateInput.value) return;
+      attendanceChartDate = dateInput.value;
+      renderAttendanceChartRows();
+    });
+  }
+  root.querySelector('#attendance-chart-prev-btn').addEventListener('click', ()=> shiftAttendanceChartDate(-1));
+  root.querySelector('#attendance-chart-next-btn').addEventListener('click', ()=> shiftAttendanceChartDate(1));
+  root.querySelector('#attendance-chart-today-btn').addEventListener('click', ()=>{
+    attendanceChartDate = dateToDateInputValue(new Date());
+    if(dateInput) dateInput.value = attendanceChartDate;
+    renderAttendanceChartRows();
+  });
+  bindAttendanceChartInteractions(root);
+  await renderAttendanceChartRows();
 }
 
 let pendingAuthEmail = '';
