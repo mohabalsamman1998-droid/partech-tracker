@@ -4157,7 +4157,7 @@ function approvedQuotePartRowHtml(p){
 
 function openApprovedQuoteViewModal(orderId){
   const order = (appData.orders||[]).find(o=>o.id===orderId);
-  if(!order){ showToast('هذه التسعيرة ما عادت متوفرة', 'error'); return; }
+  if(!order){ modalCloseCallback = null; showToast('هذه التسعيرة ما عادت متوفرة', 'error'); return; }
   const root = document.getElementById('modal-root');
   root.innerHTML =
     '<div class="modal-backdrop" data-close-backdrop>' +
@@ -4168,7 +4168,11 @@ function openApprovedQuoteViewModal(orderId){
       '</div>' +
     '</div>';
   root.classList.add('modal-open');
-  const close = ()=>{ root.innerHTML=''; root.classList.remove('modal-open'); };
+  const close = ()=>{
+    root.innerHTML=''; root.classList.remove('modal-open');
+    // لو فُتحت من شاشة تانية (سجل الإشعارات 🛎️...) نرجّع لها بعد الإغلاق
+    if(modalCloseCallback){ const cb = modalCloseCallback; modalCloseCallback = null; cb(); }
+  };
   root.querySelector('[data-close-backdrop]').addEventListener('click', e=>{
     if(e.target.hasAttribute('data-close-backdrop')) close();
   });
@@ -4591,7 +4595,7 @@ function openQuoteModal(mode, orderId, role){
     };
   } else {
     const found = appData.orders.find(o=>o.id===orderId);
-    if(!found){ showToast('هذه الطلبية غير موجودة (يمكن انحذفت)', 'error'); return; }
+    if(!found){ modalCloseCallback = null; showToast('هذه الطلبية غير موجودة (يمكن انحذفت)', 'error'); return; }
     quoteDraft = JSON.parse(JSON.stringify(found));
     quoteDraft.isNew = false;
   }
@@ -4611,6 +4615,13 @@ function closeQuoteModal(){
   root.classList.remove('modal-open');
   quoteDraft=null;
   document.removeEventListener('keydown', quoteEscListener);
+  // نفس آلية closeModal — لو فُتحت التسعيرة من شاشة تانية (سجل الإشعارات 🛎️...) نرجّع لها
+  // بعد الإغلاق بدل ما نطلّع المستخدم للقائمة الرئيسية.
+  if(modalCloseCallback){
+    const cb = modalCloseCallback;
+    modalCloseCallback = null;
+    cb();
+  }
 }
 
 // نفس ملاحظة escListener بنافذة الطلبية بالضبط — نافذة فرعية (#confirm-root) ممكن تكون مفتوحة
@@ -4915,7 +4926,12 @@ async function onApproveQuote(){
   // onSaveQuotePricing)
   if(!quoteModalStillOpen(approvedId)) return;
 
+  // مسار الرجوع (لو التسعيرة فُتحت من شاشة زي 🛎️) لازم يعبر تحوّلها لطلبية — نمنع closeQuoteModal
+  // من استهلاكه هون، ونسلّمه لـcloseModal تبع الطلبية الناتجة.
+  const pendingReturn = modalCloseCallback;
+  modalCloseCallback = null;
   closeQuoteModal();
+  modalCloseCallback = pendingReturn;
   openModal('edit', approvedId);
 }
 
@@ -7867,6 +7883,8 @@ async function openActivityLog(){
       showToast('الطلبية يلي يخصها هالإشعار ما عادت متوفرة', 'error');
       return;
     }
+    // فتح تراكمي — إغلاق الطلبية/التسعيرة يرجّع لسجل الإشعارات نفسه، مو للقائمة الرئيسية (طلب مهاب)
+    modalCloseCallback = ()=> openActivityLog();
     if(currentUserRole==='scrapyard'){
       // اعتُمدت وصارت طلبية حقيقية — عرض للقراءة فقط (نفس شاشة "التسعيرات المعتمدة")، مو
       // نافذة التسعير القابلة للتعديل يلي كانت رح تسمح لعامر يعدّل طلبية حقيقية من برّا نظام
@@ -8018,7 +8036,9 @@ function bindEditProposalsModalEvents(){
     head.addEventListener('click', ()=>{
       const orderId = head.closest('[data-open-order-proposal]').getAttribute('data-open-order-proposal');
       closeEditProposalsModal();
-      closeTreasuryView();
+      // نخلي شاشة الصندوق ظاهرة خلف الطلبية، ونرجّع لقائمة طلبات التعديل نفسها بعد إغلاقها
+      // (فتح تراكمي — طلب مهاب) بدل ما نطلّع المستخدم للقائمة الرئيسية.
+      modalCloseCallback = ()=> openEditProposalsModal();
       openModal('edit', orderId);
     });
   });
