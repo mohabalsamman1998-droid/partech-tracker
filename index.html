@@ -1949,16 +1949,19 @@ function orderPendingProposalsCount(orderId){
   return (editProposals||[]).filter(pr=>pr.order_id===orderId).length;
 }
 
-function rowHtml(order, precomputedTotals){
+function rowHtml(order, precomputedTotals, markArchived){
   const t = precomputedTotals || orderTotals(order);
   const highlightClass = order.confirmed ? (order.supplied ? 'row-supplied' : 'row-not-supplied') : 'row-unconfirmed';
   const pendingCount = orderPendingProposalsCount(order.id);
+  // بادج "مؤرشفة" — تظهر بس لمّا الصف مؤرشف وطالِع ضمن قائمة الطلبيات العادية بسبب فلتر/بحث
+  // مفعّل (markArchived=true من renderTable). بشاشة الأرشيف نفسها كل الصفوف مؤرشفة فما نعرضها.
+  const archivedTag = (markArchived && order.archived) ? '<span class="stamp stamp-amber" style="margin-inline-start:8px;vertical-align:middle;">🗄️ مؤرشفة</span>' : '';
   return '<tr class="'+highlightClass+'">' +
     '<td class="confirm-cell">'+(order.confirmed
       ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="'+escapeHtml(order.id)+'">✓ مؤكدة</button>'
       : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="'+escapeHtml(order.id)+'">تأكيد</button>'
     )+'</td>' +
-    '<td class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? '<span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+(pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">'+pendingCount+'</span>' : '')+'</td>' +
+    '<td class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? '<span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+archivedTag+(pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">'+pendingCount+'</span>' : '')+'</td>' +
     '<td>'+((order.customerPhone||'').trim() ? '<button type="button" class="icon-btn" data-contact-open="'+escapeHtml(order.id)+'" aria-label="تواصل">📞</button>' : '<span class="muted">—</span>')+'</td>' +
     '<td class="num">'+(t.hasChargeable? '<span class="'+profitColorClass(t)+'">'+fmtMoney(t.sellTotal)+'</span>' : '<span class="muted">'+(t.allPartsReturned?'مرتجعة':(t.noActiveParts?'بدون قطع محددة':'لم يُسعّر بعد'))+'</span>')+'</td>' +
     // (order.paidToAmer || order.supplied): لو لسه ما اتوردت وما انسددت، مافي دين حقيقي بعد
@@ -1981,13 +1984,14 @@ function rowHtml(order, precomputedTotals){
   '</tr>';
 }
 
-function cardHtml(order, precomputedTotals){
+function cardHtml(order, precomputedTotals, markArchived){
   const t = precomputedTotals || orderTotals(order);
   const highlightClass = order.confirmed ? (order.supplied ? 'card-supplied' : 'card-not-supplied') : 'card-unconfirmed';
   const pendingCount = orderPendingProposalsCount(order.id);
+  const archivedTag = (markArchived && order.archived) ? '<span class="stamp stamp-amber" style="margin-inline-start:8px;vertical-align:middle;">🗄️ مؤرشفة</span>' : '';
   return '<div class="order-card '+highlightClass+'">' +
     '<div class="order-card-head">' +
-      '<span class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? ' <span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+(pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">'+pendingCount+'</span>' : '')+'</span>' +
+      '<span class="num cell-order">'+escapeHtml(order.orderNumber)+(order.orderLabel ? ' <span class="order-label-tag">'+escapeHtml(order.orderLabel)+'</span>' : '')+archivedTag+(pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">'+pendingCount+'</span>' : '')+'</span>' +
       '<div class="order-card-head-actions">' +
         (order.confirmed
           ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="'+escapeHtml(order.id)+'">✓ مؤكدة</button>'
@@ -2034,22 +2038,27 @@ function isNarrowLayout(){
    orderTotals(order) بيتحسب هون مرة وحدة لكل طلبية ويترّرر لـrowHtml/cardHtml، بدل ما تتكرر
    نفس الحسبة 2-3 مرات لنفس الطلبية بكل عملية رسم (كانت تُستدعى من .filter(orderMatches) وrowHtml
    وcardHtml على نفس الطلبية بنفس اللحظة). */
-function ordersTableAndCardsHtml(orders){
+function ordersTableAndCardsHtml(orders, markArchived){
   const totalsById = {};
   orders.forEach(o=>{ totalsById[o.id] = orderTotals(o); });
   if(isNarrowLayout()){
-    return '<div class="cards-list">' + orders.map(o=>cardHtml(o, totalsById[o.id])).join('') + '</div>';
+    return '<div class="cards-list">' + orders.map(o=>cardHtml(o, totalsById[o.id], markArchived)).join('') + '</div>';
   }
   return '<table class="orders-table"><thead><tr>' +
       '<th>تأكيد</th><th>رقم الطلب</th><th>تواصل</th><th>إجمالي البيع</th><th>التشليح</th><th>المورد</th><th>الزبون</th><th></th>' +
-    '</tr></thead><tbody>' + orders.map(o=>rowHtml(o, totalsById[o.id])).join('') + '</tbody></table>';
+    '</tr></thead><tbody>' + orders.map(o=>rowHtml(o, totalsById[o.id], markArchived)).join('') + '</tbody></table>';
 }
 
 function renderTable(){
   const el = document.getElementById('table-container');
   try{
     const custIdx = buildCustomerByIdIndex();
-    const orders = appData.orders.filter(o=>!o.isQuote).filter(o=>!o.archived)
+    // العرض الافتراضي (فلتر "الكل" وبدون بحث) يبقى مخفي عنه الأرشيف متل قبل. بس أول ما يفعّل
+    // المستخدم أي فلتر أو يكتب بالبحث، القائمة تشمل الطلبيات المؤرشفة المطابقة كمان (طلب مهاب) —
+    // عشان ما تضيع طلبية بالأرشيف وهو يدوّر عليها بفلتر/بحث. الصفوف المؤرشفة تتعلّم ببادج "مؤرشفة".
+    const includeArchived = currentFilter !== 'all' || (currentSearch||'').trim() !== '';
+    const orders = appData.orders.filter(o=>!o.isQuote)
+      .filter(o=> includeArchived || !o.archived)
       .filter(o=>orderMatchesFilterAndSearch(o, currentFilter, currentSearch, custIdx))
       .sort((a,b)=> orderNumberSortKey(b) - orderNumberSortKey(a));
 
@@ -2061,7 +2070,7 @@ function renderTable(){
       return;
     }
 
-    el.innerHTML = ordersTableAndCardsHtml(orders);
+    el.innerHTML = ordersTableAndCardsHtml(orders, includeArchived);
 
     el.querySelectorAll('[data-open]').forEach(b=>{
       b.addEventListener('click', ()=> openModal('edit', b.getAttribute('data-open')));
@@ -2083,6 +2092,21 @@ function renderTable(){
       btn.addEventListener('click', (e)=>{
         e.stopPropagation();
         archiveOrder(btn.getAttribute('data-archive'));
+      });
+    });
+    // صفوف الطلبيات المؤرشفة (تظهر هون بس لمّا يكون في فلتر/بحث مفعّل) تعرض زر "استعادة" وزر
+    // "سبب الفشل" بدل زر "أرشفة" — عادةً مربوطين بشاشة الأرشيف بس (bindArchiveRowEvents)، فنربطهم
+    // هون كمان حتى ما يكونوا أزرار ميتة بالقائمة العادية.
+    el.querySelectorAll('[data-restore]').forEach(btn=>{
+      btn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        restoreOrder(btn.getAttribute('data-restore'));
+      });
+    });
+    el.querySelectorAll('[data-unsuccessful-reason]').forEach(btn=>{
+      btn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        openUnsuccessfulReasonPicker(btn.getAttribute('data-unsuccessful-reason'));
       });
     });
   }catch(e){
