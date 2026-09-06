@@ -6619,7 +6619,14 @@ async function openTreasuryView(){
   hideAllSecondaryViews();
   document.getElementById('treasury-view').style.display = 'block';
   document.getElementById('treasury-view').innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
+  // مؤشرات الصندوق تُحسب من كل الطلبيات — بما فيها المؤرشفة اللي تُحمَّل بالخلفية بعد الدخول
+  // (hydrateArchivedOrders). بدون هالانتظار كانت تُرسم الأرقام ناقصةً أولًا ثم تُصحَّح فور
+  // اكتمال التحميل (scheduleOrderRenderCascade) — وميض "رقم خطأ ثم يتغيّر". نفس ما يعمله
+  // openArchiveView بالضبط. لو التحميل خلص أصلًا (الحالة الشائعة) الـawait يرجع فورًا.
+  if(archivedOrdersHydration) await archivedOrdersHydration;
+  if(document.getElementById('treasury-view').style.display === 'none') return; // المستخدم خرج من الشاشة أثناء الانتظار
   await refreshScrapyardPendingCount();
+  if(document.getElementById('treasury-view').style.display === 'none') return;
   renderTreasuryView();
 }
 
