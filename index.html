@@ -6144,11 +6144,10 @@ function computeStatementTotals(ongoing, refunds, opts){
   return { totalRemaining, totalRefunds, net };
 }
 
-function customerStatementHtml(customer, ongoing, past, refunds, pending, opts){
+function customerStatementHtml(customer, ongoing, past, refunds, opts){
   opts = opts || {};
   const showPaid = opts.showPaid !== false;
   const showRefunds = opts.showRefunds !== false;
-  pending = pending || [];
   const { totalRemaining, totalRefunds, net } = computeStatementTotals(ongoing, refunds, opts);
   const label = customer.name || customer.phone || 'عميل';
   return (
@@ -6211,31 +6210,6 @@ function customerStatementHtml(customer, ongoing, past, refunds, pending, opts){
           refunds.map(r=>'<tr data-open-order="'+escapeHtml(r.orderId)+'" style="cursor:pointer;"><td>'+escapeHtml(r.orderNumber||'')+(r.orderLabel?' — '+escapeHtml(r.orderLabel):'')+'</td><td>'+escapeHtml(r.description||'')+'</td><td style="text-align:center;" class="num">'+fmtNum(r.amount)+'</td></tr>').join('') +
           '</tbody></table>'
         ) : '') +
-        // قسم داخلي: كل طلبيات العميل يلي لسه ما توردت (غير مؤكدة، أو مؤكدة بانتظار التوريد) —
-        // .no-print يخفيه تلقائيًا من الطباعة و من PDF (buildDocPdfBlob بيضيف pdf-export-mode)،
-        // و buildStatementWhatsAppText ما يمرّ عليه أصلًا — فما يوصل للعميل بأي قناة مشاركة.
-        // ما يدخل بمجاميع "مستحق"/"المطلوب منكم" (computeStatementTotals يشتغل على ongoing فقط).
-        (pending.length ? (
-          '<div class="no-print statement-internal-block" style="margin-top:22px;padding-top:14px;border-top:1px dashed #d4d4d4;">' +
-            '<div class="doc-section-title" style="font-weight:700;margin:0 0 4px;">طلبيات لم تُورَّد بعد — عرض داخلي</div>' +
-            '<div class="add-part-locked-hint" style="margin:0 0 10px;">للاطّلاع فقط · لا تظهر للعميل عند الطباعة أو المشاركة أو حفظ PDF</div>' +
-            '<table class="doc-table"><thead><tr><th>الطلبية</th><th>التاريخ</th><th>الحالة</th></tr></thead><tbody>' +
-            pending.map(r=>
-              '<tr data-open-order="'+escapeHtml(r.orderId)+'" style="cursor:pointer;">' +
-                '<td>'+escapeHtml(r.orderNumber||'')+(r.orderLabel?' — '+escapeHtml(r.orderLabel):'')+'</td>' +
-                '<td style="text-align:center;">'+(r.date?isoToDisplayDate(r.date):'—')+'</td>' +
-                '<td style="text-align:center;">'+(r.confirmed
-                  ? '<span class="num text-amber">مؤكدة · بانتظار التوريد</span>'
-                  : '<span class="num" style="color:#a3a3a3;">غير مؤكدة</span>') +
-                  (r.archived ? ' <span class="num" style="color:#a3a3a3;">· 🗄️ مؤرشفة</span>' : '') + '</td>' +
-              '</tr>'
-            ).join('') +
-            '</tbody></table>' +
-          '</div>'
-        ) : '') +
-        // ملاحظة "ما فيه طلبيات" مرتبطة بالأقسام الظاهرة للعميل فقط (جارية/مسددة) — لو ربطناها
-        // بـ pending كمان بتختفي من نسخة العميل (PDF/طباعة) لعميل كل طلبياته غير مورَّدة، فيطلع
-        // كشفه شبه فاضي بلا أي سطر توضيحي. القسم الداخلي فوق يُرسم مستقلًا على الشاشة.
         (!ongoing.length && !past.length ? '<p class="add-part-locked-hint">ما فيه طلبيات مسجّلة لهذا العميل بعد</p>' : '') +
       '</div>' +
     '</div>'
@@ -6468,9 +6442,8 @@ function openCustomerStatementView(customerId){
   statementCustomerId = customerId;
   const { ongoing, past } = customerOrderHistory(customerId);
   const refunds = customerRefundsPending(customerId);
-  const pending = customerPendingOrders(customerId);
   const root = document.getElementById('doc-root');
-  root.innerHTML = customerStatementHtml(customer, ongoing, past, refunds, pending, { showPaid: statementShowPaid, showRefunds: statementShowRefunds });
+  root.innerHTML = customerStatementHtml(customer, ongoing, past, refunds, { showPaid: statementShowPaid, showRefunds: statementShowRefunds });
   root.classList.add('doc-open');
   root.querySelector('#statement-close-btn').addEventListener('click', closeStatementView);
   root.querySelector('#statement-copy-btn').addEventListener('click', copyStatementToClipboard);
@@ -11361,10 +11334,10 @@ function customerOrderHistory(customerId){
   return { ongoing, past };
 }
 
-/* طلبيات العميل يلي لسه ما توردت — غير مؤكدة، أو مؤكدة وبانتظار التوريد. تُعرض كقسم "عرض داخلي"
-   بكشف الحساب حتى يشوف الموظف كامل طلبيات العميل بغض النظر عن حالتها. الطلبيات الموردة معروضة
-   أصلًا بأقسام "جارية"/"مسددة" (customerOrderHistory) فما تتكرر هون. القسم بالكامل داخل .no-print
-   وما يمرّ عليه نص الواتساب — فما يوصل للعميل عند الطباعة/PDF/المشاركة. */
+/* طلبيات العميل يلي لسه ما توردت — غير مؤكدة، أو مؤكدة وبانتظار التوريد. تُعرض كقسم مستقل
+   "غير مورَّدة" داخل مودال "سجل طلبيات العميل" (تحت قسم "سابقة")، مو بكشف الحساب المُرسَل للعميل.
+   الطلبيات الموردة معروضة أصلًا بأقسام "جارية"/"مسددة" (customerOrderHistory) فما تتكرر هون.
+   isQuote مستثنى — تسعيرة مو طلبية فعلية (customerOrderHistory يستثنيه ضمنيًا بشرطه المعاكس). */
 function customerPendingOrders(customerId){
   const rows = [];
   (appData.orders||[]).forEach(o=>{
@@ -11399,6 +11372,21 @@ function orderHistoryRowHtml(row){
   '</button>';
 }
 
+/* صف طلبية غير مورَّدة بمودال سجل طلبيات العميل — بدل مبلغ المتبقّي شارة حالة (غير مؤكدة /
+   بانتظار التوريد)، ووسم 🗄️ للمؤرشفة. نفس بنية orderHistoryRowHtml وقابل للضغط (data-open-order). */
+function pendingOrderHistoryRowHtml(row){
+  const statusHtml = row.confirmed
+    ? '<span class="num text-amber">بانتظار التوريد</span>'
+    : '<span class="num text-dim">غير مؤكدة</span>';
+  return '<button type="button" class="purchase-history-row" data-open-order="'+escapeHtml(row.orderId)+'">' +
+    '<div class="purchase-history-row-main">' +
+      '<span class="purchase-history-desc">'+escapeHtml(row.orderNumber||'')+(row.orderLabel?' — '+escapeHtml(row.orderLabel):'')+'</span>' +
+      statusHtml +
+    '</div>' +
+    '<div class="purchase-history-row-sub"><span>'+(row.date?isoToDisplayDate(row.date):'—')+'</span>'+(row.archived?'<span>🗄️ مؤرشفة</span>':'')+'</div>' +
+  '</button>';
+}
+
 function openCustomerHistoryModal(customerId){
   openCustomerHistoryId = customerId;
   const customer = (appData.customers||[]).find(c=>c.id===customerId);
@@ -11408,6 +11396,7 @@ function openCustomerHistoryModal(customerId){
   const pastTotal = round2(past.reduce((s,r)=>s+r.total,0));
   const refunds = customerRefundsPending(customerId);
   const refundsTotal = round2(refunds.reduce((s,r)=>s+r.amount,0));
+  const pending = customerPendingOrders(customerId);
   const root = document.getElementById('modal-root');
   root.innerHTML =
     '<div class="modal-backdrop" data-close-backdrop>' +
@@ -11430,6 +11419,14 @@ function openCustomerHistoryModal(customerId){
           '<div class="purchase-history-section-title"><span>سابقة (مسددة)</span><span class="num text-green">'+fmtMoney(pastTotal)+'</span></div>' +
           (past.length ? past.map(orderHistoryRowHtml).join('') : '<div class="expense-empty-hint">ما فيه طلبيات سابقة</div>') +
         '</div>' +
+        // قسم مستقل: طلبيات العميل يلي لسه ما توردت (غير مؤكدة / بانتظار التوريد) — للاطلاع الداخلي،
+        // مودال سجل الطلبيات كله شاشة داخلية ما تنطبع/تتشارك، فما يوصل للعميل. يُخفى لو ما فيه ولا وحدة.
+        (pending.length ? (
+          '<div class="purchase-history-section">' +
+            '<div class="purchase-history-section-title"><span>غير مورَّدة</span><span class="num text-dim">'+pending.length+'</span></div>' +
+            pending.map(pendingOrderHistoryRowHtml).join('') +
+          '</div>'
+        ) : '') +
       '</div>' +
     '</div>';
   root.classList.add('modal-open');
