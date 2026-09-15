@@ -725,7 +725,10 @@
   .scrapyard-supplier-total-row .num{flex-shrink:0;}
   .scrapyard-supplier-total-row:last-child{border-bottom:none;}
 
-  .cost-split-row{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:14px;}
+  /* auto-fit بدل repeat(2,..) الثابت — صار فيه احتمال 3 صناديق (مورد + عهدة عامر + عهدة عمر)
+     مو 2 بس، وgrid (عكس flex) ما بيفيض ويقص عمود بصمت، بس بدون auto-fit كان بيطلع عمود يتيم
+     بعرض نص الصف على الشاشات الضيقة */
+  .cost-split-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:14px;}
   .cost-split-box{
     background:var(--surface);border:1px solid var(--border-soft);border-radius:6px;padding:9px 10px;
     display:flex;flex-direction:column;gap:4px;cursor:pointer;text-align:right;font-family:'Tajawal',sans-serif;
@@ -1496,13 +1499,20 @@ function orderTotals(order){
   };
 }
 
+// طلبية "مسدد تكلفتها للمشتريات" لو انسددت من عهدة عامر أو عهدة عمر — عهدتان مستقلتان (انظر
+// paidToScrapyardTotalForCustody/paidToScrapyardTotalForOmar) بس أي وحدة فيهم تكفي تعتبر
+// التكلفة مسددة لغرض حالة الطلبية (بانتظار السداد / مكتملة / المرتجعات وغيرها).
+function orderSettledWithPurchasing(order){
+  return !!(order && (order.paidToAmer || order.paidToOmar));
+}
+
 function orderStatusFlags(order){
   const t = orderTotals(order);
   return Object.assign({}, t, {
     // "بانتظار السداد" لازم يتبع نفس منطق computeAggregateFinancials — قبل "تم التوريد" ما
     // في دين حقيقي بعد (انظر ملاحظة computeAggregateFinancials)، فما ينفع الفلتر/التلوين يقول
     // "بانتظار السداد" على طلبية ما صارت مستحقة أصلًا بمؤشرات الصندوق
-    waitingAmerPayment: order.confirmed && order.supplied && t.costToScrapyard>0 && !order.paidToAmer,
+    waitingAmerPayment: order.confirmed && order.supplied && t.costToScrapyard>0 && !orderSettledWithPurchasing(order),
     waitingSupplierPayment: order.confirmed && order.supplied && t.costToSupplier>0 && !order.paidToSupplier,
     waitingSupply: order.confirmed && !order.supplied,
     // fullyPriced (مش hasSell) — طلبية فيها قطعة مسعّرة وقطعة تانية لسه لأ لازم تضل "بانتظار
@@ -1512,12 +1522,12 @@ function orderStatusFlags(order){
     // fullyPriced أصلًا يشترط sellEligibleCount>0 — طلبية رجعت قطعها كلها ما عندها ولا قطعة
     // مؤهلة للتسعير أصلًا (sellEligibleCount=0)، فما توصل "مكتملة" أبدًا حتى لو استقر عليها مبلغ
     // محتفظ فيه (hasChargeable) وانسدد بالكامل — نضيف مسار بديل يغطي هالحالة بالذات
-    complete: order.confirmed && order.supplied && (t.costToScrapyard===0 || order.paidToAmer) && (t.costToSupplier===0 || order.paidToSupplier) && t.customerFullyPaid && (t.fullyPriced || (t.allPartsReturned && t.hasChargeable))
+    complete: order.confirmed && order.supplied && (t.costToScrapyard===0 || orderSettledWithPurchasing(order)) && (t.costToSupplier===0 || order.paidToSupplier) && t.customerFullyPaid && (t.fullyPriced || (t.allPartsReturned && t.hasChargeable))
   });
 }
 
 function defaultTreasury(){
-  return { delivery:[], transport:[], unexpectedLosses:[], salaries:[], hr:[], other:[], support:[], amerCustody:[] };
+  return { delivery:[], transport:[], unexpectedLosses:[], salaries:[], hr:[], other:[], support:[], amerCustody:[], omarCustody:[] };
 }
 
 function defaultTasks(){
@@ -1544,7 +1554,7 @@ function groupTaskRows(rows){
 
 /* حقول الطلبية يلي انصعدت لأعمدة حقيقية بجدول orders — أي حقل ثاني يترسم تلقائيًا بعمود extra */
 const ORDER_PROMOTED_KEYS = ['id','orderNumber','orderLabel','customerPhone','customerId','confirmed','supplied',
-  'suppliedAt','paidToAmer','paidToSupplier','parts','customerPayments','createdAt','updatedAt'];
+  'suppliedAt','paidToAmer','paidToOmar','paidToSupplier','parts','customerPayments','createdAt','updatedAt'];
 
 function orderRowToObject(row){
   const obj = Object.assign({}, row.extra || {});
@@ -1557,6 +1567,7 @@ function orderRowToObject(row){
   obj.supplied = !!row.supplied;
   obj.suppliedAt = row.supplied_at ? new Date(row.supplied_at).toISOString() : null;
   obj.paidToAmer = !!row.paid_to_amer;
+  obj.paidToOmar = !!row.paid_to_omar;
   obj.paidToSupplier = !!row.paid_to_supplier;
   obj.parts = Array.isArray(row.parts) ? row.parts : [];
   obj.customerPayments = Array.isArray(row.customer_payments) ? row.customer_payments : [];
@@ -1578,6 +1589,7 @@ function orderObjectToRow(order){
     supplied: !!order.supplied,
     supplied_at: order.suppliedAt || null,
     paid_to_amer: !!order.paidToAmer,
+    paid_to_omar: !!order.paidToOmar,
     paid_to_supplier: !!order.paidToSupplier,
     parts: Array.isArray(order.parts) ? order.parts : [],
     customer_payments: Array.isArray(order.customerPayments) ? order.customerPayments : [],
@@ -1653,27 +1665,33 @@ async function loadData(){
     // المشروع — بتخلي فتح/تحديث الموقع أسرع مع تراكم الطلبيات بمرور الوقت. المؤرشفة تلتحق
     // بنفس appData.orders بالخلفية فورًا بعدها (hydrateArchivedOrders)، فكل الحسابات المالية
     // تضل صحيحة كاملة خلال ثوان — بس البداية أسرع.
-    const [ordersRes, treasuryRes, tasksRes, suppliersRes, customersRes, custodyBalanceRes] = await Promise.all([
+    const [ordersRes, treasuryRes, tasksRes, suppliersRes, customersRes, amerCustodyBalanceRes, omarCustodyBalanceRes] = await Promise.all([
       sb.from('orders').select('*').or(ORDERS_ACTIVE_FILTER),
       sb.from('treasury_entries').select('*'),
       sb.from('tasks').select('*'),
       sb.from('suppliers').select('*'),
       sb.from('customers').select('*'),
-      sb.rpc('get_amer_custody_balance')
+      sb.rpc('get_amer_custody_balance'),
+      sb.rpc('get_omar_custody_balance')
     ]);
     if(ordersRes.error) throw ordersRes.error;
     if(treasuryRes.error) throw treasuryRes.error;
     if(tasksRes.error) throw tasksRes.error;
     if(suppliersRes.error) throw suppliersRes.error;
     if(customersRes.error) throw customersRes.error;
-    // ما منوقّف تحميل باقي البيانات لو هاي فشلت (مؤشر KPI واحد بس بيتأثر) — انظر amerCustodyBalance()
-    if(!custodyBalanceRes.error){
-      serverAmerCustodyBalance = Number(custodyBalanceRes.data) || 0;
+    // ما منوقّف تحميل باقي البيانات لو هاي فشلت (مؤشر KPI واحد بس بيتأثر) — انظر purchasingCustodyBalance()
+    if(!amerCustodyBalanceRes.error){
+      serverAmerCustodyBalance = Number(amerCustodyBalanceRes.data) || 0;
     } else {
       // بلا إعادة محاولة، serverAmerCustodyBalance تضل null للجلسة كلها لغير المخوّل (ما فيه
       // بيانات عهدة محلية عنده أصلًا بسبب RLS)، فـamerCustodyBalance() بتسقط لحساب محلي يرجّع
       // صفر مضمون (مش القيمة الحقيقية) لحد ما يصادف حدث realtime غير مرتبط يصححها بالصدفة.
       refreshServerAmerCustodyBalance().then(renderKPIs);
+    }
+    if(!omarCustodyBalanceRes.error){
+      serverOmarCustodyBalance = Number(omarCustodyBalanceRes.data) || 0;
+    } else {
+      refreshServerOmarCustodyBalance().then(renderKPIs);
     }
     appData = {
       orders: (ordersRes.data||[]).map(orderRowToObject),
@@ -1762,7 +1780,7 @@ function computeAggregateFinancials(matchPeriodFn){
     // "لسه ما انسدد" (dueTo*) — فرع "انسدد فعليًا" (paidTo*Total) لازم يضل بدون قيد التوريد،
     // لأنه بيمثّل كاش خرج فعليًا من الصندوق بغض النظر عن حالة التوريد (مثلاً دفعة مقدّمة لمورد
     // قبل وصول القطعة) — تقييده كان بيخفي كاش حقيقي مدفوع عن net.
-    if(!o.paidToAmer){ if(o.supplied && t.costToScrapyard>0){ dueToScrapyard += t.costToScrapyard; dueToScrapyardCount++; } } else paidToScrapyardTotal += t.costToScrapyard;
+    if(!orderSettledWithPurchasing(o)){ if(o.supplied && t.costToScrapyard>0){ dueToScrapyard += t.costToScrapyard; dueToScrapyardCount++; } } else paidToScrapyardTotal += t.costToScrapyard;
     if(!o.paidToSupplier){ if(o.supplied && t.costToSupplier>0){ dueToSuppliers += t.costToSupplier; dueToSuppliersCount++; } } else paidToSuppliersTotal += t.costToSupplier;
     // نفس مبدأ dueToScrapyard/dueToSuppliers فوق — ونفس شرط waitingCustomerPayment الأصلي
     // بـorderStatusFlags (كان already يشترط order.supplied، بعكس هالمجموع اللي كان يزيد فور
@@ -1791,7 +1809,7 @@ function renderKPIs(){
   // مورد انحذف وبقيت قطعة قديمة تشير لمعرّفه ما لازم يضل يحسب هون للأبد.
   const supplierReceivablesById = supplierReturnReceivablesIndex().bySupplier;
   const returnsOwedToUs = round2((appData.suppliers||[]).reduce((sum,s)=> sum + (supplierReceivablesById[s.id]||0), 0));
-  const custodyBalance = amerCustodyBalance();
+  const custodyBalance = purchasingCustodyBalance();
   const dueToScrapyardNet = round2(f.dueToScrapyard - custodyBalance);
   const dueToScrapyardShown = Math.max(0, dueToScrapyardNet);
   const suppliersWithReceivables = (appData.suppliers||[]).filter(s=>(supplierReceivablesById[s.id]||0)>0).length;
@@ -1971,7 +1989,7 @@ function rowHtml(order, precomputedTotals, markArchived){
     // فيه سداد مسبق فعلي (دفعة مقدّمة قبل التوريد) نضلّ نعرضه "مسدد"، هذا معلومة صحيحة مو دين.
     // مبلغ التكلفة الفعلي وحالة سداد المورد/التشليح معلومة مشتريات حساسة — ممنوعة عن المبيعات
     // بأي حالة (نفس القاعدة المطبّقة داخل مودال الطلبية وشاشة الموردين)، كانت ناقصة هون بالغلط.
-    '<td>'+(hasElevatedAccess() && (order.paidToAmer || order.supplied) && t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد '+fmtMoney(t.costToScrapyard),'غير مسدد '+fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>')+'</td>' +
+    '<td>'+(hasElevatedAccess() && (orderSettledWithPurchasing(order) || order.supplied) && t.costToScrapyard>0 ? stampBadge(orderSettledWithPurchasing(order),'مسدد'+(order.paidToOmar?' لعمر':order.paidToAmer?' لعامر':'')+' '+fmtMoney(t.costToScrapyard),'غير مسدد '+fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>')+'</td>' +
     '<td>'+(hasElevatedAccess() && (order.paidToSupplier || order.supplied) && t.costToSupplier>0 ? stampBadge(order.paidToSupplier,'مسدد '+fmtMoney(t.costToSupplier),'غير مسدد '+fmtMoney(t.costToSupplier)) : '<span class="muted">—</span>')+'</td>' +
     '<td>'+(order.confirmed ? customerPaymentCellHtml(t, true) : '<span class="muted">—</span>')+'</td>' +
     '<td class="row-actions">' +
@@ -2006,7 +2024,7 @@ function cardHtml(order, precomputedTotals, markArchived){
     '<div class="order-card-badges">' +
       // نفس مبدأ rowHtml فوق: ما نعرض "غير مسدد" قبل التوريد الفعلي إلا لو فيه سداد مسبق فعلي،
       // ومبلغ/حالة سداد المورد أو التشليح ممنوعة عن المبيعات بأي حالة (نفس القاعدة بمودال الطلبية)
-      (hasElevatedAccess() && (order.paidToAmer || order.supplied) && t.costToScrapyard>0 ? stampBadge(order.paidToAmer,'مسدد للتشليح '+fmtMoney(t.costToScrapyard),'غير مسدد للتشليح '+fmtMoney(t.costToScrapyard)) : '') +
+      (hasElevatedAccess() && (orderSettledWithPurchasing(order) || order.supplied) && t.costToScrapyard>0 ? stampBadge(orderSettledWithPurchasing(order),'مسدد للتشليح'+(order.paidToOmar?' (عمر)':order.paidToAmer?' (عامر)':'')+' '+fmtMoney(t.costToScrapyard),'غير مسدد للتشليح '+fmtMoney(t.costToScrapyard)) : '') +
       (hasElevatedAccess() && (order.paidToSupplier || order.supplied) && t.costToSupplier>0 ? stampBadge(order.paidToSupplier,'مسدد للمورد '+fmtMoney(t.costToSupplier),'غير مسدد للمورد '+fmtMoney(t.costToSupplier)) : '') +
       // نفس شروط orderStatusFlags.waitingPricing — بدون الحارسين كانت طلبية كل قطعها مرتجعة
       // (أو بلا قطع محددة) تطلّع "بانتظار التسعير" بالبطاقات بينما صفوف الجدول ما بتعتبرها كذلك
@@ -2695,9 +2713,14 @@ function modalHtml(d){
               '<span class="cost-split-status" id="cost-supplier-status">'+(d.paidToSupplier?'✓ مسدد':'غير مسدد')+'</span>' +
             '</button>' +
             '<button type="button" class="cost-split-box'+(d.paidToAmer?' cost-split-paid':'')+'" id="cost-split-amer-btn">' +
-              '<span>المجموع للتشليح</span>' +
+              '<span>عهدة عامر</span>' +
               '<span class="num" id="cost-amer-display">0 ر.س</span>' +
               '<span class="cost-split-status" id="cost-amer-status">'+(d.paidToAmer?'✓ مسدد':'غير مسدد')+'</span>' +
+            '</button>' +
+            '<button type="button" class="cost-split-box'+(d.paidToOmar?' cost-split-paid':'')+'" id="cost-split-omar-btn">' +
+              '<span>عهدة عمر</span>' +
+              '<span class="num" id="cost-omar-display">0 ر.س</span>' +
+              '<span class="cost-split-status" id="cost-omar-status">'+(d.paidToOmar?'✓ مسدد':'غير مسدد')+'</span>' +
             '</button>' +
           '</div>'
           ) : '') +
@@ -2749,6 +2772,7 @@ function openModal(mode, orderId){
       parts: [],
       partsSelectionEnabled:false,
       paidToAmer:false,
+      paidToOmar:false,
       paidToSupplier:false,
       supplied:false,
       customerPhone:'',
@@ -3027,7 +3051,7 @@ function attachModalHandlers(){
     if(!hasElevatedAccess()){ showToast('غير متاح', 'error'); return; }
     const willPay = !draft.paidToAmer;
     confirmAction({
-      title: willPay ? 'تحديد الطلبية كـ"مسدد للتشليح"؟' : 'إلغاء تحديد الطلبية كـ"مسدد للتشليح"؟',
+      title: willPay ? 'تحديد الطلبية كـ"مسدد من عهدة عامر"؟' : 'إلغاء تحديد الطلبية كـ"مسدد من عهدة عامر"؟',
       confirmLabel: 'نعم',
       cancelLabel: 'لا',
       onConfirm: ()=>{
@@ -3038,10 +3062,52 @@ function attachModalHandlers(){
         // لقطة من المبلغ وقت التسديد نفسه — بدونها تقرير يوم سابق (مقفول فعليًا) كان يتغيّر
         // بصمت لو انعدّل سعر تكلفة القطعة بعدين أو ترجّعت واترد سعرها (انظر accountsActivityForDate)
         draft.paidToAmerAmountSnapshot = willPay ? orderTotals(draft).costToScrapyard : null;
+        // عهدتا عامر وعمر مستقلتان بالكامل ومتنافيتان بقاعدة البيانات (orders_custody_exclusive_check)
+        // — تفعيل واحدة لازم يلغي الثانية أوتوماتيكيًا، وإلا الحفظ يرفض بخطأ من القيد
+        if(willPay && draft.paidToOmar){
+          draft.paidToOmar = false;
+          draft.paidToOmarAt = null;
+          draft.paidToOmarAmountSnapshot = null;
+          const omarBtn = document.getElementById('cost-split-omar-btn');
+          if(omarBtn){
+            omarBtn.classList.remove('cost-split-paid');
+            document.getElementById('cost-omar-status').textContent = 'غير مسدد';
+          }
+        }
         const btn = document.getElementById('cost-split-amer-btn');
         if(btn){
           btn.classList.toggle('cost-split-paid', willPay);
           document.getElementById('cost-amer-status').textContent = willPay ? '✓ مسدد' : 'غير مسدد';
+        }
+      }
+    });
+  });
+  const costSplitOmarBtn = root.querySelector('#cost-split-omar-btn');
+  if(costSplitOmarBtn) costSplitOmarBtn.addEventListener('click', ()=>{
+    if(!hasElevatedAccess()){ showToast('غير متاح', 'error'); return; }
+    const willPay = !draft.paidToOmar;
+    confirmAction({
+      title: willPay ? 'تحديد الطلبية كـ"مسدد من عهدة عمر"؟' : 'إلغاء تحديد الطلبية كـ"مسدد من عهدة عمر"؟',
+      confirmLabel: 'نعم',
+      cancelLabel: 'لا',
+      onConfirm: ()=>{
+        draft.paidToOmar = willPay;
+        draft.paidToOmarAt = willPay ? new Date().toISOString() : null;
+        draft.paidToOmarAmountSnapshot = willPay ? orderTotals(draft).costToScrapyard : null;
+        if(willPay && draft.paidToAmer){
+          draft.paidToAmer = false;
+          draft.paidToAmerAt = null;
+          draft.paidToAmerAmountSnapshot = null;
+          const amerBtn = document.getElementById('cost-split-amer-btn');
+          if(amerBtn){
+            amerBtn.classList.remove('cost-split-paid');
+            document.getElementById('cost-amer-status').textContent = 'غير مسدد';
+          }
+        }
+        const btn = document.getElementById('cost-split-omar-btn');
+        if(btn){
+          btn.classList.toggle('cost-split-paid', willPay);
+          document.getElementById('cost-omar-status').textContent = willPay ? '✓ مسدد' : 'غير مسدد';
         }
       }
     });
@@ -3308,7 +3374,7 @@ function confirmReturnWholeOrder(){
     return;
   }
   const missingSupplier = activeParts.some(p=>{
-    const hasReceivable = p.used ? draft.paidToAmer : draft.paidToSupplier;
+    const hasReceivable = p.used ? orderSettledWithPurchasing(draft) : draft.paidToSupplier;
     return hasReceivable && !p.supplierId;
   });
   if(missingSupplier){
@@ -3324,7 +3390,7 @@ function confirmReturnWholeOrder(){
 }
 
 function proceedReturnWholeOrder(activeParts, keepFee){
-  const anyPaid = activeParts.some(p=> p.used ? draft.paidToAmer : draft.paidToSupplier);
+  const anyPaid = activeParts.some(p=> p.used ? orderSettledWithPurchasing(draft) : draft.paidToSupplier);
   confirmAction({
     title: 'تأكيد إرجاع الطلبية بالكامل ('+activeParts.length+' قطعة)؟',
     message: anyPaid
@@ -3455,7 +3521,7 @@ function openPartActionChoice(part){
 }
 
 function confirmSinglePartReturn(part){
-  const hasReceivable = part.used ? draft.paidToAmer : draft.paidToSupplier;
+  const hasReceivable = part.used ? orderSettledWithPurchasing(draft) : draft.paidToSupplier;
   if(hasReceivable && !part.supplierId){
     showToast('حدد المورد لهذه القطعة قبل تأكيد الإرجاع', 'error');
     return;
@@ -3579,7 +3645,7 @@ function openReturnFeeChoiceModal(shareAmount, includesDelivery, onChoice){
    مرتبطة بهالقطعة تحديدًا (زبون دافع أكتر من المطلوب لسبب تاني) ما لازم تُنسب لإرجاعها. */
 function applyPartReturnOnOrder(order, part, extraRefundCap){
   extraRefundCap = round2(Math.max(0, Number(extraRefundCap)||0));
-  const hasReceivable = part.used ? order.paidToAmer : order.paidToSupplier;
+  const hasReceivable = part.used ? orderSettledWithPurchasing(order) : order.paidToSupplier;
   part.returned = true;
   part.returnHasReceivable = hasReceivable;
   part.returnCollected = false;
@@ -3769,6 +3835,8 @@ function updateModalTotals(){
   if(costSupplierEl) costSupplierEl.textContent = fmtMoney(t.costToSupplier);
   const costAmerEl = document.getElementById('cost-amer-display');
   if(costAmerEl) costAmerEl.textContent = fmtMoney(t.costToScrapyard);
+  const costOmarEl = document.getElementById('cost-omar-display');
+  if(costOmarEl) costOmarEl.textContent = fmtMoney(t.costToScrapyard);
   const feePreviewEl = document.getElementById('fee-amount-preview');
   if(feePreviewEl){
     feePreviewEl.textContent = (t.feeEnabled && t.feeAmount>0) ? ('= '+fmtMoney(t.feeAmount)) : '';
@@ -4576,6 +4644,7 @@ function openQuoteModal(mode, orderId, role){
       parts: [],
       partsSelectionEnabled:false,
       paidToAmer:false,
+      paidToOmar:false,
       paidToSupplier:false,
       supplied:false,
       customerPhone:'',
@@ -7196,7 +7265,7 @@ function requestPartDelete(part){
 }
 
 function requestPartReturn(part){
-  const hasReceivable = part.used ? draft.paidToAmer : draft.paidToSupplier;
+  const hasReceivable = part.used ? orderSettledWithPurchasing(draft) : draft.paidToSupplier;
   if(hasReceivable && !part.supplierId){ showToast('حدد المورد لهذه القطعة قبل إرسال طلب الإرجاع', 'error'); return; }
   if(hasAnyPendingPartAction(part.id)) return;
   confirmAction({
@@ -7285,7 +7354,7 @@ function requestOrderReturn(){
   const activeParts = orderActiveParts(draft).filter(p=>!p.returned);
   if(!activeParts.length){ showToast('لا يوجد قطع قابلة للإرجاع بهذه الطلبية', 'error'); return; }
   const missingSupplier = activeParts.some(p=>{
-    const hasReceivable = p.used ? draft.paidToAmer : draft.paidToSupplier;
+    const hasReceivable = p.used ? orderSettledWithPurchasing(draft) : draft.paidToSupplier;
     return hasReceivable && !p.supplierId;
   });
   if(missingSupplier){ showToast('حدد المورد لكل قطعة مدفوعة مسبقًا قبل إرسال طلب الإرجاع', 'error'); return; }
@@ -7381,7 +7450,7 @@ function applyEditProposal(pr, orderOverride, opts){
   } else if(pr.kind === 'part_return'){
     const part = (order.parts||[]).find(p=>p.id===pr.part_id);
     if(!part || part.returned) return false;
-    const hasReceivable = part.used ? order.paidToAmer : order.paidToSupplier;
+    const hasReceivable = part.used ? orderSettledWithPurchasing(order) : order.paidToSupplier;
     if(hasReceivable && !part.supplierId) return false; // نفس شرط الإرجاع المباشر — لازم مورد محدد أولًا
     const s = computeReturnFeeShare(order, part);
     if(opts.keepFee){
@@ -7399,7 +7468,7 @@ function applyEditProposal(pr, orderOverride, opts){
     const activeParts = orderActiveParts(order).filter(p=>!p.returned);
     if(!activeParts.length) return false;
     const missingSupplier = activeParts.some(p=>{
-      const hasReceivable = p.used ? order.paidToAmer : order.paidToSupplier;
+      const hasReceivable = p.used ? orderSettledWithPurchasing(order) : order.paidToSupplier;
       return hasReceivable && !p.supplierId;
     });
     if(missingSupplier) return false;
@@ -8179,7 +8248,7 @@ function accountsActivityForDate(isoDate){
     return isoDateMatches(new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()), isoDate);
   };
 
-  const customerPayments = [], customerRefunds = [], supplierPayments = [], expenses = [], support = [], custody = [];
+  const customerPayments = [], customerRefunds = [], supplierPayments = [], expenses = [], support = [], custody = [], custodyOmar = [];
 
   (appData.orders||[]).forEach(o=>{
     if(o.isQuote) return;
@@ -8197,7 +8266,11 @@ function accountsActivityForDate(isoDate){
     }
     if(matchIso(o.paidToAmerAt)){
       const amt = o.paidToAmerAmountSnapshot!=null ? Number(o.paidToAmerAmountSnapshot)||0 : orderTotals(o).costToScrapyard;
-      supplierPayments.push({ orderNumber: o.orderNumber, orderLabel: o.orderLabel, amount: amt, kind: 'تشليح' });
+      supplierPayments.push({ orderNumber: o.orderNumber, orderLabel: o.orderLabel, amount: amt, kind: 'تشليح (عامر)' });
+    }
+    if(matchIso(o.paidToOmarAt)){
+      const amt = o.paidToOmarAmountSnapshot!=null ? Number(o.paidToOmarAmountSnapshot)||0 : orderTotals(o).costToScrapyard;
+      supplierPayments.push({ orderNumber: o.orderNumber, orderLabel: o.orderLabel, amount: amt, kind: 'تشليح (عمر)' });
     }
   });
 
@@ -8215,15 +8288,19 @@ function accountsActivityForDate(isoDate){
     if(!matchDmy(entry.date)) return;
     custody.push({ amount: Number(entry.amount)||0, note: entry.note||'' });
   });
+  (appData.treasury.omarCustody||[]).forEach(entry=>{
+    if(!matchDmy(entry.date)) return;
+    custodyOmar.push({ amount: Number(entry.amount)||0, note: entry.note||'' });
+  });
 
   const sum = arr => round2(arr.reduce((s,r)=> s + (Number(r.amount)||0), 0));
-  // تسديد "تشليح" (عامر) ما يمثّل خروج كاش جديد من الصندوق — الكاش طلع فعليًا لحظة شحن العهدة
-  // (عهدة المشتريات)، وعامر بس يصرف من رصيد معه أصلًا. فلحساب صافي حركة اليوم منستخدم تسديد
-  // المورد المباشر فقط (supplierPaymentsDirect)، بينما القائمة/المجموع الكامل (كل الأنواع) يضل
-  // معروض بالقسم نفسه للمعلومة/التتبع فقط، مو داخل بالصافي.
+  // تسديد "تشليح" (عامر أو عمر) ما يمثّل خروج كاش جديد من الصندوق — الكاش طلع فعليًا لحظة شحن
+  // العهدة (عهدة المشتريات)، وعامر/عمر بس يصرف من رصيد معه أصلًا. فلحساب صافي حركة اليوم
+  // منستخدم تسديد المورد المباشر فقط (supplierPaymentsDirect)، بينما القائمة/المجموع الكامل
+  // (كل الأنواع) يضل معروض بالقسم نفسه للمعلومة/التتبع فقط، مو داخل بالصافي.
   const supplierPaymentsDirect = supplierPayments.filter(r=>r.kind==='مورد');
   return {
-    customerPayments, customerRefunds, supplierPayments, expenses, support, custody,
+    customerPayments, customerRefunds, supplierPayments, expenses, support, custody, custodyOmar,
     totals: {
       customerPayments: sum(customerPayments),
       customerRefunds: sum(customerRefunds),
@@ -8231,7 +8308,8 @@ function accountsActivityForDate(isoDate){
       supplierPaymentsDirect: sum(supplierPaymentsDirect),
       expenses: sum(expenses),
       support: sum(support),
-      custody: sum(custody)
+      custody: sum(custody),
+      custodyOmar: sum(custodyOmar)
     }
   };
 }
@@ -8270,7 +8348,7 @@ function computeTreasuryVolumes(){
   orders.forEach(o=>{
     const t = orderTotals(o);
     if(o.paidToSupplier) paidToSuppliersTotal += t.costToSupplier;
-    if(o.paidToAmer) paidToScrapyardTotal += t.costToScrapyard;
+    if(orderSettledWithPurchasing(o)) paidToScrapyardTotal += t.costToScrapyard;
     // costToSuppliersTotal/costToScrapyardTotal = التكلفة الكاملة بغض النظر عن حالة السداد —
     // "حجم الشراء" الرئيسي بقى يعرض هاي (الكامل)، و"تم سداد منه" بيعرض المدفوع فعليًا تحته
     costToSuppliersTotal += t.costToSupplier;
@@ -8336,15 +8414,18 @@ function treasuryTotals(){
     if(categoryTotal>0) extraIndicatorsExpensesByCategory.push({ label: c.label, amount: categoryTotal });
   });
   const supportAllTime = treasurySupportTotal(()=>true);
-  const custodyTopupsAllTime = amerCustodyTopupsTotalAll();
+  // custodyTopupsAllTime/custodyBalance هون مجموع عهدتي عامر وعمر معًا — نفس مبدأ purchasingCustodyBalance()
+  // (انظرها فوق)، بس مكرّرة هون inline بدل استدعائها لنفس سبب الأداء بالتعليق الأصلي تحت
+  const custodyTopupsAllTime = round2(amerCustodyTopupsTotalAll() + omarCustodyTopupsTotalAll());
   // إصلاح 2026-08-19 (فحص ثانٍ، أداء): amerCustodyDeficit()/amerCustodyBalance()/
   // paidToScrapyardTotalForCustody() الثلاثة كانوا يُستدعوا هون منفصلين، وكل استدعاء يمرّ مرور
   // كامل تاني على appData.orders لنفس النتيجة بالضبط — 3 مرات بدل مرة وحدة. نحسبها هون مرة
   // وحدة، ونشتق custodyBalance/custodyDeficit محليًا بنفس منطق الدالتين الأصليتين بالضبط
-  // (بما فيه فرع غير المخوّلين اللي يعتمد serverAmerCustodyBalance بدون أي حساب محلي).
-  const paidToScrapyardForCustody = paidToScrapyardTotalForCustody();
-  const custodyBalance = (!currentUserIsElevated && serverAmerCustodyBalance !== null)
-    ? serverAmerCustodyBalance
+  // (بما فيه فرع غير المخوّلين اللي يعتمد serverAmerCustodyBalance/serverOmarCustodyBalance
+  // بدون أي حساب محلي) — بعد إضافة عهدة عمر المستقلة صار لازم نجمع الاثنتين هون بدل عهدة عامر بس.
+  const paidToScrapyardForCustody = round2(paidToScrapyardTotalForCustody() + paidToScrapyardTotalForOmar());
+  const custodyBalance = (!currentUserIsElevated && (serverAmerCustodyBalance !== null || serverOmarCustodyBalance !== null))
+    ? round2((serverAmerCustodyBalance||0) + (serverOmarCustodyBalance||0))
     : round2(custodyTopupsAllTime - paidToScrapyardForCustody);
   const custodyDeficit = round2(Math.max(0, -custodyBalance));
   const supplierReturnReceivables = totalSupplierReturnReceivables();
@@ -8460,12 +8541,13 @@ function categorySubtotal(key){
 
 function expenseEntryRowHtml(entry, categoryKey){
   const isEditing = !!editingExpenseEntries[entry.id];
-  const isSupport = categoryKey === 'support' || categoryKey === 'amerCustody';
+  const isCustody = categoryKey === 'amerCustody' || categoryKey === 'omarCustody';
+  const isSupport = categoryKey === 'support' || isCustody;
   const amt = Number(entry.amount)||0;
-  // عهدة عامر عكس الدعم بالاتجاه: سحب منها (سالب) بيرجّع كاش للصندوق (أخضر)، وسداد لها (موجب)
+  // عهدة عامر/عمر عكس الدعم بالاتجاه: سحب منها (سالب) بيرجّع كاش للصندوق (أخضر)، وسداد لها (موجب)
   // كاش طالع من الصندوق (أحمر) — نفس منطق custodyRowsHtml بتقرير "حركة الحسابات" (accountsActivityModalHtml)
-  // ونفس اتجاه netTotal يلي بيطرح عهدة عامر متل مصروف، مو يضيفها متل الدعم
-  const colorClass = categoryKey === 'amerCustody'
+  // ونفس اتجاه netTotal يلي بيطرح عهدة المشتريات متل مصروف، مو يضيفها متل الدعم
+  const colorClass = isCustody
     ? (amt < 0 ? 'text-green' : 'text-rust')
     : (isSupport ? (amt < 0 ? 'text-rust' : 'text-green') : 'text-rust');
   if(!isEditing){
@@ -8553,7 +8635,7 @@ function accountsActivityModalHtml(){
   const supplierRowsHtml = a.supplierPayments.map(r=>
     '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(
       r.orderNumber+(r.orderLabel?' — '+r.orderLabel:''),
-      'تسديد '+r.kind+(r.kind==='تشليح'?' (من عهدة المشتريات — مو داخل بالصافي)':''),
+      'تسديد '+r.kind+(r.kind.indexOf('تشليح')===0?' (من عهدة المشتريات — مو داخل بالصافي)':''),
       r.amount, 'text-rust'
     ) + '</div>'
   ).join('');
@@ -8567,7 +8649,12 @@ function accountsActivityModalHtml(){
   ).join('');
   const custodyRowsHtml = a.custody.map(r=>
     '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(
-      (r.amount<0?'سحب من عهدة المشتريات':'سداد لعهدة المشتريات'), r.note, r.amount, (r.amount<0?'text-green':'text-rust')
+      (r.amount<0?'سحب من عهدة عامر':'سداد لعهدة عامر'), r.note, r.amount, (r.amount<0?'text-green':'text-rust')
+    ) + '</div>'
+  ).join('');
+  const custodyOmarRowsHtml = a.custodyOmar.map(r=>
+    '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(
+      (r.amount<0?'سحب من عهدة عمر':'سداد لعهدة عمر'), r.note, r.amount, (r.amount<0?'text-green':'text-rust')
     ) + '</div>'
   ).join('');
 
@@ -8575,8 +8662,8 @@ function accountsActivityModalHtml(){
   // التزام برد المبلغ، بس الكاش ما يطلع من الصندوق فعليًا إلا لحظة "تم رد المبلغ للزبون"
   // (customerRefundConfirmed)، وهاي كمان بلا تاريخ مسجّل حاليًا (نفس فجوة سداد المورد/التشليح).
   // فنعرض القسم للمعلومة بس ما ندخله بصافي حركة اليوم حتى ما نوهم إنه كاش طلع فعليًا.
-  const netTotal = round2(a.totals.customerPayments - a.totals.supplierPaymentsDirect - a.totals.expenses + a.totals.support - a.totals.custody);
-  const hasAnything = a.customerPayments.length || a.customerRefunds.length || a.supplierPayments.length || a.expenses.length || a.support.length || a.custody.length;
+  const netTotal = round2(a.totals.customerPayments - a.totals.supplierPaymentsDirect - a.totals.expenses + a.totals.support - a.totals.custody - a.totals.custodyOmar);
+  const hasAnything = a.customerPayments.length || a.customerRefunds.length || a.supplierPayments.length || a.expenses.length || a.support.length || a.custody.length || a.custodyOmar.length;
 
   return '<div class="modal-backdrop" data-close-backdrop>' +
     '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
@@ -8596,7 +8683,8 @@ function accountsActivityModalHtml(){
       accountsActivitySectionHtml('📤 تسديد للموردين/التشاليح', a.supplierPayments, a.totals.supplierPayments, 'text-rust', supplierRowsHtml) +
       accountsActivitySectionHtml('💸 المصاريف', a.expenses, a.totals.expenses, 'text-rust', expensesRowsHtml) +
       accountsActivitySectionHtml('🤝 دعم الصندوق الخارجي', a.support, a.totals.support, a.totals.support<0?'text-rust':'text-green', supportRowsHtml) +
-      accountsActivitySectionHtml('🔧 عهدة المشتريات', a.custody, a.totals.custody, a.totals.custody<0?'text-green':'text-rust', custodyRowsHtml) +
+      accountsActivitySectionHtml('🔧 عهدة عامر', a.custody, a.totals.custody, a.totals.custody<0?'text-green':'text-rust', custodyRowsHtml) +
+      accountsActivitySectionHtml('🔧 عهدة عمر', a.custodyOmar, a.totals.custodyOmar, a.totals.custodyOmar<0?'text-green':'text-rust', custodyOmarRowsHtml) +
       '<p class="modal-sub" style="margin-top:14px;">تسديد المورد/التشليح يظهر هون بس من تاريخ إضافة هذا التقرير فصاعدًا — الطلبيات المسدّدة قبله ما إلها تاريخ سداد مسجّل. مرتجعات الزبائن هون مو خارجة من صافي حركة اليوم — الكاش ما يطلع فعليًا إلا لحظة تأكيد الرد من شاشة الطلبية/العميل. تسديد "تشليح" مو داخل بصافي اليوم كمان — الكاش طلع فعليًا لحظة شحن عهدة المشتريات، وتسديد عامر للتشليح بس صرف من رصيد معه أصلًا (لو تشحن وتسدد بنفس اليوم، الصافي بيعكس الـ900 مرة وحدة بس، مو مرتين).</p>' +
     '</div>' +
   '</div>';
@@ -8899,12 +8987,12 @@ function bindTreasuryAddButtons(){
 /* سحب من عهدة عامر يدويًا — يرجع المبلغ للصندوق مباشرة (بنفس آلية "كاش" عند تحصيل مرتجع
    تشليح: قيد سالب بعهدة عامر يقلّل رصيدها ويزيد صافي الصندوق بنفس المبلغ).
    onSaved: دالة تحديث الشاشة بعد الحفظ — افتراضيًا شاشة الصندوق، أو شاشة سداد التشاليح لو استُدعيت منها. */
-function openWithdrawCustodyModal(onSaved){
+function openWithdrawCustodyModal(categoryKey, employeeLabel, onSaved){
   const root = document.getElementById('modal-root');
   root.innerHTML =
     '<div class="modal-backdrop" data-close-backdrop>' +
       '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' +
-        '<div class="modal-title">➖ سحب من عهدة عامر</div>' +
+        '<div class="modal-title">➖ سحب من عهدة '+escapeHtml(employeeLabel)+'</div>' +
         '<p class="modal-sub">المبلغ يُخصم من رصيد المشتريات ويُضاف مباشرة لصافي الصندوق.</p>' +
         '<label class="field"><span class="field-label">المبلغ</span><input type="number" min="0" step="0.01" id="withdraw-custody-amount-input" placeholder="المبلغ"></label>' +
         '<label class="field"><span class="field-label">التاريخ</span><input type="date" id="withdraw-custody-date-input" value="'+dmyToIso(todayNumeric())+'"></label>' +
@@ -8927,16 +9015,16 @@ function openWithdrawCustodyModal(onSaved){
     const noteInput = document.getElementById('withdraw-custody-note-input');
     const amount = Number(amountInput.value);
     if(!amountInput.value || isNaN(amount) || amount<=0){ showToast('أدخل مبلغًا صحيحًا', 'error'); return; }
-    if(!Array.isArray(appData.treasury.amerCustody)) appData.treasury.amerCustody = [];
-    const newEntry = { id: uid('exp'), amount: -amount, date: isoToDmy(dateInput.value), note: (noteInput.value||'').trim() || 'سحب من عهدة عامر' };
+    if(!Array.isArray(appData.treasury[categoryKey])) appData.treasury[categoryKey] = [];
+    const newEntry = { id: uid('exp'), amount: -amount, date: isoToDmy(dateInput.value), note: (noteInput.value||'').trim() || 'سحب من عهدة '+employeeLabel };
     // الحفظ بالقاعدة أولًا: الكتابة بجدول الصندوق محصورة بدور "full"، فكان أي دور تاني يشوف
     // "تم السحب" والقيد بالذاكرة بس — يختفي مع أول إعادة تحميل.
     const saveBtn = root.querySelector('#withdraw-custody-save-btn');
     if(saveBtn) saveBtn.disabled = true;
-    const saved = await persistTreasuryEntry(newEntry, 'amerCustody');
+    const saved = await persistTreasuryEntry(newEntry, categoryKey);
     if(saveBtn) saveBtn.disabled = false;
     if(!saved) return;
-    appData.treasury.amerCustody.push(newEntry);
+    appData.treasury[categoryKey].push(newEntry);
     close();
     (onSaved||renderTreasuryView)();
     showToast('تم السحب من العهدة وإضافة المبلغ للصندوق', 'ok');
@@ -9076,7 +9164,7 @@ function bindExpenseEntryEvents(key){
         // لازم تبقى موجبة دائمًا (نفس isSupport بـexpenseEntryRowHtml) — مبلغ سالب فيها كان يُحفظ
         // بصمت ويخفّض المجموع بدل يزيده، ويظهر بتقرير حركة الحسابات كمصروف عادي (accountsActivityRowHtml
         // بيعرض Math.abs) بلا أي إشارة إنه قيد سالب.
-        const isSupport = key==='support' || key==='amerCustody';
+        const isSupport = key==='support' || key==='amerCustody' || key==='omarCustody';
         if(entry.amount==='' || isNaN(amt) || amt===0 || (!isSupport && amt<0)){ showToast('أدخل مبلغًا صحيحًا', 'error'); return; }
         // نعيد جلب العنصر الحي من appData الحالي وقت الحفظ (لا نعتمد على المرجع القديم)
         // لأن appData ممكن يكون انستبدل بالكامل بتحديث لحظي من مستخدم ثاني أثناء ما كنا نعدّل.
@@ -9168,7 +9256,7 @@ function refreshExpenseEntries(key){
 
 function updateExpenseCategorySubtotal(key){
   const el = document.querySelector('[data-subtotal-key="'+escapeHtml(key)+'"]');
-  if(el) el.textContent = (key==='support'||key==='amerCustody') ? fmtSigned(categorySubtotal(key)) : fmtMoney(categorySubtotal(key));
+  if(el) el.textContent = (key==='support'||key==='amerCustody'||key==='omarCustody') ? fmtSigned(categorySubtotal(key)) : fmtMoney(categorySubtotal(key));
 }
 
 function updateTreasurySummary(){
@@ -9302,6 +9390,60 @@ function amerCustodyBalance(){
 }
 function amerCustodyDeficit(){
   return round2(Math.max(0, -amerCustodyBalance()));
+}
+
+/* ---------- عهدة عمر — نسخة مطابقة تمامًا لعهدة عامر فوق، بس مستقلة بالكامل (فئة
+   treasury_entries مختلفة omarCustody، وحقل orders.paid_to_omar مختلف) — الاثنتان لا يتقاطعان
+   لا بقاعدة البيانات (RLS + CHECK) ولا هون بالحساب المحلي. انظر [[feedback_partech_role_system_map]]
+   بالذاكرة — عامر وعمر نفس الدور (scrapyard) بس عهدتان منفصلتان. */
+let serverOmarCustodyBalance = null;
+let omarCustodyBalanceRequestSeq = 0;
+async function refreshServerOmarCustodyBalance(){
+  if(!sb) return;
+  const mySeq = ++omarCustodyBalanceRequestSeq;
+  const { data, error } = await sb.rpc('get_omar_custody_balance');
+  if(mySeq !== omarCustodyBalanceRequestSeq) return;
+  if(!error) serverOmarCustodyBalance = Number(data) || 0;
+}
+function omarCustodyTopupsTotalAll(){
+  return round2((appData.treasury.omarCustody||[]).reduce((sum,entry)=> sum + (Number(entry.amount)||0), 0));
+}
+function omarCustodyTopupsTotal(matchFn){
+  const filterFn = matchFn || entryMatchesPeriod;
+  return round2((appData.treasury.omarCustody||[]).filter(filterFn).reduce((sum,entry)=> sum + (Number(entry.amount)||0), 0));
+}
+function paidToScrapyardTotalForOmar(){
+  let total = 0;
+  (appData.orders||[]).forEach(o=>{
+    if(!o.confirmed || !o.paidToOmar || o.custodyLegacy || o.isQuote) return;
+    total += orderTotals(o).costToScrapyard;
+  });
+  return round2(total);
+}
+function omarCustodyBalance(){
+  if(!currentUserIsElevated && serverOmarCustodyBalance !== null) return serverOmarCustodyBalance;
+  return round2(omarCustodyTopupsTotalAll() - paidToScrapyardTotalForOmar());
+}
+function omarCustodyDeficit(){
+  return round2(Math.max(0, -omarCustodyBalance()));
+}
+
+/* رصيد "المشتريات" المجمّع — مجموع عهدتي عامر وعمر معًا، للمؤشرات الإجمالية اللي ما بتفرّق بين
+   موظف وتاني (KPI الصفحة الرئيسية، كرت الخزينة العام) */
+function purchasingCustodyBalance(){
+  return round2(amerCustodyBalance() + omarCustodyBalance());
+}
+function purchasingCustodyDeficit(){
+  return round2(Math.max(0, -purchasingCustodyBalance()));
+}
+/* عهدة "الشخص المسجّل دخوله الآن" تحديدًا — تُستخدم فقط بشاشة عامر/عمر نفسها (initScrapyardView)
+   حيث كل واحد لازم يشوف رصيده هو بس، مش رصيد الموظف التاني بالخطأ */
+function myCustodyBalance(){
+  return scrapyardSharedState.email === 'iomar.aljohnii@gmail.com' ? omarCustodyBalance() : amerCustodyBalance();
+}
+async function refreshMyServerCustodyBalance(){
+  if(scrapyardSharedState.email === 'iomar.aljohnii@gmail.com') return refreshServerOmarCustodyBalance();
+  return refreshServerAmerCustodyBalance();
 }
 
 function updateCustomersBadge(){
@@ -9560,7 +9702,7 @@ function exportAllDataToExcel(){
       'عدد القطع': o.parts.length,
       'إجمالي الشراء': t.costTotal,
       'مستحق للتشليح': t.costToScrapyard,
-      'مسدد للتشليح': o.paidToAmer ? 'نعم' : 'لا',
+      'مسدد للتشليح': orderSettledWithPurchasing(o) ? (o.paidToOmar?'نعم (عمر)':'نعم (عامر)') : 'لا',
       'مستحق للمورد': t.costToSupplier,
       'مسدد للمورد': o.paidToSupplier ? 'نعم' : 'لا',
       'مسعّرة بالكامل': t.fullyPriced ? 'نعم' : 'لا',
@@ -9630,7 +9772,14 @@ function exportAllDataToExcel(){
     'النوع': (Number(entry.amount)||0) < 0 ? 'سحب من العهدة' : 'سداد للعهدة',
     'المبلغ': entry.amount, 'التاريخ': entry.date || '', 'تفاصيل': entry.note || ''
   }));
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(custodyRows)), 'عهدة المشتريات');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(custodyRows)), 'عهدة عامر');
+
+  // عهدة عمر مستقلة تمامًا عن عهدة عامر (منذ 2026-09-15) — نفس شكل الشيت فوق بالضبط
+  const custodyOmarRows = (appData.treasury.omarCustody||[]).map(entry=>({
+    'النوع': (Number(entry.amount)||0) < 0 ? 'سحب من العهدة' : 'سداد للعهدة',
+    'المبلغ': entry.amount, 'التاريخ': entry.date || '', 'تفاصيل': entry.note || ''
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(custodyOmarRows)), 'عهدة عمر');
 
   const summary = computeAllTimeTreasurySummary();
   const summaryRows = [
@@ -9721,6 +9870,7 @@ function normalizeImportedOrder(o){
     parts: [],
     partsSelectionEnabled: false,
     paidToAmer: false,
+    paidToOmar: false,
     paidToSupplier: false,
     supplied: false,
     customerPhone: '',
@@ -10121,7 +10271,7 @@ function applyRemoteOrderChange(payload){
   // بيوصلهم حدث realtime مباشر على amerCustody (RLS بيمنعه عنهم أصلًا) — فبنجدّد رصيد
   // السيرفر يدويًا هون بدل ما يضل واقف من آخر تحميل كامل للصفحة.
   if(!currentUserIsElevated){
-    refreshServerAmerCustodyBalance().then(()=> scheduleOrderRenderCascade());
+    Promise.all([refreshServerAmerCustodyBalance(), refreshServerOmarCustodyBalance()]).then(()=> scheduleOrderRenderCascade());
   }
 }
 
@@ -10241,12 +10391,19 @@ function applyRemoteTreasuryChange(payload){
     // رصيد العهدة بيتغيّر بتعديل حركة صندوق — شاشة التسوية كانت تضل تعرض الرصيد القديم
     loadScrapyardData('used').then(renderScrapyardView);
   }
-  // نفس مبدأ applyRemoteOrderChange بالضبط — RLS بتسمح بقراءة treasury_entries لعامر (role='scrapyard')
-  // برضو (مو المخوّلين بس)، وهو نفسه غير مخوّل (currentUserIsElevated=false) فبيعتمد serverAmerCustodyBalance
-  // الكاش مثل أي حساب "full" عادي. كان الكاش عنده ما يتحدّث إلا بالصدفة عبر حدث orders غير مرتبط —
-  // مع إنه هو بالضبط المستخدم الأكثر تأثرًا برصيد العهدة، وأقرب حدث ممكن يغيّره فعليًا.
+  // نفس مبدأ applyRemoteOrderChange بالضبط — RLS بتسمح بقراءة treasury_entries لعامر/عمر
+  // (role='scrapyard') برضو (مو المخوّلين بس)، وهو نفسه غير مخوّل (currentUserIsElevated=false)
+  // فبيعتمد serverAmerCustodyBalance/serverOmarCustodyBalance الكاش مثل أي حساب "full" عادي.
+  // كان الكاش عنده ما يتحدّث إلا بالصدفة عبر حدث orders غير مرتبط — مع إنه هو بالضبط المستخدم
+  // الأكثر تأثرًا برصيد العهدة، وأقرب حدث ممكن يغيّره فعليًا. عامر/عمر (role='scrapyard') كل
+  // واحد يجدّد عهدته هو بس (myCustodyBalance) — عبدالرحمن (role='full' غير مخوّل) يجدّد الاثنتين
+  // لأن مؤشره بالرئيسية مجمّع (purchasingCustodyBalance).
   if(!currentUserIsElevated){
-    refreshServerAmerCustodyBalance().then(scheduleOrderRenderCascade);
+    if(currentUserRole === 'scrapyard'){
+      refreshMyServerCustodyBalance().then(scheduleOrderRenderCascade);
+    } else {
+      Promise.all([refreshServerAmerCustodyBalance(), refreshServerOmarCustodyBalance()]).then(scheduleOrderRenderCascade);
+    }
   }
 }
 
@@ -10549,7 +10706,7 @@ function supplierOwedAmount(supplierId){
       if(p.supplierId !== supplierId) return;
       if(p.returned) return; // القطعة المرتجعة لها حسابها المنفصل (مسترجع بانتظار التحصيل)، مو ضمن المستحق العادي
       if(!partIsIncludedInOrder(o,p)) return; // قطعة مستبعدة يدويًا من الطلبية — ما تُحسب
-      const paid = p.used ? o.paidToAmer : o.paidToSupplier;
+      const paid = p.used ? orderSettledWithPurchasing(o) : o.paidToSupplier;
       if(paid) return;
       total += (Number(p.qty)||1) * (Number(p.costPrice)||0);
     });
@@ -10568,7 +10725,7 @@ function supplierOwedIndex(){
       if(!p.supplierId) return;
       if(p.returned) return;
       if(!partIsIncludedInOrder(o,p)) return;
-      const paid = p.used ? o.paidToAmer : o.paidToSupplier;
+      const paid = p.used ? orderSettledWithPurchasing(o) : o.paidToSupplier;
       if(paid) return;
       bySupplierRaw[p.supplierId] = (bySupplierRaw[p.supplierId]||0) + (Number(p.qty)||1) * (Number(p.costPrice)||0);
     });
@@ -10596,7 +10753,7 @@ function supplierPurchaseHistory(supplierId){
       if(p.supplierId !== supplierId) return;
       if(p.returned) return; // القطعة المرتجعة لها حسابها المنفصل (مسترجع بانتظار التحصيل)، مو ضمن سجل المشتريات العادي
       if(!partIsIncludedInOrder(o,p)) return; // قطعة مستبعدة يدويًا من الطلبية — ما تُحسب
-      const paid = p.used ? o.paidToAmer : o.paidToSupplier;
+      const paid = p.used ? orderSettledWithPurchasing(o) : o.paidToSupplier;
       const map = paid ? pastMap : ongoingMap;
       const list = paid ? past : ongoing;
       if(!map[o.id]){
@@ -11930,8 +12087,10 @@ async function showAppIfAllowed(session){
    يُستخدم من الموظف (canManage=false، بيقرأ عن طريق RPC وبيقترح تعديلات بدون لمس app_data)
    ومن صاحب الحساب (canManage=true، بيقرأ appData.orders محليًا وبيقدر يقبل/يرفض مباشرة). */
 const SETTLEMENT_KINDS = {
-  used: { title:'سداد التشاليح', homeLabel:'🧾 سداد التشاليح', rpc:'get_scrapyard_used_parts', paidField:'paidToAmer' },
-  new:  { title:'سداد الجديد',   homeLabel:'🧾 سداد الجديد',   rpc:'get_new_parts_supplier',   paidField:'paidToSupplier' }
+  // isPaid('used') = orderSettledWithPurchasing وليس paidToAmer بس — طلبية انسددت من عهدة عمر
+  // لازم تختفي من قائمة "غير المسدّدة" هي كمان، مو تضل تظهر لعامر/المخوّل كأنها لسه معلّقة
+  used: { title:'سداد التشاليح', homeLabel:'🧾 سداد التشاليح', rpc:'get_scrapyard_used_parts', isPaid: o=>orderSettledWithPurchasing(o) },
+  new:  { title:'سداد الجديد',   homeLabel:'🧾 سداد الجديد',   rpc:'get_new_parts_supplier',   isPaid: o=>!!o.paidToSupplier }
 };
 
 let scrapyardSharedState = { email:'', canManage:false, viewerOnly:false, activeKind:'used', parts:[], returnReceivables:[], proposals:[], confirmations:[], partsByKind:{used:[],new:[]}, returnReceivablesByKind:{used:[],new:[]}, tasks:[], suppliers:[], custodyBalance:0, custodyEntryCount:0 };
@@ -12019,10 +12178,10 @@ function switchSettlementViewerKind(kind){
 
 function ownerScrapyardPartsFromAppData(kind){
   const list = [];
-  const paidField = SETTLEMENT_KINDS[kind].paidField;
+  const isPaid = SETTLEMENT_KINDS[kind].isPaid;
   const wantUsed = kind === 'used';
   // الطلبيات يلي تم توريدها فقط — غير الموردة ما بتظهر بشاشة السداد
-  appData.orders.filter(o=>o.supplied && !o[paidField]).forEach(o=>{
+  appData.orders.filter(o=>o.supplied && !isPaid(o)).forEach(o=>{
     (o.parts||[]).forEach(p=>{
       if(p.returned) return; // القطعة المرتجعة لها مسارها المنفصل (مرتجعات)، مو ضمن قائمة "غير المسدّدة"
       if(!partIsIncludedInOrder(o,p)) return; // قطعة مستبعدة يدويًا من الطلبية — ما تُحسب
@@ -12080,7 +12239,9 @@ async function loadScrapyardHomeTotals(){
     sb.rpc('get_scrapyard_home_quotes'),
     sb.rpc('get_scrapyard_approved_quotes'), // تسعيرات سابقة اعتُمدت وصارت طلبيات — نفس تقليم الحقول الحساسة
     sb.from('customers').select('*'),
-    sb.from('treasury_entries').select('id').eq('category','amerCustody'),
+    // عامر وعمر كل واحد يشوف "غير مشاهَد" لعهدته هو بس — RLS أصلًا بترجّع فاضي لو سألنا عن فئة
+    // الموظف التاني، بس لازم نسأل عن الفئة الصح من الأساس حتى ما يضل يطلع للموظف صفر دايمًا
+    sb.from('treasury_entries').select('id').eq('category', scrapyardSharedState.email==='iomar.aljohnii@gmail.com' ? 'omarCustody' : 'amerCustody'),
     // نفس RPC يلي شاشة السداد الفعلية (loadScrapyardData) بتستخدمها لطرح المرتجعات المستحقة —
     // بدونها usedTotal/newTotal هون بيطلعوا مجموع خام يخالف "إجمالي المستحق للسداد" المعروض
     // بنفس اللحظة بشاشة السداد (انظر renderScrapyardHomeView)
@@ -12123,16 +12284,22 @@ async function loadScrapyardHomeTotals(){
   }
 }
 
-/* عدد "سداد" جديد لعهدة عامر ما شافه بعد — نتابعه بـ localStorage محليًا على جهاز عامر (بدون جدول جديد)،
-   أول مرة نخزّن العدد الحالي كـ"مُشاهَد" فورًا عشان ما يطلع رقم كبير وهمي على بيانات قديمة من قبل هالميزة. */
+/* عدد "سداد" جديد لعهدة عامر/عمر ما شافه بعد — نتابعه بـ localStorage محليًا على جهاز كل واحد
+   منهم (بدون جدول جديد)، مفتاح مختلف لكل واحد (بريده جزء من اسم المفتاح) حتى ما يختلط بيانات
+   الاثنين لو صار يومًا استخدموا نفس الجهاز. أول مرة نخزّن العدد الحالي كـ"مُشاهَد" فورًا عشان ما
+   يطلع رقم كبير وهمي على بيانات قديمة من قبل هالميزة. */
+function scrapyardCustodySeenKey(){
+  return 'custodySeenCount:' + (scrapyardSharedState.email || 'unknown');
+}
 function scrapyardCustodyUnseenCount(){
   const current = scrapyardSharedState.custodyEntryCount || 0;
-  const stored = localStorage.getItem('amerCustodySeenCount');
-  if(stored === null){ localStorage.setItem('amerCustodySeenCount', String(current)); return 0; }
+  const key = scrapyardCustodySeenKey();
+  const stored = localStorage.getItem(key);
+  if(stored === null){ localStorage.setItem(key, String(current)); return 0; }
   return Math.max(0, current - Number(stored));
 }
 function markScrapyardCustodySeen(){
-  localStorage.setItem('amerCustodySeenCount', String(scrapyardSharedState.custodyEntryCount || 0));
+  localStorage.setItem(scrapyardCustodySeenKey(), String(scrapyardSharedState.custodyEntryCount || 0));
 }
 
 function scrapyardUnpaidPartsCount(){
@@ -12169,14 +12336,17 @@ async function loadScrapyardData(kind){
       // (scrapyard_order_confirmations) محجوبة عنه بالـRLS — نتركها فاضية (شارات عرض فقط).
       const parts = ownerScrapyardPartsFromAppData(kind);
       const returnReceivables = ownerScrapyardReturnReceivablesFromAppData(kind);
-      const [custodyRes, supNamesRes, proposalsRes] = await Promise.all([
+      const [amerCustodyRes, omarCustodyRes, supNamesRes, proposalsRes] = await Promise.all([
         kind==='used' ? sb.rpc('get_amer_custody_balance') : Promise.resolve({ data: 0 }),
+        kind==='used' ? sb.rpc('get_omar_custody_balance') : Promise.resolve({ data: 0 }),
         sb.rpc('get_settlement_supplier_names'),
         sb.from('scrapyard_proposals').select('*').eq('kind', kind).order('created_at', {ascending:false})
       ]);
       result = {
         parts, returnReceivables,
-        custodyBalance: custodyRes.error ? 0 : (Number(custodyRes.data)||0),
+        // عبدالرحمن (عرض فقط) يشوف رقم واحد مجمّع للعهدتين — نفس تجربته الحالية بدون تغيير،
+        // ما في داعي يفرّق بينهما بشاشة قراءة فقط ما تديرها هو
+        custodyBalance: (amerCustodyRes.error ? 0 : (Number(amerCustodyRes.data)||0)) + (omarCustodyRes.error ? 0 : (Number(omarCustodyRes.data)||0)),
         proposals: proposalsRes.error ? [] : (proposalsRes.data || []),
         confirmations: [],
         suppliers: supNamesRes.error ? [] : (supNamesRes.data || [])
@@ -12184,7 +12354,9 @@ async function loadScrapyardData(kind){
     } else if(scrapyardSharedState.canManage){
       const parts = ownerScrapyardPartsFromAppData(kind);
       const returnReceivables = ownerScrapyardReturnReceivablesFromAppData(kind);
-      const custodyBalance = kind==='used' ? amerCustodyBalance() : 0;
+      // مهاب (والمخوّلون) يشوفوا رصيد كل عهدة لحالها (كرتين منفصلين بالواجهة) — عكس عبدالرحمن فوق
+      const amerBalance = kind==='used' ? amerCustodyBalance() : 0;
+      const omarBalance = kind==='used' ? omarCustodyBalance() : 0;
       const [proposalsRes, confirmationsRes, suppliersRes] = await Promise.all([
         sb.from('scrapyard_proposals').select('*').eq('kind', kind).order('created_at', {ascending:false}),
         sb.from('scrapyard_order_confirmations').select('*').eq('kind', kind),
@@ -12192,13 +12364,18 @@ async function loadScrapyardData(kind){
       ]);
       if(proposalsRes.error) throw proposalsRes.error;
       result = {
-        parts, returnReceivables, custodyBalance,
+        parts, returnReceivables,
+        custodyBalance: round2(amerBalance + omarBalance),
+        amerCustodyBalance: amerBalance,
+        omarCustodyBalance: omarBalance,
         proposals: proposalsRes.data || [],
         confirmations: confirmationsRes.data || [],
         suppliers: suppliersRes.error ? [] : (suppliersRes.data || [])
       };
     } else {
-      const custodyPromise = kind==='used' ? sb.rpc('get_amer_custody_balance') : Promise.resolve({ data: 0 });
+      // عامر وعمر كل واحد يشوف عهدته هو بس — نفس دور scrapyard بس RPC مختلف حسب هويته
+      const myCustodyRpc = scrapyardSharedState.email === 'iomar.aljohnii@gmail.com' ? 'get_omar_custody_balance' : 'get_amer_custody_balance';
+      const custodyPromise = kind==='used' ? sb.rpc(myCustodyRpc) : Promise.resolve({ data: 0 });
       const [partsRes, returnReceivablesRes, proposalsRes, confirmationsRes, suppliersRes, custodyRes] = await Promise.all([
         sb.rpc(SETTLEMENT_KINDS[kind].rpc),
         sb.rpc('get_scrapyard_return_receivables', { p_kind: kind }),
@@ -12645,16 +12822,33 @@ function renderScrapyardView(){
     (kind==='used'
       ? '<div class="settlement-summary-card">' +
           '<div class="settlement-summary-row"><span>إجمالي المستحق للسداد</span><span class="num text-amber">'+fmtMoney(total)+'</span></div>' +
-          '<div class="settlement-summary-row"><span>رصيد المشتريات (عهدتك)</span><span class="num '+(custodyBalance<0?'text-rust':'text-green')+'">'+fmtMoney(custodyBalance)+'</span></div>' +
+          '<div class="settlement-summary-row"><span>رصيد المشتريات'+(canManage?' (الإجمالي)':' (عهدتك)')+'</span><span class="num '+(custodyBalance<0?'text-rust':'text-green')+'">'+fmtMoney(custodyBalance)+'</span></div>' +
           '<div class="settlement-summary-divider"></div>' +
           '<div class="settlement-summary-final"><span>المتبقي للسداد</span><span class="num '+(remainingToPay>0?'text-rust':'text-green')+'">'+fmtMoney(remainingToPay)+'</span></div>' +
         '</div>'
       : '<div class="total-box" style="margin-bottom:18px;"><span>إجمالي المستحق للسداد</span><span class="num text-amber">'+fmtMoney(total)+'</span></div>') +
-    (kind==='used' && canManage ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;">' +
-      '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-amer-custody-topup">+ سداد لعهدة المشتريات</button>' +
-      '<button type="button" class="btn btn-ghost btn-sm" id="btn-withdraw-amer-custody">➖ سحب من العهدة</button>' +
-      '<button type="button" class="expense-history-btn" id="btn-history-amer-custody">📋 سجل العهدة ('+(appData.treasury.amerCustody||[]).length+')</button>' +
-    '</div>' : '') +
+    // للمخوّلين بس: عهدة عامر وعمر منفصلتان تمامًا — كرت وأزرار مستقلة لكل واحدة، بدل رقم/زر
+    // مشترك — عكس عامر/عمر نفسهم فوق يلي كل واحد يشوف عهدته هو بس بكرت واحد (لا داعي للفصل عندهم)
+    (kind==='used' && canManage ? (
+      '<div class="cost-split-row" style="margin-bottom:18px;">' +
+        '<div class="settlement-summary-card" style="margin-bottom:0;">' +
+          '<div class="settlement-summary-row"><span>عهدة عامر</span><span class="num '+((scrapyardSharedState.amerCustodyBalance||0)<0?'text-rust':'text-green')+'">'+fmtMoney(scrapyardSharedState.amerCustodyBalance||0)+'</span></div>' +
+          '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">' +
+            '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-amer-custody-topup">+ سداد</button>' +
+            '<button type="button" class="btn btn-ghost btn-sm" id="btn-withdraw-amer-custody">➖ سحب</button>' +
+            '<button type="button" class="expense-history-btn" id="btn-history-amer-custody">📋 السجل ('+(appData.treasury.amerCustody||[]).length+')</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="settlement-summary-card" style="margin-bottom:0;">' +
+          '<div class="settlement-summary-row"><span>عهدة عمر</span><span class="num '+((scrapyardSharedState.omarCustodyBalance||0)<0?'text-rust':'text-green')+'">'+fmtMoney(scrapyardSharedState.omarCustodyBalance||0)+'</span></div>' +
+          '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">' +
+            '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-omar-custody-topup">+ سداد</button>' +
+            '<button type="button" class="btn btn-ghost btn-sm" id="btn-withdraw-omar-custody">➖ سحب</button>' +
+            '<button type="button" class="expense-history-btn" id="btn-history-omar-custody">📋 السجل ('+(appData.treasury.omarCustody||[]).length+')</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>'
+    ) : '') +
     (kind==='used' ? scrapyardSupplierTotalsHtml() : '') +
     scrapyardReturnReceivablesHtml() +
     '<div class="section-block"><div class="section-head"><span class="section-title">القطع (غير المسدّدة)</span>' +
@@ -13194,6 +13388,16 @@ function bindScrapyardEvents(){
   bindScrapyardThemeToggle();
   const manageSuppliersBtn = document.getElementById('btn-manage-scrapyard-suppliers');
   if(manageSuppliersBtn) manageSuppliersBtn.addEventListener('click', openScrapyardSupplierManageModal);
+  // بعد أي إضافة/سحب/تعديل بأي من العهدتين — نحدّث رصيديهما لحالهما وكمان المجموع (الكرت
+  // العلوي)، سواء كانت شاشة عامر/عمر (كرت واحد فقط بيتحدّث) أو شاشة المخوّل (الكرتان + المجموع)
+  function refreshCustodyBalancesAfterEdit(){
+    scrapyardSharedState.amerCustodyBalance = amerCustodyBalance();
+    scrapyardSharedState.omarCustodyBalance = omarCustodyBalance();
+    scrapyardSharedState.custodyBalance = scrapyardSharedState.canManage
+      ? round2(scrapyardSharedState.amerCustodyBalance + scrapyardSharedState.omarCustodyBalance)
+      : myCustodyBalance();
+    renderScrapyardView();
+  }
   const addCustodyTopupBtn = document.getElementById('btn-add-amer-custody-topup');
   if(addCustodyTopupBtn) addCustodyTopupBtn.addEventListener('click', ()=>{
     if(!Array.isArray(appData.treasury.amerCustody)) appData.treasury.amerCustody = [];
@@ -13201,24 +13405,32 @@ function bindScrapyardEvents(){
     appData.treasury.amerCustody.push(newEntry);
     editingExpenseEntries[newEntry.id] = true;
     unsavedDraftEntryIds.add(newEntry.id);
-    openExpenseHistoryModal('amerCustody', 'عهدة المشتريات', ()=>{
-      scrapyardSharedState.custodyBalance = amerCustodyBalance();
-      renderScrapyardView();
-    });
+    openExpenseHistoryModal('amerCustody', 'عهدة عامر', refreshCustodyBalancesAfterEdit);
   });
   const withdrawCustodyBtn = document.getElementById('btn-withdraw-amer-custody');
   if(withdrawCustodyBtn) withdrawCustodyBtn.addEventListener('click', ()=>{
-    openWithdrawCustodyModal(()=>{
-      scrapyardSharedState.custodyBalance = amerCustodyBalance();
-      renderScrapyardView();
-    });
+    openWithdrawCustodyModal('amerCustody', 'عامر', refreshCustodyBalancesAfterEdit);
   });
   const historyCustodyBtn = document.getElementById('btn-history-amer-custody');
   if(historyCustodyBtn) historyCustodyBtn.addEventListener('click', ()=>{
-    openExpenseHistoryModal('amerCustody', 'عهدة المشتريات', ()=>{
-      scrapyardSharedState.custodyBalance = amerCustodyBalance();
-      renderScrapyardView();
-    });
+    openExpenseHistoryModal('amerCustody', 'عهدة عامر', refreshCustodyBalancesAfterEdit);
+  });
+  const addOmarCustodyTopupBtn = document.getElementById('btn-add-omar-custody-topup');
+  if(addOmarCustodyTopupBtn) addOmarCustodyTopupBtn.addEventListener('click', ()=>{
+    if(!Array.isArray(appData.treasury.omarCustody)) appData.treasury.omarCustody = [];
+    const newEntry = {id: uid('exp'), amount:'', date: todayNumeric(), note:''};
+    appData.treasury.omarCustody.push(newEntry);
+    editingExpenseEntries[newEntry.id] = true;
+    unsavedDraftEntryIds.add(newEntry.id);
+    openExpenseHistoryModal('omarCustody', 'عهدة عمر', refreshCustodyBalancesAfterEdit);
+  });
+  const withdrawOmarCustodyBtn = document.getElementById('btn-withdraw-omar-custody');
+  if(withdrawOmarCustodyBtn) withdrawOmarCustodyBtn.addEventListener('click', ()=>{
+    openWithdrawCustodyModal('omarCustody', 'عمر', refreshCustodyBalancesAfterEdit);
+  });
+  const historyOmarCustodyBtn = document.getElementById('btn-history-omar-custody');
+  if(historyOmarCustodyBtn) historyOmarCustodyBtn.addEventListener('click', ()=>{
+    openExpenseHistoryModal('omarCustody', 'عهدة عمر', refreshCustodyBalancesAfterEdit);
   });
 
   // خانة تعديل السعر تظهر فقط بعد الضغط على "تعديل"
