@@ -4256,6 +4256,15 @@ function cleanedQuoteParts() {
     }));
 }
 
+function quoteMissingSupplierForPricedParts() {
+    return quoteDraft.parts.some(p => {
+        if (!p.description || !p.description.trim()) return false;
+        if (p.used === null || p.supplierId) return false;
+        const priceEntered = p.costPrice !== "" && p.costPrice != null;
+        return priceEntered;
+    });
+}
+
 async function checkQuoteSaveConflict() {
     if (quoteDraft.isNew) return true;
     const liveOrder = appData.orders.find(o => o.id === quoteDraft.id);
@@ -4447,8 +4456,8 @@ async function onSaveQuotePricing() {
         showToast("لازم تضيف وصف لقطعة وحدة على الأقل", "error");
         return;
     }
-    if (cleanedParts.some(p => p.used !== null && !p.supplierId)) {
-        showToast("لازم تحدد المورد لكل قطعة قبل الحفظ", "error");
+    if (quoteMissingSupplierForPricedParts()) {
+        showToast("لازم تحدد المورد للقطع اللي أضفت سعر شرائها قبل الحفظ", "error");
         return;
     }
     if (cleanedParts.some(p => p.used === true && !p.condition)) {
@@ -4483,8 +4492,8 @@ async function onSaveAndSendQuotePricing() {
         showToast("لازم تضيف وصف لقطعة وحدة على الأقل", "error");
         return;
     }
-    if (cleanedParts.some(p => p.used !== null && !p.supplierId)) {
-        showToast("لازم تحدد المورد لكل قطعة قبل الحفظ", "error");
+    if (quoteMissingSupplierForPricedParts()) {
+        showToast("لازم تحدد المورد للقطع اللي أضفت سعر شرائها قبل الحفظ", "error");
         return;
     }
     if (cleanedParts.some(p => p.used === true && !p.condition)) {
