@@ -4059,7 +4059,7 @@ function quoteModalHtml(d) {
         label: c.name || c.phone || "عميل",
         sublabel: c.phone
     })), d.customerId, "— بدون عميل محدد —") + "</div>" + '<button type="button" class="icon-btn" id="quote-add-customer-btn" aria-label="عميل جديد">➕</button>' + "</div>" + "</div>";
-    const labelFieldHtml = isPurchasing ? '<label class="field"><span class="field-label">الطلبية</span><input type="text" value="' + escapeHtml(d.orderLabel || "") + '" readonly></label>' : '<div class="field"><span class="field-label">الطلبية</span><input type="text" id="quote-label-input" placeholder="مثال: اسم الزبون / نوع السيارة / أي وصف مختصر" value="' + escapeHtml(d.orderLabel || "") + '"></div>';
+    const labelFieldHtml = '<div class="field"><span class="field-label">الطلبية</span><input type="text" id="quote-label-input" placeholder="مثال: اسم الزبون / نوع السيارة / أي وصف مختصر" value="' + escapeHtml(d.orderLabel || "") + '"></div>';
     const partsControlsHtml = '<div id="quote-part-type-gate-wrap">' + quotePartAddControlsHtml() + "</div>";
     const footerUtilityHtml = !isPurchasing && !d.isNew ? '<button type="button" class="btn btn-sm btn-danger-ghost" id="quote-delete-btn">🗑️ حذف طلب التسعير</button>' : "";
     const footerActionsHtml = isPurchasing ? '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-ghost" id="quote-save-btn">حفظ</button>' + '<button type="button" class="btn btn-primary" id="quote-save-send-btn">حفظ و إرسال</button>' : '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-ghost" id="quote-save-btn">💾 حفظ</button>' + '<button type="button" class="btn btn-ghost" id="quote-send-btn">حفظ و اعادة طلب</button>' + '<button type="button" class="btn btn-primary" id="quote-approve-btn">✅ اعتماد</button>';
@@ -4160,10 +4160,10 @@ function attachQuoteModalHandlers() {
     });
     root.querySelector("#quote-modal-close-btn").addEventListener("click", closeQuoteModal);
     root.querySelector("#quote-cancel-btn").addEventListener("click", closeQuoteModal);
+    root.querySelector("#quote-label-input").addEventListener("input", e => {
+        quoteDraft.orderLabel = e.target.value;
+    });
     if (!isPurchasing) {
-        root.querySelector("#quote-label-input").addEventListener("input", e => {
-            quoteDraft.orderLabel = e.target.value;
-        });
         const quoteQuickAddCustomer = prefill => {
             const openedForQuoteId = quoteDraft ? quoteDraft.id : null;
             openQuickAddCustomerModal(newCustomer => {
@@ -4435,7 +4435,8 @@ async function persistScrapyardQuotePricing(order, quoteReady) {
                 used: p.used === null ? null : !!p.used,
                 condition: p.condition || null
             })),
-            p_quote_ready: !!quoteReady
+            p_quote_ready: !!quoteReady,
+            p_order_label: order.orderLabel || ""
         });
         if (error) throw error;
         if (data === false) {
@@ -4465,6 +4466,7 @@ async function onSaveQuotePricing() {
         return;
     }
     quoteDraft.parts = cleanedParts;
+    quoteDraft.orderLabel = (quoteDraft.orderLabel || "").trim();
     quoteDraft.updatedAt = (new Date).toISOString();
     const draftId = quoteDraft.id;
     const saved = await persistScrapyardQuotePricing(quoteDraft, !!quoteDraft.quoteReady);
@@ -4501,6 +4503,7 @@ async function onSaveAndSendQuotePricing() {
         return;
     }
     quoteDraft.parts = cleanedParts;
+    quoteDraft.orderLabel = (quoteDraft.orderLabel || "").trim();
     quoteDraft.updatedAt = (new Date).toISOString();
     quoteDraft.quoteReady = true;
     const draftId = quoteDraft.id;
