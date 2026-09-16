@@ -1527,19 +1527,26 @@ function orderTotals(order) {
     };
 }
 
-function orderSettledWithPurchasing(order) {
-    return !!(order && (order.paidToAmer || order.paidToOmar));
+function orderPurchaseSettled(order) {
+    return !!(order && (order.paidToAmer || order.paidToOmar || order.paidToSupplier));
+}
+
+function costSplitStatusLabel(order) {
+    if (order.paidToSupplier) return "✓ سداد مباشر";
+    if (order.paidToAmer) return "✓ من عهدة عامر";
+    if (order.paidToOmar) return "✓ من عهدة عمر";
+    return "غير مسدد";
 }
 
 function orderStatusFlags(order) {
     const t = orderTotals(order);
     return Object.assign({}, t, {
-        waitingAmerPayment: order.confirmed && order.supplied && t.costToScrapyard > 0 && !orderSettledWithPurchasing(order),
-        waitingSupplierPayment: order.confirmed && order.supplied && t.costToSupplier > 0 && !order.paidToSupplier,
+        waitingAmerPayment: order.confirmed && order.supplied && t.costToScrapyard > 0 && !orderPurchaseSettled(order),
+        waitingSupplierPayment: order.confirmed && order.supplied && t.costToSupplier > 0 && !orderPurchaseSettled(order),
         waitingSupply: order.confirmed && !order.supplied,
         waitingPricing: !t.fullyPriced && !t.allPartsReturned && !t.noActiveParts,
         waitingCustomerPayment: order.confirmed && order.supplied && t.hasChargeable && !t.customerFullyPaid,
-        complete: order.confirmed && order.supplied && (t.costToScrapyard === 0 || orderSettledWithPurchasing(order)) && (t.costToSupplier === 0 || order.paidToSupplier) && t.customerFullyPaid && (t.fullyPriced || t.allPartsReturned && t.hasChargeable)
+        complete: order.confirmed && order.supplied && (t.costTotal === 0 || orderPurchaseSettled(order)) && t.customerFullyPaid && (t.fullyPriced || t.allPartsReturned && t.hasChargeable)
     });
 }
 
@@ -1798,13 +1805,13 @@ function computeAggregateFinancials(matchPeriodFn) {
     let paidToScrapyardTotal = 0, paidToSuppliersTotal = 0, customerReceiptsTotal = 0;
     confirmedOrders.forEach(o => {
         const t = orderTotals(o);
-        if (!orderSettledWithPurchasing(o)) {
+        if (!orderPurchaseSettled(o)) {
             if (o.supplied && t.costToScrapyard > 0) {
                 dueToScrapyard += t.costToScrapyard;
                 dueToScrapyardCount++;
             }
         } else paidToScrapyardTotal += t.costToScrapyard;
-        if (!o.paidToSupplier) {
+        if (!orderPurchaseSettled(o)) {
             if (o.supplied && t.costToSupplier > 0) {
                 dueToSuppliers += t.costToSupplier;
                 dueToSuppliersCount++;
@@ -1980,7 +1987,7 @@ function rowHtml(order, precomputedTotals, markArchived) {
     const highlightClass = order.confirmed ? order.supplied ? "row-supplied" : "row-not-supplied" : "row-unconfirmed";
     const pendingCount = orderPendingProposalsCount(order.id);
     const archivedTag = markArchived && order.archived ? '<span class="stamp stamp-amber" style="margin-inline-start:8px;vertical-align:middle;">🗄️ مؤرشفة</span>' : "";
-    return '<tr class="' + highlightClass + '">' + '<td class="confirm-cell">' + (order.confirmed ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="' + escapeHtml(order.id) + '">✓ مؤكدة</button>' : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="' + escapeHtml(order.id) + '">تأكيد</button>') + "</td>" + '<td class="num cell-order">' + escapeHtml(order.orderNumber) + (order.orderLabel ? '<span class="order-label-tag">' + escapeHtml(order.orderLabel) + "</span>" : "") + archivedTag + (pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">' + pendingCount + "</span>" : "") + "</td>" + "<td>" + ((order.customerPhone || "").trim() ? '<button type="button" class="icon-btn" data-contact-open="' + escapeHtml(order.id) + '" aria-label="تواصل">📞</button>' : '<span class="muted">—</span>') + "</td>" + '<td class="num">' + (t.hasChargeable ? '<span class="' + profitColorClass(t) + '">' + fmtMoney(t.sellTotal) + "</span>" : '<span class="muted">' + (t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد") + "</span>") + "</td>" + "<td>" + (hasElevatedAccess() && (orderSettledWithPurchasing(order) || order.supplied) && t.costToScrapyard > 0 ? stampBadge(orderSettledWithPurchasing(order), "مسدد" + (order.paidToOmar ? " لعمر" : order.paidToAmer ? " لعامر" : "") + " " + fmtMoney(t.costToScrapyard), "غير مسدد " + fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>') + "</td>" + "<td>" + (hasElevatedAccess() && (order.paidToSupplier || order.supplied) && t.costToSupplier > 0 ? stampBadge(order.paidToSupplier, "مسدد " + fmtMoney(t.costToSupplier), "غير مسدد " + fmtMoney(t.costToSupplier)) : '<span class="muted">—</span>') + "</td>" + "<td>" + (order.confirmed ? customerPaymentCellHtml(t, true) : '<span class="muted">—</span>') + "</td>" + '<td class="row-actions">' + '<button class="icon-btn" data-open="' + escapeHtml(order.id) + '">فتح</button>' + (order.archived && !order.confirmed ? '<button class="icon-btn" data-unsuccessful-reason="' + escapeHtml(order.id) + '" title="سبب عدم النجاح">📋' + (order.unsuccessfulReason ? " " + unsuccessfulReasonLabel(order.unsuccessfulReason) : " سبب الفشل") + "</button>" : "") + (order.archived ? '<button class="icon-btn" data-restore="' + escapeHtml(order.id) + '">↩️ استعادة</button>' : '<button class="icon-btn" data-archive="' + escapeHtml(order.id) + '">🗄️ أرشفة</button>') + "</td>" + "</tr>";
+    return '<tr class="' + highlightClass + '">' + '<td class="confirm-cell">' + (order.confirmed ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="' + escapeHtml(order.id) + '">✓ مؤكدة</button>' : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="' + escapeHtml(order.id) + '">تأكيد</button>') + "</td>" + '<td class="num cell-order">' + escapeHtml(order.orderNumber) + (order.orderLabel ? '<span class="order-label-tag">' + escapeHtml(order.orderLabel) + "</span>" : "") + archivedTag + (pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">' + pendingCount + "</span>" : "") + "</td>" + "<td>" + ((order.customerPhone || "").trim() ? '<button type="button" class="icon-btn" data-contact-open="' + escapeHtml(order.id) + '" aria-label="تواصل">📞</button>' : '<span class="muted">—</span>') + "</td>" + '<td class="num">' + (t.hasChargeable ? '<span class="' + profitColorClass(t) + '">' + fmtMoney(t.sellTotal) + "</span>" : '<span class="muted">' + (t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد") + "</span>") + "</td>" + "<td>" + (hasElevatedAccess() && (orderPurchaseSettled(order) || order.supplied) && t.costToScrapyard > 0 ? stampBadge(orderPurchaseSettled(order), "مسدد" + (order.paidToOmar ? " لعمر" : order.paidToAmer ? " لعامر" : order.paidToSupplier ? " مباشرة" : "") + " " + fmtMoney(t.costToScrapyard), "غير مسدد " + fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>') + "</td>" + "<td>" + (hasElevatedAccess() && (orderPurchaseSettled(order) || order.supplied) && t.costToSupplier > 0 ? stampBadge(orderPurchaseSettled(order), "مسدد" + (order.paidToAmer ? " (عامر)" : order.paidToOmar ? " (عمر)" : "") + " " + fmtMoney(t.costToSupplier), "غير مسدد " + fmtMoney(t.costToSupplier)) : '<span class="muted">—</span>') + "</td>" + "<td>" + (order.confirmed ? customerPaymentCellHtml(t, true) : '<span class="muted">—</span>') + "</td>" + '<td class="row-actions">' + '<button class="icon-btn" data-open="' + escapeHtml(order.id) + '">فتح</button>' + (order.archived && !order.confirmed ? '<button class="icon-btn" data-unsuccessful-reason="' + escapeHtml(order.id) + '" title="سبب عدم النجاح">📋' + (order.unsuccessfulReason ? " " + unsuccessfulReasonLabel(order.unsuccessfulReason) : " سبب الفشل") + "</button>" : "") + (order.archived ? '<button class="icon-btn" data-restore="' + escapeHtml(order.id) + '">↩️ استعادة</button>' : '<button class="icon-btn" data-archive="' + escapeHtml(order.id) + '">🗄️ أرشفة</button>') + "</td>" + "</tr>";
 }
 
 function cardHtml(order, precomputedTotals, markArchived) {
@@ -1988,7 +1995,7 @@ function cardHtml(order, precomputedTotals, markArchived) {
     const highlightClass = order.confirmed ? order.supplied ? "card-supplied" : "card-not-supplied" : "card-unconfirmed";
     const pendingCount = orderPendingProposalsCount(order.id);
     const archivedTag = markArchived && order.archived ? '<span class="stamp stamp-amber" style="margin-inline-start:8px;vertical-align:middle;">🗄️ مؤرشفة</span>' : "";
-    return '<div class="order-card ' + highlightClass + '">' + '<div class="order-card-head">' + '<span class="num cell-order">' + escapeHtml(order.orderNumber) + (order.orderLabel ? ' <span class="order-label-tag">' + escapeHtml(order.orderLabel) + "</span>" : "") + archivedTag + (pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">' + pendingCount + "</span>" : "") + "</span>" + '<div class="order-card-head-actions">' + (order.confirmed ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="' + escapeHtml(order.id) + '">✓ مؤكدة</button>' : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="' + escapeHtml(order.id) + '">تأكيد</button>') + ((order.customerPhone || "").trim() ? '<button type="button" class="icon-btn" data-contact-open="' + escapeHtml(order.id) + '" aria-label="تواصل">📞</button>' : "") + "</div>" + "</div>" + '<div class="order-card-row"><span>إجمالي البيع</span><span class="num ' + (t.hasChargeable ? profitColorClass(t) : "") + '">' + (t.hasChargeable ? fmtMoney(t.sellTotal) : t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد") + "</span></div>" + '<div class="order-card-badges">' + (hasElevatedAccess() && (orderSettledWithPurchasing(order) || order.supplied) && t.costToScrapyard > 0 ? stampBadge(orderSettledWithPurchasing(order), "مسدد للتشليح" + (order.paidToOmar ? " (عمر)" : order.paidToAmer ? " (عامر)" : "") + " " + fmtMoney(t.costToScrapyard), "غير مسدد للتشليح " + fmtMoney(t.costToScrapyard)) : "") + (hasElevatedAccess() && (order.paidToSupplier || order.supplied) && t.costToSupplier > 0 ? stampBadge(order.paidToSupplier, "مسدد للمورد " + fmtMoney(t.costToSupplier), "غير مسدد للمورد " + fmtMoney(t.costToSupplier)) : "") + (!t.fullyPriced && !t.allPartsReturned && !t.noActiveParts ? '<span class="stamp stamp-amber">بانتظار التسعير</span>' : order.confirmed ? customerPaymentCellHtml(t, false) : "") + "</div>" + '<div class="order-card-actions">' + '<button class="icon-btn" data-open="' + escapeHtml(order.id) + '">فتح</button>' + (order.archived && !order.confirmed ? '<button class="icon-btn" data-unsuccessful-reason="' + escapeHtml(order.id) + '" title="سبب عدم النجاح">📋' + (order.unsuccessfulReason ? " " + unsuccessfulReasonLabel(order.unsuccessfulReason) : " سبب الفشل") + "</button>" : "") + (order.archived ? '<button class="icon-btn" data-restore="' + escapeHtml(order.id) + '">↩️ استعادة</button>' : '<button class="icon-btn" data-archive="' + escapeHtml(order.id) + '">🗄️ أرشفة</button>') + "</div>" + "</div>";
+    return '<div class="order-card ' + highlightClass + '">' + '<div class="order-card-head">' + '<span class="num cell-order">' + escapeHtml(order.orderNumber) + (order.orderLabel ? ' <span class="order-label-tag">' + escapeHtml(order.orderLabel) + "</span>" : "") + archivedTag + (pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">' + pendingCount + "</span>" : "") + "</span>" + '<div class="order-card-head-actions">' + (order.confirmed ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="' + escapeHtml(order.id) + '">✓ مؤكدة</button>' : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="' + escapeHtml(order.id) + '">تأكيد</button>') + ((order.customerPhone || "").trim() ? '<button type="button" class="icon-btn" data-contact-open="' + escapeHtml(order.id) + '" aria-label="تواصل">📞</button>' : "") + "</div>" + "</div>" + '<div class="order-card-row"><span>إجمالي البيع</span><span class="num ' + (t.hasChargeable ? profitColorClass(t) : "") + '">' + (t.hasChargeable ? fmtMoney(t.sellTotal) : t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد") + "</span></div>" + '<div class="order-card-badges">' + (hasElevatedAccess() && (orderPurchaseSettled(order) || order.supplied) && t.costToScrapyard > 0 ? stampBadge(orderPurchaseSettled(order), "مسدد للتشليح" + (order.paidToOmar ? " (عمر)" : order.paidToAmer ? " (عامر)" : order.paidToSupplier ? " (مباشرة)" : "") + " " + fmtMoney(t.costToScrapyard), "غير مسدد للتشليح " + fmtMoney(t.costToScrapyard)) : "") + (hasElevatedAccess() && (orderPurchaseSettled(order) || order.supplied) && t.costToSupplier > 0 ? stampBadge(orderPurchaseSettled(order), "مسدد للمورد" + (order.paidToAmer ? " (عامر)" : order.paidToOmar ? " (عمر)" : "") + " " + fmtMoney(t.costToSupplier), "غير مسدد للمورد " + fmtMoney(t.costToSupplier)) : "") + (!t.fullyPriced && !t.allPartsReturned && !t.noActiveParts ? '<span class="stamp stamp-amber">بانتظار التسعير</span>' : order.confirmed ? customerPaymentCellHtml(t, false) : "") + "</div>" + '<div class="order-card-actions">' + '<button class="icon-btn" data-open="' + escapeHtml(order.id) + '">فتح</button>' + (order.archived && !order.confirmed ? '<button class="icon-btn" data-unsuccessful-reason="' + escapeHtml(order.id) + '" title="سبب عدم النجاح">📋' + (order.unsuccessfulReason ? " " + unsuccessfulReasonLabel(order.unsuccessfulReason) : " سبب الفشل") + "</button>" : "") + (order.archived ? '<button class="icon-btn" data-restore="' + escapeHtml(order.id) + '">↩️ استعادة</button>' : '<button class="icon-btn" data-archive="' + escapeHtml(order.id) + '">🗄️ أرشفة</button>') + "</div>" + "</div>";
 }
 
 function orderNumberSortKey(order) {
@@ -2481,7 +2488,7 @@ function partRowHtml(p, i) {
 }
 
 function modalHtml(d) {
-    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلبية جديدة" : "تعديل الطلبية") + '</div><div class="modal-sub">البيانات تُحفظ تلقائيًا عند الضغط على حفظ</div></div>' + '<div style="display:flex;gap:8px;align-items:flex-start;">' + '<span id="modal-edit-toggle-wrap">' + editModeToggleButtonHtml(d) + "</span>" + '<button class="icon-btn" id="modal-close-btn" aria-label="إغلاق">✕</button>' + "</div></div>" + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + '<label class="field"><span class="field-label">رقم الطلب (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + '<div class="field">' + '<span class="field-label">العميل (اختياري)</span>' + '<div class="phone-field-row">' + '<div id="order-customer-select" style="flex:1;">' + orderCustomerFieldHtml(d) + "</div>" + '<button type="button" class="icon-btn" id="order-add-customer-btn" aria-label="عميل جديد">➕</button>' + "</div>" + "</div>" + '<div class="field">' + '<div class="field-label-row">' + '<span class="field-label">الطلبية</span>' + '<button type="button" id="btn-toggle-part-selection" class="chip' + (d.partsSelectionEnabled ? " chip-active" : "") + '">🎯 تحديد القطع' + (d.partsSelectionEnabled ? " (مفعّل)" : "") + "</button>" + '<button type="button" id="order-add-supplier-btn" class="chip">➕ مورد جديد</button>' + "</div>" + '<input type="text" id="order-label-input" placeholder="مثال: اسم الزبون / نوع السيارة / أي وصف مختصر" value="' + escapeHtml(d.orderLabel || "") + '">' + "</div>" + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span></div>' + '<div id="parts-list" class="parts-list">' + d.parts.map(partRowHtml).join("") + "</div>" + '<div id="part-type-gate-wrap">' + partAddControlsHtml() + "</div>" + feeFieldRowHtml(d) + "</div>" + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">قسم المبيعات — التسعير والتحصيل</span></div>' + '<div class="totals-row">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="total-cost-display">0 ر.س</span></div>' + '<div class="total-box"><span>مستحق من الزبون</span><span class="num text-green" id="total-sell-display">0 ر.س</span></div>' + '<div class="total-box"><span>الربح</span><span class="num" id="total-profit-display">0 ر.س</span><span class="total-box-sub" id="total-profit-sub"></span></div>' + "</div>" + (hasElevatedAccess() ? '<div class="cost-split-row">' + '<button type="button" class="cost-split-box' + (d.paidToSupplier ? " cost-split-paid" : "") + '" id="cost-split-supplier-btn">' + "<span>المجموع للمورد</span>" + '<span class="num" id="cost-supplier-display">0 ر.س</span>' + '<span class="cost-split-status" id="cost-supplier-status">' + (d.paidToSupplier ? "✓ مسدد" : "غير مسدد") + "</span>" + "</button>" + '<button type="button" class="cost-split-box' + (d.paidToAmer ? " cost-split-paid" : "") + '" id="cost-split-amer-btn">' + "<span>عهدة عامر</span>" + '<span class="num" id="cost-amer-display">0 ر.س</span>' + '<span class="cost-split-status" id="cost-amer-status">' + (d.paidToAmer ? "✓ مسدد" : "غير مسدد") + "</span>" + "</button>" + '<button type="button" class="cost-split-box' + (d.paidToOmar ? " cost-split-paid" : "") + '" id="cost-split-omar-btn">' + "<span>عهدة عمر</span>" + '<span class="num" id="cost-omar-display">0 ر.س</span>' + '<span class="cost-split-status" id="cost-omar-status">' + (d.paidToOmar ? "✓ مسدد" : "غير مسدد") + "</span>" + "</button>" + "</div>" : "") + '<div class="payments-block">' + '<div id="payments-list" class="payments-list">' + paymentsListInnerHtml() + "</div>" + '<button type="button" id="add-payment-btn" class="btn btn-ghost btn-sm">+ إضافة دفعة</button>' + '<div class="payment-summary-row">' + '<span>إجمالي المدفوع<span class="num" id="total-paid-display">0 ر.س</span></span>' + '<span><span id="customer-remaining-label">المتبقي عليه</span><span class="num payment-remaining-display" id="customer-remaining-display">0 ر.س</span></span>' + "</div>" + '<div id="customer-refund-status-wrap">' + orderCustomerRefundStatusHtml(d) + "</div>" + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + '<div id="order-action-buttons-wrap">' + orderActionButtonsHtml(d) + "</div>" + '<div class="parts-clipboard-mini">' + '<button type="button" class="btn-clip-mini" id="copy-parts-btn">📋 نسخ</button>' + '<button type="button" class="btn-clip-mini" id="paste-parts-btn">📥 لصق</button>' + "</div>" + "</div>" + (!d.isNew ? '<div class="modal-footer-docs"><button type="button" class="btn btn-ghost btn-sm" id="modal-quote-btn">🧾 عرض سعر</button><button type="button" class="btn btn-ghost btn-sm" id="modal-invoice-btn">🧾 فاتورة</button></div>' : "<span></span>") + '<div class="modal-footer-actions">' + '<button type="button" class="btn btn-ghost" id="modal-cancel-btn">إلغاء</button>' + (!d.isNew ? '<button type="button" class="btn btn-ghost" id="modal-return-to-quote-btn">إرجاع للتسعير</button>' : "") + '<button type="button" class="btn ' + (d.supplied ? "btn-supplied-on" : "btn-ghost") + '" id="modal-supplied-btn"' + (!d.confirmed ? ' disabled title="لازم تأكيد الطلبية أولًا"' : "") + ">" + (d.supplied ? "✅ تم التوريد" : "🚚 تم التوريد") + "</button>" + '<button type="button" class="btn btn-primary" id="modal-save-btn">حفظ الطلبية</button>' + "</div>" + "</div>" + "</div>" + "</div>";
+    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلبية جديدة" : "تعديل الطلبية") + '</div><div class="modal-sub">البيانات تُحفظ تلقائيًا عند الضغط على حفظ</div></div>' + '<div style="display:flex;gap:8px;align-items:flex-start;">' + '<span id="modal-edit-toggle-wrap">' + editModeToggleButtonHtml(d) + "</span>" + '<button class="icon-btn" id="modal-close-btn" aria-label="إغلاق">✕</button>' + "</div></div>" + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + '<label class="field"><span class="field-label">رقم الطلب (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + '<div class="field">' + '<span class="field-label">العميل (اختياري)</span>' + '<div class="phone-field-row">' + '<div id="order-customer-select" style="flex:1;">' + orderCustomerFieldHtml(d) + "</div>" + '<button type="button" class="icon-btn" id="order-add-customer-btn" aria-label="عميل جديد">➕</button>' + "</div>" + "</div>" + '<div class="field">' + '<div class="field-label-row">' + '<span class="field-label">الطلبية</span>' + '<button type="button" id="btn-toggle-part-selection" class="chip' + (d.partsSelectionEnabled ? " chip-active" : "") + '">🎯 تحديد القطع' + (d.partsSelectionEnabled ? " (مفعّل)" : "") + "</button>" + '<button type="button" id="order-add-supplier-btn" class="chip">➕ مورد جديد</button>' + "</div>" + '<input type="text" id="order-label-input" placeholder="مثال: اسم الزبون / نوع السيارة / أي وصف مختصر" value="' + escapeHtml(d.orderLabel || "") + '">' + "</div>" + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span></div>' + '<div id="parts-list" class="parts-list">' + d.parts.map(partRowHtml).join("") + "</div>" + '<div id="part-type-gate-wrap">' + partAddControlsHtml() + "</div>" + feeFieldRowHtml(d) + "</div>" + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">قسم المبيعات — التسعير والتحصيل</span></div>' + '<div class="totals-row">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="total-cost-display">0 ر.س</span></div>' + '<div class="total-box"><span>مستحق من الزبون</span><span class="num text-green" id="total-sell-display">0 ر.س</span></div>' + '<div class="total-box"><span>الربح</span><span class="num" id="total-profit-display">0 ر.س</span><span class="total-box-sub" id="total-profit-sub"></span></div>' + "</div>" + (hasElevatedAccess() ? '<div class="cost-split-row">' + '<button type="button" class="cost-split-box' + (orderPurchaseSettled(d) ? " cost-split-paid" : "") + '" id="cost-split-btn">' + "<span>المجموع للمورد</span>" + '<span class="num" id="cost-split-display">0 ر.س</span>' + '<span class="cost-split-status" id="cost-split-status">' + costSplitStatusLabel(d) + "</span>" + "</button>" + "</div>" : "") + '<div class="payments-block">' + '<div id="payments-list" class="payments-list">' + paymentsListInnerHtml() + "</div>" + '<button type="button" id="add-payment-btn" class="btn btn-ghost btn-sm">+ إضافة دفعة</button>' + '<div class="payment-summary-row">' + '<span>إجمالي المدفوع<span class="num" id="total-paid-display">0 ر.س</span></span>' + '<span><span id="customer-remaining-label">المتبقي عليه</span><span class="num payment-remaining-display" id="customer-remaining-display">0 ر.س</span></span>' + "</div>" + '<div id="customer-refund-status-wrap">' + orderCustomerRefundStatusHtml(d) + "</div>" + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + '<div id="order-action-buttons-wrap">' + orderActionButtonsHtml(d) + "</div>" + '<div class="parts-clipboard-mini">' + '<button type="button" class="btn-clip-mini" id="copy-parts-btn">📋 نسخ</button>' + '<button type="button" class="btn-clip-mini" id="paste-parts-btn">📥 لصق</button>' + "</div>" + "</div>" + (!d.isNew ? '<div class="modal-footer-docs"><button type="button" class="btn btn-ghost btn-sm" id="modal-quote-btn">🧾 عرض سعر</button><button type="button" class="btn btn-ghost btn-sm" id="modal-invoice-btn">🧾 فاتورة</button></div>' : "<span></span>") + '<div class="modal-footer-actions">' + '<button type="button" class="btn btn-ghost" id="modal-cancel-btn">إلغاء</button>' + (!d.isNew ? '<button type="button" class="btn btn-ghost" id="modal-return-to-quote-btn">إرجاع للتسعير</button>' : "") + '<button type="button" class="btn ' + (d.supplied ? "btn-supplied-on" : "btn-ghost") + '" id="modal-supplied-btn"' + (!d.confirmed ? ' disabled title="لازم تأكيد الطلبية أولًا"' : "") + ">" + (d.supplied ? "✅ تم التوريد" : "🚚 تم التوريد") + "</button>" + '<button type="button" class="btn btn-primary" id="modal-save-btn">حفظ الطلبية</button>' + "</div>" + "</div>" + "</div>" + "</div>";
 }
 
 function openModal(mode, orderId) {
@@ -2723,6 +2730,34 @@ function openAnnouncementEditor() {
     });
 }
 
+function openSettlementChoiceModal(order, onChoose) {
+    const root = document.getElementById("confirm-root");
+    const current = order.paidToSupplier ? "supplier" : order.paidToAmer ? "amer" : order.paidToOmar ? "omar" : null;
+    const optionBtn = (key, label) => '<button type="button" class="btn ' + (current === key ? "btn-primary" : "btn-ghost") + '" data-settlement-choice="' + key + '" style="width:100%;margin-bottom:8px;">' + (current === key ? "✓ " : "") + label + "</button>";
+    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">سداد المشتريات — من؟</div>' + optionBtn("supplier", "سداد مباشر") + optionBtn("amer", "من عهدة عامر") + optionBtn("omar", "من عهدة عمر") + (current ? '<button type="button" class="btn btn-ghost" id="settlement-choice-clear-btn" style="width:100%;margin-bottom:8px;">✕ إلغاء التسديد</button>' : "") + '<div class="modal-footer-actions" style="margin-top:8px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="settlement-choice-cancel-btn">إغلاق</button>' + "</div>" + "</div>" + "</div>";
+    root.classList.add("modal-open");
+    const close = () => {
+        root.innerHTML = "";
+        root.classList.remove("modal-open");
+    };
+    root.querySelector("[data-close-confirm]").addEventListener("click", e => {
+        if (e.target.hasAttribute("data-close-confirm")) close();
+    });
+    root.querySelector("#settlement-choice-cancel-btn").addEventListener("click", close);
+    root.querySelectorAll("[data-settlement-choice]").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const key = btn.getAttribute("data-settlement-choice");
+            close();
+            onChoose(key);
+        });
+    });
+    const clearBtn = root.querySelector("#settlement-choice-clear-btn");
+    if (clearBtn) clearBtn.addEventListener("click", () => {
+        close();
+        onChoose(null);
+    });
+}
+
 function attachModalHandlers() {
     const root = document.getElementById("modal-root");
     root.querySelector("[data-close-backdrop]").addEventListener("click", e => {
@@ -2752,92 +2787,29 @@ function attachModalHandlers() {
     if (copyBtn) copyBtn.addEventListener("click", copyPartsToClipboard);
     const pasteBtn = root.querySelector("#paste-parts-btn");
     if (pasteBtn) pasteBtn.addEventListener("click", pastePartsFromClipboard);
-    const costSplitAmerBtn = root.querySelector("#cost-split-amer-btn");
-    if (costSplitAmerBtn) costSplitAmerBtn.addEventListener("click", () => {
+    const costSplitBtn = root.querySelector("#cost-split-btn");
+    if (costSplitBtn) costSplitBtn.addEventListener("click", () => {
         if (!hasElevatedAccess()) {
             showToast("غير متاح", "error");
             return;
         }
-        const willPay = !draft.paidToAmer;
-        confirmAction({
-            title: willPay ? 'تحديد الطلبية كـ"مسدد من عهدة عامر"؟' : 'إلغاء تحديد الطلبية كـ"مسدد من عهدة عامر"؟',
-            confirmLabel: "نعم",
-            cancelLabel: "لا",
-            onConfirm: () => {
-                draft.paidToAmer = willPay;
-                draft.paidToAmerAt = willPay ? (new Date).toISOString() : null;
-                draft.paidToAmerAmountSnapshot = willPay ? orderTotals(draft).costToScrapyard : null;
-                if (willPay && draft.paidToOmar) {
-                    draft.paidToOmar = false;
-                    draft.paidToOmarAt = null;
-                    draft.paidToOmarAmountSnapshot = null;
-                    const omarBtn = document.getElementById("cost-split-omar-btn");
-                    if (omarBtn) {
-                        omarBtn.classList.remove("cost-split-paid");
-                        document.getElementById("cost-omar-status").textContent = "غير مسدد";
-                    }
-                }
-                const btn = document.getElementById("cost-split-amer-btn");
-                if (btn) {
-                    btn.classList.toggle("cost-split-paid", willPay);
-                    document.getElementById("cost-amer-status").textContent = willPay ? "✓ مسدد" : "غير مسدد";
-                }
-            }
-        });
-    });
-    const costSplitOmarBtn = root.querySelector("#cost-split-omar-btn");
-    if (costSplitOmarBtn) costSplitOmarBtn.addEventListener("click", () => {
-        if (!hasElevatedAccess()) {
-            showToast("غير متاح", "error");
-            return;
-        }
-        const willPay = !draft.paidToOmar;
-        confirmAction({
-            title: willPay ? 'تحديد الطلبية كـ"مسدد من عهدة عمر"؟' : 'إلغاء تحديد الطلبية كـ"مسدد من عهدة عمر"؟',
-            confirmLabel: "نعم",
-            cancelLabel: "لا",
-            onConfirm: () => {
-                draft.paidToOmar = willPay;
-                draft.paidToOmarAt = willPay ? (new Date).toISOString() : null;
-                draft.paidToOmarAmountSnapshot = willPay ? orderTotals(draft).costToScrapyard : null;
-                if (willPay && draft.paidToAmer) {
-                    draft.paidToAmer = false;
-                    draft.paidToAmerAt = null;
-                    draft.paidToAmerAmountSnapshot = null;
-                    const amerBtn = document.getElementById("cost-split-amer-btn");
-                    if (amerBtn) {
-                        amerBtn.classList.remove("cost-split-paid");
-                        document.getElementById("cost-amer-status").textContent = "غير مسدد";
-                    }
-                }
-                const btn = document.getElementById("cost-split-omar-btn");
-                if (btn) {
-                    btn.classList.toggle("cost-split-paid", willPay);
-                    document.getElementById("cost-omar-status").textContent = willPay ? "✓ مسدد" : "غير مسدد";
-                }
-            }
-        });
-    });
-    const costSplitSupplierBtn = root.querySelector("#cost-split-supplier-btn");
-    if (costSplitSupplierBtn) costSplitSupplierBtn.addEventListener("click", () => {
-        if (!hasElevatedAccess()) {
-            showToast("غير متاح", "error");
-            return;
-        }
-        const willPay = !draft.paidToSupplier;
-        confirmAction({
-            title: willPay ? 'تحديد الطلبية كـ"مسدد للمورد"؟' : 'إلغاء تحديد الطلبية كـ"مسدد للمورد"؟',
-            confirmLabel: "نعم",
-            cancelLabel: "لا",
-            onConfirm: () => {
-                draft.paidToSupplier = willPay;
-                draft.paidToSupplierAt = willPay ? (new Date).toISOString() : null;
-                draft.paidToSupplierAmountSnapshot = willPay ? orderTotals(draft).costToSupplier : null;
-                const btn = document.getElementById("cost-split-supplier-btn");
-                if (btn) {
-                    btn.classList.toggle("cost-split-paid", willPay);
-                    document.getElementById("cost-supplier-status").textContent = willPay ? "✓ مسدد" : "غير مسدد";
-                }
+        openSettlementChoiceModal(draft, choice => {
+            const now = (new Date).toISOString();
+            const amountSnapshot = orderTotals(draft).costTotal;
+            draft.paidToSupplier = choice === "supplier";
+            draft.paidToSupplierAt = choice === "supplier" ? now : null;
+            draft.paidToSupplierAmountSnapshot = choice === "supplier" ? amountSnapshot : null;
+            draft.paidToAmer = choice === "amer";
+            draft.paidToAmerAt = choice === "amer" ? now : null;
+            draft.paidToAmerAmountSnapshot = choice === "amer" ? amountSnapshot : null;
+            draft.paidToOmar = choice === "omar";
+            draft.paidToOmarAt = choice === "omar" ? now : null;
+            draft.paidToOmarAmountSnapshot = choice === "omar" ? amountSnapshot : null;
+            const btn = document.getElementById("cost-split-btn");
+            if (btn) {
+                btn.classList.toggle("cost-split-paid", !!choice);
+                const statusEl = document.getElementById("cost-split-status");
+                if (statusEl) statusEl.textContent = costSplitStatusLabel(draft);
             }
         });
     });
@@ -3079,7 +3051,7 @@ function confirmReturnWholeOrder() {
         return;
     }
     const missingSupplier = activeParts.some(p => {
-        const hasReceivable = p.used ? orderSettledWithPurchasing(draft) : draft.paidToSupplier;
+        const hasReceivable = orderPurchaseSettled(draft);
         return hasReceivable && !p.supplierId;
     });
     if (missingSupplier) {
@@ -3095,7 +3067,7 @@ function confirmReturnWholeOrder() {
 }
 
 function proceedReturnWholeOrder(activeParts, keepFee) {
-    const anyPaid = activeParts.some(p => p.used ? orderSettledWithPurchasing(draft) : draft.paidToSupplier);
+    const anyPaid = orderPurchaseSettled(draft) && activeParts.length > 0;
     confirmAction({
         title: "تأكيد إرجاع الطلبية بالكامل (" + activeParts.length + " قطعة)؟",
         message: anyPaid ? "بعض القطع مدفوعة مسبقًا — مبلغها رح يظهر كمسترجع بانتظار التحصيل بشاشة الموردين، وينخصم من دفعة الزبون تلقائيًا." : "رح تُستبعد كل قطع الطلبية من حساباتها مباشرة.",
@@ -3207,7 +3179,7 @@ function openPartActionChoice(part) {
 }
 
 function confirmSinglePartReturn(part) {
-    const hasReceivable = part.used ? orderSettledWithPurchasing(draft) : draft.paidToSupplier;
+    const hasReceivable = orderPurchaseSettled(draft);
     if (hasReceivable && !part.supplierId) {
         showToast("حدد المورد لهذه القطعة قبل تأكيد الإرجاع", "error");
         return;
@@ -3310,7 +3282,7 @@ function openReturnFeeChoiceModal(shareAmount, includesDelivery, onChoice) {
 
 function applyPartReturnOnOrder(order, part, extraRefundCap) {
     extraRefundCap = round2(Math.max(0, Number(extraRefundCap) || 0));
-    const hasReceivable = part.used ? orderSettledWithPurchasing(order) : order.paidToSupplier;
+    const hasReceivable = orderPurchaseSettled(order);
     part.returned = true;
     part.returnHasReceivable = hasReceivable;
     part.returnCollected = false;
@@ -3488,12 +3460,8 @@ function updateModalTotals() {
     const t = orderTotals(draft);
     document.getElementById("total-cost-display").textContent = fmtMoney(t.costTotal);
     document.getElementById("total-sell-display").textContent = t.hasChargeable ? fmtMoney(t.sellTotal) : t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد";
-    const costSupplierEl = document.getElementById("cost-supplier-display");
-    if (costSupplierEl) costSupplierEl.textContent = fmtMoney(t.costToSupplier);
-    const costAmerEl = document.getElementById("cost-amer-display");
-    if (costAmerEl) costAmerEl.textContent = fmtMoney(t.costToScrapyard);
-    const costOmarEl = document.getElementById("cost-omar-display");
-    if (costOmarEl) costOmarEl.textContent = fmtMoney(t.costToScrapyard);
+    const costSplitEl = document.getElementById("cost-split-display");
+    if (costSplitEl) costSplitEl.textContent = fmtMoney(t.costTotal);
     const feePreviewEl = document.getElementById("fee-amount-preview");
     if (feePreviewEl) {
         feePreviewEl.textContent = t.feeEnabled && t.feeAmount > 0 ? "= " + fmtMoney(t.feeAmount) : "";
@@ -6683,7 +6651,7 @@ function requestPartDelete(part) {
 }
 
 function requestPartReturn(part) {
-    const hasReceivable = part.used ? orderSettledWithPurchasing(draft) : draft.paidToSupplier;
+    const hasReceivable = orderPurchaseSettled(draft);
     if (hasReceivable && !part.supplierId) {
         showToast("حدد المورد لهذه القطعة قبل إرسال طلب الإرجاع", "error");
         return;
@@ -6818,7 +6786,7 @@ function requestOrderReturn() {
         return;
     }
     const missingSupplier = activeParts.some(p => {
-        const hasReceivable = p.used ? orderSettledWithPurchasing(draft) : draft.paidToSupplier;
+        const hasReceivable = orderPurchaseSettled(draft);
         return hasReceivable && !p.supplierId;
     });
     if (missingSupplier) {
@@ -6912,7 +6880,7 @@ function applyEditProposal(pr, orderOverride, opts) {
     } else if (pr.kind === "part_return") {
         const part = (order.parts || []).find(p => p.id === pr.part_id);
         if (!part || part.returned) return false;
-        const hasReceivable = part.used ? orderSettledWithPurchasing(order) : order.paidToSupplier;
+        const hasReceivable = orderPurchaseSettled(order);
         if (hasReceivable && !part.supplierId) return false;
         const s = computeReturnFeeShare(order, part);
         if (opts.keepFee) {
@@ -6928,7 +6896,7 @@ function applyEditProposal(pr, orderOverride, opts) {
         const activeParts = orderActiveParts(order).filter(p => !p.returned);
         if (!activeParts.length) return false;
         const missingSupplier = activeParts.some(p => {
-            const hasReceivable = p.used ? orderSettledWithPurchasing(order) : order.paidToSupplier;
+            const hasReceivable = orderPurchaseSettled(order);
             return hasReceivable && !p.supplierId;
         });
         if (missingSupplier) return false;
@@ -7749,8 +7717,8 @@ function computeTreasuryVolumes() {
     let costToSuppliersTotal = 0, costToScrapyardTotal = 0, sellTotalSum = 0;
     orders.forEach(o => {
         const t = orderTotals(o);
-        if (o.paidToSupplier) paidToSuppliersTotal += t.costToSupplier;
-        if (orderSettledWithPurchasing(o)) paidToScrapyardTotal += t.costToScrapyard;
+        if (orderPurchaseSettled(o)) paidToSuppliersTotal += t.costToSupplier;
+        if (orderPurchaseSettled(o)) paidToScrapyardTotal += t.costToScrapyard;
         costToSuppliersTotal += t.costToSupplier;
         costToScrapyardTotal += t.costToScrapyard;
         customerReceiptsTotal += t.customerPaidAmount;
@@ -8502,7 +8470,7 @@ function paidToScrapyardTotalForCustody() {
     let total = 0;
     (appData.orders || []).forEach(o => {
         if (!o.confirmed || !o.paidToAmer || o.custodyLegacy || o.isQuote) return;
-        total += orderTotals(o).costToScrapyard;
+        total += orderTotals(o).costTotal;
     });
     return round2(total);
 }
@@ -8541,7 +8509,7 @@ function paidToScrapyardTotalForOmar() {
     let total = 0;
     (appData.orders || []).forEach(o => {
         if (!o.confirmed || !o.paidToOmar || o.custodyLegacy || o.isQuote) return;
-        total += orderTotals(o).costToScrapyard;
+        total += orderTotals(o).costTotal;
     });
     return round2(total);
 }
@@ -8800,9 +8768,9 @@ async function exportAllDataToExcel() {
             "عدد القطع": o.parts.length,
             "إجمالي الشراء": t.costTotal,
             "مستحق للتشليح": t.costToScrapyard,
-            "مسدد للتشليح": orderSettledWithPurchasing(o) ? o.paidToOmar ? "نعم (عمر)" : "نعم (عامر)" : "لا",
+            "مسدد للتشليح": o.paidToAmer ? "نعم (عامر)" : o.paidToOmar ? "نعم (عمر)" : o.paidToSupplier ? "مسدد مباشرة" : "لا",
             "مستحق للمورد": t.costToSupplier,
-            "مسدد للمورد": o.paidToSupplier ? "نعم" : "لا",
+            "مسدد للمورد": o.paidToSupplier ? "نعم" : orderPurchaseSettled(o) ? "مسدد عن طريق العهدة" : "لا",
             "مسعّرة بالكامل": t.fullyPriced ? "نعم" : "لا",
             "إجمالي البيع": t.hasChargeable ? t.sellTotal : "",
             "نسبة رسوم الخدمة %": t.feeEnabled ? t.feePercent : "",
@@ -9889,7 +9857,7 @@ function supplierOwedAmount(supplierId) {
             if (p.supplierId !== supplierId) return;
             if (p.returned) return;
             if (!partIsIncludedInOrder(o, p)) return;
-            const paid = p.used ? orderSettledWithPurchasing(o) : o.paidToSupplier;
+            const paid = orderPurchaseSettled(o);
             if (paid) return;
             total += (Number(p.qty) || 1) * (Number(p.costPrice) || 0);
         });
@@ -9905,7 +9873,7 @@ function supplierOwedIndex() {
             if (!p.supplierId) return;
             if (p.returned) return;
             if (!partIsIncludedInOrder(o, p)) return;
-            const paid = p.used ? orderSettledWithPurchasing(o) : o.paidToSupplier;
+            const paid = orderPurchaseSettled(o);
             if (paid) return;
             bySupplierRaw[p.supplierId] = (bySupplierRaw[p.supplierId] || 0) + (Number(p.qty) || 1) * (Number(p.costPrice) || 0);
         });
@@ -9933,7 +9901,7 @@ function supplierPurchaseHistory(supplierId) {
             if (p.supplierId !== supplierId) return;
             if (p.returned) return;
             if (!partIsIncludedInOrder(o, p)) return;
-            const paid = p.used ? orderSettledWithPurchasing(o) : o.paidToSupplier;
+            const paid = orderPurchaseSettled(o);
             const map = paid ? pastMap : ongoingMap;
             const list = paid ? past : ongoing;
             if (!map[o.id]) {
@@ -11068,13 +11036,13 @@ const SETTLEMENT_KINDS = {
         title: "سداد التشاليح",
         homeLabel: "🧾 سداد التشاليح",
         rpc: "get_scrapyard_used_parts",
-        isPaid: o => orderSettledWithPurchasing(o)
+        isPaid: o => orderPurchaseSettled(o)
     },
     new: {
         title: "سداد الجديد",
         homeLabel: "🧾 سداد الجديد",
         rpc: "get_new_parts_supplier",
-        isPaid: o => !!o.paidToSupplier
+        isPaid: o => orderPurchaseSettled(o)
     }
 };
 
