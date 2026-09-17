@@ -7,7 +7,6 @@
 <title>تتبع القطع · بارتك</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192-v2.png">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="بارتك">
@@ -1191,8 +1190,7 @@
   <div id="doc-root"></div>
   <div id="toast-root" class="toast-root"></div>
 
-<!-- html2pdf وxlsx صارت تتحمّل عند الحاجة بس (ensureHtml2pdf/ensureXLSX أول السكربت) — مو بكل تحميل صفحة -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<!-- html2pdf وxlsx وleaflet صارت تتحمّل عند الحاجة بس (ensureHtml2pdf/ensureXLSX/ensureLeaflet أول السكربت) — مو بكل تحميل صفحة -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>const SUPABASE_URL = "https://kbgvwphlgepfaarkjsjp.supabase.co";
 
@@ -1231,6 +1229,20 @@ async function ensureHtml2pdf() {
 async function ensureXLSX() {
     if (typeof XLSX !== "undefined") return;
     await loadScriptOnce("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js");
+}
+
+function loadStylesheetOnce(url) {
+    if (document.querySelector('link[href="' + url + '"]')) return;
+    const el = document.createElement("link");
+    el.rel = "stylesheet";
+    el.href = url;
+    document.head.appendChild(el);
+}
+
+async function ensureLeaflet() {
+    loadStylesheetOnce("https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css");
+    if (typeof L !== "undefined") return;
+    await loadScriptOnce("https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js");
 }
 
 async function withRetry(fn, attempts, delayMs) {
@@ -13101,6 +13113,8 @@ async function openEmployeeMap() {
             handleEmployeeMapHistorySearch();
         });
     });
+    await ensureLeaflet();
+    if (myToken !== employeeMapOpenToken) return;
     employeeMapMarkers = {};
     employeeMapInstance = L.map("employee-map-wrap");
     L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
@@ -13316,6 +13330,7 @@ async function showAttendanceSessionPathInline(email, startIso, endIso, btn) {
         btn.disabled = true;
         btn.textContent = "🗺️ جاري التحميل…";
     }
+    const leafletPromise = ensureLeaflet();
     const {data: data, error: error} = await sb.from("employee_location_history").select("lat, lng, recorded_at").eq("email", email).gte("recorded_at", startIso).lte("recorded_at", endIso).order("recorded_at", {
         ascending: true
     });
@@ -13331,6 +13346,8 @@ async function showAttendanceSessionPathInline(email, startIso, endIso, btn) {
         attendanceChartPathMapInstance.remove();
         attendanceChartPathMapInstance = null;
     }
+    await leafletPromise;
+    if (!document.getElementById("attendance-chart-path-map-wrap")) return;
     const map = L.map("attendance-chart-path-map");
     attendanceChartPathMapInstance = map;
     L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
