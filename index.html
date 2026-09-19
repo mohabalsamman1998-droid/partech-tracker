@@ -8600,7 +8600,7 @@ function updateSuppliersBadge() {
 function openTasksView() {
     hideAllSecondaryViews();
     document.getElementById("tasks-view").style.display = "block";
-    activeTaskCategory = null;
+    activeTaskCategory = !currentUserIsElevated && TASK_ASSIGNABLE_EMAILS.includes(presenceEmail) ? presenceEmail : null;
     renderTasksView();
 }
 
@@ -8639,49 +8639,56 @@ function bindTasksMenuEvents() {
 }
 
 function taskItemRowHtml(item) {
-    return '<div class="task-item-row ' + (item.done ? "task-item-done" : "") + '" data-task-id="' + escapeHtml(item.id) + '">' + '<label class="task-item-check-wrap"><input type="checkbox" class="task-item-check" ' + (item.done ? "checked" : "") + ' aria-label="تم الإنجاز"></label>' + '<span class="task-item-text">' + escapeHtml(item.text) + "</span>" + '<button type="button" class="task-item-remove-btn" aria-label="حذف المهمة">✕</button>' + "</div>";
+    return '<div class="task-item-row ' + (item.done ? "task-item-done" : "") + '" data-task-id="' + escapeHtml(item.id) + '">' + '<label class="task-item-check-wrap"><input type="checkbox" class="task-item-check" ' + (item.done ? "checked" : "") + ' aria-label="تم الإنجاز"></label>' + '<span class="task-item-text">' + escapeHtml(item.text) + "</span>" + (currentUserIsElevated ? '<button type="button" class="task-item-remove-btn" aria-label="حذف المهمة">✕</button>' : "") + "</div>";
 }
 
 function taskCategoryHtml(key) {
     const cat = TASK_CATEGORIES.find(c => c.key === key);
     const items = appData.tasks[key] || [];
-    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-tasks-menu">→ رجوع لـ TASKS</button>' + '<div class="tasks-title">' + cat.icon + " " + cat.label + "</div>" + "</div>" + '<div class="treasury-block">' + '<div class="task-add-row">' + '<input type="text" id="new-task-input" class="task-add-input" placeholder="اكتب مهمة جديدة واضغط إضافة…">' + '<button type="button" class="btn btn-sm btn-add-part" id="add-task-btn">+ إضافة</button>' + "</div>" + '<div class="task-items-list" id="task-items-list">' + (items.length ? items.map(taskItemRowHtml).join("") : '<div class="expense-empty-hint">ما فيه مهام مضافة بعد</div>') + "</div>" + "</div>";
+    const backLabel = currentUserIsElevated ? "→ رجوع لـ TASKS" : "→ رجوع للطلبيات";
+    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-tasks-menu">' + backLabel + "</button>" + '<div class="tasks-title">' + cat.icon + " " + cat.label + "</div>" + "</div>" + '<div class="treasury-block">' + (currentUserIsElevated ? '<div class="task-add-row">' + '<input type="text" id="new-task-input" class="task-add-input" placeholder="اكتب مهمة جديدة واضغط إضافة…">' + '<button type="button" class="btn btn-sm btn-add-part" id="add-task-btn">+ إضافة</button>' + "</div>" : "") + '<div class="task-items-list" id="task-items-list">' + (items.length ? items.map(taskItemRowHtml).join("") : '<div class="expense-empty-hint">ما فيه مهام مضافة بعد</div>') + "</div>" + "</div>";
 }
 
 function bindTaskCategoryEvents(key) {
     document.getElementById("btn-back-to-tasks-menu").addEventListener("click", () => {
+        if (!currentUserIsElevated) {
+            closeTasksView();
+            return;
+        }
         activeTaskCategory = null;
         renderTasksView();
     });
     const addBtn = document.getElementById("add-task-btn");
     const input = document.getElementById("new-task-input");
-    const addTask = async () => {
-        if (addBtn.disabled) return;
-        const text = input.value.trim();
-        if (!text) return;
-        if (!Array.isArray(appData.tasks[key])) appData.tasks[key] = [];
-        const newItem = {
-            id: uid("task"),
-            text: text,
-            done: false,
-            createdAt: (new Date).toISOString()
+    if (addBtn && input) {
+        const addTask = async () => {
+            if (addBtn.disabled) return;
+            const text = input.value.trim();
+            if (!text) return;
+            if (!Array.isArray(appData.tasks[key])) appData.tasks[key] = [];
+            const newItem = {
+                id: uid("task"),
+                text: text,
+                done: false,
+                createdAt: (new Date).toISOString()
+            };
+            addBtn.disabled = true;
+            const saved = await persistTaskItem(newItem, key);
+            addBtn.disabled = false;
+            if (!saved) return;
+            appData.tasks[key].push(newItem);
+            input.value = "";
+            updateTasksBadge();
+            refreshTaskItemsList(key);
         };
-        addBtn.disabled = true;
-        const saved = await persistTaskItem(newItem, key);
-        addBtn.disabled = false;
-        if (!saved) return;
-        appData.tasks[key].push(newItem);
-        input.value = "";
-        updateTasksBadge();
-        refreshTaskItemsList(key);
-    };
-    addBtn.addEventListener("click", addTask);
-    input.addEventListener("keydown", e => {
-        if (e.key === "Enter") {
-            e.preventDefault();
-            addTask();
-        }
-    });
+        addBtn.addEventListener("click", addTask);
+        input.addEventListener("keydown", e => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                addTask();
+            }
+        });
+    }
     bindTaskItemEvents(key);
 }
 
@@ -8699,7 +8706,7 @@ function bindTaskItemEvents(key) {
             liveItem.done = e.target.checked;
             row.classList.toggle("task-item-done", liveItem.done);
             updateTasksBadge();
-            const saved = await persistTaskItem(liveItem, key);
+            const saved = currentUserIsElevated ? await persistTaskItem(liveItem, key) : await setMyTaskDoneViaRpc(liveItem.id, liveItem.done);
             if (!saved) {
                 liveItem.done = prevDone;
                 e.target.checked = prevDone;
@@ -8707,7 +8714,8 @@ function bindTaskItemEvents(key) {
                 updateTasksBadge();
             }
         });
-        row.querySelector(".task-item-remove-btn").addEventListener("click", async () => {
+        const removeBtn = row.querySelector(".task-item-remove-btn");
+        if (removeBtn) removeBtn.addEventListener("click", async () => {
             const deleted = await deleteTaskItem(tid);
             if (!deleted) return;
             appData.tasks[key] = (appData.tasks[key] || []).filter(t => t.id !== tid);
@@ -9655,6 +9663,21 @@ async function persistTaskItem(item, category) {
             text: item.text || "",
             done: !!item.done,
             created_at: item.createdAt || (new Date).toISOString()
+        });
+        if (error) throw error;
+        return true;
+    } catch (e) {
+        showToast("تعذر حفظ المهمة: " + friendlyErrorText(e), "error");
+        return false;
+    }
+}
+
+async function setMyTaskDoneViaRpc(taskId, done) {
+    try {
+        if (!sb) throw new Error("NO_DB");
+        const {error: error} = await sb.rpc("set_my_scrapyard_task_done", {
+            p_task_id: taskId,
+            p_done: done
         });
         if (error) throw error;
         return true;
