@@ -1291,6 +1291,20 @@ const DATA_SCHEMA_VERSION = 1;
 
 const PARTECH_LOGO_DATA_URI = "logo.png";
 
+const EMAIL_DISPLAY_NAMES = {
+    "mohabalsamman1998@gmail.com": "مهاب",
+    "homam.techno@gmail.com": "همام",
+    "sammaneng@gmail.com": "بشار",
+    "amerpartech@gmail.com": "عامر",
+    "manomahomed11223@gmail.com": "عبد الرحمن",
+    "iomar.aljohnii@gmail.com": "عمر"
+};
+
+function displayNameForEmail(email) {
+    if (!email) return "";
+    return EMAIL_DISPLAY_NAMES[email] || email.split("@")[0];
+}
+
 let appData = {
     orders: [],
     treasury: defaultTreasury(),
@@ -1333,20 +1347,6 @@ function escapeHtml(s) {
         '"': "&quot;",
         "'": "&#39;"
     }[c]));
-}
-
-const EMAIL_DISPLAY_NAMES = {
-    "mohabalsamman1998@gmail.com": "مهاب",
-    "homam.techno@gmail.com": "همام",
-    "sammaneng@gmail.com": "بشار",
-    "amerpartech@gmail.com": "عامر",
-    "manomahomed11223@gmail.com": "عبد الرحمن",
-    "iomar.aljohnii@gmail.com": "عمر"
-};
-
-function displayNameForEmail(email) {
-    if (!email) return "";
-    return EMAIL_DISPLAY_NAMES[email] || email.split("@")[0];
 }
 
 function searchableSelectHtml(inputClass, options, selectedId, placeholder) {
@@ -1582,10 +1582,11 @@ function defaultTreasury() {
 }
 
 function defaultTasks() {
-    return {
-        purchases: [],
-        sales: []
-    };
+    const t = {};
+    Object.keys(EMAIL_DISPLAY_NAMES).forEach(email => {
+        t[email] = [];
+    });
+    return t;
 }
 
 function groupTreasuryRows(rows) {
@@ -8417,15 +8418,11 @@ function updateTreasurySummary() {
     }
 }
 
-const TASK_CATEGORIES = [ {
-    key: "purchases",
-    label: "المشتريات",
-    icon: "🛒"
-}, {
-    key: "sales",
-    label: "المبيعات",
-    icon: "💰"
-} ];
+const TASK_CATEGORIES = Object.keys(EMAIL_DISPLAY_NAMES).map(email => ({
+    key: email,
+    label: EMAIL_DISPLAY_NAMES[email],
+    icon: "👤"
+}));
 
 let activeTaskCategory = null;
 
@@ -11247,14 +11244,14 @@ function goToScrapyardHome() {
 }
 
 async function loadScrapyardHomeTotals() {
-    const [usedRes, newRes, tasksRes, suppliersRes, ordersRes, approvedRes, customersRes, custodyRes, usedReturnsRes, newReturnsRes] = await Promise.all([ sb.rpc("get_scrapyard_used_parts"), sb.rpc("get_new_parts_supplier"), sb.rpc("get_purchases_tasks"), sb.from("suppliers").select("*"), sb.rpc("get_scrapyard_home_quotes"), sb.rpc("get_scrapyard_approved_quotes"), sb.from("customers").select("*"), sb.from("treasury_entries").select("id").eq("category", scrapyardSharedState.email === "iomar.aljohnii@gmail.com" ? "omarCustody" : "amerCustody"), sb.rpc("get_scrapyard_return_receivables", {
+    const [usedRes, newRes, tasksRes, suppliersRes, ordersRes, approvedRes, customersRes, custodyRes, usedReturnsRes, newReturnsRes] = await Promise.all([ sb.rpc("get_scrapyard_used_parts"), sb.rpc("get_new_parts_supplier"), sb.rpc("get_my_scrapyard_tasks"), sb.from("suppliers").select("*"), sb.rpc("get_scrapyard_home_quotes"), sb.rpc("get_scrapyard_approved_quotes"), sb.from("customers").select("*"), sb.from("treasury_entries").select("id").eq("category", scrapyardSharedState.email === "iomar.aljohnii@gmail.com" ? "omarCustody" : "amerCustody"), sb.rpc("get_scrapyard_return_receivables", {
         p_kind: "used"
     }), sb.rpc("get_scrapyard_return_receivables", {
         p_kind: "new"
     }) ]);
     if (usedRes.error) console.error("get_scrapyard_used_parts:", usedRes.error);
     if (newRes.error) console.error("get_new_parts_supplier:", newRes.error);
-    if (tasksRes.error) console.error("get_purchases_tasks:", tasksRes.error);
+    if (tasksRes.error) console.error("get_my_scrapyard_tasks:", tasksRes.error);
     if (suppliersRes.error) console.error("suppliers:", suppliersRes.error);
     if (ordersRes.error) console.error("get_scrapyard_home_quotes:", ordersRes.error);
     if (approvedRes.error) console.error("get_scrapyard_approved_quotes:", approvedRes.error);
@@ -11527,12 +11524,12 @@ async function togglePurchasesTaskDone(taskId, newDone) {
     const task = (scrapyardSharedState.tasks || []).find(t => t.id === taskId);
     if (task) task.done = newDone;
     renderScrapyardHomeView();
-    const {error: error} = await sb.rpc("set_purchases_task_done", {
+    const {error: error} = await sb.rpc("set_my_scrapyard_task_done", {
         p_task_id: taskId,
         p_done: newDone
     });
     if (error) {
-        console.error("set_purchases_task_done:", error);
+        console.error("set_my_scrapyard_task_done:", error);
         if (task) task.done = !newDone;
         renderScrapyardHomeView();
         showToast("تعذر تحديث المهمة", "error");
