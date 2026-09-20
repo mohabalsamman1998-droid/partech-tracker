@@ -11718,10 +11718,14 @@ function monthlySalesGrowth(monthsBack) {
         const key = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
         if (!byMonth[key]) byMonth[key] = {
             sales: 0,
-            profit: 0
+            profit: 0,
+            salesPaid: 0,
+            profitPaid: 0
         };
         byMonth[key].sales += t.sellTotal;
         byMonth[key].profit += t.profit;
+        byMonth[key].salesPaid += t.customerPaidAmount;
+        byMonth[key].profitPaid += t.collectedProfit;
     });
     const now = new Date;
     const months = [];
@@ -11729,23 +11733,26 @@ function monthlySalesGrowth(monthsBack) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
         months.push(d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"));
     }
+    const emptyMonth = {
+        sales: 0,
+        profit: 0,
+        salesPaid: 0,
+        profitPaid: 0
+    };
+    const growthOf = (cur, prev) => prev > 0 ? round2((cur - prev) / prev * 100) : null;
     const rows = months.map((key, i) => {
-        const cur = byMonth[key] || {
-            sales: 0,
-            profit: 0
-        };
-        const prev = i > 0 ? byMonth[months[i - 1]] || {
-            sales: 0,
-            profit: 0
-        } : null;
-        const salesGrowth = prev && prev.sales > 0 ? round2((cur.sales - prev.sales) / prev.sales * 100) : null;
-        const profitGrowth = prev && prev.profit > 0 ? round2((cur.profit - prev.profit) / prev.profit * 100) : null;
+        const cur = byMonth[key] || emptyMonth;
+        const prev = i > 0 ? byMonth[months[i - 1]] || emptyMonth : emptyMonth;
         return {
             key: key,
             sales: round2(cur.sales),
             profit: round2(cur.profit),
-            salesGrowth: salesGrowth,
-            profitGrowth: profitGrowth
+            salesGrowth: i > 0 ? growthOf(cur.sales, prev.sales) : null,
+            profitGrowth: i > 0 ? growthOf(cur.profit, prev.profit) : null,
+            salesPaid: round2(cur.salesPaid),
+            profitPaid: round2(cur.profitPaid),
+            salesPaidGrowth: i > 0 ? growthOf(cur.salesPaid, prev.salesPaid) : null,
+            profitPaidGrowth: i > 0 ? growthOf(cur.profitPaid, prev.profitPaid) : null
         };
     });
     const firstActiveIdx = rows.findIndex(r => r.sales > 0 || r.profit > 0);
@@ -11822,7 +11829,8 @@ function salesPerformanceSectionHtml() {
     const timingRows = timing ? '<div class="treasury-summary-row"><span>الطلب ← التسعير</span><span class="num">' + (timing.toQuoteCount ? arabicDurationLabelFromMinutes(timing.toQuote) : "—") + "</span></div>" + '<div class="treasury-summary-row"><span>التسعير ← التوريد</span><span class="num">' + (timing.toSupplyCount ? arabicDurationLabelFromMinutes(timing.toSupply) : "—") + "</span></div>" + '<div class="treasury-summary-row net"><span>الإجمالي (الطلب ← الإغلاق/التوريد)</span><span class="num">' + (timing.totalCount ? arabicDurationLabelFromMinutes(timing.total) : "—") + "</span></div>" : '<div class="expense-empty-hint">جارِ تحميل بيانات الاستجابة...</div>';
     const timingBlock = '<div class="stat-chart-block">' + '<div class="stat-chart-title">⏱ زمن الاستجابة (الطلب ← التسعير ← التوريد)</div>' + '<div class="treasury-summary">' + timingRows + "</div>" + "</div>";
     const loyaltyBlock = '<div class="stat-chart-block">' + '<div class="stat-chart-title">🔁 ولاء العملاء</div>' + '<div class="treasury-summary">' + '<div class="treasury-summary-row"><span>عادوا وطلبوا أكثر من مرة (آخر 30 يوم)</span><span class="num">' + returning.returning + " من " + returning.total + " (" + returning.rate + "%)</span></div>" + '<div class="treasury-summary-row"><span>عملاء جدد (آخر 60 يوم)</span><span class="num text-green">' + newCustomers + "</span></div>" + "</div>" + "</div>";
-    const growthRows = growth.map(g => '<div class="treasury-summary-row"><span>' + escapeHtml(arabicMonthLabel(g.key)) + '</span><span class="num">مبيعات ' + fmtMoney(g.sales) + ' <span class="' + (g.salesGrowth == null ? "" : g.salesGrowth >= 0 ? "text-green" : "text-rust") + '">(' + fmtPercentSigned(g.salesGrowth) + ")</span> · أرباح " + fmtMoney(g.profit) + ' <span class="' + (g.profitGrowth == null ? "" : g.profitGrowth >= 0 ? "text-green" : "text-rust") + '">(' + fmtPercentSigned(g.profitGrowth) + ")</span></span></div>").join("");
+    const growthGrowthSpan = v => '<span class="' + (v == null ? "" : v >= 0 ? "text-green" : "text-rust") + '">(' + fmtPercentSigned(v) + ")</span>";
+    const growthRows = growth.map(g => "<div>" + '<div class="treasury-summary-row"><span>' + escapeHtml(arabicMonthLabel(g.key)) + '</span><span class="num">مبيعات ' + fmtMoney(g.sales) + " " + growthGrowthSpan(g.salesGrowth) + " · أرباح " + fmtMoney(g.profit) + " " + growthGrowthSpan(g.profitGrowth) + "</span></div>" + '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل: مبيعات <span class="num">' + fmtMoney(g.salesPaid) + "</span> " + growthGrowthSpan(g.salesPaidGrowth) + ' · أرباح <span class="num">' + fmtMoney(g.profitPaid) + "</span> " + growthGrowthSpan(g.profitPaidGrowth) + "</div>" + "</div>").join("");
     const growthBlock = '<div class="stat-chart-block">' + '<div class="stat-chart-title">📈 النمو الشهري (المبيعات والأرباح)</div>' + '<div class="treasury-summary">' + (growthRows || '<div class="expense-empty-hint">ما فيه بيانات كافية بعد</div>') + "</div>" + "</div>";
     return '<div class="tasks-title" style="margin:18px 0 4px;">📈 مؤشرات أداء المبيعات</div>' + successBlock + timingBlock + loyaltyBlock + statBarChartHtml("🎯 تحويل طلبات التسعير لكل عميل (ناجحة/إجمالي)", topConversion, {
         onOpenAttr: "open-customer"
