@@ -419,6 +419,13 @@
   .quote-row-elapsed{color:var(--text-faint);font-size:12.5px;flex-shrink:0;white-space:nowrap;}
   .quote-row-ready{border-inline-start-color:var(--green-line);}
   .quote-row-ready .quote-row-label{color:var(--green);}
+  .quote-priority-controls{display:flex;flex-direction:column;gap:2px;flex-shrink:0;}
+  .quote-priority-btn{
+    background:transparent;border:1px solid var(--border);color:var(--text-faint);
+    width:26px;height:22px;border-radius:5px;cursor:pointer;font-size:11px;line-height:1;padding:0;
+  }
+  .quote-priority-btn:hover{border-color:var(--amber-line);color:var(--amber);}
+  .quote-priority-btn:disabled{opacity:.35;cursor:not-allowed;}
   .activity-log-row{cursor:pointer;}
   .activity-log-row:hover{border-color:var(--text-faint);}
   .doc-history-row{cursor:pointer;}
@@ -3804,19 +3811,83 @@ function openWhatsAppForPart(part) {
 let quoteOriginalSnapshot = null;
 
 function quotesMatchingList() {
-    return (appData.orders || []).filter(o => o.isQuote).sort((a, b) => orderNumberSortKey(b) - orderNumberSortKey(a));
+    return (appData.orders || []).filter(o => o.isQuote).sort((a, b) => {
+        const ap = Number.isFinite(a.priority), bp = Number.isFinite(b.priority);
+        if (ap && bp) return a.priority - b.priority;
+        if (ap) return -1;
+        if (bp) return 1;
+        return orderNumberSortKey(b) - orderNumberSortKey(a);
+    });
 }
 
-function quoteRowHtml(o) {
+function canReorderQuotePriority() {
+    return hasElevatedAccess() || currentUserRole === "scrapyard";
+}
+
+function quoteRowHtml(o, idx, total) {
     const ready = !!o.quoteReady;
     const elapsed = o.createdAt ? arabicDurationLabel(new Date(o.createdAt).getTime()) : "";
-    return '<div class="task-item-row quote-row' + (ready ? " quote-row-ready" : "") + '" data-quote-id="' + escapeHtml(o.id) + '">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(o.orderLabel || "—") + "</span>" + (elapsed ? '<span class="quote-row-elapsed" data-created-at="' + escapeHtml(o.createdAt) + '">⏱ ' + escapeHtml(elapsed) + "</span>" : "") + "</div>";
+    const priorityControls = canReorderQuotePriority() ? '<div class="quote-priority-controls">' + '<button type="button" class="quote-priority-btn" data-priority-move="up"' + (idx === 0 ? " disabled" : "") + ' title="رفع الأولوية">▲</button>' + '<button type="button" class="quote-priority-btn" data-priority-move="down"' + (idx === total - 1 ? " disabled" : "") + ' title="خفض الأولوية">▼</button>' + "</div>" : "";
+    return '<div class="task-item-row quote-row' + (ready ? " quote-row-ready" : "") + '" data-quote-id="' + escapeHtml(o.id) + '">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(o.orderLabel || "—") + "</span>" + (elapsed ? '<span class="quote-row-elapsed" data-created-at="' + escapeHtml(o.createdAt) + '">⏱ ' + escapeHtml(elapsed) + "</span>" : "") + priorityControls + "</div>";
 }
 
 function quotesListHtml() {
     const rows = quotesMatchingList();
     if (!rows.length) return '<div class="expense-empty-hint">ما فيه طلبات تسعير بعد</div>';
-    return rows.map(quoteRowHtml).join("");
+    return rows.map((o, i) => quoteRowHtml(o, i, rows.length)).join("");
+}
+
+async function moveQuotePriority(orderId, dir) {
+    if (!canReorderQuotePriority()) return;
+    const list = quotesMatchingList();
+    const idx = list.findIndex(o => o.id === orderId);
+    if (idx < 0) return;
+    const targetIdx = dir === "up" ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= list.length) return;
+    const reordered = list.slice();
+    const tmp = reordered[idx];
+    reordered[idx] = reordered[targetIdx];
+    reordered[targetIdx] = tmp;
+    const updates = [];
+    reordered.forEach((o, i) => {
+        const newPriority = i + 1;
+        const prevPriority = Number.isFinite(o.priority) ? o.priority : null;
+        if (prevPriority !== newPriority) updates.push({
+            id: o.id,
+            newPriority: newPriority,
+            prevPriority: prevPriority
+        });
+    });
+    if (!updates.length) return;
+    updates.forEach(u => {
+        const o = appData.orders.find(x => x.id === u.id);
+        if (o) o.priority = u.newPriority;
+    });
+    renderQuotesList();
+    const results = await Promise.all(updates.map(async u => {
+        const fresh = appData.orders.find(x => x.id === u.id);
+        if (!fresh) return true;
+        fresh.priority = u.newPriority;
+        fresh.updatedAt = (new Date).toISOString();
+        return await persistOrder(fresh, false);
+    }));
+    if (results.some(r => !r)) {
+        updates.forEach(u => {
+            const o = appData.orders.find(x => x.id === u.id);
+            if (o) o.priority = u.prevPriority;
+        });
+        renderQuotesList();
+        showToast("تعذر تحديث ترتيب الأولوية", "error");
+    }
+}
+
+function bindQuotePriorityMoveButtons(row) {
+    row.querySelectorAll("[data-priority-move]").forEach(btn => {
+        btn.addEventListener("click", e => {
+            e.stopPropagation();
+            moveQuotePriority(row.getAttribute("data-quote-id"), btn.getAttribute("data-priority-move"));
+        });
+    });
 }
 
 let quoteElapsedTimer = null;
@@ -3901,6 +3972,7 @@ function renderQuotesList() {
         el.innerHTML = quotesListHtml();
         el.querySelectorAll(".quote-row").forEach(row => {
             row.addEventListener("click", () => openQuoteModal("edit", row.getAttribute("data-quote-id")));
+            bindQuotePriorityMoveButtons(row);
         });
     }
     refreshScrapyardQuotesListIfOpen();
@@ -12228,6 +12300,7 @@ async function togglePurchasesTaskDone(taskId, newDone) {
 function bindScrapyardQuoteRowEvents() {
     document.querySelectorAll("#scrapyard-quotes-items-list .quote-row").forEach(row => {
         row.addEventListener("click", () => openQuoteModal("edit", row.getAttribute("data-quote-id"), "purchasing"));
+        bindQuotePriorityMoveButtons(row);
     });
 }
 
