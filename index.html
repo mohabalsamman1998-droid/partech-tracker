@@ -11599,10 +11599,237 @@ function statBarChartHtml(title, items, opts) {
     const fmt = v => opts.money ? fmtMoney(v) : String(v);
     const rowsHtml = items.length ? items.map(i => {
         const pct = Math.max(2, round2(i.value / max * 100));
-        const inner = '<span class="stat-bar-label" title="' + escapeHtml(i.label) + '">' + escapeHtml(i.label) + "</span>" + '<span class="stat-bar-track"><span class="stat-bar-fill" style="width:' + pct + '%"></span></span>' + '<span class="stat-bar-value">' + fmt(i.value) + "</span>";
+        const inner = '<span class="stat-bar-label" title="' + escapeHtml(i.label) + '">' + escapeHtml(i.label) + "</span>" + '<span class="stat-bar-track"><span class="stat-bar-fill" style="width:' + pct + '%"></span></span>' + '<span class="stat-bar-value">' + (i.display != null ? escapeHtml(i.display) : fmt(i.value)) + "</span>";
         return opts.onOpenAttr && i.id ? '<button type="button" class="stat-bar-row" data-' + opts.onOpenAttr + '="' + escapeHtml(i.id) + '">' + inner + "</button>" : '<div class="stat-bar-row">' + inner + "</div>";
     }).join("") : '<div class="expense-empty-hint">ما فيه بيانات كافية بعد</div>';
     return '<div class="stat-chart-block">' + '<div class="stat-chart-title">' + escapeHtml(title) + "</div>" + rowsHtml + "</div>";
+}
+
+let salesKpiPeriod = "all";
+
+const SALES_KPI_PERIODS = [ {
+    id: "all",
+    label: "كامل"
+}, {
+    id: "week",
+    label: "أسبوعي"
+}, {
+    id: "month",
+    label: "شهري"
+} ];
+
+let quoteReadyFirstByOrderId = null;
+
+let salesKpiStepTimingsLoading = false;
+
+function periodDateOf(iso) {
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return null;
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function salesSuccessStats(periodKey) {
+    const orders = (appData.orders || []).filter(o => dateMatchesPeriod(periodDateOf(o.createdAt), periodKey));
+    const total = orders.length;
+    const successful = orders.filter(o => o.confirmed).length;
+    return {
+        total: total,
+        successful: successful,
+        rate: total ? round2(successful / total * 100) : 0
+    };
+}
+
+function customerQuoteConversionIndex() {
+    const idx = {};
+    (appData.orders || []).forEach(o => {
+        if (!o.customerId) return;
+        if (!(o.isQuote || o.wasQuote)) return;
+        if (!idx[o.customerId]) idx[o.customerId] = {
+            total: 0,
+            success: 0
+        };
+        idx[o.customerId].total++;
+        if (o.confirmed) idx[o.customerId].success++;
+    });
+    return idx;
+}
+
+function topCustomerQuoteConversion(n) {
+    const idx = customerQuoteConversionIndex();
+    return (appData.customers || []).map(c => {
+        const s = idx[c.id];
+        if (!s || !s.total) return null;
+        const pct = round2(s.success / s.total * 100);
+        return {
+            id: c.id,
+            label: c.name || c.phone || "بدون اسم",
+            value: s.total,
+            display: s.success + "/" + s.total + " (" + pct + "%)"
+        };
+    }).filter(Boolean).sort((a, b) => b.value - a.value).slice(0, n || 10);
+}
+
+function customerOrderCountIndex() {
+    const idx = {};
+    (appData.orders || []).forEach(o => {
+        if (!o.customerId) return;
+        idx[o.customerId] = (idx[o.customerId] || 0) + 1;
+    });
+    return idx;
+}
+
+function returningCustomerRateLast30() {
+    const cutoff = Date.now() - 30 * 24 * 3600 * 1e3;
+    const counts = {};
+    (appData.orders || []).forEach(o => {
+        if (!o.customerId || !o.createdAt) return;
+        const t = new Date(o.createdAt).getTime();
+        if (isNaN(t) || t < cutoff) return;
+        counts[o.customerId] = (counts[o.customerId] || 0) + 1;
+    });
+    const ids = Object.keys(counts);
+    const total = ids.length;
+    const returning = ids.filter(id => counts[id] >= 2).length;
+    return {
+        total: total,
+        returning: returning,
+        rate: total ? round2(returning / total * 100) : 0
+    };
+}
+
+function newCustomersLast60() {
+    const cutoff = Date.now() - 60 * 24 * 3600 * 1e3;
+    return (appData.customers || []).filter(c => {
+        const t = c.createdAt ? new Date(c.createdAt).getTime() : NaN;
+        return !isNaN(t) && t >= cutoff;
+    }).length;
+}
+
+function monthlySalesGrowth(monthsBack) {
+    monthsBack = monthsBack || 6;
+    const byMonth = {};
+    (appData.orders || []).forEach(o => {
+        if (!o.supplied || !o.suppliedAt) return;
+        const d = new Date(o.suppliedAt);
+        if (isNaN(d.getTime())) return;
+        const t = orderTotals(o);
+        if (!t.hasChargeable) return;
+        const key = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+        if (!byMonth[key]) byMonth[key] = {
+            sales: 0,
+            profit: 0
+        };
+        byMonth[key].sales += t.sellTotal;
+        byMonth[key].profit += t.profit;
+    });
+    const now = new Date;
+    const months = [];
+    for (let i = monthsBack - 1; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        months.push(d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"));
+    }
+    return months.map((key, i) => {
+        const cur = byMonth[key] || {
+            sales: 0,
+            profit: 0
+        };
+        const prev = i > 0 ? byMonth[months[i - 1]] || {
+            sales: 0,
+            profit: 0
+        } : null;
+        const salesGrowth = prev && prev.sales > 0 ? round2((cur.sales - prev.sales) / prev.sales * 100) : null;
+        const profitGrowth = prev && prev.profit > 0 ? round2((cur.profit - prev.profit) / prev.profit * 100) : null;
+        return {
+            key: key,
+            sales: round2(cur.sales),
+            profit: round2(cur.profit),
+            salesGrowth: salesGrowth,
+            profitGrowth: profitGrowth
+        };
+    });
+}
+
+function fmtPercentSigned(n) {
+    if (n === null || n === undefined) return "—";
+    return (n >= 0 ? "+" : "") + n + "%";
+}
+
+function stepTimingAverages(periodKey) {
+    if (!quoteReadyFirstByOrderId) return null;
+    const toQuote = [], toSupply = [], total = [];
+    (appData.orders || []).forEach(o => {
+        if (!o.supplied || !o.suppliedAt || !o.createdAt) return;
+        if (!dateMatchesPeriod(periodDateOf(o.createdAt), periodKey)) return;
+        const createdMs = new Date(o.createdAt).getTime();
+        const suppliedMs = new Date(o.suppliedAt).getTime();
+        if (isNaN(createdMs) || isNaN(suppliedMs) || suppliedMs <= createdMs) return;
+        total.push(suppliedMs - createdMs);
+        const quoteReadyIso = quoteReadyFirstByOrderId.get(o.id);
+        if (quoteReadyIso) {
+            const quoteMs = new Date(quoteReadyIso).getTime();
+            if (!isNaN(quoteMs) && quoteMs > createdMs) toQuote.push(quoteMs - createdMs);
+            if (!isNaN(quoteMs) && suppliedMs > quoteMs) toSupply.push(suppliedMs - quoteMs);
+        }
+    });
+    const avgMinutes = arr => arr.length ? Math.round(arr.reduce((s, v) => s + v, 0) / arr.length / 6e4) : null;
+    return {
+        toQuote: avgMinutes(toQuote),
+        toQuoteCount: toQuote.length,
+        toSupply: avgMinutes(toSupply),
+        toSupplyCount: toSupply.length,
+        total: avgMinutes(total),
+        totalCount: total.length
+    };
+}
+
+async function loadSalesKpiStepTimings() {
+    if (quoteReadyFirstByOrderId || salesKpiStepTimingsLoading) return;
+    salesKpiStepTimingsLoading = true;
+    try {
+        if (!sb) return;
+        const {data: data, error: error} = await sb.from("activity_events").select("order_id,created_at").eq("kind", "order_quote_ready").order("created_at", {
+            ascending: true
+        });
+        if (error) throw error;
+        const map = new Map;
+        (data || []).forEach(ev => {
+            if (ev.order_id && !map.has(ev.order_id)) map.set(ev.order_id, ev.created_at);
+        });
+        quoteReadyFirstByOrderId = map;
+    } catch (e) {
+        console.error("loadSalesKpiStepTimings:", e);
+    } finally {
+        salesKpiStepTimingsLoading = false;
+        const view = document.getElementById("statistics-view");
+        if (view && view.style.display !== "none") renderStatisticsView();
+    }
+}
+
+function salesPerformanceSectionHtml() {
+    const success = salesSuccessStats(salesKpiPeriod);
+    const timing = stepTimingAverages(salesKpiPeriod);
+    const returning = returningCustomerRateLast30();
+    const newCustomers = newCustomersLast60();
+    const topConversion = topCustomerQuoteConversion(10);
+    const topOrderCounts = topEntitiesFromIndex(appData.customers, customerOrderCountIndex(), 10);
+    const topCustomerValue = topEntitiesFromIndex(appData.customers, customerPurchaseTotalIndex(), 10);
+    const growth = monthlySalesGrowth(6);
+    const periodChips = '<div class="filter-chips" id="sales-kpi-period-filter" style="margin-bottom:10px;">' + SALES_KPI_PERIODS.map(p => '<button type="button" class="chip' + (salesKpiPeriod === p.id ? " chip-active" : "") + '" data-sales-kpi-period="' + p.id + '">' + p.label + "</button>").join("") + "</div>";
+    const successBlock = '<div class="stat-chart-block">' + '<div class="stat-chart-title">✅ نجاح الطلبات</div>' + periodChips + '<div class="treasury-summary">' + '<div class="treasury-summary-row"><span>طلبات ناجحة (مؤكدة)</span><span class="num text-green">' + success.successful + " من " + success.total + "</span></div>" + '<div class="treasury-summary-row net"><span>نسبة النجاح</span><span class="num">' + success.rate + "%</span></div>" + "</div>" + "</div>";
+    const timingRows = timing ? '<div class="treasury-summary-row"><span>الطلب ← التسعير</span><span class="num">' + (timing.toQuoteCount ? arabicDurationLabelFromMinutes(timing.toQuote) : "—") + "</span></div>" + '<div class="treasury-summary-row"><span>التسعير ← التوريد</span><span class="num">' + (timing.toSupplyCount ? arabicDurationLabelFromMinutes(timing.toSupply) : "—") + "</span></div>" + '<div class="treasury-summary-row net"><span>الإجمالي (الطلب ← الإغلاق/التوريد)</span><span class="num">' + (timing.totalCount ? arabicDurationLabelFromMinutes(timing.total) : "—") + "</span></div>" : '<div class="expense-empty-hint">جارِ تحميل بيانات الاستجابة...</div>';
+    const timingBlock = '<div class="stat-chart-block">' + '<div class="stat-chart-title">⏱ زمن الاستجابة (الطلب ← التسعير ← التوريد)</div>' + '<div class="treasury-summary">' + timingRows + "</div>" + "</div>";
+    const loyaltyBlock = '<div class="stat-chart-block">' + '<div class="stat-chart-title">🔁 ولاء العملاء</div>' + '<div class="treasury-summary">' + '<div class="treasury-summary-row"><span>عادوا وطلبوا أكثر من مرة (آخر 30 يوم)</span><span class="num">' + returning.returning + " من " + returning.total + " (" + returning.rate + "%)</span></div>" + '<div class="treasury-summary-row"><span>عملاء جدد (آخر 60 يوم)</span><span class="num text-green">' + newCustomers + "</span></div>" + "</div>" + "</div>";
+    const growthRows = growth.map(g => '<div class="treasury-summary-row"><span>' + escapeHtml(arabicMonthLabel(g.key)) + '</span><span class="num">مبيعات ' + fmtMoney(g.sales) + ' <span class="' + (g.salesGrowth == null ? "" : g.salesGrowth >= 0 ? "text-green" : "text-rust") + '">(' + fmtPercentSigned(g.salesGrowth) + ")</span> · أرباح " + fmtMoney(g.profit) + ' <span class="' + (g.profitGrowth == null ? "" : g.profitGrowth >= 0 ? "text-green" : "text-rust") + '">(' + fmtPercentSigned(g.profitGrowth) + ")</span></span></div>").join("");
+    const growthBlock = '<div class="stat-chart-block">' + '<div class="stat-chart-title">📈 النمو الشهري (المبيعات والأرباح)</div>' + '<div class="treasury-summary">' + (growthRows || '<div class="expense-empty-hint">ما فيه بيانات كافية بعد</div>') + "</div>" + "</div>";
+    return '<div class="tasks-title" style="margin:18px 0 4px;">📈 مؤشرات أداء المبيعات</div>' + successBlock + timingBlock + loyaltyBlock + statBarChartHtml("🎯 تحويل طلبات التسعير لكل عميل (ناجحة/إجمالي)", topConversion, {
+        onOpenAttr: "open-customer"
+    }) + statBarChartHtml("🧾 أكثر العملاء طلبًا (عدد الطلبات)", topOrderCounts, {
+        onOpenAttr: "open-customer"
+    }) + statBarChartHtml("💰 أكثر العملاء شراءً (إجمالي قيمة الطلبيات)", topCustomerValue, {
+        money: true,
+        onOpenAttr: "open-customer"
+    }) + growthBlock;
 }
 
 function statisticsViewHtml() {
@@ -11610,7 +11837,6 @@ function statisticsViewHtml() {
     const topPurchasersByCount = topEntitiesFromIndex(appData.suppliers, supplierPurchaseCountIndex(), 10);
     const topCooperators = topEntitiesFromIndex(appData.suppliers, supplierPricedTotalIndex(), 10);
     const topCooperatorsByCount = topEntitiesFromIndex(appData.suppliers, supplierPricedCountIndex(), 10);
-    const topCustomers = topEntitiesFromIndex(appData.customers, customerPurchaseTotalIndex(), 10);
     return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-statistics">→ رجوع للطلبيات</button>' + '<div class="tasks-title">📊 الإحصائيات</div>' + "</div>" + '<div class="treasury-block">' + statBarChartHtml("⭐ أكثر الموردين اعتمادية (إجمالي المشتريات الفعلية)", topPurchasers, {
         money: true,
         onOpenAttr: "open-supplier"
@@ -11621,10 +11847,7 @@ function statisticsViewHtml() {
         onOpenAttr: "open-supplier"
     }) + statBarChartHtml("🤝 أكثر الموردين تعاونًا (عدد عمليات التسعير)", topCooperatorsByCount, {
         onOpenAttr: "open-supplier"
-    }) + statBarChartHtml("💰 أكثر العملاء شراءً (إجمالي قيمة الطلبيات)", topCustomers, {
-        money: true,
-        onOpenAttr: "open-customer"
-    }) + statBarChartHtml("🚗 توزيع الموردين حسب السيارات", supplierCarMakeDistribution(12), {}) + statBarChartHtml("📦 توزيع الموردين حسب النوع", supplierTypeDistribution(), {}) + "</div>";
+    }) + statBarChartHtml("🚗 توزيع الموردين حسب السيارات", supplierCarMakeDistribution(12), {}) + statBarChartHtml("📦 توزيع الموردين حسب النوع", supplierTypeDistribution(), {}) + salesPerformanceSectionHtml() + "</div>";
 }
 
 function openStatisticsView() {
@@ -11633,8 +11856,10 @@ function openStatisticsView() {
         return;
     }
     hideAllSecondaryViews();
+    quoteReadyFirstByOrderId = null;
     renderStatisticsView();
     document.getElementById("statistics-view").style.display = "block";
+    loadSalesKpiStepTimings();
 }
 
 function closeStatisticsView() {
@@ -11655,6 +11880,12 @@ function bindStatisticsViewEvents() {
     });
     document.querySelectorAll("#statistics-view [data-open-customer]").forEach(btn => {
         btn.addEventListener("click", () => openCustomerHistoryModal(btn.getAttribute("data-open-customer")));
+    });
+    document.querySelectorAll("#statistics-view [data-sales-kpi-period]").forEach(btn => {
+        btn.addEventListener("click", () => {
+            salesKpiPeriod = btn.getAttribute("data-sales-kpi-period");
+            renderStatisticsView();
+        });
     });
 }
 
