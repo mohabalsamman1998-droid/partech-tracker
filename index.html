@@ -10261,6 +10261,24 @@ function supplierPricedTotalIndex() {
     return idx;
 }
 
+function supplierPurchaseCountIndex() {
+    const idx = {};
+    (appData.suppliers || []).forEach(s => {
+        const {ongoing: ongoing, past: past} = supplierPurchaseHistory(s.id);
+        idx[s.id] = ongoing.length + past.length;
+    });
+    return idx;
+}
+
+function supplierPricedCountIndex() {
+    const idx = {};
+    (appData.suppliers || []).forEach(s => {
+        const {approved: approved, pending: pending} = supplierPricedHistory(s.id);
+        idx[s.id] = approved.length + pending.length;
+    });
+    return idx;
+}
+
 function isoToDisplayDate(iso) {
     if (!iso) return "—";
     const d = new Date(iso);
@@ -11462,13 +11480,19 @@ function statBarChartHtml(title, items, opts) {
 
 function statisticsViewHtml() {
     const topPurchasers = topEntitiesFromIndex(appData.suppliers, supplierPurchaseTotalIndex(), 10);
+    const topPurchasersByCount = topEntitiesFromIndex(appData.suppliers, supplierPurchaseCountIndex(), 10);
     const topCooperators = topEntitiesFromIndex(appData.suppliers, supplierPricedTotalIndex(), 10);
+    const topCooperatorsByCount = topEntitiesFromIndex(appData.suppliers, supplierPricedCountIndex(), 10);
     const topCustomers = topEntitiesFromIndex(appData.customers, customerPurchaseTotalIndex(), 10);
     return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-statistics">→ رجوع للطلبيات</button>' + '<div class="tasks-title">📊 الإحصائيات</div>' + "</div>" + '<div class="treasury-block">' + statBarChartHtml("⭐ أكثر الموردين اعتمادية (إجمالي المشتريات الفعلية)", topPurchasers, {
         money: true,
         onOpenAttr: "open-supplier"
+    }) + statBarChartHtml("⭐ أكثر الموردين اعتمادية (عدد الطلبيات)", topPurchasersByCount, {
+        onOpenAttr: "open-supplier"
     }) + statBarChartHtml("🤝 أكثر الموردين تعاونًا (إجمالي التسعير معتمد+معلّق)", topCooperators, {
         money: true,
+        onOpenAttr: "open-supplier"
+    }) + statBarChartHtml("🤝 أكثر الموردين تعاونًا (عدد عمليات التسعير)", topCooperatorsByCount, {
         onOpenAttr: "open-supplier"
     }) + statBarChartHtml("💰 أكثر العملاء شراءً (إجمالي قيمة الطلبيات)", topCustomers, {
         money: true,
