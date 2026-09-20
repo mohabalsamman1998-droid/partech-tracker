@@ -10203,6 +10203,43 @@ function supplierPurchaseHistory(supplierId) {
     };
 }
 
+function supplierPricedHistory(supplierId) {
+    const approvedMap = {}, pendingMap = {};
+    const approved = [], pending = [];
+    (appData.orders || []).forEach(o => {
+        (o.parts || []).forEach(p => {
+            if (p.supplierId !== supplierId) return;
+            const isQuote = !!o.isQuote;
+            const map = isQuote ? pendingMap : approvedMap;
+            const list = isQuote ? pending : approved;
+            if (!map[o.id]) {
+                map[o.id] = {
+                    orderId: o.id,
+                    orderNumber: o.orderNumber,
+                    orderLabel: o.orderLabel,
+                    amount: 0,
+                    count: 0,
+                    date: o.suppliedAt || o.updatedAt || o.createdAt || "",
+                    isQuote: isQuote,
+                    supplied: !!o.supplied,
+                    returnedCount: 0
+                };
+                list.push(map[o.id]);
+            }
+            map[o.id].amount = round2(map[o.id].amount + (Number(p.qty) || 1) * (Number(p.costPrice) || 0));
+            map[o.id].count++;
+            if (p.returned) map[o.id].returnedCount++;
+        });
+    });
+    const byDateDesc = (a, b) => new Date(b.date || 0) - new Date(a.date || 0);
+    approved.sort(byDateDesc);
+    pending.sort(byDateDesc);
+    return {
+        approved: approved,
+        pending: pending
+    };
+}
+
 function supplierReturnReceivables(supplierId) {
     const rows = [];
     (appData.orders || []).forEach(o => {
@@ -10268,6 +10305,12 @@ function purchaseHistoryRowHtml(row) {
     return '<button type="button" class="purchase-history-row" data-open-order="' + escapeHtml(row.orderId) + '">' + '<div class="purchase-history-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(row.orderNumber || "") + (row.orderLabel ? " — " + escapeHtml(row.orderLabel) : "") + "</span>" + '<span class="num text-rust">' + fmtMoney(row.amount) + "</span>" + "</div>" + '<div class="purchase-history-row-sub">' + "<span>" + row.count + " قطعة</span>" + "<span>" + isoToDisplayDate(row.date) + "</span>" + "</div>" + "</button>";
 }
 
+function pricedHistoryRowHtml(row) {
+    const statusTag = row.isQuote ? '<span class="stamp stamp-amber">تسعير</span>' : row.supplied ? '<span class="stamp stamp-green">تم التوريد</span>' : '<span class="stamp stamp-amber">لسه ما وردّت</span>';
+    const returnedTag = row.returnedCount ? '<span class="stamp stamp-rust">' + row.returnedCount + " مرتجعة</span>" : "";
+    return '<button type="button" class="purchase-history-row" data-open-priced="' + escapeHtml(row.orderId) + '" data-is-quote="' + (row.isQuote ? "1" : "") + '">' + '<div class="purchase-history-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(row.orderNumber || "") + (row.orderLabel ? " — " + escapeHtml(row.orderLabel) : "") + "</span>" + '<span class="num">' + fmtMoney(row.amount) + "</span>" + "</div>" + '<div class="purchase-history-row-sub">' + "<span>" + row.count + " قطعة</span>" + statusTag + returnedTag + "<span>" + isoToDisplayDate(row.date) + "</span>" + "</div>" + "</button>";
+}
+
 function openSupplierHistoryModal(supplierId) {
     openSupplierHistoryId = supplierId;
     const supplier = (appData.suppliers || []).find(s => s.id === supplierId);
@@ -10277,8 +10320,11 @@ function openSupplierHistoryModal(supplierId) {
     const pastTotal = round2(past.reduce((s, r) => s + r.amount, 0));
     const receivables = supplierReturnReceivables(supplierId);
     const receivablesTotal = round2(receivables.reduce((s, r) => s + r.amount, 0));
+    const {approved: approved, pending: pending} = supplierPricedHistory(supplierId);
+    const approvedTotal = round2(approved.reduce((s, r) => s + r.amount, 0));
+    const pendingTotal = round2(pending.reduce((s, r) => s + r.amount, 0));
     const root = document.getElementById("modal-root");
-    root.innerHTML = '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-header"><div class="modal-title">سجل مشتريات — ' + escapeHtml(label) + "</div>" + '<button type="button" class="icon-btn" id="supplier-history-close-btn" aria-label="إغلاق">✕</button></div>' + (receivables.length ? '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>مرتجعات بانتظار التحصيل</span><span class="num text-green">' + fmtMoney(receivablesTotal) + "</span></div>" + receivables.map(returnReceivableRowHtml).join("") + "</div>" : "") + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>جارية (غير مسددة)</span><span class="num text-rust">' + fmtMoney(ongoingTotal) + "</span></div>" + (ongoing.length ? ongoing.map(purchaseHistoryRowHtml).join("") : '<div class="expense-empty-hint">ما فيه مشتريات جارية</div>') + "</div>" + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>سابقة (مسددة)</span><span class="num text-green">' + fmtMoney(pastTotal) + "</span></div>" + (past.length ? past.map(purchaseHistoryRowHtml).join("") : '<div class="expense-empty-hint">ما فيه مشتريات سابقة</div>') + "</div>" + "</div>" + "</div>";
+    root.innerHTML = '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-header"><div class="modal-title">ملف المورد — ' + escapeHtml(label) + "</div>" + '<button type="button" class="icon-btn" id="supplier-history-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>المسعّر — معتمدة</span><span class="num">' + fmtMoney(approvedTotal) + "</span></div>" + (approved.length ? approved.map(pricedHistoryRowHtml).join("") : '<div class="expense-empty-hint">ما فيه قطع مسعّرة عنده بطلبيات معتمدة</div>') + "</div>" + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>المسعّر — غير معتمدة (طلبات تسعير)</span><span class="num">' + fmtMoney(pendingTotal) + "</span></div>" + (pending.length ? pending.map(pricedHistoryRowHtml).join("") : '<div class="expense-empty-hint">ما فيه طلبات تسعير معلّقة عنده</div>') + "</div>" + (receivables.length ? '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>مرتجعات بانتظار التحصيل</span><span class="num text-green">' + fmtMoney(receivablesTotal) + "</span></div>" + receivables.map(returnReceivableRowHtml).join("") + "</div>" : "") + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>جارية (غير مسددة)</span><span class="num text-rust">' + fmtMoney(ongoingTotal) + "</span></div>" + (ongoing.length ? ongoing.map(purchaseHistoryRowHtml).join("") : '<div class="expense-empty-hint">ما فيه مشتريات جارية</div>') + "</div>" + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>سابقة (مسددة)</span><span class="num text-green">' + fmtMoney(pastTotal) + "</span></div>" + (past.length ? past.map(purchaseHistoryRowHtml).join("") : '<div class="expense-empty-hint">ما فيه مشتريات سابقة</div>') + "</div>" + "</div>" + "</div>";
     root.classList.add("modal-open");
     const close = () => {
         root.innerHTML = "";
@@ -10295,6 +10341,15 @@ function openSupplierHistoryModal(supplierId) {
             modalCloseCallback = () => openSupplierHistoryModal(supplierId);
             close();
             openModal("edit", btn.getAttribute("data-open-order"));
+        });
+    });
+    root.querySelectorAll("[data-open-priced]").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const orderId = btn.getAttribute("data-open-priced");
+            const isQuote = btn.getAttribute("data-is-quote") === "1";
+            modalCloseCallback = () => openSupplierHistoryModal(supplierId);
+            close();
+            if (isQuote) openQuoteModal("edit", orderId); else openModal("edit", orderId);
         });
     });
     root.querySelectorAll(".return-collect-btn").forEach(btn => {
