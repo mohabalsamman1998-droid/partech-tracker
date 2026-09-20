@@ -30,6 +30,7 @@
     --rust:#E2703A;
     --rust-dim:rgba(226,112,58,.14);
     --rust-line:rgba(226,112,58,.45);
+    --rust-deep:#D32F2F;
     --amber:#E8B23D;
     --amber-ink:#06170F;
     --amber-dim:rgba(232,178,61,.14);
@@ -54,6 +55,7 @@
     --rust:#B5481D;
     --rust-dim:rgba(181,72,29,.12);
     --rust-line:rgba(181,72,29,.5);
+    --rust-deep:#A31515;
     --amber:#9C6A00;
     --amber-ink:#FFFFFF;
     --amber-dim:rgba(156,106,0,.14);
@@ -417,6 +419,8 @@
   .quote-row-number{color:var(--text-faint);font-size:12.5px;flex-shrink:0;}
   .quote-row-label{font-size:19px;font-weight:800;color:var(--amber);flex:1 1 auto;min-width:0;}
   .quote-row-elapsed{color:var(--text-faint);font-size:12.5px;flex-shrink:0;white-space:nowrap;}
+  .quote-row-elapsed-warn{color:var(--rust);font-weight:700;}
+  .quote-row-elapsed-critical{color:var(--rust-deep);font-weight:800;}
   .quote-row-ready{border-inline-start-color:var(--green-line);}
   .quote-row-ready .quote-row-label{color:var(--green);}
   .quote-priority-controls{display:flex;flex-direction:column;gap:2px;flex-shrink:0;}
@@ -3824,11 +3828,19 @@ function canReorderQuotePriority() {
     return hasElevatedAccess() || currentUserRole === "scrapyard";
 }
 
+function quoteElapsedSeverityClass(createdAtIso) {
+    if (!createdAtIso) return "";
+    const mins = (Date.now() - new Date(createdAtIso).getTime()) / 6e4;
+    if (mins >= 90) return " quote-row-elapsed-critical";
+    if (mins >= 40) return " quote-row-elapsed-warn";
+    return "";
+}
+
 function quoteRowHtml(o, idx, total) {
     const ready = !!o.quoteReady;
     const elapsed = o.createdAt ? arabicDurationLabel(new Date(o.createdAt).getTime()) : "";
     const priorityControls = canReorderQuotePriority() ? '<div class="quote-priority-controls">' + '<button type="button" class="quote-priority-btn" data-priority-move="up"' + (idx === 0 ? " disabled" : "") + ' title="رفع الأولوية">▲</button>' + '<button type="button" class="quote-priority-btn" data-priority-move="down"' + (idx === total - 1 ? " disabled" : "") + ' title="خفض الأولوية">▼</button>' + "</div>" : "";
-    return '<div class="task-item-row quote-row' + (ready ? " quote-row-ready" : "") + '" data-quote-id="' + escapeHtml(o.id) + '">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(o.orderLabel || "—") + "</span>" + (elapsed ? '<span class="quote-row-elapsed" data-created-at="' + escapeHtml(o.createdAt) + '">⏱ ' + escapeHtml(elapsed) + "</span>" : "") + priorityControls + "</div>";
+    return '<div class="task-item-row quote-row' + (ready ? " quote-row-ready" : "") + '" data-quote-id="' + escapeHtml(o.id) + '">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(o.orderLabel || "—") + "</span>" + (elapsed ? '<span class="quote-row-elapsed' + quoteElapsedSeverityClass(o.createdAt) + '" data-created-at="' + escapeHtml(o.createdAt) + '">⏱ ' + escapeHtml(elapsed) + "</span>" : "") + priorityControls + "</div>";
 }
 
 function quotesListHtml() {
@@ -3897,6 +3909,7 @@ function refreshQuoteElapsedBadges() {
         const iso = el.getAttribute("data-created-at");
         if (!iso) return;
         el.textContent = "⏱ " + arabicDurationLabel(new Date(iso).getTime());
+        el.className = "quote-row-elapsed" + quoteElapsedSeverityClass(iso);
     });
 }
 
