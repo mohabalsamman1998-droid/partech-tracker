@@ -268,6 +268,22 @@
   .purchase-history-desc{color:var(--text);flex:1;min-width:0;overflow-wrap:break-word;}
   .purchase-history-row-sub{display:flex;justify-content:space-between;gap:10px;font-size:11.5px;color:var(--text-faint);margin-top:4px;flex-wrap:wrap;min-width:0;}
 
+  /* شاشة الإحصائيات (2026-09-20) — رسوم أعمدة أفقية بلا مكتبة خارجية (CSS بس)، متوافقة تلقائيًا
+     مع اتجاه RTL والثيم الليلي/النهاري لأنها تستخدم متغيرات الألوان الموجودة أصلًا. كل رسمة
+     مقياس وحيد (ترتيب/توزيع)، فلون تعبئة واحد يكفي — ما تحتاج legend (العنوان يكفي يعرّف المقياس) */
+  .stat-chart-block{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px;margin-bottom:14px;}
+  .stat-chart-title{font-family:'Cairo',sans-serif;font-weight:800;font-size:14px;color:var(--text);margin-bottom:12px;}
+  .stat-bar-row{display:flex;align-items:center;gap:10px;padding:5px 0;background:none;border:none;width:100%;text-align:right;font-family:'Tajawal',sans-serif;}
+  button.stat-bar-row{cursor:pointer;}
+  button.stat-bar-row:hover .stat-bar-label{color:var(--green);}
+  .stat-bar-label{flex:0 0 34%;max-width:34%;font-size:12.5px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .stat-bar-track{flex:1;height:16px;background:var(--surface-2);border-radius:999px;overflow:hidden;min-width:0;}
+  .stat-bar-fill{height:100%;border-radius:999px;background:var(--green);min-width:3px;}
+  .stat-bar-value{flex:0 0 auto;font-size:12.5px;color:var(--text);font-variant-numeric:tabular-nums;font-weight:700;min-width:56px;text-align:left;}
+  @media (max-width:640px){
+    .stat-bar-label{flex-basis:28%;max-width:28%;}
+  }
+
   /* shared scrapyard settlement screen (employee + owner) */
   /* بطاقة مستقلة لكل طلبية — تباين واضح عن خلفية القسم وعن الطلبية يلي جنبها */
   .scrapyard-order-group{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px;margin-bottom:14px;}
@@ -1138,6 +1154,7 @@
         <button id="btn-open-suppliers" class="btn btn-ghost btn-with-badge">🏭 الموردين<span id="suppliers-receivables-badge" class="tasks-badge"></span></button>
         <button id="btn-open-customers" class="btn btn-ghost btn-with-badge">👤 العملاء<span id="customers-overdue-badge" class="tasks-badge"></span></button>
         <button id="btn-open-archive" class="btn btn-ghost btn-with-badge">🗄️ الأرشيف<span id="archive-pending-badge" class="tasks-badge"></span></button>
+        <button id="btn-open-statistics" class="btn btn-ghost">📊 الإحصائيات</button>
         <button id="btn-open-settlement-viewer" class="btn btn-ghost" style="display:none;">🧾 السداد</button>
       </div>
     </header>
@@ -1184,6 +1201,7 @@
     <div id="suppliers-view" style="display:none;"></div>
     <div id="customers-view" style="display:none;"></div>
     <div id="archive-view" style="display:none;"></div>
+    <div id="statistics-view" style="display:none;"></div>
   </div>
 
   <div class="page" id="scrapyard-root" style="display:none;"></div>
@@ -6099,6 +6117,7 @@ function hideAllSecondaryViews() {
     document.getElementById("suppliers-view").style.display = "none";
     document.getElementById("customers-view").style.display = "none";
     document.getElementById("archive-view").style.display = "none";
+    document.getElementById("statistics-view").style.display = "none";
 }
 
 async function openTreasuryView() {
@@ -9235,6 +9254,11 @@ function bindToolbar() {
         const view = document.getElementById("archive-view");
         if (view.style.display !== "none") closeArchiveView(); else openArchiveView();
     });
+    const statisticsBtn2 = document.getElementById("btn-open-statistics");
+    if (statisticsBtn2) statisticsBtn2.addEventListener("click", () => {
+        const view = document.getElementById("statistics-view");
+        if (view.style.display !== "none") closeStatisticsView(); else openStatisticsView();
+    });
     const settlementViewerBtn = document.getElementById("btn-open-settlement-viewer");
     if (settlementViewerBtn) settlementViewerBtn.addEventListener("click", openSettlementViewer);
     document.getElementById("btn-who-online").addEventListener("click", showWhoIsOnline);
@@ -11382,6 +11406,104 @@ function bindCustomerRowEvents() {
     });
 }
 
+function topEntitiesFromIndex(entities, idx, n) {
+    return (entities || []).map(e => ({
+        id: e.id,
+        label: e.name || e.phone || "بدون اسم",
+        value: round2(idx[e.id] || 0)
+    })).filter(e => e.value > 0).sort((a, b) => b.value - a.value).slice(0, n || 10);
+}
+
+function supplierCarMakeDistribution(n) {
+    const counts = {};
+    (appData.suppliers || []).forEach(s => {
+        (Array.isArray(s.carMakes) ? s.carMakes : []).forEach(m => {
+            counts[m] = (counts[m] || 0) + 1;
+        });
+    });
+    return Object.keys(counts).map(m => ({
+        label: m,
+        value: counts[m]
+    })).sort((a, b) => b.value - a.value).slice(0, n || 12);
+}
+
+function supplierTypeDistribution() {
+    let newOnly = 0, usedOnly = 0, both = 0;
+    (appData.suppliers || []).forEach(s => {
+        const hn = s.handlesNew !== false, hu = s.handlesUsed !== false;
+        if (hn && hu) both++; else if (hn) newOnly++; else if (hu) usedOnly++;
+    });
+    return [ {
+        label: "الاثنين معًا",
+        value: both
+    }, {
+        label: "قطع جديدة فقط",
+        value: newOnly
+    }, {
+        label: "قطع مستعملة فقط",
+        value: usedOnly
+    } ];
+}
+
+function statBarChartHtml(title, items, opts) {
+    opts = opts || {};
+    const max = Math.max(1, ...items.map(i => i.value));
+    const fmt = v => opts.money ? fmtMoney(v) : String(v);
+    const rowsHtml = items.length ? items.map(i => {
+        const pct = Math.max(2, round2(i.value / max * 100));
+        const inner = '<span class="stat-bar-label" title="' + escapeHtml(i.label) + '">' + escapeHtml(i.label) + "</span>" + '<span class="stat-bar-track"><span class="stat-bar-fill" style="width:' + pct + '%"></span></span>' + '<span class="stat-bar-value">' + fmt(i.value) + "</span>";
+        return opts.onOpenAttr && i.id ? '<button type="button" class="stat-bar-row" data-' + opts.onOpenAttr + '="' + escapeHtml(i.id) + '">' + inner + "</button>" : '<div class="stat-bar-row">' + inner + "</div>";
+    }).join("") : '<div class="expense-empty-hint">ما فيه بيانات كافية بعد</div>';
+    return '<div class="stat-chart-block">' + '<div class="stat-chart-title">' + escapeHtml(title) + "</div>" + rowsHtml + "</div>";
+}
+
+function statisticsViewHtml() {
+    const topPurchasers = topEntitiesFromIndex(appData.suppliers, supplierPurchaseTotalIndex(), 10);
+    const topCooperators = topEntitiesFromIndex(appData.suppliers, supplierPricedTotalIndex(), 10);
+    const topCustomers = topEntitiesFromIndex(appData.customers, customerPurchaseTotalIndex(), 10);
+    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-statistics">→ رجوع للطلبيات</button>' + '<div class="tasks-title">📊 الإحصائيات</div>' + "</div>" + '<div class="treasury-block">' + statBarChartHtml("⭐ أكثر الموردين اعتمادية (إجمالي المشتريات الفعلية)", topPurchasers, {
+        money: true,
+        onOpenAttr: "open-supplier"
+    }) + statBarChartHtml("🤝 أكثر الموردين تعاونًا (إجمالي التسعير معتمد+معلّق)", topCooperators, {
+        money: true,
+        onOpenAttr: "open-supplier"
+    }) + statBarChartHtml("💰 أكثر العملاء شراءً (إجمالي قيمة الطلبيات)", topCustomers, {
+        money: true,
+        onOpenAttr: "open-customer"
+    }) + statBarChartHtml("🚗 توزيع الموردين حسب السيارات", supplierCarMakeDistribution(12), {}) + statBarChartHtml("📦 توزيع الموردين حسب النوع", supplierTypeDistribution(), {}) + "</div>";
+}
+
+function openStatisticsView() {
+    if (!hasElevatedAccess()) {
+        showToast("غير متاح", "error");
+        return;
+    }
+    hideAllSecondaryViews();
+    renderStatisticsView();
+    document.getElementById("statistics-view").style.display = "block";
+}
+
+function closeStatisticsView() {
+    document.getElementById("statistics-view").style.display = "none";
+    document.getElementById("orders-view").style.display = "";
+}
+
+function renderStatisticsView() {
+    const el = document.getElementById("statistics-view");
+    el.innerHTML = statisticsViewHtml();
+    bindStatisticsViewEvents();
+}
+
+function bindStatisticsViewEvents() {
+    document.getElementById("btn-back-to-orders-from-statistics").addEventListener("click", closeStatisticsView);
+    document.querySelectorAll("#statistics-view [data-open-supplier]").forEach(btn => {
+        btn.addEventListener("click", () => openSupplierHistoryModal(btn.getAttribute("data-open-supplier")));
+    });
+    document.querySelectorAll("#statistics-view [data-open-customer]").forEach(btn => {
+        btn.addEventListener("click", () => openCustomerHistoryModal(btn.getAttribute("data-open-customer")));
+    });
+}
+
 async function openArchiveView() {
     hideAllSecondaryViews();
     document.getElementById("archive-view").style.display = "block";
@@ -11594,6 +11716,8 @@ async function showAppIfAllowed(session) {
         if (attendanceChartBtnVis) attendanceChartBtnVis.style.display = currentUserIsElevated ? "" : "none";
         const suppliersBtn = document.getElementById("btn-open-suppliers");
         if (suppliersBtn) suppliersBtn.style.display = currentUserIsElevated ? "" : "none";
+        const statisticsBtn = document.getElementById("btn-open-statistics");
+        if (statisticsBtn) statisticsBtn.style.display = currentUserIsElevated ? "" : "none";
         const settlementViewerBtn = document.getElementById("btn-open-settlement-viewer");
         if (settlementViewerBtn) settlementViewerBtn.style.display = !currentUserIsElevated && SETTLEMENT_VIEWER_EMAILS.includes(email) ? "" : "none";
         if (!appInitDone) {
