@@ -4702,8 +4702,9 @@ function openQuickAddCustomerModal(onSaved, prefill) {
 }
 
 function openQuickAddSupplierModal(onSaved) {
+    let quickCarMakes = [];
     const root = document.getElementById("confirm-root");
-    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">إضافة مورد جديد</div>' + '<label class="field"><span class="field-label">الاسم</span><input type="text" id="quick-supplier-name-input" placeholder="اسم المورد"></label>' + '<label class="field"><span class="field-label">رقم الجوال</span><input type="tel" id="quick-supplier-phone-input" placeholder="05XXXXXXXX"></label>' + '<div class="supplier-kinds-row">' + '<label class="supplier-kind-toggle"><input type="checkbox" id="quick-supplier-handles-new-check" checked><span>قطع جديدة</span></label>' + '<label class="supplier-kind-toggle"><input type="checkbox" id="quick-supplier-handles-used-check"><span>قطع مستعملة (تشليح)</span></label>' + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="quick-supplier-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-primary" id="quick-supplier-save-btn">💾 حفظ</button>' + "</div>" + "</div>" + "</div>";
+    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">إضافة مورد جديد</div>' + '<label class="field"><span class="field-label">الاسم</span><input type="text" id="quick-supplier-name-input" placeholder="اسم المورد"></label>' + '<label class="field"><span class="field-label">رقم الجوال</span><input type="tel" id="quick-supplier-phone-input" placeholder="05XXXXXXXX"></label>' + '<div class="supplier-kinds-row">' + '<label class="supplier-kind-toggle"><input type="checkbox" id="quick-supplier-handles-new-check" checked><span>قطع جديدة</span></label>' + '<label class="supplier-kind-toggle"><input type="checkbox" id="quick-supplier-handles-used-check"><span>قطع مستعملة (تشليح)</span></label>' + "</div>" + '<label class="field"><span class="field-label">السيارات</span>' + carMakesPickerHtml(quickCarMakes) + "</label>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="quick-supplier-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-primary" id="quick-supplier-save-btn">💾 حفظ</button>' + "</div>" + "</div>" + "</div>";
     root.classList.add("modal-open");
     const close = () => {
         root.innerHTML = "";
@@ -4713,6 +4714,12 @@ function openQuickAddSupplierModal(onSaved) {
         if (e.target.hasAttribute("data-close-confirm")) close();
     });
     root.querySelector("#quick-supplier-cancel-btn").addEventListener("click", close);
+    const carMakesPickerEl = root.querySelector(".car-makes-picker");
+    if (carMakesPickerEl) {
+        bindCarMakesPicker(carMakesPickerEl, () => quickCarMakes, (make, nowSelected) => {
+            quickCarMakes = nowSelected ? quickCarMakes.concat([ make ]) : quickCarMakes.filter(m => m !== make);
+        });
+    }
     const nameInput = root.querySelector("#quick-supplier-name-input");
     if (nameInput) nameInput.focus();
     const saveBtn = root.querySelector("#quick-supplier-save-btn");
@@ -4729,6 +4736,10 @@ function openQuickAddSupplierModal(onSaved) {
             showToast("لازم تحدد نوع واحد على الأقل (قطع جديدة/مستعملة)", "error");
             return;
         }
+        if (!quickCarMakes.length) {
+            showToast("لازم تحدد سيارة وحدة على الأقل", "error");
+            return;
+        }
         const dup = findDuplicateSupplier(name, phone);
         if (dup) {
             showToast("مورد موجود مسبقًا بنفس الاسم أو الرقم: " + (dup.name || dup.phone || "مورد"), "error");
@@ -4743,6 +4754,7 @@ function openQuickAddSupplierModal(onSaved) {
             extraPhones: [],
             handlesNew: handlesNew,
             handlesUsed: handlesUsed,
+            carMakes: quickCarMakes.slice(),
             createdAt: (new Date).toISOString()
         };
         if (!Array.isArray(appData.suppliers)) appData.suppliers = [];
@@ -10512,7 +10524,7 @@ function bindCarMakesPicker(wrapEl, getSelected, onToggle) {
                 const make = btn.getAttribute("data-car-make");
                 const nowSelected = !btn.classList.contains("chip-active");
                 btn.classList.toggle("chip-active", nowSelected);
-                onToggle(make, nowSelected);
+                onToggle(make, nowSelected, btn);
             });
         });
     };
@@ -10687,6 +10699,10 @@ function bindSuppliersViewEvents() {
         }
         if (!handlesNewCheck.checked && !handlesUsedCheck.checked) {
             showToast("لازم تحدد نوع واحد على الأقل (قطع جديدة/مستعملة)", "error");
+            return;
+        }
+        if (!newSupplierCarMakes.length) {
+            showToast("لازم تحدد سيارة وحدة على الأقل", "error");
             return;
         }
         const dup = findDuplicateSupplier(name, phone);
@@ -10868,12 +10884,17 @@ function bindSupplierRowEvents() {
         }
         const carMakesPicker = row.querySelector(".car-makes-picker");
         if (carMakesPicker) {
-            bindCarMakesPicker(carMakesPicker, () => freshSupplier().carMakes || [], async (make, nowSelected) => {
+            bindCarMakesPicker(carMakesPicker, () => freshSupplier().carMakes || [], async (make, nowSelected, btn) => {
                 const s = freshSupplier();
-                const prev = {
-                    carMakes: (s.carMakes || []).slice()
-                };
                 const current = Array.isArray(s.carMakes) ? s.carMakes : [];
+                if (!nowSelected && current.length <= 1) {
+                    btn.classList.add("chip-active");
+                    showToast("لازم تحدد سيارة وحدة على الأقل", "error");
+                    return;
+                }
+                const prev = {
+                    carMakes: current.slice()
+                };
                 s.carMakes = nowSelected ? current.concat([ make ]) : current.filter(m => m !== make);
                 await persistFieldOrRevert(s, prev, persistSupplier, refreshSuppliersList);
             });
@@ -12214,8 +12235,9 @@ function renderScrapyardView() {
 }
 
 function openQuickAddScrapyardSupplierModal(onSaved) {
+    let quickCarMakes = [];
     const root = document.getElementById("confirm-root");
-    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">إضافة تشليح جديد</div>' + '<label class="field"><span class="field-label">الاسم</span><input type="text" id="quick-scrapyard-name-input" placeholder="اسم التشليح"></label>' + '<label class="field"><span class="field-label">رقم الجوال</span><input type="tel" id="quick-scrapyard-phone-input" placeholder="05XXXXXXXX"></label>' + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="quick-scrapyard-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-primary" id="quick-scrapyard-save-btn">💾 حفظ</button>' + "</div>" + "</div>" + "</div>";
+    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">إضافة تشليح جديد</div>' + '<label class="field"><span class="field-label">الاسم</span><input type="text" id="quick-scrapyard-name-input" placeholder="اسم التشليح"></label>' + '<label class="field"><span class="field-label">رقم الجوال</span><input type="tel" id="quick-scrapyard-phone-input" placeholder="05XXXXXXXX"></label>' + '<label class="field"><span class="field-label">السيارات</span>' + carMakesPickerHtml(quickCarMakes) + "</label>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="quick-scrapyard-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-primary" id="quick-scrapyard-save-btn">💾 حفظ</button>' + "</div>" + "</div>" + "</div>";
     root.classList.add("modal-open");
     const close = () => {
         root.innerHTML = "";
@@ -12225,12 +12247,22 @@ function openQuickAddScrapyardSupplierModal(onSaved) {
         if (e.target.hasAttribute("data-close-confirm")) close();
     });
     root.querySelector("#quick-scrapyard-cancel-btn").addEventListener("click", close);
+    const scrapyardCarMakesPickerEl = root.querySelector(".car-makes-picker");
+    if (scrapyardCarMakesPickerEl) {
+        bindCarMakesPicker(scrapyardCarMakesPickerEl, () => quickCarMakes, (make, nowSelected) => {
+            quickCarMakes = nowSelected ? quickCarMakes.concat([ make ]) : quickCarMakes.filter(m => m !== make);
+        });
+    }
     const scrapyardSaveBtn = root.querySelector("#quick-scrapyard-save-btn");
     scrapyardSaveBtn.addEventListener("click", async () => {
         const name = document.getElementById("quick-scrapyard-name-input").value.trim();
         const phone = document.getElementById("quick-scrapyard-phone-input").value.trim();
         if (!name && !phone) {
             showToast("اكتب اسم أو رقم جوال على الأقل", "error");
+            return;
+        }
+        if (!quickCarMakes.length) {
+            showToast("لازم تحدد سيارة وحدة على الأقل", "error");
             return;
         }
         const dup = findDuplicateSupplier(name, phone);
@@ -12246,7 +12278,8 @@ function openQuickAddScrapyardSupplierModal(onSaved) {
             notes: "",
             extraPhones: [],
             handlesNew: false,
-            handlesUsed: true
+            handlesUsed: true,
+            carMakes: quickCarMakes.slice()
         };
         const saved = await persistSupplier(newSupplier);
         if (!saved) {
@@ -12265,7 +12298,8 @@ function openQuickAddScrapyardSupplierModal(onSaved) {
                 phone: newSupplier.phone,
                 handles_new: false,
                 handles_used: true,
-                extra_phones: []
+                extra_phones: [],
+                car_makes: newSupplier.carMakes
             });
             renderScrapyardView();
         }
