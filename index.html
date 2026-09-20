@@ -9883,6 +9883,36 @@ async function deleteSupplier(id) {
     }
 }
 
+function supplierStatsRows() {
+    const rows = (appData.suppliers || []).map(s => {
+        const {ongoing: ongoing, past: past} = supplierPurchaseHistory(s.id);
+        const purchaseTotal = round2(ongoing.reduce((sum, r) => sum + r.amount, 0) + past.reduce((sum, r) => sum + r.amount, 0));
+        const {approved: approved, pending: pending} = supplierPricedHistory(s.id);
+        return {
+            name: s.name || s.phone || "مورد",
+            purchaseTotal: purchaseTotal,
+            purchaseOrdersCount: ongoing.length + past.length,
+            approvedTotal: round2(approved.reduce((sum, r) => sum + r.amount, 0)),
+            pendingTotal: round2(pending.reduce((sum, r) => sum + r.amount, 0)),
+            pendingCount: pending.length,
+            owedNow: supplierOwedAmount(s.id),
+            receivables: supplierReturnReceivableTotal(s.id)
+        };
+    });
+    rows.sort((a, b) => b.purchaseTotal - a.purchaseTotal);
+    return rows.map((r, i) => ({
+        "الترتيب": i + 1,
+        "المورد": r.name,
+        "إجمالي المشتريات الفعلية": r.purchaseTotal,
+        "عدد الطلبيات المشتراة": r.purchaseOrdersCount,
+        "إجمالي المسعّر (طلبيات معتمدة)": r.approvedTotal,
+        "إجمالي المسعّر (طلبات تسعير معلّقة)": r.pendingTotal,
+        "عدد طلبات التسعير المعلّقة": r.pendingCount,
+        "المستحق له حاليًا (غير مسدد)": r.owedNow,
+        "مرتجعات بانتظار التحصيل": r.receivables
+    }));
+}
+
 async function exportSuppliersToExcel() {
     try {
         await ensureXLSX();
@@ -9901,10 +9931,11 @@ async function exportSuppliersToExcel() {
         "ملاحظات": s.notes || ""
     }));
     const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(supplierStatsRows())), "إحصائيات الموردين");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(rows)), "الموردين");
     const stamp = todayNumeric().replace(/\//g, "-");
     XLSX.writeFile(wb, "PARTECH-الموردين-" + stamp + ".xlsx");
-    showToast('تم تحميل ملف الموردين — عدّل بإكسل واستورده لتحديث نفس الموردين، وسيب عمود "المعرّف" بدون لمس', "ok");
+    showToast('تم تحميل ملف الموردين — ورقة "إحصائيات الموردين" للترتيب، وورقة "الموردين" القابلة للتعديل وإعادة الرفع', "ok");
 }
 
 async function importSuppliersFromExcelFile(file) {
