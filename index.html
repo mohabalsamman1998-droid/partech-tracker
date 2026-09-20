@@ -4619,10 +4619,10 @@ function findDuplicateCustomer(name, phone) {
     });
 }
 
-function findDuplicateSupplier(name, phone) {
+function findDuplicateSupplier(name, phone, list) {
     const n = (name || "").trim().toLowerCase();
     const p = (phone || "").trim() ? normalizePhoneForWhatsapp(phone) : "";
-    return (appData.suppliers || []).find(s => {
+    return (list || appData.suppliers || []).find(s => {
         const sPhone = (s.phone || "").trim() ? normalizePhoneForWhatsapp(s.phone) : "";
         if (p && sPhone) return p === sPhone;
         return !!(n && (s.name || "").trim().toLowerCase() === n);
@@ -9883,6 +9883,139 @@ async function deleteSupplier(id) {
     }
 }
 
+async function exportSuppliersToExcel() {
+    try {
+        await ensureXLSX();
+    } catch (e) {}
+    if (typeof XLSX === "undefined") {
+        showToast("تعذر تحميل مكتبة Excel — تأكد من الاتصال بالإنترنت وحاول مرة أخرى", "error");
+        return;
+    }
+    const rows = (appData.suppliers || []).map(s => ({
+        "المعرّف": s.id,
+        "الاسم": s.name || "",
+        "الجوال": s.phone || "",
+        "أرقام إضافية": (Array.isArray(s.extraPhones) ? s.extraPhones : []).join(" / "),
+        "قطع جديدة": s.handlesNew !== false ? "نعم" : "لا",
+        "قطع مستعملة": s.handlesUsed !== false ? "نعم" : "لا",
+        "ملاحظات": s.notes || ""
+    }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(rows)), "الموردين");
+    const stamp = todayNumeric().replace(/\//g, "-");
+    XLSX.writeFile(wb, "PARTECH-الموردين-" + stamp + ".xlsx");
+    showToast('تم تحميل ملف الموردين — عدّل بإكسل واستورده لتحديث نفس الموردين، وسيب عمود "المعرّف" بدون لمس', "ok");
+}
+
+async function importSuppliersFromExcelFile(file) {
+    try {
+        await ensureXLSX();
+    } catch (e) {}
+    if (typeof XLSX === "undefined") {
+        showToast("تعذر تحميل مكتبة Excel — تأكد من الاتصال بالإنترنت وحاول مرة أخرى", "error");
+        return;
+    }
+    const reader = new FileReader;
+    reader.onload = async () => {
+        let rows;
+        try {
+            const wb = XLSX.read(reader.result, {
+                type: "array"
+            });
+            const sheetName = wb.SheetNames.includes("الموردين") ? "الموردين" : wb.SheetNames[0];
+            rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], {
+                defval: ""
+            });
+        } catch (err) {
+            showToast("تعذر قراءة الملف — تأكد إنه ملف Excel صالح", "error");
+            return;
+        }
+        if (!rows || !rows.length) {
+            showToast("الملف فاضي — ما فيه صفوف للاستيراد", "error");
+            return;
+        }
+        const working = (appData.suppliers || []).map(s => Object.assign({}, s));
+        const byId = new Map(working.map(s => [ s.id, s ]));
+        const readYesNo = (v, fallback) => {
+            const s = String(v == null ? "" : v).trim();
+            if (!s) return fallback;
+            return s === "نعم";
+        };
+        const toUpsertById = new Map;
+        let skippedEmpty = 0;
+        rows.forEach(row => {
+            const id = String(row["المعرّف"] || "").trim();
+            const name = String(row["الاسم"] || "").trim();
+            const phone = String(row["الجوال"] || "").trim();
+            if (!name && !phone) {
+                skippedEmpty++;
+                return;
+            }
+            const extraPhonesRaw = String(row["أرقام إضافية"] || "").trim();
+            const extraPhones = extraPhonesRaw ? extraPhonesRaw.split("/").map(x => x.trim()).filter(Boolean) : [];
+            const handlesNew = readYesNo(row["قطع جديدة"], true);
+            const handlesUsed = readYesNo(row["قطع مستعملة"], true);
+            const notes = String(row["ملاحظات"] || "").trim();
+            let target = id ? byId.get(id) : null;
+            if (!target) target = findDuplicateSupplier(name, phone, working);
+            if (target) {
+                target.name = name;
+                target.phone = phone;
+                target.extraPhones = extraPhones;
+                target.handlesNew = handlesNew;
+                target.handlesUsed = handlesUsed;
+                target.notes = notes;
+                if (target._importIsNew === undefined) target._importIsNew = false;
+            } else {
+                target = {
+                    id: uid("sup"),
+                    name: name,
+                    phone: phone,
+                    notes: notes,
+                    extraPhones: extraPhones,
+                    handlesNew: handlesNew,
+                    handlesUsed: handlesUsed,
+                    createdAt: (new Date).toISOString(),
+                    _importIsNew: true
+                };
+                working.push(target);
+                byId.set(target.id, target);
+            }
+            toUpsertById.set(target.id, target);
+        });
+        const toUpsert = Array.from(toUpsertById.values());
+        if (!toUpsert.length) {
+            showToast("ما فيه صفوف صالحة للاستيراد (لازم اسم أو جوال على الأقل بكل صف)", "error");
+            return;
+        }
+        showToast("جاري استيراد " + toUpsert.length + " مورد…", "ok");
+        const results = await Promise.all(toUpsert.map(s => persistSupplier(s)));
+        let addedCount = 0, updatedCount = 0, failedCount = 0;
+        toUpsert.forEach((s, i) => {
+            if (!results[i]) {
+                failedCount++;
+                return;
+            }
+            if (s._importIsNew) addedCount++; else updatedCount++;
+            delete s._importIsNew;
+            const idx = (appData.suppliers || []).findIndex(x => x.id === s.id);
+            if (idx >= 0) appData.suppliers[idx] = s; else {
+                if (!Array.isArray(appData.suppliers)) appData.suppliers = [];
+                appData.suppliers.push(s);
+            }
+        });
+        refreshSuppliersList();
+        updateSuppliersBadge();
+        if (failedCount > 0) {
+            showToast("تم استيراد " + (addedCount + updatedCount) + " من " + toUpsert.length + " — فشل حفظ " + failedCount + " (تحقق من الصلاحيات/الاتصال)", "error");
+        } else {
+            showToast("تم الاستيراد: " + addedCount + " مورد جديد، " + updatedCount + " تم تحديثه" + (skippedEmpty ? "، وتجاهلنا " + skippedEmpty + " صف فاضي" : ""), "ok");
+        }
+    };
+    reader.onerror = () => showToast("تعذر قراءة الملف", "error");
+    reader.readAsArrayBuffer(file);
+}
+
 async function replaceAllSuppliers(suppliersArray) {
     if (!sb) return;
     const rows = (suppliersArray || []).map(s => ({
@@ -10313,7 +10446,7 @@ function suppliersItemsListHtml() {
 }
 
 function suppliersViewHtml() {
-    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-suppliers">→ رجوع للطلبيات</button>' + '<div class="tasks-title">🏭 الموردين</div>' + "</div>" + '<div class="treasury-block">' + '<div class="task-add-row">' + '<input type="text" id="new-supplier-name-input" class="task-add-input" placeholder="اسم المورد الجديد">' + '<input type="tel" id="new-supplier-phone-input" class="task-add-input" placeholder="رقم الجوال (اختياري)">' + '<button type="button" class="btn btn-sm btn-add-part" id="add-supplier-btn">+ إضافة</button>' + "</div>" + '<div class="supplier-kinds-row" style="margin-bottom:12px;">' + '<label class="supplier-kind-toggle"><input type="checkbox" id="new-supplier-handles-new-check"><span>قطع جديدة</span></label>' + '<label class="supplier-kind-toggle"><input type="checkbox" id="new-supplier-handles-used-check"><span>قطع مستعملة (تشليح)</span></label>' + "</div>" + '<div class="filter-chips" id="suppliers-kind-filter-buttons" style="margin-bottom:12px;"></div>' + '<input type="text" id="suppliers-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث بالاسم أو رقم الجوال..." value="' + escapeHtml(suppliersSearchQuery) + '">' + '<div class="task-items-list" id="suppliers-items-list">' + suppliersItemsListHtml() + "</div>" + "</div>";
+    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-suppliers">→ رجوع للطلبيات</button>' + '<div class="tasks-title">🏭 الموردين</div>' + "</div>" + '<div class="treasury-block">' + '<div class="task-add-row">' + '<input type="text" id="new-supplier-name-input" class="task-add-input" placeholder="اسم المورد الجديد">' + '<input type="tel" id="new-supplier-phone-input" class="task-add-input" placeholder="رقم الجوال (اختياري)">' + '<button type="button" class="btn btn-sm btn-add-part" id="add-supplier-btn">+ إضافة</button>' + "</div>" + '<div class="supplier-kinds-row" style="margin-bottom:12px;">' + '<label class="supplier-kind-toggle"><input type="checkbox" id="new-supplier-handles-new-check"><span>قطع جديدة</span></label>' + '<label class="supplier-kind-toggle"><input type="checkbox" id="new-supplier-handles-used-check"><span>قطع مستعملة (تشليح)</span></label>' + "</div>" + '<div class="filter-chips" id="suppliers-kind-filter-buttons" style="margin-bottom:12px;"></div>' + '<div class="data-mgmt-row" style="margin-bottom:12px;">' + '<span class="data-mgmt-label">إدارة البيانات</span>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-export-suppliers-excel">⬇️ تصدير Excel</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-suppliers-excel">⬆️ استيراد Excel</button>' + '<input type="file" id="suppliers-excel-import-input" accept=".xlsx" style="display:none;">' + "</div>" + '<input type="text" id="suppliers-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث بالاسم أو رقم الجوال..." value="' + escapeHtml(suppliersSearchQuery) + '">' + '<div class="task-items-list" id="suppliers-items-list">' + suppliersItemsListHtml() + "</div>" + "</div>";
 }
 
 function refreshSuppliersList() {
@@ -10332,6 +10465,24 @@ function renderSuppliersView() {
 function bindSuppliersViewEvents() {
     document.getElementById("btn-back-to-orders-from-suppliers").addEventListener("click", closeSuppliersView);
     renderSuppliersKindFilterButtons();
+    bindBusyButton(document.getElementById("btn-export-suppliers-excel"), async () => {
+        const btn = document.getElementById("btn-export-suppliers-excel");
+        const originalText = btn ? btn.textContent : "";
+        if (btn) btn.textContent = "⏳ جاري التصدير…";
+        try {
+            await exportSuppliersToExcel();
+        } finally {
+            if (btn) btn.textContent = originalText;
+        }
+    });
+    document.getElementById("btn-import-suppliers-excel").addEventListener("click", () => {
+        document.getElementById("suppliers-excel-import-input").click();
+    });
+    document.getElementById("suppliers-excel-import-input").addEventListener("change", e => {
+        const file = e.target.files[0];
+        if (file) importSuppliersFromExcelFile(file);
+        e.target.value = "";
+    });
     bindBusyButton(document.getElementById("add-supplier-btn"), async () => {
         const nameInput = document.getElementById("new-supplier-name-input");
         const phoneInput = document.getElementById("new-supplier-phone-input");
