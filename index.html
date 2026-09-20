@@ -10204,6 +10204,24 @@ function supplierOwedIndex() {
     return bySupplier;
 }
 
+function supplierPurchaseTotalIndex() {
+    const idx = {};
+    (appData.suppliers || []).forEach(s => {
+        const {ongoing: ongoing, past: past} = supplierPurchaseHistory(s.id);
+        idx[s.id] = round2(ongoing.reduce((sum, r) => sum + r.amount, 0) + past.reduce((sum, r) => sum + r.amount, 0));
+    });
+    return idx;
+}
+
+function supplierPricedTotalIndex() {
+    const idx = {};
+    (appData.suppliers || []).forEach(s => {
+        const {approved: approved, pending: pending} = supplierPricedHistory(s.id);
+        idx[s.id] = round2(approved.reduce((sum, r) => sum + r.amount, 0) + pending.reduce((sum, r) => sum + r.amount, 0));
+    });
+    return idx;
+}
+
 function isoToDisplayDate(iso) {
     if (!iso) return "—";
     const d = new Date(iso);
@@ -10505,7 +10523,7 @@ function bindCarMakesPicker(wrapEl, getSelected, onToggle) {
     });
 }
 
-function supplierRowHtml(s, receivablesIdx, owedIdx) {
+function supplierRowHtml(s, receivablesIdx, owedIdx, sortIdx, rank) {
     const isEditing = !!editingSuppliers[s.id];
     const extraPhones = Array.isArray(s.extraPhones) ? s.extraPhones : [];
     if (!isEditing) {
@@ -10513,7 +10531,8 @@ function supplierRowHtml(s, receivablesIdx, owedIdx) {
         const phones = [ s.phone ].concat(extraPhones).filter(Boolean).join(" / ");
         const returnTotal = receivablesIdx ? receivablesIdx[s.id] || 0 : supplierReturnReceivableTotal(s.id);
         const owedAmount = owedIdx ? owedIdx[s.id] || 0 : supplierOwedAmount(s.id);
-        return '<div class="task-item-row supplier-item-row" data-supplier-id="' + escapeHtml(s.id) + '">' + '<div class="supplier-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(s.name || "بدون اسم") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(phones || "—") + "</span>" + '<span class="num ' + (owedAmount > 0 ? "text-rust" : "text-green") + '">' + fmtMoney(owedAmount) + "</span>" + ((s.phone || "").trim() ? '<button type="button" class="icon-btn supplier-contact-btn" title="اتصال" aria-label="اتصال">📞</button>' : "") + '<button type="button" class="icon-btn supplier-history-btn" title="سجل المشتريات" aria-label="سجل المشتريات">📋</button>' + '<button type="button" class="icon-btn supplier-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' + "</div>" + '<div class="purchase-history-row-sub"><span>' + escapeHtml(kindsLabel) + "</span>" + "<span>" + escapeHtml(Array.isArray(s.carMakes) && s.carMakes.length ? s.carMakes.join("، ") : "بلا سيارات محددة") + "</span>" + (returnTotal > 0 ? '<span class="text-green">مسترجع بانتظار التحصيل: ' + fmtMoney(returnTotal) + "</span>" : "") + "</div>" + "</div>";
+        const sortBadge = sortIdx ? '<span class="stamp stamp-green">#' + rank + " — " + (suppliersSortBy === "purchases" ? "⭐ اعتمادية" : "🤝 تعاون") + ": " + fmtMoney(sortIdx[s.id] || 0) + "</span>" : "";
+        return '<div class="task-item-row supplier-item-row" data-supplier-id="' + escapeHtml(s.id) + '">' + '<div class="supplier-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(s.name || "بدون اسم") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(phones || "—") + "</span>" + '<span class="num ' + (owedAmount > 0 ? "text-rust" : "text-green") + '">' + fmtMoney(owedAmount) + "</span>" + ((s.phone || "").trim() ? '<button type="button" class="icon-btn supplier-contact-btn" title="اتصال" aria-label="اتصال">📞</button>' : "") + '<button type="button" class="icon-btn supplier-history-btn" title="سجل المشتريات" aria-label="سجل المشتريات">📋</button>' + '<button type="button" class="icon-btn supplier-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' + "</div>" + '<div class="purchase-history-row-sub"><span>' + escapeHtml(kindsLabel) + "</span>" + "<span>" + escapeHtml(Array.isArray(s.carMakes) && s.carMakes.length ? s.carMakes.join("، ") : "بلا سيارات محددة") + "</span>" + sortBadge + (returnTotal > 0 ? '<span class="text-green">مسترجع بانتظار التحصيل: ' + fmtMoney(returnTotal) + "</span>" : "") + "</div>" + "</div>";
     }
     return '<div class="task-item-row supplier-item-row" data-supplier-id="' + escapeHtml(s.id) + '">' + '<div class="supplier-row-main">' + '<input type="text" class="supplier-name-input" placeholder="اسم المورد" value="' + escapeHtml(s.name || "") + '">' + '<input type="tel" class="supplier-phone-input" placeholder="رقم الجوال" value="' + escapeHtml(s.phone || "") + '">' + (() => {
         const owedAmount = owedIdx ? owedIdx[s.id] || 0 : supplierOwedAmount(s.id);
@@ -10551,7 +10570,33 @@ function renderSuppliersKindFilterButtons() {
     });
 }
 
-function suppliersMatchingSearch(receivablesIdx) {
+let suppliersSortBy = "default";
+
+const SUPPLIER_SORT_OPTIONS = [ {
+    id: "default",
+    label: "الافتراضي"
+}, {
+    id: "purchases",
+    label: "⭐ الأكثر اعتمادية"
+}, {
+    id: "pricing",
+    label: "🤝 الأكثر تعاون"
+} ];
+
+function renderSuppliersSortButtons() {
+    const el = document.getElementById("suppliers-sort-buttons");
+    if (!el) return;
+    el.innerHTML = SUPPLIER_SORT_OPTIONS.map(f => '<button type="button" class="chip ' + (suppliersSortBy === f.id ? "chip-active" : "") + '" data-sort-by="' + escapeHtml(f.id) + '">' + f.label + "</button>").join("");
+    el.querySelectorAll(".chip").forEach(btn => {
+        btn.addEventListener("click", () => {
+            suppliersSortBy = btn.getAttribute("data-sort-by");
+            renderSuppliersSortButtons();
+            refreshSuppliersList();
+        });
+    });
+}
+
+function suppliersMatchingSearch(receivablesIdx, sortIdx) {
     const idx = receivablesIdx || supplierReturnReceivablesIndex().bySupplier;
     const q = suppliersSearchQuery.trim().toLowerCase();
     let rows = appData.suppliers || [];
@@ -10564,6 +10609,9 @@ function suppliersMatchingSearch(receivablesIdx) {
             return hay.includes(q);
         });
     }
+    if (sortIdx) {
+        return [ ...rows ].sort((a, b) => (sortIdx[b.id] || 0) - (sortIdx[a.id] || 0));
+    }
     return [ ...rows ].sort((a, b) => {
         const ap = (idx[a.id] || 0) > 0 ? 1 : 0;
         const bp = (idx[b.id] || 0) > 0 ? 1 : 0;
@@ -10575,13 +10623,14 @@ function suppliersMatchingSearch(receivablesIdx) {
 function suppliersItemsListHtml() {
     const receivablesIdx = supplierReturnReceivablesIndex().bySupplier;
     const owedIdx = supplierOwedIndex();
-    const rows = suppliersMatchingSearch(receivablesIdx);
+    const sortIdx = suppliersSortBy === "purchases" ? supplierPurchaseTotalIndex() : suppliersSortBy === "pricing" ? supplierPricedTotalIndex() : null;
+    const rows = suppliersMatchingSearch(receivablesIdx, sortIdx);
     if (!rows.length) return '<div class="expense-empty-hint">' + (suppliersSearchQuery.trim() ? "ما فيه نتائج مطابقة" : "ما فيه موردين مضافين بعد") + "</div>";
-    return rows.map(s => supplierRowHtml(s, receivablesIdx, owedIdx)).join("");
+    return rows.map((s, i) => supplierRowHtml(s, receivablesIdx, owedIdx, sortIdx, i + 1)).join("");
 }
 
 function suppliersViewHtml() {
-    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-suppliers">→ رجوع للطلبيات</button>' + '<div class="tasks-title">🏭 الموردين</div>' + "</div>" + '<div class="treasury-block">' + '<div class="task-add-row">' + '<input type="text" id="new-supplier-name-input" class="task-add-input" placeholder="اسم المورد الجديد">' + '<input type="tel" id="new-supplier-phone-input" class="task-add-input" placeholder="رقم الجوال (اختياري)">' + '<button type="button" class="btn btn-sm btn-add-part" id="add-supplier-btn">+ إضافة</button>' + "</div>" + '<div class="supplier-kinds-row" style="margin-bottom:12px;">' + '<label class="supplier-kind-toggle"><input type="checkbox" id="new-supplier-handles-new-check"><span>قطع جديدة</span></label>' + '<label class="supplier-kind-toggle"><input type="checkbox" id="new-supplier-handles-used-check"><span>قطع مستعملة (تشليح)</span></label>' + "</div>" + '<div class="mini-label" id="new-supplier-car-makes-wrap" style="margin-bottom:12px;">السيارات' + carMakesPickerHtml(newSupplierCarMakes) + "</div>" + '<div class="filter-chips" id="suppliers-kind-filter-buttons" style="margin-bottom:12px;"></div>' + '<div class="data-mgmt-row" style="margin-bottom:12px;">' + '<span class="data-mgmt-label">إدارة البيانات</span>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-export-suppliers-excel">⬇️ تصدير Excel</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-suppliers-excel">⬆️ استيراد Excel</button>' + '<input type="file" id="suppliers-excel-import-input" accept=".xlsx" style="display:none;">' + "</div>" + '<input type="text" id="suppliers-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث بالاسم أو رقم الجوال..." value="' + escapeHtml(suppliersSearchQuery) + '">' + '<div class="task-items-list" id="suppliers-items-list">' + suppliersItemsListHtml() + "</div>" + "</div>";
+    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-suppliers">→ رجوع للطلبيات</button>' + '<div class="tasks-title">🏭 الموردين</div>' + "</div>" + '<div class="treasury-block">' + '<div class="task-add-row">' + '<input type="text" id="new-supplier-name-input" class="task-add-input" placeholder="اسم المورد الجديد">' + '<input type="tel" id="new-supplier-phone-input" class="task-add-input" placeholder="رقم الجوال (اختياري)">' + '<button type="button" class="btn btn-sm btn-add-part" id="add-supplier-btn">+ إضافة</button>' + "</div>" + '<div class="supplier-kinds-row" style="margin-bottom:12px;">' + '<label class="supplier-kind-toggle"><input type="checkbox" id="new-supplier-handles-new-check"><span>قطع جديدة</span></label>' + '<label class="supplier-kind-toggle"><input type="checkbox" id="new-supplier-handles-used-check"><span>قطع مستعملة (تشليح)</span></label>' + "</div>" + '<div class="mini-label" id="new-supplier-car-makes-wrap" style="margin-bottom:12px;">السيارات' + carMakesPickerHtml(newSupplierCarMakes) + "</div>" + '<div class="filter-chips" id="suppliers-kind-filter-buttons" style="margin-bottom:12px;"></div>' + '<div class="filter-chips" id="suppliers-sort-buttons" style="margin-bottom:12px;"></div>' + '<div class="data-mgmt-row" style="margin-bottom:12px;">' + '<span class="data-mgmt-label">إدارة البيانات</span>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-export-suppliers-excel">⬇️ تصدير Excel</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-suppliers-excel">⬆️ استيراد Excel</button>' + '<input type="file" id="suppliers-excel-import-input" accept=".xlsx" style="display:none;">' + "</div>" + '<input type="text" id="suppliers-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث بالاسم أو رقم الجوال..." value="' + escapeHtml(suppliersSearchQuery) + '">' + '<div class="task-items-list" id="suppliers-items-list">' + suppliersItemsListHtml() + "</div>" + "</div>";
 }
 
 function refreshSuppliersList() {
@@ -10600,6 +10649,7 @@ function renderSuppliersView() {
 function bindSuppliersViewEvents() {
     document.getElementById("btn-back-to-orders-from-suppliers").addEventListener("click", closeSuppliersView);
     renderSuppliersKindFilterButtons();
+    renderSuppliersSortButtons();
     bindBusyButton(document.getElementById("btn-export-suppliers-excel"), async () => {
         const btn = document.getElementById("btn-export-suppliers-excel");
         const originalText = btn ? btn.textContent : "";
@@ -10899,6 +10949,21 @@ function customerStatsIndex() {
     return byCustomer;
 }
 
+function customerPurchaseTotalIndex() {
+    const idx = {};
+    (appData.orders || []).forEach(o => {
+        if (!o.customerId) return;
+        if (!o.supplied) return;
+        const t = orderTotals(o);
+        if (!t.hasChargeable) return;
+        idx[o.customerId] = (idx[o.customerId] || 0) + t.sellTotal;
+    });
+    Object.keys(idx).forEach(id => {
+        idx[id] = round2(idx[id]);
+    });
+    return idx;
+}
+
 function customerRefundsPending(customerId) {
     const rows = [];
     (appData.orders || []).forEach(o => {
@@ -10955,7 +11020,7 @@ function customerRefundRowHtml(row) {
 
 let editingCustomers = {};
 
-function customerRowHtml(c, refundsIdx, statsIdx) {
+function customerRowHtml(c, refundsIdx, statsIdx, sortIdx, rank) {
     const isEditing = !!editingCustomers[c.id];
     const stats = statsIdx ? statsIdx[c.id] || {
         count: 0,
@@ -10963,7 +11028,8 @@ function customerRowHtml(c, refundsIdx, statsIdx) {
     } : customerOrderStats(c.id);
     if (!isEditing) {
         const refundTotal = refundsIdx ? refundsIdx[c.id] || 0 : customerRefundTotal(c.id);
-        return '<div class="task-item-row customer-item-row" data-customer-id="' + escapeHtml(c.id) + '">' + '<div class="customer-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(c.name || "بدون اسم") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(c.phone || "—") + "</span>" + '<span class="expense-entry-view-date">' + stats.count + " طلبية</span>" + '<span class="num ' + (stats.remaining > 0 ? "text-rust" : "text-green") + '">' + fmtMoney(stats.remaining) + "</span>" + ((c.phone || "").trim() ? '<button type="button" class="icon-btn customer-contact-btn" title="اتصال" aria-label="اتصال">📞</button>' : "") + '<button type="button" class="icon-btn customer-history-btn" title="سجل الطلبيات" aria-label="سجل الطلبيات">📋</button>' + '<button type="button" class="icon-btn customer-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' + "</div>" + (refundTotal > 0 ? '<div class="purchase-history-row-sub"><span class="text-rust">يجب إرجاع له: ' + fmtMoney(refundTotal) + "</span></div>" : "") + "</div>";
+        const sortBadge = sortIdx ? '<div class="purchase-history-row-sub"><span class="stamp stamp-green">#' + rank + " — 💰 إجمالي الشراء: " + fmtMoney(sortIdx[c.id] || 0) + "</span></div>" : "";
+        return '<div class="task-item-row customer-item-row" data-customer-id="' + escapeHtml(c.id) + '">' + '<div class="customer-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(c.name || "بدون اسم") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(c.phone || "—") + "</span>" + '<span class="expense-entry-view-date">' + stats.count + " طلبية</span>" + '<span class="num ' + (stats.remaining > 0 ? "text-rust" : "text-green") + '">' + fmtMoney(stats.remaining) + "</span>" + ((c.phone || "").trim() ? '<button type="button" class="icon-btn customer-contact-btn" title="اتصال" aria-label="اتصال">📞</button>' : "") + '<button type="button" class="icon-btn customer-history-btn" title="سجل الطلبيات" aria-label="سجل الطلبيات">📋</button>' + '<button type="button" class="icon-btn customer-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' + "</div>" + sortBadge + (refundTotal > 0 ? '<div class="purchase-history-row-sub"><span class="text-rust">يجب إرجاع له: ' + fmtMoney(refundTotal) + "</span></div>" : "") + "</div>";
     }
     return '<div class="task-item-row customer-item-row" data-customer-id="' + escapeHtml(c.id) + '">' + '<div class="customer-row-main">' + '<input type="text" class="customer-name-input" placeholder="اسم العميل" value="' + escapeHtml(c.name || "") + '">' + '<input type="tel" class="customer-phone-input" placeholder="رقم الجوال" value="' + escapeHtml(c.phone || "") + '">' + '<span class="expense-entry-view-date">' + stats.count + " طلبية</span>" + '<span class="num ' + (stats.remaining > 0 ? "text-rust" : "text-green") + '">' + fmtMoney(stats.remaining) + "</span>" + '<button type="button" class="btn btn-sm expense-add-entry-btn customer-save-btn">💾 حفظ</button>' + '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' + "</div>" + "</div>";
 }
@@ -11096,7 +11162,30 @@ function openCustomerHistoryModal(customerId) {
 
 let customersSearchQuery = "";
 
-function customersMatchingSearch(refundsIdx) {
+let customersSortBy = "default";
+
+const CUSTOMER_SORT_OPTIONS = [ {
+    id: "default",
+    label: "الافتراضي"
+}, {
+    id: "purchases",
+    label: "💰 الأكثر شراء"
+} ];
+
+function renderCustomersSortButtons() {
+    const el = document.getElementById("customers-sort-buttons");
+    if (!el) return;
+    el.innerHTML = CUSTOMER_SORT_OPTIONS.map(f => '<button type="button" class="chip ' + (customersSortBy === f.id ? "chip-active" : "") + '" data-sort-by="' + escapeHtml(f.id) + '">' + f.label + "</button>").join("");
+    el.querySelectorAll(".chip").forEach(btn => {
+        btn.addEventListener("click", () => {
+            customersSortBy = btn.getAttribute("data-sort-by");
+            renderCustomersSortButtons();
+            refreshCustomersList();
+        });
+    });
+}
+
+function customersMatchingSearch(refundsIdx, sortIdx) {
     const idx = refundsIdx || customerRefundsPendingIndex();
     const q = customersSearchQuery.trim().toLowerCase();
     let rows = appData.customers || [];
@@ -11106,6 +11195,9 @@ function customersMatchingSearch(refundsIdx) {
             const hay = [ c.name, c.phone ].join(" ").toLowerCase();
             return hay.includes(q);
         });
+    }
+    if (sortIdx) {
+        return [ ...rows ].sort((a, b) => (sortIdx[b.id] || 0) - (sortIdx[a.id] || 0));
     }
     return [ ...rows ].sort((a, b) => {
         const ap = (idx[a.id] || 0) > 0 ? 1 : 0;
@@ -11118,13 +11210,14 @@ function customersMatchingSearch(refundsIdx) {
 function customersItemsListHtml() {
     const refundsIdx = customerRefundsPendingIndex();
     const statsIdx = customerStatsIndex();
-    const rows = customersMatchingSearch(refundsIdx);
+    const sortIdx = customersSortBy === "purchases" ? customerPurchaseTotalIndex() : null;
+    const rows = customersMatchingSearch(refundsIdx, sortIdx);
     if (!rows.length) return '<div class="expense-empty-hint">' + (customersSearchQuery.trim() ? "ما فيه نتائج مطابقة" : "ما فيه عملاء مضافين بعد") + "</div>";
-    return rows.map(c => customerRowHtml(c, refundsIdx, statsIdx)).join("");
+    return rows.map((c, i) => customerRowHtml(c, refundsIdx, statsIdx, sortIdx, i + 1)).join("");
 }
 
 function customersViewHtml() {
-    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-customers">→ رجوع للطلبيات</button>' + '<div class="tasks-title">👤 العملاء</div>' + "</div>" + '<div class="treasury-block">' + '<div class="task-add-row">' + '<input type="text" id="new-customer-name-input" class="task-add-input" placeholder="اسم العميل الجديد">' + '<input type="tel" id="new-customer-phone-input" class="task-add-input" placeholder="رقم الجوال (اختياري)">' + '<button type="button" class="btn btn-sm btn-add-part" id="add-customer-btn">+ إضافة</button>' + "</div>" + '<input type="text" id="customers-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث بالاسم أو رقم الجوال..." value="' + escapeHtml(customersSearchQuery) + '">' + '<div class="task-items-list" id="customers-items-list">' + customersItemsListHtml() + "</div>" + "</div>";
+    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-customers">→ رجوع للطلبيات</button>' + '<div class="tasks-title">👤 العملاء</div>' + "</div>" + '<div class="treasury-block">' + '<div class="task-add-row">' + '<input type="text" id="new-customer-name-input" class="task-add-input" placeholder="اسم العميل الجديد">' + '<input type="tel" id="new-customer-phone-input" class="task-add-input" placeholder="رقم الجوال (اختياري)">' + '<button type="button" class="btn btn-sm btn-add-part" id="add-customer-btn">+ إضافة</button>' + "</div>" + '<div class="filter-chips" id="customers-sort-buttons" style="margin-bottom:12px;"></div>' + '<input type="text" id="customers-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث بالاسم أو رقم الجوال..." value="' + escapeHtml(customersSearchQuery) + '">' + '<div class="task-items-list" id="customers-items-list">' + customersItemsListHtml() + "</div>" + "</div>";
 }
 
 function refreshCustomersList() {
@@ -11142,6 +11235,7 @@ function renderCustomersView() {
 
 function bindCustomersViewEvents() {
     document.getElementById("btn-back-to-orders-from-customers").addEventListener("click", closeCustomersView);
+    renderCustomersSortButtons();
     bindBusyButton(document.getElementById("add-customer-btn"), async () => {
         const nameInput = document.getElementById("new-customer-name-input");
         const phoneInput = document.getElementById("new-customer-phone-input");
