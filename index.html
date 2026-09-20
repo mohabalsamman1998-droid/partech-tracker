@@ -423,6 +423,12 @@
   .quote-row-elapsed-critical{color:var(--rust-deep);font-weight:800;}
   .quote-row-ready{border-inline-start-color:var(--green-line);}
   .quote-row-ready .quote-row-label{color:var(--green);}
+  /* تنبيه التأخر بيغلب لون الجاهزية (أخضر/أصفر) — نفس مبدأ شارة الوقت، القاعدتان بعد قاعدة
+     quote-row-ready بالورقة عمدًا حتى يغلبوها لو الصف جاهز ومتأخر بنفس الوقت */
+  .quote-row-warn{border-inline-start-color:var(--rust-line);}
+  .quote-row-warn .quote-row-label{color:var(--rust);}
+  .quote-row-critical{border-inline-start-color:var(--rust-deep);}
+  .quote-row-critical .quote-row-label{color:var(--rust-deep);}
   .quote-priority-controls{display:flex;flex-direction:column;gap:2px;flex-shrink:0;}
   .quote-priority-btn{
     background:transparent;border:1px solid var(--border);color:var(--text-faint);
@@ -3828,19 +3834,20 @@ function canReorderQuotePriority() {
     return hasElevatedAccess() || currentUserRole === "scrapyard";
 }
 
-function quoteElapsedSeverityClass(createdAtIso) {
+function quoteElapsedSeverity(createdAtIso) {
     if (!createdAtIso) return "";
     const mins = (Date.now() - new Date(createdAtIso).getTime()) / 6e4;
-    if (mins >= 90) return " quote-row-elapsed-critical";
-    if (mins >= 40) return " quote-row-elapsed-warn";
+    if (mins >= 90) return "critical";
+    if (mins >= 40) return "warn";
     return "";
 }
 
 function quoteRowHtml(o, idx, total) {
     const ready = !!o.quoteReady;
     const elapsed = o.createdAt ? arabicDurationLabel(new Date(o.createdAt).getTime()) : "";
+    const severity = quoteElapsedSeverity(o.createdAt);
     const priorityControls = canReorderQuotePriority() ? '<div class="quote-priority-controls">' + '<button type="button" class="quote-priority-btn" data-priority-move="up"' + (idx === 0 ? " disabled" : "") + ' title="رفع الأولوية">▲</button>' + '<button type="button" class="quote-priority-btn" data-priority-move="down"' + (idx === total - 1 ? " disabled" : "") + ' title="خفض الأولوية">▼</button>' + "</div>" : "";
-    return '<div class="task-item-row quote-row' + (ready ? " quote-row-ready" : "") + '" data-quote-id="' + escapeHtml(o.id) + '">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(o.orderLabel || "—") + "</span>" + (elapsed ? '<span class="quote-row-elapsed' + quoteElapsedSeverityClass(o.createdAt) + '" data-created-at="' + escapeHtml(o.createdAt) + '">⏱ ' + escapeHtml(elapsed) + "</span>" : "") + priorityControls + "</div>";
+    return '<div class="task-item-row quote-row' + (ready ? " quote-row-ready" : "") + (severity ? " quote-row-" + severity : "") + '" data-quote-id="' + escapeHtml(o.id) + '">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(o.orderLabel || "—") + "</span>" + (elapsed ? '<span class="quote-row-elapsed' + (severity ? " quote-row-elapsed-" + severity : "") + '" data-created-at="' + escapeHtml(o.createdAt) + '">⏱ ' + escapeHtml(elapsed) + "</span>" : "") + priorityControls + "</div>";
 }
 
 function quotesListHtml() {
@@ -3909,7 +3916,13 @@ function refreshQuoteElapsedBadges() {
         const iso = el.getAttribute("data-created-at");
         if (!iso) return;
         el.textContent = "⏱ " + arabicDurationLabel(new Date(iso).getTime());
-        el.className = "quote-row-elapsed" + quoteElapsedSeverityClass(iso);
+        const severity = quoteElapsedSeverity(iso);
+        el.className = "quote-row-elapsed" + (severity ? " quote-row-elapsed-" + severity : "");
+        const row = el.closest(".quote-row");
+        if (row) {
+            row.classList.remove("quote-row-warn", "quote-row-critical");
+            if (severity) row.classList.add("quote-row-" + severity);
+        }
     });
 }
 
