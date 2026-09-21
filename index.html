@@ -311,6 +311,12 @@
   .stat-legend-dot{width:9px;height:9px;border-radius:50%;display:inline-block;}
   .stat-legend-dot-purchased{background:var(--green);}
   .stat-legend-dot-not-purchased{background:var(--rust);}
+  .stat-chart-expand-btn{
+    display:block;width:100%;margin-top:6px;padding:7px;text-align:center;
+    background:transparent;border:1px dashed var(--border);border-radius:var(--radius-sm);
+    color:var(--text-dim);font-size:12.5px;font-weight:700;cursor:pointer;font-family:'Tajawal',sans-serif;
+  }
+  .stat-chart-expand-btn:hover{color:var(--green);border-color:var(--green-line);}
   @media (max-width:640px){
     .stat-bar-label{flex-basis:28%;max-width:28%;}
   }
@@ -11654,6 +11660,8 @@ function topEntitiesFromIndex(entities, idx, n) {
     })).filter(e => e.value > 0).sort((a, b) => b.value - a.value).slice(0, n || 10);
 }
 
+const STAT_CHART_FETCH_ALL = 1e5;
+
 function supplierCarMakeDistribution(n) {
     const counts = {};
     (appData.suppliers || []).forEach(s => {
@@ -11685,28 +11693,49 @@ function supplierTypeDistribution() {
     } ];
 }
 
+let expandedStatCharts = {};
+
+const STAT_CHART_COLLAPSE_LIMIT = 10;
+
+function statChartVisibleItems(items, opts) {
+    const limit = opts && opts.collapseLimit || STAT_CHART_COLLAPSE_LIMIT;
+    const chartId = opts && opts.chartId;
+    if (!chartId || items.length <= limit || expandedStatCharts[chartId]) return items;
+    return opts && opts.collapseFromEnd ? items.slice(-limit) : items.slice(0, limit);
+}
+
+function statChartExpandButtonHtml(items, opts) {
+    const limit = opts && opts.collapseLimit || STAT_CHART_COLLAPSE_LIMIT;
+    const chartId = opts && opts.chartId;
+    if (!chartId || items.length <= limit) return "";
+    const expanded = !!expandedStatCharts[chartId];
+    return '<button type="button" class="stat-chart-expand-btn" data-expand-chart="' + escapeHtml(chartId) + '">' + (expanded ? "▲ عرض أقل" : "▼ عرض الكل (" + items.length + ")") + "</button>";
+}
+
 function statBarChartHtml(title, items, opts) {
     opts = opts || {};
-    const max = Math.max(1, ...items.map(i => i.value));
+    const visibleItems = statChartVisibleItems(items, opts);
+    const max = Math.max(1, ...visibleItems.map(i => i.value));
     const fmt = v => opts.money ? fmtMoney(v) : String(v);
-    const rowsHtml = items.length ? items.map(i => {
+    const rowsHtml = visibleItems.length ? visibleItems.map(i => {
         const pct = Math.max(2, round2(i.value / max * 100));
         const inner = '<span class="stat-bar-label" title="' + escapeHtml(i.label) + '">' + escapeHtml(i.label) + "</span>" + '<span class="stat-bar-track"><span class="stat-bar-fill" style="width:' + pct + '%"></span></span>' + '<span class="stat-bar-value">' + (i.display != null ? escapeHtml(i.display) : fmt(i.value)) + "</span>";
         return opts.onOpenAttr && i.id ? '<button type="button" class="stat-bar-row" data-' + opts.onOpenAttr + '="' + escapeHtml(i.id) + '">' + inner + "</button>" : '<div class="stat-bar-row">' + inner + "</div>";
     }).join("") : '<div class="expense-empty-hint">ما فيه بيانات كافية بعد</div>';
-    return '<div class="stat-chart-block">' + '<div class="stat-chart-title">' + escapeHtml(title) + "</div>" + (opts.subHtml || "") + rowsHtml + "</div>";
+    return '<div class="stat-chart-block">' + '<div class="stat-chart-title">' + escapeHtml(title) + "</div>" + (opts.subHtml || "") + rowsHtml + statChartExpandButtonHtml(items, opts) + "</div>";
 }
 
 function statSplitBarChartHtml(title, items, opts) {
     opts = opts || {};
+    const visibleItems = statChartVisibleItems(items, opts);
     const legend = '<div class="stat-legend">' + '<span class="stat-legend-item"><span class="stat-legend-dot stat-legend-dot-purchased"></span>اشترينا</span>' + '<span class="stat-legend-item"><span class="stat-legend-dot stat-legend-dot-not-purchased"></span>ما اشترينا</span>' + "</div>";
-    const rowsHtml = items.length ? items.map(i => {
+    const rowsHtml = visibleItems.length ? visibleItems.map(i => {
         const purchasedPct = i.total ? round2(i.purchased / i.total * 100) : 0;
         const notPurchasedPct = i.total ? round2(i.notPurchased / i.total * 100) : 0;
         const inner = '<span class="stat-bar-label" title="' + escapeHtml(i.label) + '">' + escapeHtml(i.label) + "</span>" + '<span class="stat-bar-track stat-bar-track-split">' + '<span class="stat-bar-fill-purchased" style="width:' + purchasedPct + '%"></span>' + '<span class="stat-bar-fill-not-purchased" style="width:' + notPurchasedPct + '%"></span>' + "</span>" + '<span class="stat-bar-value">' + i.purchased + "/" + i.total + " (" + i.rate + "%)</span>";
         return opts.onOpenAttr && i.id ? '<button type="button" class="stat-bar-row" data-' + opts.onOpenAttr + '="' + escapeHtml(i.id) + '">' + inner + "</button>" : '<div class="stat-bar-row">' + inner + "</div>";
     }).join("") : '<div class="expense-empty-hint">ما فيه بيانات كافية بعد</div>';
-    return '<div class="stat-chart-block">' + '<div class="stat-chart-title">' + escapeHtml(title) + "</div>" + legend + rowsHtml + "</div>";
+    return '<div class="stat-chart-block">' + '<div class="stat-chart-title">' + escapeHtml(title) + "</div>" + legend + rowsHtml + statChartExpandButtonHtml(items, opts) + "</div>";
 }
 
 let statisticsSupplierKind = "used";
@@ -11733,29 +11762,43 @@ function supplierPerformanceSectionHtml(opts) {
     const restricted = !!(opts && opts.restricted);
     const kindSuppliers = (appData.suppliers || []).filter(s => supplierKindBucket(s) === statisticsSupplierKind);
     const kindChips = '<div class="filter-chips" id="stats-supplier-kind-filter" style="margin-bottom:10px;">' + STATISTICS_SUPPLIER_KINDS.map(k => '<button type="button" class="chip' + (statisticsSupplierKind === k.id ? " chip-active" : "") + '" data-stats-supplier-kind="' + k.id + '">' + k.label + "</button>").join("") + "</div>";
-    const cooperationCount = topEntitiesFromIndex(kindSuppliers, supplierPricedCountIndex(), 10);
-    const conversionItems = topSupplierPurchaseConversion(kindSuppliers, 10);
+    const cooperationCount = topEntitiesFromIndex(kindSuppliers, supplierPricedCountIndex(), STAT_CHART_FETCH_ALL);
+    const conversionItems = topSupplierPurchaseConversion(kindSuppliers, STAT_CHART_FETCH_ALL);
     let purchaseBlock;
     if (restricted) {
-        const purchaseItems = topEntitiesFromIndex(kindSuppliers, supplierPurchaseCountIndex(), 10);
+        const purchaseItems = topEntitiesFromIndex(kindSuppliers, supplierPurchaseCountIndex(), STAT_CHART_FETCH_ALL);
         purchaseBlock = statBarChartHtml("📦 الأكثر شراءً فعليًا (عدد الفواتير)", purchaseItems, {
-            onOpenAttr: "open-supplier"
+            onOpenAttr: "open-supplier",
+            chartId: "supplier-purchase"
         });
     } else {
         const purchaseViewChips = '<div class="filter-chips" style="margin-bottom:8px;">' + STATISTICS_SUPPLIER_PURCHASE_VIEWS.map(v => '<button type="button" class="chip' + (statisticsSupplierPurchaseView === v.id ? " chip-active" : "") + '" data-stats-supplier-purchase-view="' + v.id + '">' + v.label + "</button>").join("") + "</div>";
         const purchaseMoney = statisticsSupplierPurchaseView === "money";
-        const purchaseItems = topEntitiesFromIndex(kindSuppliers, purchaseMoney ? supplierPurchaseTotalIndex() : supplierPurchaseCountIndex(), 10);
+        const purchaseItems = topEntitiesFromIndex(kindSuppliers, purchaseMoney ? supplierPurchaseTotalIndex() : supplierPurchaseCountIndex(), STAT_CHART_FETCH_ALL);
         purchaseBlock = statBarChartHtml("📦 الأكثر شراءً فعليًا", purchaseItems, {
             money: purchaseMoney,
             onOpenAttr: "open-supplier",
-            subHtml: purchaseViewChips
+            subHtml: purchaseViewChips,
+            chartId: "supplier-purchase"
         });
     }
     return '<div class="tasks-title" style="margin:18px 0 4px;">🏭 بيان الموردين</div>' + kindChips + purchaseBlock + statBarChartHtml("🤝 الأكثر تعاونًا بالتسعير (عدد طلبات التسعير)", cooperationCount, {
-        onOpenAttr: "open-supplier"
+        onOpenAttr: "open-supplier",
+        chartId: "supplier-cooperation"
     }) + statSplitBarChartHtml("🎯 نسبة الشراء من التسعير لكل مورد", conversionItems, {
-        onOpenAttr: "open-supplier"
+        onOpenAttr: "open-supplier",
+        chartId: "supplier-conversion"
     }) + (restricted ? "" : statBarChartHtml("🚗 توزيع الموردين حسب السيارات", supplierCarMakeDistribution(12), {}) + statBarChartHtml("📦 توزيع الموردين حسب النوع", supplierTypeDistribution(), {}));
+}
+
+function bindStatChartExpandEvents(container, rerender) {
+    container.querySelectorAll("[data-expand-chart]").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const id = btn.getAttribute("data-expand-chart");
+            expandedStatCharts[id] = !expandedStatCharts[id];
+            rerender();
+        });
+    });
 }
 
 function bindSupplierPerformanceSectionEvents(container, rerender) {
@@ -11774,6 +11817,7 @@ function bindSupplierPerformanceSectionEvents(container, rerender) {
             rerender();
         });
     });
+    bindStatChartExpandEvents(container, rerender);
 }
 
 let salesKpiPeriod = "all";
@@ -12005,10 +12049,10 @@ function salesPerformanceSectionHtml() {
     const timing = stepTimingAverages(salesKpiPeriod);
     const returning = returningCustomerRateLast30();
     const newCustomers = newCustomersLast60();
-    const topConversion = topCustomerQuoteConversion(10);
-    const topOrderCounts = topEntitiesFromIndex(appData.customers, customerOrderCountIndex(), 10);
-    const topCustomerValue = topEntitiesFromIndex(appData.customers, customerPurchaseTotalIndex(), 10);
-    const growth = monthlySalesGrowth(6);
+    const topConversion = topCustomerQuoteConversion(STAT_CHART_FETCH_ALL);
+    const topOrderCounts = topEntitiesFromIndex(appData.customers, customerOrderCountIndex(), STAT_CHART_FETCH_ALL);
+    const topCustomerValue = topEntitiesFromIndex(appData.customers, customerPurchaseTotalIndex(), STAT_CHART_FETCH_ALL);
+    const growth = monthlySalesGrowth(12);
     const periodChips = '<div class="filter-chips" id="sales-kpi-period-filter" style="margin-bottom:10px;">' + SALES_KPI_PERIODS.map(p => '<button type="button" class="chip' + (salesKpiPeriod === p.id ? " chip-active" : "") + '" data-sales-kpi-period="' + p.id + '">' + p.label + "</button>").join("") + "</div>";
     const successBlock = '<div class="stat-chart-block">' + '<div class="stat-chart-title">✅ نجاح الطلبات</div>' + periodChips + '<div class="treasury-summary">' + '<div class="treasury-summary-row"><span>طلبات ناجحة (مؤكدة)</span><span class="num text-green">' + success.successful + " من " + success.total + "</span></div>" + '<div class="treasury-summary-row net"><span>نسبة النجاح</span><span class="num">' + success.rate + "%</span></div>" + "</div>" + "</div>";
     const timingRows = timing ? '<div class="treasury-summary-row"><span>الطلب ← التسعير</span><span class="num">' + (timing.toQuoteCount ? arabicDurationLabelFromMinutes(timing.toQuote) : "—") + "</span></div>" + '<div class="treasury-summary-row"><span>التسعير ← التوريد</span><span class="num">' + (timing.toSupplyCount ? arabicDurationLabelFromMinutes(timing.toSupply) : "—") + "</span></div>" + '<div class="treasury-summary-row net"><span>الإجمالي (الطلب ← الإغلاق/التوريد)</span><span class="num">' + (timing.totalCount ? arabicDurationLabelFromMinutes(timing.total) : "—") + "</span></div>" : '<div class="expense-empty-hint">جارِ تحميل بيانات الاستجابة...</div>';
@@ -12021,31 +12065,48 @@ function salesPerformanceSectionHtml() {
         value: arr(g),
         display: fmtMoney(arr(g))
     }));
-    const growthBlock = (growth.length ? statBarChartHtml("📈 نمو المبيعات الشهرية", growthChartItems(g => g.sales), {}) + statBarChartHtml("💵 نمو الأرباح الشهرية", growthChartItems(g => g.profit), {}) : "") + '<div class="stat-chart-block">' + '<div class="stat-chart-title">📈 النمو الشهري (المبيعات والأرباح) — التفاصيل</div>' + '<div class="treasury-summary">' + (growthRows || '<div class="expense-empty-hint">ما فيه بيانات كافية بعد</div>') + "</div>" + "</div>";
+    const growthBlock = (growth.length ? statBarChartHtml("📈 نمو المبيعات الشهرية", growthChartItems(g => g.sales), {
+        chartId: "sales-growth-money",
+        collapseFromEnd: true
+    }) + statBarChartHtml("💵 نمو الأرباح الشهرية", growthChartItems(g => g.profit), {
+        chartId: "profit-growth-money",
+        collapseFromEnd: true
+    }) : "") + '<div class="stat-chart-block">' + '<div class="stat-chart-title">📈 النمو الشهري (المبيعات والأرباح) — التفاصيل</div>' + '<div class="treasury-summary">' + (growthRows || '<div class="expense-empty-hint">ما فيه بيانات كافية بعد</div>') + "</div>" + "</div>";
     return '<div class="tasks-title" style="margin:18px 0 4px;">📈 مؤشرات أداء المبيعات</div>' + successBlock + timingBlock + loyaltyBlock + statSplitBarChartHtml("🎯 نسبة الشراء من التسعير لكل عميل", topConversion, {
-        onOpenAttr: "open-customer"
+        onOpenAttr: "open-customer",
+        chartId: "customer-conversion"
     }) + statBarChartHtml("🧾 أكثر العملاء طلبًا (عدد الطلبات)", topOrderCounts, {
-        onOpenAttr: "open-customer"
+        onOpenAttr: "open-customer",
+        chartId: "customer-order-count"
     }) + statBarChartHtml("💰 أكثر العملاء شراءً (إجمالي قيمة الطلبيات)", topCustomerValue, {
         money: true,
-        onOpenAttr: "open-customer"
+        onOpenAttr: "open-customer",
+        chartId: "customer-value"
     }) + growthBlock;
 }
 
 function salesRestrictedPerformanceSectionHtml() {
-    const topConversion = topCustomerQuoteConversion(10);
-    const topSuppliedCounts = topEntitiesFromIndex(appData.customers, customerSuppliedOrderCountIndex(), 10);
-    const growth = monthlySalesGrowth(6);
+    const topConversion = topCustomerQuoteConversion(STAT_CHART_FETCH_ALL);
+    const topSuppliedCounts = topEntitiesFromIndex(appData.customers, customerSuppliedOrderCountIndex(), STAT_CHART_FETCH_ALL);
+    const growth = monthlySalesGrowth(12);
     const growthPctItems = field => growth.map(g => ({
         label: arabicMonthLabel(g.key),
         value: g[field] != null ? Math.abs(g[field]) : 0,
         display: fmtPercentSigned(g[field])
     }));
     return '<div class="tasks-title" style="margin:18px 0 4px;">📈 مؤشرات أداء المبيعات</div>' + statSplitBarChartHtml("🎯 نسبة الشراء من التسعير لكل عميل", topConversion, {
-        onOpenAttr: "open-customer"
+        onOpenAttr: "open-customer",
+        chartId: "customer-conversion"
     }) + statBarChartHtml("💰 أكثر العملاء شراءً (عدد الطلبيات الموردة)", topSuppliedCounts, {
-        onOpenAttr: "open-customer"
-    }) + statBarChartHtml("📈 نمو المبيعات الشهرية", growthPctItems("salesGrowth"), {}) + statBarChartHtml("💵 نمو الأرباح الشهرية", growthPctItems("profitGrowth"), {});
+        onOpenAttr: "open-customer",
+        chartId: "customer-supplied-count"
+    }) + statBarChartHtml("📈 نمو المبيعات الشهرية", growthPctItems("salesGrowth"), {
+        chartId: "sales-growth-pct",
+        collapseFromEnd: true
+    }) + statBarChartHtml("💵 نمو الأرباح الشهرية", growthPctItems("profitGrowth"), {
+        chartId: "profit-growth-pct",
+        collapseFromEnd: true
+    });
 }
 
 function statisticsViewHtml() {
