@@ -12080,6 +12080,108 @@ function openScrapyardSuppliersStatsView() {
     renderScrapyardSuppliersStatsView();
 }
 
+let partPriceLogEntries = null;
+
+let partPriceLogDraftSupplierId = "";
+
+async function loadPartPriceLog() {
+    const {data: data, error: error} = await sb.from("part_price_log").select("*").order("created_at", {
+        ascending: false
+    });
+    if (error) {
+        console.error("loadPartPriceLog:", error);
+        partPriceLogEntries = [];
+        return;
+    }
+    partPriceLogEntries = data || [];
+}
+
+function partPriceLogRowHtml(e) {
+    const supplier = (appData.suppliers || []).find(s => s.id === e.supplier_id);
+    return '<div class="task-item-row">' + '<div class="supplier-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(e.part_description) + "</span>" + '<span class="num">' + fmtMoney(e.price) + "</span>" + "</div>" + '<div class="purchase-history-row-sub">' + "<span>" + escapeHtml(e.car_title || "—") + "</span>" + "<span>" + escapeHtml(supplier ? supplier.name || supplier.phone || "مورد" : "—") + "</span>" + "<span>" + escapeHtml(displayNameForEmail(e.created_by)) + " — " + escapeHtml(arabicRelativeTime(new Date(e.created_at).getTime())) + "</span>" + "</div>" + "</div>";
+}
+
+function partPriceLogListHtml() {
+    if (partPriceLogEntries === null) return '<div class="expense-empty-hint">جارِ التحميل...</div>';
+    if (!partPriceLogEntries.length) return '<div class="expense-empty-hint">ما فيه بيانات مدخلة بعد</div>';
+    return '<div class="task-items-list">' + partPriceLogEntries.map(partPriceLogRowHtml).join("") + "</div>";
+}
+
+function partPriceLogViewHtml() {
+    const supplierOptions = (appData.suppliers || []).map(s => ({
+        id: s.id,
+        label: s.name || s.phone || "مورد",
+        sublabel: s.phone
+    }));
+    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-from-part-price-log">→ رجوع للرئيسية</button>' + '<div class="tasks-title">➕ إدخال بيانات</div>' + "</div>" + '<div class="treasury-block">' + '<label class="field"><span class="field-label">نوع السيارة</span><input type="text" id="ppl-car-title-input" class="task-add-input" placeholder="مثلاً: كامري 2020"></label>' + '<label class="field"><span class="field-label">القطعة</span><input type="text" id="ppl-part-input" class="task-add-input" placeholder="وصف القطعة"></label>' + '<label class="field"><span class="field-label">سعر القطعة</span><input type="number" id="ppl-price-input" class="task-add-input" placeholder="0"></label>' + '<label class="field"><span class="field-label">المورد</span>' + searchableSelectHtml("ppl-supplier-select", supplierOptions, partPriceLogDraftSupplierId, "— اختر المورد —") + "</label>" + '<button type="button" class="btn btn-primary" id="ppl-save-btn" style="margin-top:10px;">💾 حفظ</button>' + "</div>" + '<div class="tasks-title" style="margin:18px 0 4px;">آخر الإدخالات</div>' + '<div class="treasury-block">' + partPriceLogListHtml() + "</div>";
+}
+
+function renderPartPriceLogView() {
+    const root = document.getElementById("scrapyard-root");
+    root.innerHTML = partPriceLogViewHtml();
+    bindPartPriceLogEvents();
+}
+
+function bindPartPriceLogEvents() {
+    const backBtn = document.getElementById("btn-back-from-part-price-log");
+    if (backBtn) backBtn.addEventListener("click", goToScrapyardHome);
+    const supplierSelectEl = document.querySelector(".ppl-supplier-select");
+    const supplierWrap = supplierSelectEl ? supplierSelectEl.closest(".searchable-select") : null;
+    if (supplierWrap) {
+        bindSearchableSelect(supplierWrap, () => (appData.suppliers || []).map(s => ({
+            id: s.id,
+            label: s.name || s.phone || "مورد",
+            sublabel: s.phone
+        })), id => {
+            partPriceLogDraftSupplierId = id;
+        });
+    }
+    bindBusyButton(document.getElementById("ppl-save-btn"), async () => {
+        const carTitleInput = document.getElementById("ppl-car-title-input");
+        const partInput = document.getElementById("ppl-part-input");
+        const priceInput = document.getElementById("ppl-price-input");
+        const carTitle = carTitleInput.value.trim();
+        const partDesc = partInput.value.trim();
+        const price = Number(priceInput.value) || 0;
+        if (!carTitle || !partDesc) {
+            showToast("اكتب نوع السيارة والقطعة على الأقل", "error");
+            return;
+        }
+        if (!partPriceLogDraftSupplierId) {
+            showToast("اختر المورد", "error");
+            return;
+        }
+        const entry = {
+            id: uid("ppl"),
+            car_title: carTitle,
+            part_description: partDesc,
+            price: price,
+            supplier_id: partPriceLogDraftSupplierId,
+            created_by: presenceEmail
+        };
+        const {error: error} = await sb.from("part_price_log").insert(entry);
+        if (error) {
+            showToast("تعذر الحفظ: " + friendlyErrorText(error), "error");
+            return;
+        }
+        partPriceLogEntries = [ Object.assign({}, entry, {
+            created_at: (new Date).toISOString()
+        }) ].concat(partPriceLogEntries || []);
+        partPriceLogDraftSupplierId = "";
+        renderPartPriceLogView();
+        showToast("تم الحفظ", "ok");
+    });
+}
+
+async function openPartPriceLogView() {
+    scrapyardCurrentScreen = null;
+    if (partPriceLogEntries === null) {
+        document.getElementById("scrapyard-root").innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
+        await loadPartPriceLog();
+    }
+    renderPartPriceLogView();
+}
+
 async function openArchiveView() {
     hideAllSecondaryViews();
     document.getElementById("archive-view").style.display = "block";
@@ -12801,7 +12903,7 @@ function renderScrapyardHomeView() {
     const pendingTasks = (scrapyardSharedState.tasks || []).filter(t => !t.done).length;
     const pendingQuotes = quotesMatchingList().filter(o => !o.quoteReady).length;
     const settlementUnseen = scrapyardCustodyUnseenCount() + scrapyardPartsUnseenCount();
-    root.innerHTML = '<div class="app-top-utility-row">' + '<div class="app-top-logo-row"><span class="app-welcome-greeting">اهلا ' + escapeHtml(displayNameForEmail(presenceEmail)) + '</span><img class="app-corner-logo" src="' + PARTECH_LOGO_DATA_URI + '" id="scrapyard-home-logo-img" alt="PARTECH" title="الصفحة الرئيسية"></div>' + '<div class="corner-mini-bar">' + scrapyardThemeToggleHtml() + '<button id="btn-activity-log-scrapyard" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge-scrapyard" class="tasks-badge"></span></button></div>' + "</div>" + '<div class="app-top-divider"></div>' + announcementBannerHtml() + '<div class="app-top-divider"></div>' + '<header class="topbar" style="justify-content:space-between;"><div class="brand">قسم المشتريات</div>' + '<div style="display:flex;gap:8px;">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-suppliers">🏭 الموردين</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-statistics">📊 الإحصائيات</button>' + "</div></header>" + '<section class="kpi-row scrapyard-kpi-row">' + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للتشليح</div><div class="kpi-value num">' + fmtMoney(usedTotal) + "</div></div>" + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للموردين</div><div class="kpi-value num">' + fmtMoney(newTotal) + "</div></div>" + '<div class="kpi-card' + (pendingTasks > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">مهام معلّقة</div><div class="kpi-value num">' + pendingTasks + "</div></div>" + '<div class="kpi-card' + (pendingQuotes > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">طلبات تسعير معلّقة</div><div class="kpi-value num">' + pendingQuotes + "</div></div>" + "</section>" + '<div class="new-order-btn-row top-toggle-row">' + '<button type="button" class="btn btn-primary btn-with-badge" id="btn-toggle-scrapyard-settlement" aria-expanded="' + (scrapyardHomeOpenSection === "settlement" ? "true" : "false") + '">السداد<span class="tasks-badge" style="' + (settlementUnseen > 0 ? "display:flex;" : "display:none;") + '">' + (settlementUnseen > 0 ? settlementUnseen : "") + "</span></button>" + '<button type="button" class="btn btn-amber btn-with-badge" id="btn-toggle-scrapyard-quotes" aria-expanded="' + (scrapyardHomeOpenSection === "quotes" ? "true" : "false") + '">طلبات التسعير<span class="tasks-badge" style="' + (pendingQuotes > 0 ? "display:flex;" : "display:none;") + '">' + (pendingQuotes > 0 ? pendingQuotes : "") + "</span></button>" + '<button type="button" class="btn btn-ghost" id="btn-toggle-scrapyard-approved" aria-expanded="' + (scrapyardHomeOpenSection === "approved" ? "true" : "false") + '">✅ التسعيرات المعتمدة</button>' + '<button type="button" class="btn btn-ghost btn-with-badge" id="btn-toggle-scrapyard-tasks" aria-expanded="' + (scrapyardHomeOpenSection === "tasks" ? "true" : "false") + '">المهام<span class="tasks-badge" style="' + (pendingTasks > 0 ? "display:flex;" : "display:none;") + '">' + (pendingTasks > 0 ? pendingTasks : "") + "</span></button>" + "</div>" + '<div id="scrapyard-home-settlement-section" style="' + (scrapyardHomeOpenSection === "settlement" ? "" : "display:none;") + '">' + '<div class="new-order-btn-row">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-settlement">' + SETTLEMENT_KINDS.used.homeLabel + " — " + fmtMoney(usedTotal) + "</button>" + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-new-parts-settlement">' + SETTLEMENT_KINDS.new.homeLabel + " — " + fmtMoney(newTotal) + "</button>" + "</div>" + "</div>" + '<div id="scrapyard-home-quotes-section" style="' + (scrapyardHomeOpenSection === "quotes" ? "" : "display:none;") + '">' + '<div class="task-items-list" id="scrapyard-quotes-items-list">' + quotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-approved-section" style="' + (scrapyardHomeOpenSection === "approved" ? "" : "display:none;") + '">' + '<input type="text" id="approved-quotes-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث برقم الطلبية أو وصف القطعة..." value="' + escapeHtml(approvedQuotesSearchQuery) + '">' + '<div class="task-items-list" id="scrapyard-approved-quotes-items-list">' + approvedQuotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-tasks-section" style="' + (scrapyardHomeOpenSection === "tasks" ? "" : "display:none;") + '">' + '<div class="task-items-list">' + purchasesTasksListHtml() + "</div>" + "</div>";
+    root.innerHTML = '<div class="app-top-utility-row">' + '<div class="app-top-logo-row"><span class="app-welcome-greeting">اهلا ' + escapeHtml(displayNameForEmail(presenceEmail)) + '</span><img class="app-corner-logo" src="' + PARTECH_LOGO_DATA_URI + '" id="scrapyard-home-logo-img" alt="PARTECH" title="الصفحة الرئيسية"></div>' + '<div class="corner-mini-bar">' + scrapyardThemeToggleHtml() + '<button id="btn-activity-log-scrapyard" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge-scrapyard" class="tasks-badge"></span></button></div>' + "</div>" + '<div class="app-top-divider"></div>' + announcementBannerHtml() + '<div class="app-top-divider"></div>' + '<header class="topbar" style="justify-content:space-between;"><div class="brand">قسم المشتريات</div>' + '<div style="display:flex;gap:8px;">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-suppliers">🏭 الموردين</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-statistics">📊 الإحصائيات</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-part-price-log">➕ إدخال بيانات</button>' + "</div></header>" + '<section class="kpi-row scrapyard-kpi-row">' + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للتشليح</div><div class="kpi-value num">' + fmtMoney(usedTotal) + "</div></div>" + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للموردين</div><div class="kpi-value num">' + fmtMoney(newTotal) + "</div></div>" + '<div class="kpi-card' + (pendingTasks > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">مهام معلّقة</div><div class="kpi-value num">' + pendingTasks + "</div></div>" + '<div class="kpi-card' + (pendingQuotes > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">طلبات تسعير معلّقة</div><div class="kpi-value num">' + pendingQuotes + "</div></div>" + "</section>" + '<div class="new-order-btn-row top-toggle-row">' + '<button type="button" class="btn btn-primary btn-with-badge" id="btn-toggle-scrapyard-settlement" aria-expanded="' + (scrapyardHomeOpenSection === "settlement" ? "true" : "false") + '">السداد<span class="tasks-badge" style="' + (settlementUnseen > 0 ? "display:flex;" : "display:none;") + '">' + (settlementUnseen > 0 ? settlementUnseen : "") + "</span></button>" + '<button type="button" class="btn btn-amber btn-with-badge" id="btn-toggle-scrapyard-quotes" aria-expanded="' + (scrapyardHomeOpenSection === "quotes" ? "true" : "false") + '">طلبات التسعير<span class="tasks-badge" style="' + (pendingQuotes > 0 ? "display:flex;" : "display:none;") + '">' + (pendingQuotes > 0 ? pendingQuotes : "") + "</span></button>" + '<button type="button" class="btn btn-ghost" id="btn-toggle-scrapyard-approved" aria-expanded="' + (scrapyardHomeOpenSection === "approved" ? "true" : "false") + '">✅ التسعيرات المعتمدة</button>' + '<button type="button" class="btn btn-ghost btn-with-badge" id="btn-toggle-scrapyard-tasks" aria-expanded="' + (scrapyardHomeOpenSection === "tasks" ? "true" : "false") + '">المهام<span class="tasks-badge" style="' + (pendingTasks > 0 ? "display:flex;" : "display:none;") + '">' + (pendingTasks > 0 ? pendingTasks : "") + "</span></button>" + "</div>" + '<div id="scrapyard-home-settlement-section" style="' + (scrapyardHomeOpenSection === "settlement" ? "" : "display:none;") + '">' + '<div class="new-order-btn-row">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-settlement">' + SETTLEMENT_KINDS.used.homeLabel + " — " + fmtMoney(usedTotal) + "</button>" + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-new-parts-settlement">' + SETTLEMENT_KINDS.new.homeLabel + " — " + fmtMoney(newTotal) + "</button>" + "</div>" + "</div>" + '<div id="scrapyard-home-quotes-section" style="' + (scrapyardHomeOpenSection === "quotes" ? "" : "display:none;") + '">' + '<div class="task-items-list" id="scrapyard-quotes-items-list">' + quotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-approved-section" style="' + (scrapyardHomeOpenSection === "approved" ? "" : "display:none;") + '">' + '<input type="text" id="approved-quotes-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث برقم الطلبية أو وصف القطعة..." value="' + escapeHtml(approvedQuotesSearchQuery) + '">' + '<div class="task-items-list" id="scrapyard-approved-quotes-items-list">' + approvedQuotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-tasks-section" style="' + (scrapyardHomeOpenSection === "tasks" ? "" : "display:none;") + '">' + '<div class="task-items-list">' + purchasesTasksListHtml() + "</div>" + "</div>";
     const logo = document.getElementById("scrapyard-home-logo-img");
     if (logo) logo.addEventListener("click", goToScrapyardHome);
     bindScrapyardThemeToggle();
@@ -12811,6 +12913,8 @@ function renderScrapyardHomeView() {
     if (scrapyardSuppliersBtn) scrapyardSuppliersBtn.addEventListener("click", openSuppliersView);
     const scrapyardStatsBtn = document.getElementById("btn-open-scrapyard-statistics");
     if (scrapyardStatsBtn) scrapyardStatsBtn.addEventListener("click", openScrapyardSuppliersStatsView);
+    const partPriceLogBtn = document.getElementById("btn-open-part-price-log");
+    if (partPriceLogBtn) partPriceLogBtn.addEventListener("click", openPartPriceLogView);
     const sections = [ "settlement", "quotes", "approved", "tasks" ];
     sections.forEach(key => {
         document.getElementById("btn-toggle-scrapyard-" + key).addEventListener("click", () => {
