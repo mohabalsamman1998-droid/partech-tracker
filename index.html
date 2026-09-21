@@ -11851,6 +11851,15 @@ function customerOrderCountIndex() {
     return idx;
 }
 
+function customerSuppliedOrderCountIndex() {
+    const idx = {};
+    (appData.orders || []).forEach(o => {
+        if (!o.customerId || !o.supplied) return;
+        idx[o.customerId] = (idx[o.customerId] || 0) + 1;
+    });
+    return idx;
+}
+
 function returningCustomerRateLast30() {
     const cutoff = Date.now() - 30 * 24 * 3600 * 1e3;
     const counts = {};
@@ -12023,12 +12032,28 @@ function salesPerformanceSectionHtml() {
     }) + growthBlock;
 }
 
+function salesRestrictedPerformanceSectionHtml() {
+    const topConversion = topCustomerQuoteConversion(10);
+    const topSuppliedCounts = topEntitiesFromIndex(appData.customers, customerSuppliedOrderCountIndex(), 10);
+    const growth = monthlySalesGrowth(6);
+    const growthPctItems = field => growth.filter(g => g[field] != null).map(g => ({
+        label: arabicMonthLabel(g.key),
+        value: Math.abs(g[field]),
+        display: fmtPercentSigned(g[field])
+    }));
+    return '<div class="tasks-title" style="margin:18px 0 4px;">📈 مؤشرات أداء المبيعات</div>' + statSplitBarChartHtml("🎯 نسبة الشراء من التسعير لكل عميل", topConversion, {
+        onOpenAttr: "open-customer"
+    }) + statBarChartHtml("💰 أكثر العملاء شراءً (عدد الطلبيات الموردة)", topSuppliedCounts, {
+        onOpenAttr: "open-customer"
+    }) + statBarChartHtml("📈 نمو المبيعات الشهرية", growthPctItems("salesGrowth"), {}) + statBarChartHtml("💵 نمو الأرباح الشهرية", growthPctItems("profitGrowth"), {});
+}
+
 function statisticsViewHtml() {
-    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-statistics">→ رجوع للطلبيات</button>' + '<div class="tasks-title">📊 الإحصائيات</div>' + "</div>" + '<div class="treasury-block">' + supplierPerformanceSectionHtml() + salesPerformanceSectionHtml() + "</div>";
+    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-statistics">→ رجوع للطلبيات</button>' + '<div class="tasks-title">📊 الإحصائيات</div>' + "</div>" + '<div class="treasury-block">' + (currentUserIsElevated ? supplierPerformanceSectionHtml() + salesPerformanceSectionHtml() : salesRestrictedPerformanceSectionHtml()) + "</div>";
 }
 
 async function openStatisticsView() {
-    if (!hasElevatedAccess()) {
+    if (currentUserRole !== "full") {
         showToast("غير متاح", "error");
         return;
     }
@@ -12459,8 +12484,6 @@ async function showAppIfAllowed(session) {
         if (attendanceChartBtnVis) attendanceChartBtnVis.style.display = currentUserIsElevated ? "" : "none";
         const suppliersBtn = document.getElementById("btn-open-suppliers");
         if (suppliersBtn) suppliersBtn.style.display = currentUserIsElevated ? "" : "none";
-        const statisticsBtn = document.getElementById("btn-open-statistics");
-        if (statisticsBtn) statisticsBtn.style.display = currentUserIsElevated ? "" : "none";
         const settlementViewerBtn = document.getElementById("btn-open-settlement-viewer");
         if (settlementViewerBtn) settlementViewerBtn.style.display = !currentUserIsElevated && SETTLEMENT_VIEWER_EMAILS.includes(email) ? "" : "none";
         if (!appInitDone) {
