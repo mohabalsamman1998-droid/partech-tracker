@@ -3834,6 +3834,24 @@ function canReorderQuotePriority() {
     return hasElevatedAccess() || currentUserRole === "scrapyard" || QUOTE_PRIORITY_EXTRA_EMAILS.includes(presenceEmail);
 }
 
+function businessMinutesBetween(startMs, endMs, startHour, endHour) {
+    if (!(startMs < endMs)) return 0;
+    let totalMs = 0;
+    const dayCursor = new Date(startMs);
+    dayCursor.setHours(0, 0, 0, 0);
+    while (dayCursor.getTime() <= endMs) {
+        const winStart = new Date(dayCursor);
+        winStart.setHours(startHour, 0, 0, 0);
+        const winEnd = new Date(dayCursor);
+        winEnd.setHours(endHour, 0, 0, 0);
+        const from = Math.max(winStart.getTime(), startMs);
+        const to = Math.min(winEnd.getTime(), endMs);
+        if (to > from) totalMs += to - from;
+        dayCursor.setDate(dayCursor.getDate() + 1);
+    }
+    return Math.floor(totalMs / 6e4);
+}
+
 const QUOTE_BUSINESS_START_HOUR = 8;
 
 const QUOTE_BUSINESS_END_HOUR = 20;
@@ -3842,21 +3860,7 @@ function quoteBusinessMinutesElapsed(createdAtIso, nowMs) {
     if (!createdAtIso) return 0;
     const startMs = new Date(createdAtIso).getTime();
     const now = nowMs != null ? nowMs : Date.now();
-    if (!(startMs < now)) return 0;
-    let totalMs = 0;
-    const dayCursor = new Date(startMs);
-    dayCursor.setHours(0, 0, 0, 0);
-    while (dayCursor.getTime() <= now) {
-        const winStart = new Date(dayCursor);
-        winStart.setHours(QUOTE_BUSINESS_START_HOUR, 0, 0, 0);
-        const winEnd = new Date(dayCursor);
-        winEnd.setHours(QUOTE_BUSINESS_END_HOUR, 0, 0, 0);
-        const from = Math.max(winStart.getTime(), startMs);
-        const to = Math.min(winEnd.getTime(), now);
-        if (to > from) totalMs += to - from;
-        dayCursor.setDate(dayCursor.getDate() + 1);
-    }
-    return Math.floor(totalMs / 6e4);
+    return businessMinutesBetween(startMs, now, QUOTE_BUSINESS_START_HOUR, QUOTE_BUSINESS_END_HOUR);
 }
 
 function quoteElapsedLabel(createdAtIso, nowMs) {
@@ -10388,6 +10392,22 @@ function supplierPricedTotalIndex() {
     return idx;
 }
 
+function supplierPaidTotalIndex() {
+    const idx = {};
+    (appData.suppliers || []).forEach(s => {
+        const {past: past} = supplierPurchaseHistory(s.id);
+        idx[s.id] = round2(past.reduce((sum, r) => sum + r.amount, 0));
+    });
+    return idx;
+}
+
+function supplierKindBucket(s) {
+    const hn = s.handlesNew !== false, hu = s.handlesUsed !== false;
+    if (hn) return "new";
+    if (hu) return "used";
+    return "new";
+}
+
 function supplierPurchaseCountIndex() {
     const idx = {};
     (appData.suppliers || []).forEach(s => {
@@ -11602,7 +11622,47 @@ function statBarChartHtml(title, items, opts) {
         const inner = '<span class="stat-bar-label" title="' + escapeHtml(i.label) + '">' + escapeHtml(i.label) + "</span>" + '<span class="stat-bar-track"><span class="stat-bar-fill" style="width:' + pct + '%"></span></span>' + '<span class="stat-bar-value">' + (i.display != null ? escapeHtml(i.display) : fmt(i.value)) + "</span>";
         return opts.onOpenAttr && i.id ? '<button type="button" class="stat-bar-row" data-' + opts.onOpenAttr + '="' + escapeHtml(i.id) + '">' + inner + "</button>" : '<div class="stat-bar-row">' + inner + "</div>";
     }).join("") : '<div class="expense-empty-hint">ما فيه بيانات كافية بعد</div>';
-    return '<div class="stat-chart-block">' + '<div class="stat-chart-title">' + escapeHtml(title) + "</div>" + rowsHtml + "</div>";
+    return '<div class="stat-chart-block">' + '<div class="stat-chart-title">' + escapeHtml(title) + "</div>" + (opts.subHtml || "") + rowsHtml + "</div>";
+}
+
+let statisticsSupplierKind = "used";
+
+const STATISTICS_SUPPLIER_KINDS = [ {
+    id: "used",
+    label: "مستخدم/تشليح"
+}, {
+    id: "new",
+    label: "جديد"
+} ];
+
+let statisticsSupplierPurchaseView = "count";
+
+const STATISTICS_SUPPLIER_PURCHASE_VIEWS = [ {
+    id: "count",
+    label: "عدد الفواتير"
+}, {
+    id: "money",
+    label: "المبلغ"
+} ];
+
+function supplierPerformanceSectionHtml() {
+    const kindSuppliers = (appData.suppliers || []).filter(s => supplierKindBucket(s) === statisticsSupplierKind);
+    const kindChips = '<div class="filter-chips" id="stats-supplier-kind-filter" style="margin-bottom:10px;">' + STATISTICS_SUPPLIER_KINDS.map(k => '<button type="button" class="chip' + (statisticsSupplierKind === k.id ? " chip-active" : "") + '" data-stats-supplier-kind="' + k.id + '">' + k.label + "</button>").join("") + "</div>";
+    const cooperationCount = topEntitiesFromIndex(kindSuppliers, supplierPricedCountIndex(), 10);
+    const purchaseViewChips = '<div class="filter-chips" style="margin-bottom:8px;">' + STATISTICS_SUPPLIER_PURCHASE_VIEWS.map(v => '<button type="button" class="chip' + (statisticsSupplierPurchaseView === v.id ? " chip-active" : "") + '" data-stats-supplier-purchase-view="' + v.id + '">' + v.label + "</button>").join("") + "</div>";
+    const purchaseMoney = statisticsSupplierPurchaseView === "money";
+    const purchaseItems = topEntitiesFromIndex(kindSuppliers, purchaseMoney ? supplierPurchaseTotalIndex() : supplierPurchaseCountIndex(), 10);
+    const paidItems = topEntitiesFromIndex(kindSuppliers, supplierPaidTotalIndex(), 10);
+    return '<div class="tasks-title" style="margin:18px 0 4px;">🏭 بيان الموردين</div>' + kindChips + statBarChartHtml("🤝 الأكثر تعاونًا بالتسعير (عدد طلبات التسعير)", cooperationCount, {
+        onOpenAttr: "open-supplier"
+    }) + statBarChartHtml("📦 الأكثر شراءً فعليًا", purchaseItems, {
+        money: purchaseMoney,
+        onOpenAttr: "open-supplier",
+        subHtml: purchaseViewChips
+    }) + statBarChartHtml("💰 أكبر المبالغ المدفوعة فعليًا", paidItems, {
+        money: true,
+        onOpenAttr: "open-supplier"
+    }) + statBarChartHtml("🚗 توزيع الموردين حسب السيارات", supplierCarMakeDistribution(12), {}) + statBarChartHtml("📦 توزيع الموردين حسب النوع", supplierTypeDistribution(), {});
 }
 
 let salesKpiPeriod = "all";
@@ -11764,6 +11824,10 @@ function fmtPercentSigned(n) {
     return (n >= 0 ? "+" : "") + n + "%";
 }
 
+const SALES_KPI_BUSINESS_START_HOUR = 9;
+
+const SALES_KPI_BUSINESS_END_HOUR = 18;
+
 function stepTimingAverages(periodKey) {
     if (!quoteReadyFirstByOrderId) return null;
     const toQuote = [], toSupply = [], total = [];
@@ -11773,15 +11837,15 @@ function stepTimingAverages(periodKey) {
         const createdMs = new Date(o.createdAt).getTime();
         const suppliedMs = new Date(o.suppliedAt).getTime();
         if (isNaN(createdMs) || isNaN(suppliedMs) || suppliedMs <= createdMs) return;
-        total.push(suppliedMs - createdMs);
+        total.push(businessMinutesBetween(createdMs, suppliedMs, SALES_KPI_BUSINESS_START_HOUR, SALES_KPI_BUSINESS_END_HOUR));
         const quoteReadyIso = quoteReadyFirstByOrderId.get(o.id);
         if (quoteReadyIso) {
             const quoteMs = new Date(quoteReadyIso).getTime();
-            if (!isNaN(quoteMs) && quoteMs > createdMs) toQuote.push(quoteMs - createdMs);
-            if (!isNaN(quoteMs) && suppliedMs > quoteMs) toSupply.push(suppliedMs - quoteMs);
+            if (!isNaN(quoteMs) && quoteMs > createdMs) toQuote.push(businessMinutesBetween(createdMs, quoteMs, SALES_KPI_BUSINESS_START_HOUR, SALES_KPI_BUSINESS_END_HOUR));
+            if (!isNaN(quoteMs) && suppliedMs > quoteMs) toSupply.push(businessMinutesBetween(quoteMs, suppliedMs, SALES_KPI_BUSINESS_START_HOUR, SALES_KPI_BUSINESS_END_HOUR));
         }
     });
-    const avgMinutes = arr => arr.length ? Math.round(arr.reduce((s, v) => s + v, 0) / arr.length / 6e4) : null;
+    const avgMinutes = arr => arr.length ? Math.round(arr.reduce((s, v) => s + v, 0) / arr.length) : null;
     return {
         toQuote: avgMinutes(toQuote),
         toQuoteCount: toQuote.length,
@@ -11831,7 +11895,12 @@ function salesPerformanceSectionHtml() {
     const loyaltyBlock = '<div class="stat-chart-block">' + '<div class="stat-chart-title">🔁 ولاء العملاء</div>' + '<div class="treasury-summary">' + '<div class="treasury-summary-row"><span>عادوا وطلبوا أكثر من مرة (آخر 30 يوم)</span><span class="num">' + returning.returning + " من " + returning.total + " (" + returning.rate + "%)</span></div>" + '<div class="treasury-summary-row"><span>عملاء جدد (آخر 60 يوم)</span><span class="num text-green">' + newCustomers + "</span></div>" + "</div>" + "</div>";
     const growthGrowthSpan = v => '<span class="' + (v == null ? "" : v >= 0 ? "text-green" : "text-rust") + '">(' + fmtPercentSigned(v) + ")</span>";
     const growthRows = growth.map(g => "<div>" + '<div class="treasury-summary-row"><span>' + escapeHtml(arabicMonthLabel(g.key)) + '</span><span class="num">مبيعات ' + fmtMoney(g.sales) + " " + growthGrowthSpan(g.salesGrowth) + " · أرباح " + fmtMoney(g.profit) + " " + growthGrowthSpan(g.profitGrowth) + "</span></div>" + '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل: مبيعات <span class="num">' + fmtMoney(g.salesPaid) + "</span> " + growthGrowthSpan(g.salesPaidGrowth) + ' · أرباح <span class="num">' + fmtMoney(g.profitPaid) + "</span> " + growthGrowthSpan(g.profitPaidGrowth) + "</div>" + "</div>").join("");
-    const growthBlock = '<div class="stat-chart-block">' + '<div class="stat-chart-title">📈 النمو الشهري (المبيعات والأرباح)</div>' + '<div class="treasury-summary">' + (growthRows || '<div class="expense-empty-hint">ما فيه بيانات كافية بعد</div>') + "</div>" + "</div>";
+    const growthChartItems = arr => growth.map(g => ({
+        label: arabicMonthLabel(g.key),
+        value: arr(g),
+        display: fmtMoney(arr(g))
+    }));
+    const growthBlock = (growth.length ? statBarChartHtml("📈 نمو المبيعات الشهرية", growthChartItems(g => g.sales), {}) + statBarChartHtml("💵 نمو الأرباح الشهرية", growthChartItems(g => g.profit), {}) : "") + '<div class="stat-chart-block">' + '<div class="stat-chart-title">📈 النمو الشهري (المبيعات والأرباح) — التفاصيل</div>' + '<div class="treasury-summary">' + (growthRows || '<div class="expense-empty-hint">ما فيه بيانات كافية بعد</div>') + "</div>" + "</div>";
     return '<div class="tasks-title" style="margin:18px 0 4px;">📈 مؤشرات أداء المبيعات</div>' + successBlock + timingBlock + loyaltyBlock + statBarChartHtml("🎯 تحويل طلبات التسعير لكل عميل (ناجحة/إجمالي)", topConversion, {
         onOpenAttr: "open-customer"
     }) + statBarChartHtml("🧾 أكثر العملاء طلبًا (عدد الطلبات)", topOrderCounts, {
@@ -11843,21 +11912,7 @@ function salesPerformanceSectionHtml() {
 }
 
 function statisticsViewHtml() {
-    const topPurchasers = topEntitiesFromIndex(appData.suppliers, supplierPurchaseTotalIndex(), 10);
-    const topPurchasersByCount = topEntitiesFromIndex(appData.suppliers, supplierPurchaseCountIndex(), 10);
-    const topCooperators = topEntitiesFromIndex(appData.suppliers, supplierPricedTotalIndex(), 10);
-    const topCooperatorsByCount = topEntitiesFromIndex(appData.suppliers, supplierPricedCountIndex(), 10);
-    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-statistics">→ رجوع للطلبيات</button>' + '<div class="tasks-title">📊 الإحصائيات</div>' + "</div>" + '<div class="treasury-block">' + statBarChartHtml("⭐ أكثر الموردين اعتمادية (إجمالي المشتريات الفعلية)", topPurchasers, {
-        money: true,
-        onOpenAttr: "open-supplier"
-    }) + statBarChartHtml("⭐ أكثر الموردين اعتمادية (عدد الطلبيات)", topPurchasersByCount, {
-        onOpenAttr: "open-supplier"
-    }) + statBarChartHtml("🤝 أكثر الموردين تعاونًا (إجمالي التسعير معتمد+معلّق)", topCooperators, {
-        money: true,
-        onOpenAttr: "open-supplier"
-    }) + statBarChartHtml("🤝 أكثر الموردين تعاونًا (عدد عمليات التسعير)", topCooperatorsByCount, {
-        onOpenAttr: "open-supplier"
-    }) + statBarChartHtml("🚗 توزيع الموردين حسب السيارات", supplierCarMakeDistribution(12), {}) + statBarChartHtml("📦 توزيع الموردين حسب النوع", supplierTypeDistribution(), {}) + salesPerformanceSectionHtml() + "</div>";
+    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-statistics">→ رجوع للطلبيات</button>' + '<div class="tasks-title">📊 الإحصائيات</div>' + "</div>" + '<div class="treasury-block">' + supplierPerformanceSectionHtml() + salesPerformanceSectionHtml() + "</div>";
 }
 
 async function openStatisticsView() {
@@ -11895,6 +11950,18 @@ function bindStatisticsViewEvents() {
     document.querySelectorAll("#statistics-view [data-sales-kpi-period]").forEach(btn => {
         btn.addEventListener("click", () => {
             salesKpiPeriod = btn.getAttribute("data-sales-kpi-period");
+            renderStatisticsView();
+        });
+    });
+    document.querySelectorAll("#statistics-view [data-stats-supplier-kind]").forEach(btn => {
+        btn.addEventListener("click", () => {
+            statisticsSupplierKind = btn.getAttribute("data-stats-supplier-kind");
+            renderStatisticsView();
+        });
+    });
+    document.querySelectorAll("#statistics-view [data-stats-supplier-purchase-view]").forEach(btn => {
+        btn.addEventListener("click", () => {
+            statisticsSupplierPurchaseView = btn.getAttribute("data-stats-supplier-purchase-view");
             renderStatisticsView();
         });
     });
