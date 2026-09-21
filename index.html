@@ -299,6 +299,18 @@
      display:block إلزامي هون */
   .stat-bar-fill{display:block;height:100%;border-radius:999px;background:var(--green);min-width:3px;}
   .stat-bar-value{flex:0 0 auto;font-size:12.5px;color:var(--text);font-variant-numeric:tabular-nums;font-weight:700;min-width:56px;text-align:left;}
+  /* شريط بلونين (statSplitBarChartHtml، طلب مهاب 2026-09-21) — نسبتان ضمن نفس الصف (اشترينا/ما
+     اشترينا) بمجموع 100% دايمًا، فاحتاج legend فوقه (بعكس شريط statBarChartHtml العادي أحادي
+     اللون). display:flex على المسار حتى القطعتان يقعدوا جنب بعض، display:block لكل قطعة (نفس
+     ملاحظة .stat-bar-fill فوق بالضبط). */
+  .stat-bar-track-split{display:flex;}
+  .stat-bar-fill-purchased{display:block;height:100%;background:var(--green);}
+  .stat-bar-fill-not-purchased{display:block;height:100%;background:var(--rust);}
+  .stat-legend{display:flex;gap:14px;margin-bottom:8px;font-size:11.5px;color:var(--text-dim);}
+  .stat-legend-item{display:flex;align-items:center;gap:5px;}
+  .stat-legend-dot{width:9px;height:9px;border-radius:50%;display:inline-block;}
+  .stat-legend-dot-purchased{background:var(--green);}
+  .stat-legend-dot-not-purchased{background:var(--rust);}
   @media (max-width:640px){
     .stat-bar-label{flex-basis:28%;max-width:28%;}
   }
@@ -10433,6 +10445,39 @@ function supplierKindBucket(s) {
     return "new";
 }
 
+function supplierPurchaseConversionIndex() {
+    const idx = {};
+    (appData.suppliers || []).forEach(s => {
+        const {approved: approved, pending: pending} = supplierPricedHistory(s.id);
+        const total = approved.length + pending.length;
+        if (!total) return;
+        const {ongoing: ongoing, past: past} = supplierPurchaseHistory(s.id);
+        const purchased = ongoing.length + past.length;
+        idx[s.id] = {
+            total: total,
+            purchased: purchased,
+            notPurchased: Math.max(0, total - purchased)
+        };
+    });
+    return idx;
+}
+
+function topSupplierPurchaseConversion(entities, n) {
+    const idx = supplierPurchaseConversionIndex();
+    return (entities || []).map(s => {
+        const c = idx[s.id];
+        if (!c) return null;
+        return {
+            id: s.id,
+            label: s.name || s.phone || "بدون اسم",
+            total: c.total,
+            purchased: c.purchased,
+            notPurchased: c.notPurchased,
+            rate: c.total ? round2(c.purchased / c.total * 100) : 0
+        };
+    }).filter(Boolean).sort((a, b) => b.total - a.total).slice(0, n || 10);
+}
+
 function supplierPurchaseCountIndex() {
     const idx = {};
     (appData.suppliers || []).forEach(s => {
@@ -11652,6 +11697,17 @@ function statBarChartHtml(title, items, opts) {
     return '<div class="stat-chart-block">' + '<div class="stat-chart-title">' + escapeHtml(title) + "</div>" + (opts.subHtml || "") + rowsHtml + "</div>";
 }
 
+function statSplitBarChartHtml(title, items) {
+    const legend = '<div class="stat-legend">' + '<span class="stat-legend-item"><span class="stat-legend-dot stat-legend-dot-purchased"></span>اشترينا</span>' + '<span class="stat-legend-item"><span class="stat-legend-dot stat-legend-dot-not-purchased"></span>ما اشترينا</span>' + "</div>";
+    const rowsHtml = items.length ? items.map(i => {
+        const purchasedPct = i.total ? round2(i.purchased / i.total * 100) : 0;
+        const notPurchasedPct = i.total ? round2(i.notPurchased / i.total * 100) : 0;
+        const inner = '<span class="stat-bar-label" title="' + escapeHtml(i.label) + '">' + escapeHtml(i.label) + "</span>" + '<span class="stat-bar-track stat-bar-track-split">' + '<span class="stat-bar-fill-purchased" style="width:' + purchasedPct + '%"></span>' + '<span class="stat-bar-fill-not-purchased" style="width:' + notPurchasedPct + '%"></span>' + "</span>" + '<span class="stat-bar-value">' + i.purchased + "/" + i.total + " (" + i.rate + "%)</span>";
+        return i.id ? '<button type="button" class="stat-bar-row" data-open-supplier="' + escapeHtml(i.id) + '">' + inner + "</button>" : '<div class="stat-bar-row">' + inner + "</div>";
+    }).join("") : '<div class="expense-empty-hint">ما فيه بيانات كافية بعد</div>';
+    return '<div class="stat-chart-block">' + '<div class="stat-chart-title">' + escapeHtml(title) + "</div>" + legend + rowsHtml + "</div>";
+}
+
 let statisticsSupplierKind = "used";
 
 const STATISTICS_SUPPLIER_KINDS = [ {
@@ -11677,6 +11733,7 @@ function supplierPerformanceSectionHtml(opts) {
     const kindSuppliers = (appData.suppliers || []).filter(s => supplierKindBucket(s) === statisticsSupplierKind);
     const kindChips = '<div class="filter-chips" id="stats-supplier-kind-filter" style="margin-bottom:10px;">' + STATISTICS_SUPPLIER_KINDS.map(k => '<button type="button" class="chip' + (statisticsSupplierKind === k.id ? " chip-active" : "") + '" data-stats-supplier-kind="' + k.id + '">' + k.label + "</button>").join("") + "</div>";
     const cooperationCount = topEntitiesFromIndex(kindSuppliers, supplierPricedCountIndex(), 10);
+    const conversionItems = topSupplierPurchaseConversion(kindSuppliers, 10);
     let purchaseBlock;
     if (restricted) {
         const purchaseItems = topEntitiesFromIndex(kindSuppliers, supplierPurchaseCountIndex(), 10);
@@ -11695,7 +11752,7 @@ function supplierPerformanceSectionHtml(opts) {
     }
     return '<div class="tasks-title" style="margin:18px 0 4px;">🏭 بيان الموردين</div>' + kindChips + purchaseBlock + statBarChartHtml("🤝 الأكثر تعاونًا بالتسعير (عدد طلبات التسعير)", cooperationCount, {
         onOpenAttr: "open-supplier"
-    }) + (restricted ? "" : statBarChartHtml("🚗 توزيع الموردين حسب السيارات", supplierCarMakeDistribution(12), {}) + statBarChartHtml("📦 توزيع الموردين حسب النوع", supplierTypeDistribution(), {}));
+    }) + statSplitBarChartHtml("🎯 نسبة الشراء من التسعير لكل مورد", conversionItems) + (restricted ? "" : statBarChartHtml("🚗 توزيع الموردين حسب السيارات", supplierCarMakeDistribution(12), {}) + statBarChartHtml("📦 توزيع الموردين حسب النوع", supplierTypeDistribution(), {}));
 }
 
 function bindSupplierPerformanceSectionEvents(container, rerender) {
