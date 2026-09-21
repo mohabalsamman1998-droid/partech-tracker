@@ -10347,14 +10347,27 @@ async function replaceAllCustomers(customersArray) {
     await replaceAllRowsSafely("customers", rows);
 }
 
+function suppliersViewContainer() {
+    return currentUserRole === "scrapyard" ? document.getElementById("scrapyard-root") : document.getElementById("suppliers-view");
+}
+
 function openSuppliersView() {
-    hideAllSecondaryViews();
     newSupplierCarMakes = [];
+    if (currentUserRole === "scrapyard") {
+        scrapyardCurrentScreen = null;
+        renderSuppliersView();
+        return;
+    }
+    hideAllSecondaryViews();
     document.getElementById("suppliers-view").style.display = "block";
     renderSuppliersView();
 }
 
 function closeSuppliersView() {
+    if (currentUserRole === "scrapyard") {
+        goToScrapyardHome();
+        return;
+    }
     document.getElementById("suppliers-view").style.display = "none";
     document.getElementById("orders-view").style.display = "";
 }
@@ -10753,7 +10766,7 @@ function supplierRowHtml(s, receivablesIdx, owedIdx, sortIdx, rank) {
     return '<div class="task-item-row supplier-item-row" data-supplier-id="' + escapeHtml(s.id) + '">' + '<div class="supplier-row-main">' + '<input type="text" class="supplier-name-input" placeholder="اسم المورد" value="' + escapeHtml(s.name || "") + '">' + '<input type="tel" class="supplier-phone-input" placeholder="رقم الجوال" value="' + escapeHtml(s.phone || "") + '">' + (() => {
         const owedAmount = owedIdx ? owedIdx[s.id] || 0 : supplierOwedAmount(s.id);
         return '<span class="num ' + (owedAmount > 0 ? "text-rust" : "text-green") + '">' + fmtMoney(owedAmount) + "</span>";
-    })() + '<button type="button" class="icon-btn supplier-add-phone-btn" title="إضافة رقم آخر" aria-label="إضافة رقم">➕</button>' + '<button type="button" class="btn btn-sm expense-add-entry-btn supplier-save-btn">💾 حفظ</button>' + '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' + "</div>" + '<div class="supplier-kinds-row">' + '<label class="supplier-kind-toggle"><input type="checkbox" class="supplier-handles-new-check"' + (s.handlesNew ? " checked" : "") + "><span>قطع جديدة</span></label>" + '<label class="supplier-kind-toggle"><input type="checkbox" class="supplier-handles-used-check"' + (s.handlesUsed ? " checked" : "") + "><span>قطع مستعملة (تشليح)</span></label>" + "</div>" + '<div class="mini-label">السيارات' + carMakesPickerHtml(s.carMakes) + "</div>" + (extraPhones.length ? '<div class="supplier-extra-phones">' + extraPhones.map((ph, i) => '<div class="supplier-extra-phone-row">' + '<input type="tel" class="supplier-extra-phone-input" data-phone-index="' + escapeHtml(i) + '" placeholder="رقم إضافي" value="' + escapeHtml(ph || "") + '">' + '<button type="button" class="icon-btn supplier-remove-phone-btn" data-phone-index="' + escapeHtml(i) + '" aria-label="حذف الرقم">✕</button>' + "</div>").join("") + "</div>" : "") + "</div>";
+    })() + '<button type="button" class="icon-btn supplier-add-phone-btn" title="إضافة رقم آخر" aria-label="إضافة رقم">➕</button>' + '<button type="button" class="btn btn-sm expense-add-entry-btn supplier-save-btn">💾 حفظ</button>' + (currentUserRole === "full" ? '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' : "") + "</div>" + '<div class="supplier-kinds-row">' + '<label class="supplier-kind-toggle"><input type="checkbox" class="supplier-handles-new-check"' + (s.handlesNew ? " checked" : "") + "><span>قطع جديدة</span></label>" + '<label class="supplier-kind-toggle"><input type="checkbox" class="supplier-handles-used-check"' + (s.handlesUsed ? " checked" : "") + "><span>قطع مستعملة (تشليح)</span></label>" + "</div>" + '<div class="mini-label">السيارات' + carMakesPickerHtml(s.carMakes) + "</div>" + (extraPhones.length ? '<div class="supplier-extra-phones">' + extraPhones.map((ph, i) => '<div class="supplier-extra-phone-row">' + '<input type="tel" class="supplier-extra-phone-input" data-phone-index="' + escapeHtml(i) + '" placeholder="رقم إضافي" value="' + escapeHtml(ph || "") + '">' + '<button type="button" class="icon-btn supplier-remove-phone-btn" data-phone-index="' + escapeHtml(i) + '" aria-label="حذف الرقم">✕</button>' + "</div>").join("") + "</div>" : "") + "</div>";
 }
 
 let suppliersSearchQuery = "";
@@ -10846,7 +10859,8 @@ function suppliersItemsListHtml() {
 }
 
 function suppliersViewHtml() {
-    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-suppliers">→ رجوع للطلبيات</button>' + '<div class="tasks-title">🏭 الموردين</div>' + "</div>" + '<div class="treasury-block">' + '<div class="task-add-row">' + '<input type="text" id="new-supplier-name-input" class="task-add-input" placeholder="اسم المورد الجديد">' + '<input type="tel" id="new-supplier-phone-input" class="task-add-input" placeholder="رقم الجوال (اختياري)">' + '<button type="button" class="btn btn-sm btn-add-part" id="add-supplier-btn">+ إضافة</button>' + "</div>" + '<div class="supplier-kinds-row" style="margin-bottom:12px;">' + '<label class="supplier-kind-toggle"><input type="checkbox" id="new-supplier-handles-new-check"><span>قطع جديدة</span></label>' + '<label class="supplier-kind-toggle"><input type="checkbox" id="new-supplier-handles-used-check"><span>قطع مستعملة (تشليح)</span></label>' + "</div>" + '<div class="mini-label" id="new-supplier-car-makes-wrap" style="margin-bottom:12px;">السيارات' + carMakesPickerHtml(newSupplierCarMakes) + "</div>" + '<div class="filter-chips" id="suppliers-kind-filter-buttons" style="margin-bottom:12px;"></div>' + '<div class="filter-chips" id="suppliers-sort-buttons" style="margin-bottom:12px;"></div>' + '<div class="data-mgmt-row" style="margin-bottom:12px;">' + '<span class="data-mgmt-label">إدارة البيانات</span>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-export-suppliers-excel">⬇️ تصدير Excel</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-suppliers-excel">⬆️ استيراد Excel</button>' + '<input type="file" id="suppliers-excel-import-input" accept=".xlsx" style="display:none;">' + "</div>" + '<input type="text" id="suppliers-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث بالاسم أو رقم الجوال..." value="' + escapeHtml(suppliersSearchQuery) + '">' + '<div class="task-items-list" id="suppliers-items-list">' + suppliersItemsListHtml() + "</div>" + "</div>";
+    const backLabel = currentUserRole === "scrapyard" ? "→ رجوع للرئيسية" : "→ رجوع للطلبيات";
+    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-suppliers">' + backLabel + "</button>" + '<div class="tasks-title">🏭 الموردين</div>' + "</div>" + '<div class="treasury-block">' + '<div class="task-add-row">' + '<input type="text" id="new-supplier-name-input" class="task-add-input" placeholder="اسم المورد الجديد">' + '<input type="tel" id="new-supplier-phone-input" class="task-add-input" placeholder="رقم الجوال (اختياري)">' + '<button type="button" class="btn btn-sm btn-add-part" id="add-supplier-btn">+ إضافة</button>' + "</div>" + '<div class="supplier-kinds-row" style="margin-bottom:12px;">' + '<label class="supplier-kind-toggle"><input type="checkbox" id="new-supplier-handles-new-check"><span>قطع جديدة</span></label>' + '<label class="supplier-kind-toggle"><input type="checkbox" id="new-supplier-handles-used-check"><span>قطع مستعملة (تشليح)</span></label>' + "</div>" + '<div class="mini-label" id="new-supplier-car-makes-wrap" style="margin-bottom:12px;">السيارات' + carMakesPickerHtml(newSupplierCarMakes) + "</div>" + '<div class="filter-chips" id="suppliers-kind-filter-buttons" style="margin-bottom:12px;"></div>' + '<div class="filter-chips" id="suppliers-sort-buttons" style="margin-bottom:12px;"></div>' + '<div class="data-mgmt-row" style="margin-bottom:12px;">' + '<span class="data-mgmt-label">إدارة البيانات</span>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-export-suppliers-excel">⬇️ تصدير Excel</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-suppliers-excel">⬆️ استيراد Excel</button>' + '<input type="file" id="suppliers-excel-import-input" accept=".xlsx" style="display:none;">' + "</div>" + '<input type="text" id="suppliers-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث بالاسم أو رقم الجوال..." value="' + escapeHtml(suppliersSearchQuery) + '">' + '<div class="task-items-list" id="suppliers-items-list">' + suppliersItemsListHtml() + "</div>" + "</div>";
 }
 
 function refreshSuppliersList() {
@@ -10857,7 +10871,8 @@ function refreshSuppliersList() {
 }
 
 function renderSuppliersView() {
-    const el = document.getElementById("suppliers-view");
+    const el = suppliersViewContainer();
+    if (!el) return;
     el.innerHTML = suppliersViewHtml();
     bindSuppliersViewEvents();
 }
@@ -12597,7 +12612,6 @@ let scrapyardEditOpenFor = {};
 let scrapyardProposalSending = new Set;
 
 function scrapyardHasOpenEdit() {
-    if (Object.keys(editingScrapyardSuppliers || {}).length > 0) return true;
     const active = document.activeElement;
     if (active && active.matches && active.matches("[data-scrapyard-note]")) return true;
     return false;
@@ -12697,12 +12711,14 @@ function renderScrapyardHomeView() {
     const pendingTasks = (scrapyardSharedState.tasks || []).filter(t => !t.done).length;
     const pendingQuotes = quotesMatchingList().filter(o => !o.quoteReady).length;
     const settlementUnseen = scrapyardCustodyUnseenCount() + scrapyardPartsUnseenCount();
-    root.innerHTML = '<div class="app-top-utility-row">' + '<div class="app-top-logo-row"><span class="app-welcome-greeting">اهلا ' + escapeHtml(displayNameForEmail(presenceEmail)) + '</span><img class="app-corner-logo" src="' + PARTECH_LOGO_DATA_URI + '" id="scrapyard-home-logo-img" alt="PARTECH" title="الصفحة الرئيسية"></div>' + '<div class="corner-mini-bar">' + scrapyardThemeToggleHtml() + '<button id="btn-activity-log-scrapyard" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge-scrapyard" class="tasks-badge"></span></button></div>' + "</div>" + '<div class="app-top-divider"></div>' + announcementBannerHtml() + '<div class="app-top-divider"></div>' + '<header class="topbar"><div class="brand">قسم المشتريات</div></header>' + '<section class="kpi-row scrapyard-kpi-row">' + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للتشليح</div><div class="kpi-value num">' + fmtMoney(usedTotal) + "</div></div>" + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للموردين</div><div class="kpi-value num">' + fmtMoney(newTotal) + "</div></div>" + '<div class="kpi-card' + (pendingTasks > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">مهام معلّقة</div><div class="kpi-value num">' + pendingTasks + "</div></div>" + '<div class="kpi-card' + (pendingQuotes > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">طلبات تسعير معلّقة</div><div class="kpi-value num">' + pendingQuotes + "</div></div>" + "</section>" + '<div class="new-order-btn-row top-toggle-row">' + '<button type="button" class="btn btn-primary btn-with-badge" id="btn-toggle-scrapyard-settlement" aria-expanded="' + (scrapyardHomeOpenSection === "settlement" ? "true" : "false") + '">السداد<span class="tasks-badge" style="' + (settlementUnseen > 0 ? "display:flex;" : "display:none;") + '">' + (settlementUnseen > 0 ? settlementUnseen : "") + "</span></button>" + '<button type="button" class="btn btn-amber btn-with-badge" id="btn-toggle-scrapyard-quotes" aria-expanded="' + (scrapyardHomeOpenSection === "quotes" ? "true" : "false") + '">طلبات التسعير<span class="tasks-badge" style="' + (pendingQuotes > 0 ? "display:flex;" : "display:none;") + '">' + (pendingQuotes > 0 ? pendingQuotes : "") + "</span></button>" + '<button type="button" class="btn btn-ghost" id="btn-toggle-scrapyard-approved" aria-expanded="' + (scrapyardHomeOpenSection === "approved" ? "true" : "false") + '">✅ التسعيرات المعتمدة</button>' + '<button type="button" class="btn btn-ghost btn-with-badge" id="btn-toggle-scrapyard-tasks" aria-expanded="' + (scrapyardHomeOpenSection === "tasks" ? "true" : "false") + '">المهام<span class="tasks-badge" style="' + (pendingTasks > 0 ? "display:flex;" : "display:none;") + '">' + (pendingTasks > 0 ? pendingTasks : "") + "</span></button>" + "</div>" + '<div id="scrapyard-home-settlement-section" style="' + (scrapyardHomeOpenSection === "settlement" ? "" : "display:none;") + '">' + '<div class="new-order-btn-row">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-settlement">' + SETTLEMENT_KINDS.used.homeLabel + " — " + fmtMoney(usedTotal) + "</button>" + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-new-parts-settlement">' + SETTLEMENT_KINDS.new.homeLabel + " — " + fmtMoney(newTotal) + "</button>" + "</div>" + "</div>" + '<div id="scrapyard-home-quotes-section" style="' + (scrapyardHomeOpenSection === "quotes" ? "" : "display:none;") + '">' + '<div class="task-items-list" id="scrapyard-quotes-items-list">' + quotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-approved-section" style="' + (scrapyardHomeOpenSection === "approved" ? "" : "display:none;") + '">' + '<input type="text" id="approved-quotes-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث برقم الطلبية أو وصف القطعة..." value="' + escapeHtml(approvedQuotesSearchQuery) + '">' + '<div class="task-items-list" id="scrapyard-approved-quotes-items-list">' + approvedQuotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-tasks-section" style="' + (scrapyardHomeOpenSection === "tasks" ? "" : "display:none;") + '">' + '<div class="task-items-list">' + purchasesTasksListHtml() + "</div>" + "</div>";
+    root.innerHTML = '<div class="app-top-utility-row">' + '<div class="app-top-logo-row"><span class="app-welcome-greeting">اهلا ' + escapeHtml(displayNameForEmail(presenceEmail)) + '</span><img class="app-corner-logo" src="' + PARTECH_LOGO_DATA_URI + '" id="scrapyard-home-logo-img" alt="PARTECH" title="الصفحة الرئيسية"></div>' + '<div class="corner-mini-bar">' + scrapyardThemeToggleHtml() + '<button id="btn-activity-log-scrapyard" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge-scrapyard" class="tasks-badge"></span></button></div>' + "</div>" + '<div class="app-top-divider"></div>' + announcementBannerHtml() + '<div class="app-top-divider"></div>' + '<header class="topbar" style="justify-content:space-between;"><div class="brand">قسم المشتريات</div>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-suppliers">🏭 الموردين</button></header>' + '<section class="kpi-row scrapyard-kpi-row">' + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للتشليح</div><div class="kpi-value num">' + fmtMoney(usedTotal) + "</div></div>" + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للموردين</div><div class="kpi-value num">' + fmtMoney(newTotal) + "</div></div>" + '<div class="kpi-card' + (pendingTasks > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">مهام معلّقة</div><div class="kpi-value num">' + pendingTasks + "</div></div>" + '<div class="kpi-card' + (pendingQuotes > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">طلبات تسعير معلّقة</div><div class="kpi-value num">' + pendingQuotes + "</div></div>" + "</section>" + '<div class="new-order-btn-row top-toggle-row">' + '<button type="button" class="btn btn-primary btn-with-badge" id="btn-toggle-scrapyard-settlement" aria-expanded="' + (scrapyardHomeOpenSection === "settlement" ? "true" : "false") + '">السداد<span class="tasks-badge" style="' + (settlementUnseen > 0 ? "display:flex;" : "display:none;") + '">' + (settlementUnseen > 0 ? settlementUnseen : "") + "</span></button>" + '<button type="button" class="btn btn-amber btn-with-badge" id="btn-toggle-scrapyard-quotes" aria-expanded="' + (scrapyardHomeOpenSection === "quotes" ? "true" : "false") + '">طلبات التسعير<span class="tasks-badge" style="' + (pendingQuotes > 0 ? "display:flex;" : "display:none;") + '">' + (pendingQuotes > 0 ? pendingQuotes : "") + "</span></button>" + '<button type="button" class="btn btn-ghost" id="btn-toggle-scrapyard-approved" aria-expanded="' + (scrapyardHomeOpenSection === "approved" ? "true" : "false") + '">✅ التسعيرات المعتمدة</button>' + '<button type="button" class="btn btn-ghost btn-with-badge" id="btn-toggle-scrapyard-tasks" aria-expanded="' + (scrapyardHomeOpenSection === "tasks" ? "true" : "false") + '">المهام<span class="tasks-badge" style="' + (pendingTasks > 0 ? "display:flex;" : "display:none;") + '">' + (pendingTasks > 0 ? pendingTasks : "") + "</span></button>" + "</div>" + '<div id="scrapyard-home-settlement-section" style="' + (scrapyardHomeOpenSection === "settlement" ? "" : "display:none;") + '">' + '<div class="new-order-btn-row">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-settlement">' + SETTLEMENT_KINDS.used.homeLabel + " — " + fmtMoney(usedTotal) + "</button>" + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-new-parts-settlement">' + SETTLEMENT_KINDS.new.homeLabel + " — " + fmtMoney(newTotal) + "</button>" + "</div>" + "</div>" + '<div id="scrapyard-home-quotes-section" style="' + (scrapyardHomeOpenSection === "quotes" ? "" : "display:none;") + '">' + '<div class="task-items-list" id="scrapyard-quotes-items-list">' + quotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-approved-section" style="' + (scrapyardHomeOpenSection === "approved" ? "" : "display:none;") + '">' + '<input type="text" id="approved-quotes-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث برقم الطلبية أو وصف القطعة..." value="' + escapeHtml(approvedQuotesSearchQuery) + '">' + '<div class="task-items-list" id="scrapyard-approved-quotes-items-list">' + approvedQuotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-tasks-section" style="' + (scrapyardHomeOpenSection === "tasks" ? "" : "display:none;") + '">' + '<div class="task-items-list">' + purchasesTasksListHtml() + "</div>" + "</div>";
     const logo = document.getElementById("scrapyard-home-logo-img");
     if (logo) logo.addEventListener("click", goToScrapyardHome);
     bindScrapyardThemeToggle();
     const activityLogBtnScrapyard = document.getElementById("btn-activity-log-scrapyard");
     if (activityLogBtnScrapyard) activityLogBtnScrapyard.addEventListener("click", openActivityLog);
+    const scrapyardSuppliersBtn = document.getElementById("btn-open-scrapyard-suppliers");
+    if (scrapyardSuppliersBtn) scrapyardSuppliersBtn.addEventListener("click", openSuppliersView);
     const sections = [ "settlement", "quotes", "approved", "tasks" ];
     sections.forEach(key => {
         document.getElementById("btn-toggle-scrapyard-" + key).addEventListener("click", () => {
@@ -12826,225 +12842,8 @@ function renderScrapyardView() {
     const viewerOnly = scrapyardSharedState.viewerOnly;
     const custodyBalance = scrapyardSharedState.custodyBalance || 0;
     const remainingToPay = round2(total - custodyBalance);
-    root.innerHTML = '<div class="app-top-utility-row">' + '<div class="app-top-logo-row"><span class="app-welcome-greeting">اهلا ' + escapeHtml(displayNameForEmail(presenceEmail)) + '</span><img class="app-corner-logo" src="' + PARTECH_LOGO_DATA_URI + '" id="scrapyard-logo-img" alt="PARTECH" title="الصفحة الرئيسية"></div>' + '<div class="corner-mini-bar">' + (viewerOnly ? '<button type="button" class="btn btn-ghost btn-sm" id="btn-settlement-viewer-back">→ رجوع</button>' + scrapyardThemeToggleHtml() : canManage ? '<button type="button" class="btn btn-ghost btn-sm" id="btn-exit-scrapyard-shared">→ الرجوع للصندوق</button>' : '<button type="button" class="btn btn-ghost btn-sm" id="btn-scrapyard-back-home">→ الرئيسية</button>' + scrapyardThemeToggleHtml()) + "</div>" + "</div>" + '<div class="app-top-divider"></div>' + announcementBannerHtml() + '<div class="app-top-divider"></div>' + '<header class="topbar">' + '<div class="brand">' + SETTLEMENT_KINDS[kind].title + (viewerOnly ? ' <span class="muted" style="font-size:13px;font-weight:400;">— عرض فقط</span>' : "") + "</div>" + "</header>" + (viewerOnly ? '<div class="new-order-btn-row top-toggle-row" style="margin-bottom:14px;">' + '<button type="button" class="btn ' + (kind === "used" ? "btn-primary" : "btn-ghost") + '" data-settlement-viewer-kind="used">🧾 سداد التشاليح</button>' + '<button type="button" class="btn ' + (kind === "new" ? "btn-primary" : "btn-ghost") + '" data-settlement-viewer-kind="new">🧾 سداد الجديد</button>' + "</div>" : "") + (kind === "used" ? '<div class="settlement-summary-card">' + '<div class="settlement-summary-row"><span>إجمالي المستحق للسداد</span><span class="num text-amber">' + fmtMoney(total) + "</span></div>" + '<div class="settlement-summary-row"><span>رصيد المشتريات' + (canManage ? " (الإجمالي)" : " (عهدتك)") + '</span><span class="num ' + (custodyBalance < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(custodyBalance) + "</span></div>" + '<div class="settlement-summary-divider"></div>' + '<div class="settlement-summary-final"><span>المتبقي للسداد</span><span class="num ' + (remainingToPay > 0 ? "text-rust" : "text-green") + '">' + fmtMoney(remainingToPay) + "</span></div>" + "</div>" : '<div class="total-box" style="margin-bottom:18px;"><span>إجمالي المستحق للسداد</span><span class="num text-amber">' + fmtMoney(total) + "</span></div>") + (kind === "used" && canManage ? '<div class="cost-split-row" style="margin-bottom:18px;">' + '<div class="settlement-summary-card" style="margin-bottom:0;">' + '<div class="settlement-summary-row"><span>عهدة عامر</span><span class="num ' + ((scrapyardSharedState.amerCustodyBalance || 0) < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(scrapyardSharedState.amerCustodyBalance || 0) + "</span></div>" + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-amer-custody-topup">+ سداد</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-withdraw-amer-custody">➖ سحب</button>' + '<button type="button" class="expense-history-btn" id="btn-history-amer-custody">📋 السجل (' + (appData.treasury.amerCustody || []).length + ")</button>" + "</div>" + "</div>" + '<div class="settlement-summary-card" style="margin-bottom:0;">' + '<div class="settlement-summary-row"><span>عهدة عمر</span><span class="num ' + ((scrapyardSharedState.omarCustodyBalance || 0) < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(scrapyardSharedState.omarCustodyBalance || 0) + "</span></div>" + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-omar-custody-topup">+ سداد</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-withdraw-omar-custody">➖ سحب</button>' + '<button type="button" class="expense-history-btn" id="btn-history-omar-custody">📋 السجل (' + (appData.treasury.omarCustody || []).length + ")</button>" + "</div>" + "</div>" + "</div>" : "") + (kind === "used" ? scrapyardSupplierTotalsHtml() : "") + scrapyardReturnReceivablesHtml() + '<div class="section-block"><div class="section-head"><span class="section-title">القطع (غير المسدّدة)</span>' + (canManage || viewerOnly || kind !== "used" ? "" : '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-manage-scrapyard-suppliers">👥 الموردين</button>' + "</div>") + "</div>" + (groups.length ? groups.map(g => scrapyardOrderGroupHtml(g, canManage)).join("") : '<div class="expense-empty-hint">ما فيه قطع غير مسدّدة حاليًا</div>') + "</div>";
+    root.innerHTML = '<div class="app-top-utility-row">' + '<div class="app-top-logo-row"><span class="app-welcome-greeting">اهلا ' + escapeHtml(displayNameForEmail(presenceEmail)) + '</span><img class="app-corner-logo" src="' + PARTECH_LOGO_DATA_URI + '" id="scrapyard-logo-img" alt="PARTECH" title="الصفحة الرئيسية"></div>' + '<div class="corner-mini-bar">' + (viewerOnly ? '<button type="button" class="btn btn-ghost btn-sm" id="btn-settlement-viewer-back">→ رجوع</button>' + scrapyardThemeToggleHtml() : canManage ? '<button type="button" class="btn btn-ghost btn-sm" id="btn-exit-scrapyard-shared">→ الرجوع للصندوق</button>' : '<button type="button" class="btn btn-ghost btn-sm" id="btn-scrapyard-back-home">→ الرئيسية</button>' + scrapyardThemeToggleHtml()) + "</div>" + "</div>" + '<div class="app-top-divider"></div>' + announcementBannerHtml() + '<div class="app-top-divider"></div>' + '<header class="topbar">' + '<div class="brand">' + SETTLEMENT_KINDS[kind].title + (viewerOnly ? ' <span class="muted" style="font-size:13px;font-weight:400;">— عرض فقط</span>' : "") + "</div>" + "</header>" + (viewerOnly ? '<div class="new-order-btn-row top-toggle-row" style="margin-bottom:14px;">' + '<button type="button" class="btn ' + (kind === "used" ? "btn-primary" : "btn-ghost") + '" data-settlement-viewer-kind="used">🧾 سداد التشاليح</button>' + '<button type="button" class="btn ' + (kind === "new" ? "btn-primary" : "btn-ghost") + '" data-settlement-viewer-kind="new">🧾 سداد الجديد</button>' + "</div>" : "") + (kind === "used" ? '<div class="settlement-summary-card">' + '<div class="settlement-summary-row"><span>إجمالي المستحق للسداد</span><span class="num text-amber">' + fmtMoney(total) + "</span></div>" + '<div class="settlement-summary-row"><span>رصيد المشتريات' + (canManage ? " (الإجمالي)" : " (عهدتك)") + '</span><span class="num ' + (custodyBalance < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(custodyBalance) + "</span></div>" + '<div class="settlement-summary-divider"></div>' + '<div class="settlement-summary-final"><span>المتبقي للسداد</span><span class="num ' + (remainingToPay > 0 ? "text-rust" : "text-green") + '">' + fmtMoney(remainingToPay) + "</span></div>" + "</div>" : '<div class="total-box" style="margin-bottom:18px;"><span>إجمالي المستحق للسداد</span><span class="num text-amber">' + fmtMoney(total) + "</span></div>") + (kind === "used" && canManage ? '<div class="cost-split-row" style="margin-bottom:18px;">' + '<div class="settlement-summary-card" style="margin-bottom:0;">' + '<div class="settlement-summary-row"><span>عهدة عامر</span><span class="num ' + ((scrapyardSharedState.amerCustodyBalance || 0) < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(scrapyardSharedState.amerCustodyBalance || 0) + "</span></div>" + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-amer-custody-topup">+ سداد</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-withdraw-amer-custody">➖ سحب</button>' + '<button type="button" class="expense-history-btn" id="btn-history-amer-custody">📋 السجل (' + (appData.treasury.amerCustody || []).length + ")</button>" + "</div>" + "</div>" + '<div class="settlement-summary-card" style="margin-bottom:0;">' + '<div class="settlement-summary-row"><span>عهدة عمر</span><span class="num ' + ((scrapyardSharedState.omarCustodyBalance || 0) < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(scrapyardSharedState.omarCustodyBalance || 0) + "</span></div>" + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-omar-custody-topup">+ سداد</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-withdraw-omar-custody">➖ سحب</button>' + '<button type="button" class="expense-history-btn" id="btn-history-omar-custody">📋 السجل (' + (appData.treasury.omarCustody || []).length + ")</button>" + "</div>" + "</div>" + "</div>" : "") + (kind === "used" ? scrapyardSupplierTotalsHtml() : "") + scrapyardReturnReceivablesHtml() + '<div class="section-block"><div class="section-head"><span class="section-title">القطع (غير المسدّدة)</span></div>' + (groups.length ? groups.map(g => scrapyardOrderGroupHtml(g, canManage)).join("") : '<div class="expense-empty-hint">ما فيه قطع غير مسدّدة حاليًا</div>') + "</div>";
     bindScrapyardEvents();
-}
-
-function openQuickAddScrapyardSupplierModal(onSaved) {
-    let quickCarMakes = [];
-    const root = document.getElementById("confirm-root");
-    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">إضافة تشليح جديد</div>' + '<label class="field"><span class="field-label">الاسم</span><input type="text" id="quick-scrapyard-name-input" placeholder="اسم التشليح"></label>' + '<label class="field"><span class="field-label">رقم الجوال</span><input type="tel" id="quick-scrapyard-phone-input" placeholder="05XXXXXXXX"></label>' + '<label class="field"><span class="field-label">السيارات</span>' + carMakesPickerHtml(quickCarMakes) + "</label>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="quick-scrapyard-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-primary" id="quick-scrapyard-save-btn">💾 حفظ</button>' + "</div>" + "</div>" + "</div>";
-    root.classList.add("modal-open");
-    const close = () => {
-        root.innerHTML = "";
-        root.classList.remove("modal-open");
-    };
-    root.querySelector("[data-close-confirm]").addEventListener("click", e => {
-        if (e.target.hasAttribute("data-close-confirm")) close();
-    });
-    root.querySelector("#quick-scrapyard-cancel-btn").addEventListener("click", close);
-    const scrapyardCarMakesPickerEl = root.querySelector(".car-makes-picker");
-    if (scrapyardCarMakesPickerEl) {
-        bindCarMakesPicker(scrapyardCarMakesPickerEl, () => quickCarMakes, (make, nowSelected) => {
-            quickCarMakes = nowSelected ? quickCarMakes.concat([ make ]) : quickCarMakes.filter(m => m !== make);
-        });
-    }
-    const scrapyardSaveBtn = root.querySelector("#quick-scrapyard-save-btn");
-    scrapyardSaveBtn.addEventListener("click", async () => {
-        const name = document.getElementById("quick-scrapyard-name-input").value.trim();
-        const phone = document.getElementById("quick-scrapyard-phone-input").value.trim();
-        if (!name && !phone) {
-            showToast("اكتب اسم أو رقم جوال على الأقل", "error");
-            return;
-        }
-        if (!quickCarMakes.length) {
-            showToast("لازم تحدد سيارة وحدة على الأقل", "error");
-            return;
-        }
-        const dup = findDuplicateSupplier(name, phone);
-        if (dup) {
-            showToast("تشليح موجود مسبقًا بنفس الاسم أو الرقم: " + (dup.name || dup.phone || "تشليح"), "error");
-            return;
-        }
-        scrapyardSaveBtn.disabled = true;
-        const newSupplier = {
-            id: uid("sup"),
-            name: name,
-            phone: phone,
-            notes: "",
-            extraPhones: [],
-            handlesNew: false,
-            handlesUsed: true,
-            carMakes: quickCarMakes.slice()
-        };
-        const saved = await persistSupplier(newSupplier);
-        if (!saved) {
-            scrapyardSaveBtn.disabled = false;
-            return;
-        }
-        close();
-        showToast("تم إضافة التشليح", "ok");
-        if (typeof onSaved === "function") {
-            onSaved(newSupplier);
-        } else {
-            if (!Array.isArray(scrapyardSharedState.suppliers)) scrapyardSharedState.suppliers = [];
-            scrapyardSharedState.suppliers.push({
-                id: newSupplier.id,
-                name: newSupplier.name,
-                phone: newSupplier.phone,
-                handles_new: false,
-                handles_used: true,
-                extra_phones: [],
-                car_makes: newSupplier.carMakes
-            });
-            renderScrapyardView();
-        }
-    });
-}
-
-let editingScrapyardSuppliers = {};
-
-function scrapyardSupplierEditRowHtml(s) {
-    const isEditing = !!editingScrapyardSuppliers[s.id];
-    const extraPhones = Array.isArray(s.extra_phones) ? s.extra_phones : [];
-    if (!isEditing) {
-        const phones = [ s.phone ].concat(extraPhones).filter(Boolean).join(" / ");
-        return '<div class="task-item-row supplier-item-row" data-supplier-id="' + escapeHtml(s.id) + '">' + '<div class="supplier-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(s.name || "بدون اسم") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(phones || "—") + "</span>" + '<button type="button" class="icon-btn scrapyard-supplier-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' + "</div>" + "</div>";
-    }
-    return '<div class="task-item-row supplier-item-row" data-supplier-id="' + escapeHtml(s.id) + '">' + '<div class="supplier-row-main">' + '<input type="text" class="supplier-name-input" placeholder="اسم المورد" value="' + escapeHtml(s.name || "") + '">' + '<input type="tel" class="supplier-phone-input" placeholder="رقم الجوال" value="' + escapeHtml(s.phone || "") + '">' + '<button type="button" class="icon-btn scrapyard-supplier-add-phone-btn" title="إضافة رقم آخر" aria-label="إضافة رقم">➕</button>' + '<button type="button" class="btn btn-sm expense-add-entry-btn scrapyard-supplier-save-btn">💾 حفظ</button>' + "</div>" + (extraPhones.length ? '<div class="supplier-extra-phones">' + extraPhones.map((ph, i) => '<div class="supplier-extra-phone-row">' + '<input type="tel" class="supplier-extra-phone-input" data-phone-index="' + escapeHtml(i) + '" placeholder="رقم إضافي" value="' + escapeHtml(ph || "") + '">' + '<button type="button" class="icon-btn scrapyard-supplier-remove-phone-btn" data-phone-index="' + escapeHtml(i) + '" aria-label="حذف الرقم">✕</button>' + "</div>").join("") + "</div>" : "") + "</div>";
-}
-
-let scrapyardSupplierManageSearchTerm = "";
-
-function scrapyardSupplierManageListHtml() {
-    let rows = (scrapyardSharedState.suppliers || []).filter(s => s.handles_used !== false);
-    const term = scrapyardSupplierManageSearchTerm.trim().toLowerCase();
-    if (term) {
-        const normPhone = v => (v || "").replace(/[^0-9]/g, "");
-        const termDigits = normPhone(term);
-        rows = rows.filter(s => {
-            if (editingScrapyardSuppliers[s.id]) return true;
-            const nameMatch = (s.name || "").toLowerCase().includes(term);
-            const phones = [ s.phone ].concat(Array.isArray(s.extra_phones) ? s.extra_phones : []).filter(Boolean);
-            const phoneMatch = termDigits.length >= 3 && phones.some(ph => normPhone(ph).includes(termDigits));
-            return nameMatch || phoneMatch;
-        });
-    }
-    if (!rows.length) return '<div class="expense-empty-hint">' + (term ? "ما فيه نتائج مطابقة" : "ما فيه موردين مضافين بعد") + "</div>";
-    return rows.map(scrapyardSupplierEditRowHtml).join("");
-}
-
-function openScrapyardSupplierManageModal() {
-    editingScrapyardSuppliers = {};
-    scrapyardSupplierManageSearchTerm = "";
-    const root = document.getElementById("modal-root");
-    root.innerHTML = '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-header"><div class="modal-title">الموردين (التشاليح)</div>' + '<div style="display:flex;gap:8px;align-items:center;">' + '<button type="button" class="btn btn-ghost btn-sm" id="scrapyard-supplier-manage-add-btn">➕ تشليح جديد</button>' + '<button type="button" class="icon-btn" id="scrapyard-supplier-manage-close-btn" aria-label="إغلاق">✕</button>' + "</div></div>" + '<input type="text" id="scrapyard-supplier-manage-search" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث بالاسم أو رقم الجوال...">' + '<div class="task-items-list" id="scrapyard-supplier-manage-list">' + scrapyardSupplierManageListHtml() + "</div>" + "</div>" + "</div>";
-    root.classList.add("modal-open");
-    const close = () => {
-        root.innerHTML = "";
-        root.classList.remove("modal-open");
-    };
-    root.querySelector("[data-close-backdrop]").addEventListener("click", e => {
-        if (e.target.hasAttribute("data-close-backdrop")) close();
-    });
-    root.querySelector("#scrapyard-supplier-manage-close-btn").addEventListener("click", close);
-    const searchInput = root.querySelector("#scrapyard-supplier-manage-search");
-    if (searchInput) {
-        searchInput.addEventListener("input", e => {
-            scrapyardSupplierManageSearchTerm = e.target.value;
-            refreshScrapyardSupplierManageList();
-        });
-    }
-    root.querySelector("#scrapyard-supplier-manage-add-btn").addEventListener("click", () => {
-        openQuickAddScrapyardSupplierModal(newSupplier => {
-            if (!Array.isArray(scrapyardSharedState.suppliers)) scrapyardSharedState.suppliers = [];
-            scrapyardSharedState.suppliers.push({
-                id: newSupplier.id,
-                name: newSupplier.name,
-                phone: newSupplier.phone,
-                handles_new: false,
-                handles_used: true,
-                extra_phones: []
-            });
-            refreshScrapyardSupplierManageList();
-        });
-    });
-    bindScrapyardSupplierManageEvents();
-}
-
-function refreshScrapyardSupplierManageList() {
-    const list = document.getElementById("scrapyard-supplier-manage-list");
-    if (!list) return;
-    list.innerHTML = scrapyardSupplierManageListHtml();
-    bindScrapyardSupplierManageEvents();
-}
-
-function bindScrapyardSupplierManageEvents() {
-    const list = document.getElementById("scrapyard-supplier-manage-list");
-    if (!list) return;
-    list.querySelectorAll(".supplier-item-row").forEach(row => {
-        const sid = row.getAttribute("data-supplier-id");
-        const supplier = (scrapyardSharedState.suppliers || []).find(s => s.id === sid);
-        if (!supplier) return;
-        const editBtn = row.querySelector(".scrapyard-supplier-edit-btn");
-        if (editBtn) {
-            editBtn.addEventListener("click", () => {
-                editingScrapyardSuppliers[sid] = true;
-                refreshScrapyardSupplierManageList();
-            });
-        }
-        const nameInput = row.querySelector(".supplier-name-input");
-        if (nameInput) nameInput.addEventListener("input", e => {
-            supplier.name = e.target.value;
-        });
-        const phoneInput = row.querySelector(".supplier-phone-input");
-        if (phoneInput) phoneInput.addEventListener("input", e => {
-            supplier.phone = e.target.value;
-        });
-        const addPhoneBtn = row.querySelector(".scrapyard-supplier-add-phone-btn");
-        if (addPhoneBtn) {
-            addPhoneBtn.addEventListener("click", () => {
-                if (!Array.isArray(supplier.extra_phones)) supplier.extra_phones = [];
-                supplier.extra_phones.push("");
-                refreshScrapyardSupplierManageList();
-            });
-        }
-        row.querySelectorAll(".supplier-extra-phone-input").forEach(inp => {
-            inp.addEventListener("input", e => {
-                const idx = Number(inp.getAttribute("data-phone-index"));
-                supplier.extra_phones[idx] = e.target.value;
-            });
-        });
-        row.querySelectorAll(".scrapyard-supplier-remove-phone-btn").forEach(btn => {
-            btn.addEventListener("click", () => {
-                const idx = Number(btn.getAttribute("data-phone-index"));
-                supplier.extra_phones.splice(idx, 1);
-                refreshScrapyardSupplierManageList();
-            });
-        });
-        const saveBtn = row.querySelector(".scrapyard-supplier-save-btn");
-        if (saveBtn) {
-            saveBtn.addEventListener("click", async () => {
-                if (!(supplier.name || "").trim()) {
-                    showToast("اسم المورد ما يصير يكون فاضي", "error");
-                    return;
-                }
-                const saved = await persistSupplier({
-                    id: supplier.id,
-                    name: supplier.name,
-                    phone: supplier.phone,
-                    extraPhones: Array.isArray(supplier.extra_phones) ? supplier.extra_phones.filter(Boolean) : [],
-                    handlesNew: supplier.handles_new !== false,
-                    handlesUsed: supplier.handles_used !== false
-                });
-                if (!saved) return;
-                delete editingScrapyardSuppliers[sid];
-                refreshScrapyardSupplierManageList();
-                showToast("تم حفظ المورد", "ok");
-                renderScrapyardView();
-            });
-        }
-    });
 }
 
 function confirmedAmountIsStale(confirmedAmount, currentAmount) {
@@ -13260,8 +13059,6 @@ function bindScrapyardEvents() {
     const scrapLogo = document.getElementById("scrapyard-logo-img");
     if (scrapLogo) scrapLogo.addEventListener("click", scrapyardSharedState.viewerOnly ? closeSettlementViewer : goHomeFromLogo);
     bindScrapyardThemeToggle();
-    const manageSuppliersBtn = document.getElementById("btn-manage-scrapyard-suppliers");
-    if (manageSuppliersBtn) manageSuppliersBtn.addEventListener("click", openScrapyardSupplierManageModal);
     function refreshCustodyBalancesAfterEdit() {
         scrapyardSharedState.amerCustodyBalance = amerCustodyBalance();
         scrapyardSharedState.omarCustodyBalance = omarCustodyBalance();
