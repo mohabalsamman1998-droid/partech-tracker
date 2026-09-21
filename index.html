@@ -12082,7 +12082,23 @@ function openScrapyardSuppliersStatsView() {
 
 let partPriceLogEntries = null;
 
-let partPriceLogDraftSupplierId = "";
+let partPriceLogDraft = null;
+
+function freshPartPriceLogPart() {
+    return {
+        id: uid("pplp"),
+        description: "",
+        price: "",
+        supplierId: ""
+    };
+}
+
+function freshPartPriceLogDraft() {
+    return {
+        carTitle: "",
+        parts: [ freshPartPriceLogPart() ]
+    };
+}
 
 async function loadPartPriceLog() {
     const {data: data, error: error} = await sb.from("part_price_log").select("*").order("created_at", {
@@ -12096,7 +12112,7 @@ async function loadPartPriceLog() {
     partPriceLogEntries = data || [];
 }
 
-function partPriceLogRowHtml(e) {
+function partPriceLogEntryRowHtml(e) {
     const supplier = (appData.suppliers || []).find(s => s.id === e.supplier_id);
     return '<div class="task-item-row">' + '<div class="supplier-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(e.part_description) + "</span>" + '<span class="num">' + fmtMoney(e.price) + "</span>" + "</div>" + '<div class="purchase-history-row-sub">' + "<span>" + escapeHtml(e.car_title || "—") + "</span>" + "<span>" + escapeHtml(supplier ? supplier.name || supplier.phone || "مورد" : "—") + "</span>" + "<span>" + escapeHtml(displayNameForEmail(e.created_by)) + " — " + escapeHtml(arabicRelativeTime(new Date(e.created_at).getTime())) + "</span>" + "</div>" + "</div>";
 }
@@ -12104,16 +12120,21 @@ function partPriceLogRowHtml(e) {
 function partPriceLogListHtml() {
     if (partPriceLogEntries === null) return '<div class="expense-empty-hint">جارِ التحميل...</div>';
     if (!partPriceLogEntries.length) return '<div class="expense-empty-hint">ما فيه بيانات مدخلة بعد</div>';
-    return '<div class="task-items-list">' + partPriceLogEntries.map(partPriceLogRowHtml).join("") + "</div>";
+    return '<div class="task-items-list">' + partPriceLogEntries.map(partPriceLogEntryRowHtml).join("") + "</div>";
 }
 
-function partPriceLogViewHtml() {
+function partPriceLogDraftPartRowHtml(part, total) {
     const supplierOptions = (appData.suppliers || []).map(s => ({
         id: s.id,
         label: s.name || s.phone || "مورد",
         sublabel: s.phone
     }));
-    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-from-part-price-log">→ رجوع للرئيسية</button>' + '<div class="tasks-title">➕ إدخال بيانات</div>' + "</div>" + '<div class="treasury-block">' + '<label class="field"><span class="field-label">نوع السيارة</span><input type="text" id="ppl-car-title-input" class="task-add-input" placeholder="مثلاً: كامري 2020"></label>' + '<label class="field"><span class="field-label">القطعة</span><input type="text" id="ppl-part-input" class="task-add-input" placeholder="وصف القطعة"></label>' + '<label class="field"><span class="field-label">سعر القطعة</span><input type="number" id="ppl-price-input" class="task-add-input" placeholder="0"></label>' + '<label class="field"><span class="field-label">المورد</span>' + searchableSelectHtml("ppl-supplier-select", supplierOptions, partPriceLogDraftSupplierId, "— اختر المورد —") + "</label>" + '<button type="button" class="btn btn-primary" id="ppl-save-btn" style="margin-top:10px;">💾 حفظ</button>' + "</div>" + '<div class="tasks-title" style="margin:18px 0 4px;">آخر الإدخالات</div>' + '<div class="treasury-block">' + partPriceLogListHtml() + "</div>";
+    return '<div class="task-item-row" data-ppl-part-id="' + escapeHtml(part.id) + '">' + '<div class="supplier-row-main">' + '<input type="text" class="task-add-input ppl-part-desc-input" placeholder="وصف القطعة" value="' + escapeHtml(part.description) + '">' + '<input type="number" class="task-add-input ppl-part-price-input" placeholder="السعر" value="' + escapeHtml(part.price) + '" style="max-width:110px;flex:0 0 110px;">' + (total > 1 ? '<button type="button" class="task-item-remove-btn" aria-label="حذف القطعة">✕</button>' : "") + "</div>" + '<label class="mini-label mini-label-supplier">المورد' + searchableSelectHtml("ppl-part-supplier-select", supplierOptions, part.supplierId, "— اختر المورد —") + "</label>" + "</div>";
+}
+
+function partPriceLogViewHtml() {
+    const partsHtml = partPriceLogDraft.parts.map(p => partPriceLogDraftPartRowHtml(p, partPriceLogDraft.parts.length)).join("");
+    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-from-part-price-log">→ رجوع للرئيسية</button>' + '<div class="tasks-title">➕ إدخال بيانات</div>' + "</div>" + '<div class="treasury-block">' + '<label class="field"><span class="field-label">نوع السيارة</span><input type="text" id="ppl-car-title-input" class="task-add-input" placeholder="مثلاً: كامري 2020" value="' + escapeHtml(partPriceLogDraft.carTitle) + '"></label>' + '<div class="data-mgmt-row" style="margin-bottom:8px;">' + '<span class="data-mgmt-label">القطع</span>' + '<button type="button" class="btn btn-ghost btn-sm" id="ppl-add-supplier-btn">+ مورد جديد</button>' + "</div>" + '<div class="task-items-list" id="ppl-parts-list">' + partsHtml + "</div>" + '<button type="button" class="btn btn-ghost btn-sm" id="ppl-add-part-btn" style="margin-top:10px;">+ إضافة قطعة</button>' + '<div><button type="button" class="btn btn-primary" id="ppl-save-btn" style="margin-top:14px;">💾 حفظ</button></div>' + "</div>" + '<div class="tasks-title" style="margin:18px 0 4px;">آخر الإدخالات</div>' + '<div class="treasury-block">' + partPriceLogListHtml() + "</div>";
 }
 
 function renderPartPriceLogView() {
@@ -12122,59 +12143,99 @@ function renderPartPriceLogView() {
     bindPartPriceLogEvents();
 }
 
+function bindPartPriceLogPartRowEvents() {
+    document.querySelectorAll("#ppl-parts-list [data-ppl-part-id]").forEach(row => {
+        const pid = row.getAttribute("data-ppl-part-id");
+        const part = partPriceLogDraft.parts.find(p => p.id === pid);
+        if (!part) return;
+        const descInput = row.querySelector(".ppl-part-desc-input");
+        if (descInput) descInput.addEventListener("input", e => {
+            part.description = e.target.value;
+        });
+        const priceInput = row.querySelector(".ppl-part-price-input");
+        if (priceInput) priceInput.addEventListener("input", e => {
+            part.price = e.target.value;
+        });
+        const removeBtn = row.querySelector(".task-item-remove-btn");
+        if (removeBtn) removeBtn.addEventListener("click", () => {
+            partPriceLogDraft.parts = partPriceLogDraft.parts.filter(p => p.id !== pid);
+            renderPartPriceLogView();
+        });
+        const supplierSelectEl = row.querySelector(".ppl-part-supplier-select");
+        const supplierWrap = supplierSelectEl ? supplierSelectEl.closest(".searchable-select") : null;
+        if (supplierWrap) {
+            bindSearchableSelect(supplierWrap, () => (appData.suppliers || []).map(s => ({
+                id: s.id,
+                label: s.name || s.phone || "مورد",
+                sublabel: s.phone
+            })), id => {
+                part.supplierId = id;
+            });
+        }
+    });
+}
+
 function bindPartPriceLogEvents() {
     const backBtn = document.getElementById("btn-back-from-part-price-log");
     if (backBtn) backBtn.addEventListener("click", goToScrapyardHome);
-    const supplierSelectEl = document.querySelector(".ppl-supplier-select");
-    const supplierWrap = supplierSelectEl ? supplierSelectEl.closest(".searchable-select") : null;
-    if (supplierWrap) {
-        bindSearchableSelect(supplierWrap, () => (appData.suppliers || []).map(s => ({
-            id: s.id,
-            label: s.name || s.phone || "مورد",
-            sublabel: s.phone
-        })), id => {
-            partPriceLogDraftSupplierId = id;
+    const carTitleInput = document.getElementById("ppl-car-title-input");
+    if (carTitleInput) carTitleInput.addEventListener("input", e => {
+        partPriceLogDraft.carTitle = e.target.value;
+    });
+    bindPartPriceLogPartRowEvents();
+    const addPartBtn = document.getElementById("ppl-add-part-btn");
+    if (addPartBtn) addPartBtn.addEventListener("click", () => {
+        partPriceLogDraft.parts.push(freshPartPriceLogPart());
+        renderPartPriceLogView();
+    });
+    const addSupplierBtn = document.getElementById("ppl-add-supplier-btn");
+    if (addSupplierBtn) addSupplierBtn.addEventListener("click", () => {
+        openQuickAddSupplierModal(() => {
+            renderPartPriceLogView();
         });
-    }
+    });
     bindBusyButton(document.getElementById("ppl-save-btn"), async () => {
-        const carTitleInput = document.getElementById("ppl-car-title-input");
-        const partInput = document.getElementById("ppl-part-input");
-        const priceInput = document.getElementById("ppl-price-input");
-        const carTitle = carTitleInput.value.trim();
-        const partDesc = partInput.value.trim();
-        const price = Number(priceInput.value) || 0;
-        if (!carTitle || !partDesc) {
-            showToast("اكتب نوع السيارة والقطعة على الأقل", "error");
+        const carTitle = partPriceLogDraft.carTitle.trim();
+        if (!carTitle) {
+            showToast("اكتب نوع السيارة", "error");
             return;
         }
-        if (!partPriceLogDraftSupplierId) {
-            showToast("اختر المورد", "error");
+        const validParts = partPriceLogDraft.parts.filter(p => p.description.trim());
+        if (!validParts.length) {
+            showToast("أضف قطعة وحدة عالأقل بوصف", "error");
             return;
         }
-        const entry = {
+        const missingSupplier = validParts.find(p => !p.supplierId);
+        if (missingSupplier) {
+            showToast("اختر المورد لكل قطعة", "error");
+            return;
+        }
+        const nowIso = (new Date).toISOString();
+        const rows = validParts.map(p => ({
             id: uid("ppl"),
             car_title: carTitle,
-            part_description: partDesc,
-            price: price,
-            supplier_id: partPriceLogDraftSupplierId,
+            part_description: p.description.trim(),
+            price: Number(p.price) || 0,
+            supplier_id: p.supplierId,
             created_by: presenceEmail
-        };
-        const {error: error} = await sb.from("part_price_log").insert(entry);
+        }));
+        const {error: error} = await sb.from("part_price_log").insert(rows);
         if (error) {
             showToast("تعذر الحفظ: " + friendlyErrorText(error), "error");
             return;
         }
-        partPriceLogEntries = [ Object.assign({}, entry, {
-            created_at: (new Date).toISOString()
-        }) ].concat(partPriceLogEntries || []);
-        partPriceLogDraftSupplierId = "";
+        partPriceLogEntries = rows.map(r => Object.assign({}, r, {
+            created_at: nowIso
+        })).concat(partPriceLogEntries || []);
+        partPriceLogDraft = freshPartPriceLogDraft();
         renderPartPriceLogView();
-        showToast("تم الحفظ", "ok");
+        showToast("تم الحفظ (" + rows.length + " قطعة)", "ok");
     });
 }
 
 async function openPartPriceLogView() {
     scrapyardCurrentScreen = null;
+    partPriceLogDraft = freshPartPriceLogDraft();
     if (partPriceLogEntries === null) {
         document.getElementById("scrapyard-root").innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
         await loadPartPriceLog();
