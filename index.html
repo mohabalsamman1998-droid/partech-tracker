@@ -11697,13 +11697,14 @@ function statBarChartHtml(title, items, opts) {
     return '<div class="stat-chart-block">' + '<div class="stat-chart-title">' + escapeHtml(title) + "</div>" + (opts.subHtml || "") + rowsHtml + "</div>";
 }
 
-function statSplitBarChartHtml(title, items) {
+function statSplitBarChartHtml(title, items, opts) {
+    opts = opts || {};
     const legend = '<div class="stat-legend">' + '<span class="stat-legend-item"><span class="stat-legend-dot stat-legend-dot-purchased"></span>اشترينا</span>' + '<span class="stat-legend-item"><span class="stat-legend-dot stat-legend-dot-not-purchased"></span>ما اشترينا</span>' + "</div>";
     const rowsHtml = items.length ? items.map(i => {
         const purchasedPct = i.total ? round2(i.purchased / i.total * 100) : 0;
         const notPurchasedPct = i.total ? round2(i.notPurchased / i.total * 100) : 0;
         const inner = '<span class="stat-bar-label" title="' + escapeHtml(i.label) + '">' + escapeHtml(i.label) + "</span>" + '<span class="stat-bar-track stat-bar-track-split">' + '<span class="stat-bar-fill-purchased" style="width:' + purchasedPct + '%"></span>' + '<span class="stat-bar-fill-not-purchased" style="width:' + notPurchasedPct + '%"></span>' + "</span>" + '<span class="stat-bar-value">' + i.purchased + "/" + i.total + " (" + i.rate + "%)</span>";
-        return i.id ? '<button type="button" class="stat-bar-row" data-open-supplier="' + escapeHtml(i.id) + '">' + inner + "</button>" : '<div class="stat-bar-row">' + inner + "</div>";
+        return opts.onOpenAttr && i.id ? '<button type="button" class="stat-bar-row" data-' + opts.onOpenAttr + '="' + escapeHtml(i.id) + '">' + inner + "</button>" : '<div class="stat-bar-row">' + inner + "</div>";
     }).join("") : '<div class="expense-empty-hint">ما فيه بيانات كافية بعد</div>';
     return '<div class="stat-chart-block">' + '<div class="stat-chart-title">' + escapeHtml(title) + "</div>" + legend + rowsHtml + "</div>";
 }
@@ -11752,7 +11753,9 @@ function supplierPerformanceSectionHtml(opts) {
     }
     return '<div class="tasks-title" style="margin:18px 0 4px;">🏭 بيان الموردين</div>' + kindChips + purchaseBlock + statBarChartHtml("🤝 الأكثر تعاونًا بالتسعير (عدد طلبات التسعير)", cooperationCount, {
         onOpenAttr: "open-supplier"
-    }) + statSplitBarChartHtml("🎯 نسبة الشراء من التسعير لكل مورد", conversionItems) + (restricted ? "" : statBarChartHtml("🚗 توزيع الموردين حسب السيارات", supplierCarMakeDistribution(12), {}) + statBarChartHtml("📦 توزيع الموردين حسب النوع", supplierTypeDistribution(), {}));
+    }) + statSplitBarChartHtml("🎯 نسبة الشراء من التسعير لكل مورد", conversionItems, {
+        onOpenAttr: "open-supplier"
+    }) + (restricted ? "" : statBarChartHtml("🚗 توزيع الموردين حسب السيارات", supplierCarMakeDistribution(12), {}) + statBarChartHtml("📦 توزيع الموردين حسب النوع", supplierTypeDistribution(), {}));
 }
 
 function bindSupplierPerformanceSectionEvents(container, rerender) {
@@ -11828,14 +11831,15 @@ function topCustomerQuoteConversion(n) {
     return (appData.customers || []).map(c => {
         const s = idx[c.id];
         if (!s || !s.total) return null;
-        const pct = round2(s.success / s.total * 100);
         return {
             id: c.id,
             label: c.name || c.phone || "بدون اسم",
-            value: s.total,
-            display: s.success + "/" + s.total + " (" + pct + "%)"
+            total: s.total,
+            purchased: s.success,
+            notPurchased: Math.max(0, s.total - s.success),
+            rate: round2(s.success / s.total * 100)
         };
-    }).filter(Boolean).sort((a, b) => b.value - a.value).slice(0, n || 10);
+    }).filter(Boolean).sort((a, b) => b.total - a.total).slice(0, n || 10);
 }
 
 function customerOrderCountIndex() {
@@ -12009,7 +12013,7 @@ function salesPerformanceSectionHtml() {
         display: fmtMoney(arr(g))
     }));
     const growthBlock = (growth.length ? statBarChartHtml("📈 نمو المبيعات الشهرية", growthChartItems(g => g.sales), {}) + statBarChartHtml("💵 نمو الأرباح الشهرية", growthChartItems(g => g.profit), {}) : "") + '<div class="stat-chart-block">' + '<div class="stat-chart-title">📈 النمو الشهري (المبيعات والأرباح) — التفاصيل</div>' + '<div class="treasury-summary">' + (growthRows || '<div class="expense-empty-hint">ما فيه بيانات كافية بعد</div>') + "</div>" + "</div>";
-    return '<div class="tasks-title" style="margin:18px 0 4px;">📈 مؤشرات أداء المبيعات</div>' + successBlock + timingBlock + loyaltyBlock + statBarChartHtml("🎯 تحويل طلبات التسعير لكل عميل (ناجحة/إجمالي)", topConversion, {
+    return '<div class="tasks-title" style="margin:18px 0 4px;">📈 مؤشرات أداء المبيعات</div>' + successBlock + timingBlock + loyaltyBlock + statSplitBarChartHtml("🎯 نسبة الشراء من التسعير لكل عميل", topConversion, {
         onOpenAttr: "open-customer"
     }) + statBarChartHtml("🧾 أكثر العملاء طلبًا (عدد الطلبات)", topOrderCounts, {
         onOpenAttr: "open-customer"
