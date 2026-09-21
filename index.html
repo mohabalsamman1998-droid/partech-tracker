@@ -423,10 +423,9 @@
   .quote-row-elapsed-critical{color:var(--rust-deep);font-weight:800;}
   .quote-row-ready{border-inline-start-color:var(--green-line);}
   .quote-row-ready .quote-row-label{color:var(--green);}
-  /* تنبيه التأخر بيغلب لون الجاهزية (أخضر/أصفر) — نفس مبدأ شارة الوقت، القاعدتان بعد قاعدة
-     quote-row-ready بالورقة عمدًا حتى يغلبوها لو الصف جاهز ومتأخر بنفس الوقت */
-  .quote-row-warn{border-inline-start-color:var(--rust-line);}
-  .quote-row-warn .quote-row-label{color:var(--rust);}
+  /* لون الصف نفسه 3 حالات حصرية بس (quoteRowColorState): كهرماني افتراضيًا (بلا كلاس، القاعدة
+     الأساسية فوق)، أخضر (ready) فور التسعير ويضل أخضر، أو أحمر غامق (critical) لو قبل التسعير
+     وطالت عن ساعة — الاثنان ما يتعايشوا أبدًا بنفس الصف، بعكس شارة ⏱ اللي إلها تدرّج مستقل */
   .quote-row-critical{border-inline-start-color:var(--rust-deep);}
   .quote-row-critical .quote-row-label{color:var(--rust-deep);}
   .quote-priority-controls{display:flex;flex-direction:column;gap:2px;flex-shrink:0;}
@@ -3875,12 +3874,20 @@ function quoteElapsedSeverity(createdAtIso, nowMs) {
     return "";
 }
 
+const QUOTE_ROW_LATE_MINUTES = 60;
+
+function quoteRowColorState(o, nowMs) {
+    if (o.quoteReady) return "ready";
+    if (!o.createdAt) return "";
+    return quoteBusinessMinutesElapsed(o.createdAt, nowMs) >= QUOTE_ROW_LATE_MINUTES ? "critical" : "";
+}
+
 function quoteRowHtml(o, idx, total) {
-    const ready = !!o.quoteReady;
     const elapsed = o.createdAt ? quoteElapsedLabel(o.createdAt) : "";
-    const severity = quoteElapsedSeverity(o.createdAt);
+    const badgeSeverity = quoteElapsedSeverity(o.createdAt);
+    const rowState = quoteRowColorState(o);
     const priorityControls = canReorderQuotePriority() ? '<div class="quote-priority-controls">' + '<button type="button" class="quote-priority-btn" data-priority-move="up"' + (idx === 0 ? " disabled" : "") + ' title="رفع الأولوية">▲</button>' + '<button type="button" class="quote-priority-btn" data-priority-move="down"' + (idx === total - 1 ? " disabled" : "") + ' title="خفض الأولوية">▼</button>' + "</div>" : "";
-    return '<div class="task-item-row quote-row' + (ready ? " quote-row-ready" : "") + (severity ? " quote-row-" + severity : "") + '" data-quote-id="' + escapeHtml(o.id) + '">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(o.orderLabel || "—") + "</span>" + (elapsed ? '<span class="quote-row-elapsed' + (severity ? " quote-row-elapsed-" + severity : "") + '" data-created-at="' + escapeHtml(o.createdAt) + '">⏱ ' + escapeHtml(elapsed) + "</span>" : "") + priorityControls + "</div>";
+    return '<div class="task-item-row quote-row' + (rowState ? " quote-row-" + rowState : "") + '" data-quote-id="' + escapeHtml(o.id) + '">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(o.orderLabel || "—") + "</span>" + (elapsed ? '<span class="quote-row-elapsed' + (badgeSeverity ? " quote-row-elapsed-" + badgeSeverity : "") + '" data-created-at="' + escapeHtml(o.createdAt) + '">⏱ ' + escapeHtml(elapsed) + "</span>" : "") + priorityControls + "</div>";
 }
 
 function quotesListHtml() {
@@ -3949,12 +3956,12 @@ function refreshQuoteElapsedBadges() {
         const iso = el.getAttribute("data-created-at");
         if (!iso) return;
         el.textContent = "⏱ " + quoteElapsedLabel(iso);
-        const severity = quoteElapsedSeverity(iso);
-        el.className = "quote-row-elapsed" + (severity ? " quote-row-elapsed-" + severity : "");
+        const badgeSeverity = quoteElapsedSeverity(iso);
+        el.className = "quote-row-elapsed" + (badgeSeverity ? " quote-row-elapsed-" + badgeSeverity : "");
         const row = el.closest(".quote-row");
-        if (row) {
-            row.classList.remove("quote-row-warn", "quote-row-critical");
-            if (severity) row.classList.add("quote-row-" + severity);
+        if (row && !row.classList.contains("quote-row-ready")) {
+            const late = quoteBusinessMinutesElapsed(iso) >= QUOTE_ROW_LATE_MINUTES;
+            row.classList.toggle("quote-row-critical", late);
         }
     });
 }
