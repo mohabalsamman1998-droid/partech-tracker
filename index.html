@@ -1348,6 +1348,14 @@ async function withRetry(fn, attempts, delayMs) {
     return lastResult;
 }
 
+const GUARDED_AWAIT_TIMEOUT_MS = 12e3;
+
+const RESUME_REFRESH_TIMEOUT_MS = 3e4;
+
+function withTimeout(promise, ms, label) {
+    return Promise.race([ Promise.resolve(promise), new Promise((_, reject) => setTimeout(() => reject(new Error("TIMEOUT: " + (label || "await"))), ms || GUARDED_AWAIT_TIMEOUT_MS)) ]);
+}
+
 const STORAGE_KEY = "partech-parts-orders";
 
 function showPersistentErrorToast(msg) {
@@ -1597,16 +1605,19 @@ function orderTotals(order) {
     const hasChargeable = hasSell || returnKeptFeeAmount + returnKeptServiceFeeAmount + returnKeptDeliveryAmount + returnKeptExcessAmount > .01;
     const customerRemaining = hasChargeable ? round2(sellTotal - customerPaidAmount) : 0;
     const customerFullyPaid = hasChargeable && customerRemaining < CUSTOMER_REMAINING_TOLERANCE;
-    const profit = sellTotal - costTotal;
+    const deliveryCost = round2(Math.max(0, Number(order.deliveryCost) || 0));
+    const costBasis = costTotal + deliveryCost;
+    const profit = sellTotal - costBasis;
     let collectedProfit = 0;
     if (hasChargeable && profit > 0) {
-        collectedProfit = round2(Math.max(0, Math.min(customerPaidAmount - costTotal, profit)));
+        collectedProfit = round2(Math.max(0, Math.min(customerPaidAmount - costBasis, profit)));
     }
     const uncollectedProfit = hasChargeable ? round2(profit - collectedProfit) : 0;
     return {
         costTotal: costTotal,
         costToScrapyard: costToScrapyard,
         costToSupplier: costToSupplier,
+        deliveryCost: deliveryCost,
         partsSellTotal: partsSellTotal,
         feeAmount: feeAmount,
         feePercent: feePercent,
@@ -2427,13 +2438,15 @@ function feeFieldRowHtml(d) {
     const serviceFeePercentInputHtml = serviceFeePercentUi != null ? serviceFeePercentUi : '<input type="number" min="0" step="0.1" id="order-service-fee-percent-input" class="num" value="' + escapeHtml(d.serviceFeePercent ? d.serviceFeePercent : "") + '" placeholder="0">';
     const deliveryFeeUi = fieldRequestUiHtml("deliveryFeeAmount", null, d.deliveryFeeAmount, '<span class="field-readonly-value num">' + fmtMoney(Number(d.deliveryFeeAmount) || 0) + "</span>");
     const deliveryFeeInputHtml = deliveryFeeUi != null ? deliveryFeeUi : '<input type="number" min="0" step="0.5" id="order-delivery-fee-input" class="num" value="' + escapeHtml(d.deliveryFeeAmount ? d.deliveryFeeAmount : "") + '" placeholder="0">';
+    const deliveryCostUi = fieldRequestUiHtml("deliveryCost", null, d.deliveryCost, '<span class="field-readonly-value num">' + fmtMoney(Number(d.deliveryCost) || 0) + "</span>");
+    const deliveryCostInputHtml = deliveryCostUi != null ? deliveryCostUi : '<input type="number" min="0" step="0.5" id="order-delivery-cost-input" class="num" value="' + escapeHtml(d.deliveryCost ? d.deliveryCost : "") + '" placeholder="0">';
     const feeEnabledUi = fieldRequestUiHtml("feeEnabled", null, d.feeEnabled, '<span class="field-readonly-value">' + (d.feeEnabled ? "✓ مفعّلة" : "غير مفعّلة") + "</span>");
     const feeToggleHtml = feeEnabledUi != null ? feeEnabledUi : '<input type="checkbox" id="order-fee-toggle" ' + (d.feeEnabled ? "checked" : "") + ">";
     const serviceFeeEnabledUi = fieldRequestUiHtml("serviceFeeEnabled", null, d.serviceFeeEnabled, '<span class="field-readonly-value">' + (d.serviceFeeEnabled ? "✓ مفعّلة" : "غير مفعّلة") + "</span>");
     const serviceFeeToggleHtml = serviceFeeEnabledUi != null ? serviceFeeEnabledUi : '<input type="checkbox" id="order-service-fee-toggle" ' + (d.serviceFeeEnabled ? "checked" : "") + ">";
     const deliveryFeeEnabledUi = fieldRequestUiHtml("deliveryFeeEnabled", null, d.deliveryFeeEnabled, '<span class="field-readonly-value">' + (d.deliveryFeeEnabled ? "✓ مفعّلة" : "غير مفعّلة") + "</span>");
     const deliveryFeeToggleHtml = deliveryFeeEnabledUi != null ? deliveryFeeEnabledUi : '<input type="checkbox" id="order-delivery-fee-toggle" ' + (d.deliveryFeeEnabled ? "checked" : "") + ">";
-    return '<div id="order-fee-fields-wrap">' + '<label class="toggle-row">' + feeToggleHtml + '<span>احتساب نسبة رسوم خدمة وتوصيل (منفصلة عن مربع "أجور التوصيل" تحت — فعّل الاثنين لو فيه توصيل فعلي بالإضافة للنسبة)</span></label>' + '<div class="fee-percent-row" id="order-fee-percent-row" style="' + (d.feeEnabled ? "" : "display:none;") + '"><span>النسبة</span>' + feePercentInputHtml + '<span>%</span><span class="fee-amount-preview" id="fee-amount-preview"></span></div>' + (feePercentUi == null ? '<div class="fee-percent-row" id="order-fee-amount-row" style="' + (d.feeEnabled ? "" : "display:none;") + '"><span>أو المبلغ مباشرة</span><input type="number" min="0" step="0.5" id="order-fee-amount-input" class="num" placeholder="0"><span>ر.س</span></div>' : "") + '<label class="toggle-row">' + serviceFeeToggleHtml + "<span>احتساب نسبة رسوم خدمات</span></label>" + '<div class="fee-percent-row" id="order-service-fee-percent-row" style="' + (d.serviceFeeEnabled ? "" : "display:none;") + '"><span>النسبة</span>' + serviceFeePercentInputHtml + '<span>%</span><span class="service-fee-amount-preview" id="service-fee-amount-preview"></span></div>' + (serviceFeePercentUi == null ? '<div class="fee-percent-row" id="order-service-fee-amount-row" style="' + (d.serviceFeeEnabled ? "" : "display:none;") + '"><span>أو المبلغ مباشرة</span><input type="number" min="0" step="0.5" id="order-service-fee-amount-input" class="num" placeholder="0"><span>ر.س</span></div>' : "") + '<label class="toggle-row">' + deliveryFeeToggleHtml + "<span>احتساب أجور التوصيل</span></label>" + '<div class="fee-percent-row" id="order-delivery-fee-row" style="' + (d.deliveryFeeEnabled ? "" : "display:none;") + '"><span>المبلغ</span>' + deliveryFeeInputHtml + "<span>ر.س</span></div>" + "</div>";
+    return '<div id="order-fee-fields-wrap">' + '<label class="toggle-row">' + feeToggleHtml + '<span>احتساب نسبة رسوم خدمة وتوصيل (منفصلة عن مربع "أجور التوصيل" تحت — فعّل الاثنين لو فيه توصيل فعلي بالإضافة للنسبة)</span></label>' + '<div class="fee-percent-row" id="order-fee-percent-row" style="' + (d.feeEnabled ? "" : "display:none;") + '"><span>النسبة</span>' + feePercentInputHtml + '<span>%</span><span class="fee-amount-preview" id="fee-amount-preview"></span></div>' + (feePercentUi == null ? '<div class="fee-percent-row" id="order-fee-amount-row" style="' + (d.feeEnabled ? "" : "display:none;") + '"><span>أو المبلغ مباشرة</span><input type="number" min="0" step="0.5" id="order-fee-amount-input" class="num" placeholder="0"><span>ر.س</span></div>' : "") + '<label class="toggle-row">' + serviceFeeToggleHtml + "<span>احتساب نسبة رسوم خدمات</span></label>" + '<div class="fee-percent-row" id="order-service-fee-percent-row" style="' + (d.serviceFeeEnabled ? "" : "display:none;") + '"><span>النسبة</span>' + serviceFeePercentInputHtml + '<span>%</span><span class="service-fee-amount-preview" id="service-fee-amount-preview"></span></div>' + (serviceFeePercentUi == null ? '<div class="fee-percent-row" id="order-service-fee-amount-row" style="' + (d.serviceFeeEnabled ? "" : "display:none;") + '"><span>أو المبلغ مباشرة</span><input type="number" min="0" step="0.5" id="order-service-fee-amount-input" class="num" placeholder="0"><span>ر.س</span></div>' : "") + '<label class="toggle-row">' + deliveryFeeToggleHtml + "<span>احتساب أجور التوصيل</span></label>" + '<div class="fee-percent-row" id="order-delivery-fee-row" style="' + (d.deliveryFeeEnabled ? "" : "display:none;") + '"><span>المبلغ</span>' + deliveryFeeInputHtml + "<span>ر.س</span></div>" + '<label class="field-label" style="margin-top:10px;">تكلفة التوصيل <span class="muted">(داخلية — لا تظهر بالفاتورة، تُخصم من الربح فقط)</span></label>' + '<div class="fee-percent-row"><span>المبلغ</span>' + deliveryCostInputHtml + "<span>ر.س</span></div>" + "</div>";
 }
 
 function bindFeeFieldEvents() {
@@ -2494,6 +2507,11 @@ function bindFeeFieldEvents() {
     const deliveryFeeInput = root.querySelector("#order-delivery-fee-input");
     if (deliveryFeeInput) deliveryFeeInput.addEventListener("input", e => {
         draft.deliveryFeeAmount = e.target.value === "" ? 0 : Math.max(0, Number(e.target.value) || 0);
+        updateModalTotals();
+    });
+    const deliveryCostInput = root.querySelector("#order-delivery-cost-input");
+    if (deliveryCostInput) deliveryCostInput.addEventListener("input", e => {
+        draft.deliveryCost = e.target.value === "" ? 0 : Math.max(0, Number(e.target.value) || 0);
         updateModalTotals();
     });
 }
@@ -2667,6 +2685,7 @@ function openModal(mode, orderId) {
             serviceFeePercent: 0,
             deliveryFeeEnabled: false,
             deliveryFeeAmount: 0,
+            deliveryCost: 0,
             createdAt: (new Date).toISOString(),
             updatedAt: (new Date).toISOString(),
             isNew: true
@@ -4383,6 +4402,7 @@ function openQuoteModal(mode, orderId, role) {
             serviceFeePercent: 0,
             deliveryFeeEnabled: false,
             deliveryFeeAmount: 0,
+            deliveryCost: 0,
             createdAt: (new Date).toISOString(),
             updatedAt: (new Date).toISOString(),
             isQuote: true,
@@ -7238,7 +7258,7 @@ function applyEditProposal(pr, orderOverride, opts) {
             part.supplierId = null;
         } else if (pr.field === "supplierId") part.supplierId = pr.proposed_value || null; else return false;
     } else if (pr.kind === "order_field") {
-        if (pr.field === "feePercent") order.feePercent = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "serviceFeePercent") order.serviceFeePercent = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "deliveryFeeAmount") order.deliveryFeeAmount = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "feeEnabled") order.feeEnabled = !!pr.proposed_value; else if (pr.field === "serviceFeeEnabled") order.serviceFeeEnabled = !!pr.proposed_value; else if (pr.field === "deliveryFeeEnabled") order.deliveryFeeEnabled = !!pr.proposed_value; else if (pr.field === "customerId") {
+        if (pr.field === "feePercent") order.feePercent = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "serviceFeePercent") order.serviceFeePercent = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "deliveryFeeAmount") order.deliveryFeeAmount = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "deliveryCost") order.deliveryCost = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "feeEnabled") order.feeEnabled = !!pr.proposed_value; else if (pr.field === "serviceFeeEnabled") order.serviceFeeEnabled = !!pr.proposed_value; else if (pr.field === "deliveryFeeEnabled") order.deliveryFeeEnabled = !!pr.proposed_value; else if (pr.field === "customerId") {
             order.customerId = pr.proposed_value || null;
             const c = (appData.customers || []).find(c => c.id === order.customerId);
             order.customerPhone = c ? c.phone || "" : "";
@@ -7710,49 +7730,53 @@ function activityLogEscListener(e) {
     if (e.key === "Escape") closeActivityLog();
 }
 
+let activityLogOpening = false;
+
 async function openActivityLog() {
-    if (activityLogModalOpen) return;
+    if (activityLogModalOpen || activityLogOpening) return;
     if (draft || quoteDraft) {
         showToast("عندك نافذة مفتوحة حاليًا — سكّرها الأول وبعدين افتح سجل الإشعارات 🛎️", "error");
         return;
     }
-    activityLogModalOpen = true;
-    await refreshActivityEvents();
-    if (draft || quoteDraft) {
-        activityLogModalOpen = false;
-        return;
+    activityLogOpening = true;
+    try {
+        await withTimeout(refreshActivityEvents(), GUARDED_AWAIT_TIMEOUT_MS, "refreshActivityEvents").catch(e => console.error("openActivityLog:", e));
+        if (draft || quoteDraft) return;
+        const root = document.getElementById("modal-root");
+        root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">🛎️ سجل الإشعارات</div>' + '<div id="activity-log-list" style="margin-top:14px;max-height:60vh;overflow-y:auto;">' + activityLogListHtml() + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="close-activity-log-btn">إغلاق</button>' + "</div>" + "</div>" + "</div>";
+        root.classList.add("modal-open");
+        root.querySelector("[data-close-confirm]").addEventListener("click", e => {
+            if (e.target.hasAttribute("data-close-confirm")) closeActivityLog();
+        });
+        root.querySelector("#close-activity-log-btn").addEventListener("click", closeActivityLog);
+        root.querySelector("#activity-log-list").addEventListener("click", e => {
+            const row = e.target.closest(".activity-log-row");
+            if (!row) return;
+            const orderId = row.getAttribute("data-open-order-id");
+            if (!orderId) return;
+            const order = appData.orders.find(o => o.id === orderId);
+            closeActivityLog();
+            if (!order) {
+                showToast("الطلبية يلي يخصها هالإشعار ما عادت متوفرة", "error");
+                return;
+            }
+            modalCloseCallback = () => openActivityLog();
+            if (currentUserRole === "scrapyard") {
+                if (order.isQuote) openQuoteModal("edit", orderId, "purchasing"); else openApprovedQuoteViewModal(orderId);
+                return;
+            }
+            if (order.isQuote) {
+                openQuoteModal("edit", orderId);
+                return;
+            }
+            openModal("edit", orderId);
+        });
+        document.addEventListener("keydown", activityLogEscListener);
+        activityLogModalOpen = true;
+        markActivityEventsSeen();
+    } finally {
+        activityLogOpening = false;
     }
-    const root = document.getElementById("modal-root");
-    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">🛎️ سجل الإشعارات</div>' + '<div id="activity-log-list" style="margin-top:14px;max-height:60vh;overflow-y:auto;">' + activityLogListHtml() + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="close-activity-log-btn">إغلاق</button>' + "</div>" + "</div>" + "</div>";
-    root.classList.add("modal-open");
-    root.querySelector("[data-close-confirm]").addEventListener("click", e => {
-        if (e.target.hasAttribute("data-close-confirm")) closeActivityLog();
-    });
-    root.querySelector("#close-activity-log-btn").addEventListener("click", closeActivityLog);
-    root.querySelector("#activity-log-list").addEventListener("click", e => {
-        const row = e.target.closest(".activity-log-row");
-        if (!row) return;
-        const orderId = row.getAttribute("data-open-order-id");
-        if (!orderId) return;
-        const order = appData.orders.find(o => o.id === orderId);
-        closeActivityLog();
-        if (!order) {
-            showToast("الطلبية يلي يخصها هالإشعار ما عادت متوفرة", "error");
-            return;
-        }
-        modalCloseCallback = () => openActivityLog();
-        if (currentUserRole === "scrapyard") {
-            if (order.isQuote) openQuoteModal("edit", orderId, "purchasing"); else openApprovedQuoteViewModal(orderId);
-            return;
-        }
-        if (order.isQuote) {
-            openQuoteModal("edit", orderId);
-            return;
-        }
-        openModal("edit", orderId);
-    });
-    document.addEventListener("keydown", activityLogEscListener);
-    markActivityEventsSeen();
 }
 
 let editProposalDelegationBound = false;
@@ -7817,6 +7841,7 @@ const EDIT_PROPOSAL_FIELD_LABELS = {
     feeEnabled: "تفعيل نسبة الرسوم",
     serviceFeeEnabled: "تفعيل رسوم الخدمة",
     deliveryFeeEnabled: "تفعيل رسوم التوصيل",
+    deliveryCost: "تكلفة التوصيل (داخلية)",
     supplierId: "المورد/التشليح",
     customerId: "العميل"
 };
@@ -9207,6 +9232,7 @@ async function exportAllDataToExcel() {
             "نسبة رسوم الخدمة %": t.feeEnabled ? t.feePercent : "",
             "نسبة رسوم الخدمات %": t.serviceFeeEnabled ? t.serviceFeePercent : "",
             "أجور التوصيل": t.deliveryFeeEnabled ? t.deliveryFeeAmount : "",
+            "تكلفة التوصيل (داخلية)": t.deliveryCost || "",
             "الربح": t.hasChargeable ? t.profit : "",
             "المدفوع من الزبون": t.customerPaidAmount,
             "المتبقي على الزبون": t.hasChargeable ? t.customerRemaining : "",
@@ -9410,6 +9436,7 @@ function normalizeImportedOrder(o) {
         serviceFeePercent: 0,
         deliveryFeeEnabled: false,
         deliveryFeeAmount: 0,
+        deliveryCost: 0,
         createdAt: (new Date).toISOString(),
         updatedAt: (new Date).toISOString()
     };
@@ -9803,7 +9830,7 @@ function scheduleCustodyBalanceRefresh(refreshFn) {
         return;
     }
     custodyBalanceRefreshInFlight = true;
-    Promise.resolve(refreshFn()).then(() => {
+    withTimeout(Promise.resolve().then(refreshFn), GUARDED_AWAIT_TIMEOUT_MS, "custodyBalanceRefresh").catch(e => console.error("scheduleCustodyBalanceRefresh:", e)).then(() => {
         custodyBalanceRefreshInFlight = false;
         scheduleOrderRenderCascade();
         if (custodyBalanceRefreshDirty) {
@@ -15094,59 +15121,77 @@ let resumeRefreshInFlight = false;
 
 let lastResumeRefreshAt = 0;
 
+let resumeRefreshGeneration = 0;
+
 async function refreshOnResume() {
     if (!shownForEmail || resumeRefreshInFlight) return;
     const now = Date.now();
     if (now - lastResumeRefreshAt < 4e3) return;
     lastResumeRefreshAt = now;
     resumeRefreshInFlight = true;
+    const myGen = ++resumeRefreshGeneration;
     try {
-        if (currentUserRole === "scrapyard") {
-            if (document.getElementById("scrapyard-root").style.display === "none") return;
-            if (scrapyardCurrentScreen === "settlement") {
-                if (!scrapyardHasOpenEdit()) await loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
-            } else if (scrapyardCurrentScreen === "home") {
-                await loadScrapyardHomeTotals().then(renderScrapyardHomeView);
-            }
-            refreshActivityEvents();
-            loadAnnouncement();
-            return;
-        }
-        await loadData();
-        renderKPIs();
-        renderTable();
-        renderQuotesList();
-        updateTasksBadge();
-        updateCustomersBadge();
-        updateSuppliersBadge();
-        refreshScrapyardPendingCount();
-        refreshEditProposals();
-        refreshActivityEvents();
-        loadAnnouncement();
-        if (document.getElementById("treasury-view").style.display !== "none") {
-            renderTreasuryView();
-        }
-        const tasksView = document.getElementById("tasks-view");
-        if (tasksView && tasksView.style.display !== "none") {
-            if (activeTaskCategory) {
-                if (document.getElementById("task-items-list")) refreshTaskItemsList(activeTaskCategory);
-            } else renderTasksView();
-        }
-        if (document.getElementById("suppliers-view").style.display !== "none" && Object.keys(editingSuppliers).length === 0) {
-            refreshSuppliersList();
-        }
-        if (document.getElementById("customers-view").style.display !== "none" && Object.keys(editingCustomers).length === 0) {
-            refreshCustomersList();
-        }
-        refreshArchiveViewIfOpen();
-        const scrapRoot = document.getElementById("scrapyard-root");
-        if (scrapRoot && scrapRoot.style.display !== "none" && scrapyardSharedState.canManage && scrapyardCurrentScreen === "settlement") {
-            if (!scrapyardHasOpenEdit()) await loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
-        }
+        await withTimeout(refreshOnResumeWork(myGen), RESUME_REFRESH_TIMEOUT_MS, "refreshOnResume");
     } catch (e) {
         console.error("refreshOnResume:", e);
     } finally {
         resumeRefreshInFlight = false;
+    }
+}
+
+async function refreshOnResumeWork(myGen) {
+    if (currentUserRole === "scrapyard") {
+        if (document.getElementById("scrapyard-root").style.display === "none") return;
+        if (scrapyardCurrentScreen === "settlement") {
+            if (!scrapyardHasOpenEdit()) {
+                await loadScrapyardData(scrapyardSharedState.activeKind);
+                if (myGen !== resumeRefreshGeneration) return;
+                renderScrapyardView();
+            }
+        } else if (scrapyardCurrentScreen === "home") {
+            await loadScrapyardHomeTotals();
+            if (myGen !== resumeRefreshGeneration) return;
+            renderScrapyardHomeView();
+        }
+        refreshActivityEvents();
+        loadAnnouncement();
+        return;
+    }
+    await loadData();
+    if (myGen !== resumeRefreshGeneration) return;
+    renderKPIs();
+    renderTable();
+    renderQuotesList();
+    updateTasksBadge();
+    updateCustomersBadge();
+    updateSuppliersBadge();
+    refreshScrapyardPendingCount();
+    refreshEditProposals();
+    refreshActivityEvents();
+    loadAnnouncement();
+    if (document.getElementById("treasury-view").style.display !== "none") {
+        renderTreasuryView();
+    }
+    const tasksView = document.getElementById("tasks-view");
+    if (tasksView && tasksView.style.display !== "none") {
+        if (activeTaskCategory) {
+            if (document.getElementById("task-items-list")) refreshTaskItemsList(activeTaskCategory);
+        } else renderTasksView();
+    }
+    if (document.getElementById("suppliers-view").style.display !== "none" && Object.keys(editingSuppliers).length === 0) {
+        refreshSuppliersList();
+    }
+    if (document.getElementById("customers-view").style.display !== "none" && Object.keys(editingCustomers).length === 0) {
+        refreshCustomersList();
+    }
+    refreshArchiveViewIfOpen();
+    const scrapRoot = document.getElementById("scrapyard-root");
+    if (scrapRoot && scrapRoot.style.display !== "none" && scrapyardSharedState.canManage && scrapyardCurrentScreen === "settlement") {
+        if (!scrapyardHasOpenEdit()) {
+            await loadScrapyardData(scrapyardSharedState.activeKind);
+            if (myGen !== resumeRefreshGeneration) return;
+            renderScrapyardView();
+        }
     }
 }
 
