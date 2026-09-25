@@ -2796,8 +2796,8 @@ function vinFieldHtml(d, mode, prefix) {
     const ro = mode === "readonly";
     const v = d.vin || "";
     const hint = ro ? "" : vinHintHtml(v);
-    const btn = ro ? v ? '<button type="button" class="icon-btn" data-vin-copy="' + escapeHtml(v) + '" aria-label="نسخ رقم الهيكل">📋</button>' : "" : '<button type="button" class="icon-btn" data-media-add="' + escapeHtml("vin|" + d.id + "|_order:vin") + '" aria-label="صورة رقم الهيكل">📷</button>';
-    return '<div class="field">' + '<span class="field-label">رقم الهيكل VIN (اختياري)</span>' + '<div class="phone-field-row">' + '<input type="text" id="' + prefix + '-vin-input" dir="ltr" style="text-align:right;" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" placeholder="' + (ro ? "ما انكتب رقم هيكل" : "اكتبه أو صوّر الاستمارة") + '" value="' + escapeHtml(v) + '"' + (ro ? " readonly" : "") + ">" + btn + "</div>" + (ro ? "" : '<div class="add-part-hint" id="' + prefix + '-vin-hint" style="margin-top:4px;"' + (hint ? "" : " hidden") + ">" + hint + "</div>") + "</div>";
+    const btn = ro ? v ? '<button type="button" class="icon-btn" data-vin-copy="' + escapeHtml(v) + '" aria-label="نسخ رقم الهيكل">📋</button>' : "" : '<button type="button" class="icon-btn" data-media-add="' + escapeHtml(prefix + "|" + d.id + "|_order") + '" aria-label="صور الطلب (الاستمارة وغيرها)" title="صور الطلب (الاستمارة وغيرها)">📷</button>';
+    return '<div class="field">' + '<span class="field-label">رقم الهيكل VIN (اختياري)</span>' + '<div class="phone-field-row">' + '<input type="text" id="' + prefix + '-vin-input" dir="ltr" style="text-align:right;" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" placeholder="' + (ro ? "ما انكتب رقم هيكل" : "اكتب رقم الهيكل") + '" value="' + escapeHtml(v) + '"' + (ro ? " readonly" : "") + ">" + btn + "</div>" + (ro ? "" : '<div class="add-part-hint" id="' + prefix + '-vin-hint" style="margin-top:4px;"' + (hint ? "" : " hidden") + ">" + hint + "</div>") + "</div>";
 }
 
 function refreshVinHint(prefix, raw) {
@@ -4269,8 +4269,7 @@ function mediaDefaultAudience(role, kind, isElevated) {
     return role === "scrapyard" || role === "full" ? "shared" : null;
 }
 
-function mediaAltAudience(role, kind) {
-    if (kind === "vin") return null;
+function mediaAltAudience(role) {
     return role === "scrapyard" ? "purch" : null;
 }
 
@@ -4287,7 +4286,7 @@ function mediaStagedFlushPlan(snapshot, savedPartIds) {
     const flush = [], dropped = [];
     const visit = (items, key) => {
         if (!items || !items.length) return;
-        (key === "_order" || key === "_order:vin" || has(key) ? flush : dropped).push({
+        (key === "_order" || has(key) ? flush : dropped).push({
             key: key,
             items: items
         });
@@ -4358,16 +4357,15 @@ function bytesHasLocationAtom(u8) {
 }
 
 function mediaPartKey(ctx) {
-    return ctx.kind === "vin" ? "_order:vin" : ctx.partId || "_order";
+    return ctx.partId || "_order";
 }
 
-function mediaRowKind(ctx, role) {
-    if (ctx.kind === "vin") return "vin";
+function mediaRowKind(role) {
     if (role === "scrapyard") return "yard_part";
     return "customer_ref";
 }
 
-function mediaOrderBlockItems(rows, vinLocals, orderLocals) {
+function mediaOrderBlockItems(rows, orderLocals) {
     const t = r => String(r.created_at || "");
     const lvl = (rows || []).filter(r => r && !r.part_id).sort((a, b) => t(a).localeCompare(t(b)));
     const out = [];
@@ -4377,10 +4375,6 @@ function mediaOrderBlockItems(rows, vinLocals, orderLocals) {
             vin: true
         });
     });
-    (vinLocals || []).forEach(it => out.push({
-        local: it,
-        vin: true
-    }));
     lvl.forEach(r => {
         if (r.kind !== "vin") out.push({
             row: r,
@@ -4651,7 +4645,7 @@ function mediaSeedPersisted(orderId, parts) {
 function mediaTargetPersisted(ctx) {
     const s = persistedPartIds.get(ctx.orderId);
     if (!s) return false;
-    if (ctx.kind === "vin" || !ctx.partId) return true;
+    if (!ctx.partId) return true;
     return s.has(ctx.partId);
 }
 
@@ -4753,8 +4747,7 @@ function mediaDrainPersistedStaged(draftId) {
     st.forEach((arr, key) => {
         const ctx = {
             orderId: draftId,
-            partId: key === "_order" || key === "_order:vin" ? null : key,
-            kind: key === "_order:vin" ? "vin" : key === "_order" ? "order" : "part"
+            partId: key === "_order" ? null : key
         };
         if (!mediaTargetPersisted(ctx)) return;
         st.delete(key);
@@ -5115,7 +5108,7 @@ function mediaLocalTileHtml(item, mode, block) {
         failed: "الرفع ما كمل"
     }[phase] || "";
     const id = escapeHtml(item.localId);
-    return '<div class="' + (block ? "media-block-item" : "media-tile") + " media-tile-local" + (phase === "failed" ? " media-tile-failed" : "") + '" role="button" tabindex="0" data-media-open-local="' + id + '" title="' + title + '" aria-label="' + title + '"' + (block ? ' style="aspect-ratio:' + mediaAspectRatioCss(item.width, item.height) + '"' : "") + ">" + (item.previewUrl ? '<img alt="" src="' + escapeHtml(item.previewUrl) + '">' : "") + (item.mediaType === "video" ? '<span class="media-tile-badge media-tile-play">▶</span>' : "") + (block && block.vin ? MEDIA_VIN_CAPTION_HTML : "") + mediaLockBadgeHtml(item.audience) + (phase === "failed" ? '<button type="button" class="media-tile-x media-tile-retry" data-media-retry="' + id + '" aria-label="إعادة المحاولة">↻</button>' : '<span class="media-tile-badge media-tile-state">' + badge + "</span>") + (mode === "edit" && (phase === "staged" || phase === "failed") ? '<button type="button" class="media-tile-x" data-media-cancel="' + id + '" aria-label="إزالة">✕</button>' : "") + "</div>";
+    return '<div class="' + (block ? "media-block-item" : "media-tile") + " media-tile-local" + (phase === "failed" ? " media-tile-failed" : "") + '" role="button" tabindex="0" data-media-open-local="' + id + '" title="' + title + '" aria-label="' + title + '"' + (block ? ' style="aspect-ratio:' + mediaAspectRatioCss(item.width, item.height) + '"' : "") + ">" + (item.previewUrl ? '<img alt="" src="' + escapeHtml(item.previewUrl) + '">' : "") + (item.mediaType === "video" ? '<span class="media-tile-badge media-tile-play">▶</span>' : "") + mediaLockBadgeHtml(item.audience) + (phase === "failed" ? '<button type="button" class="media-tile-x media-tile-retry" data-media-retry="' + id + '" aria-label="إعادة المحاولة">↻</button>' : '<span class="media-tile-badge media-tile-state">' + badge + "</span>") + (mode === "edit" && (phase === "staged" || phase === "failed") ? '<button type="button" class="media-tile-x" data-media-cancel="' + id + '" aria-label="إزالة">✕</button>' : "") + "</div>";
 }
 
 function mediaStripInnerHtml(orderId, key, mode) {
@@ -5161,20 +5154,18 @@ function mediaOrderBlockHtml(orderId, surface, canAdd) {
 
 function mediaOrderBlockInnerHtml(orderId, mode, surface) {
     const ent = orderMediaIndex.get(orderId);
-    const items = mediaOrderBlockItems(ent ? Array.from(ent.rows.values()) : [], mediaLocalItems(orderId, "_order:vin"), mediaLocalItems(orderId, "_order"));
+    const items = mediaOrderBlockItems(ent ? Array.from(ent.rows.values()) : [], mediaLocalItems(orderId, "_order"));
     const addSpec = escapeHtml((surface || "order") + "|" + orderId + "|_order");
     let html = "";
     if (items.length) {
         html += '<span class="field-label">صور الطلب</span>' + '<div class="media-block-row' + (items.length === 1 ? " media-block-single" : "") + '" data-media-scope="' + escapeHtml(orderId + "|_block") + '">';
         items.forEach(x => {
-            html += x.row ? mediaBlockRowItemHtml(x.row, x.vin) : mediaLocalTileHtml(x.local, mode, {
-                vin: x.vin
-            });
+            html += x.row ? mediaBlockRowItemHtml(x.row, x.vin) : mediaLocalTileHtml(x.local, mode, true);
         });
         if (mode === "edit") html += '<button type="button" class="media-block-add" data-media-add="' + addSpec + '" aria-label="إضافة صور للطلب">＋</button>';
         html += "</div>";
     } else if (mode === "edit") {
-        html += '<button type="button" class="media-block-empty" data-media-add="' + addSpec + '">📎 صور الطلب (صور الزبون، الاستمارة…)</button>';
+        html += '<button type="button" class="media-block-empty" data-media-add="' + addSpec + '">📎 صور الطلب (الاستمارة، صور الزبون…)</button>';
     }
     const deleted = mediaStripInnerHtml(orderId, "_deleted", "view");
     if (deleted) html += '<div class="media-strip" data-media-scope="' + escapeHtml(orderId + "|_deleted") + '">' + deleted + "</div>";
@@ -5356,28 +5347,15 @@ function mediaDelegatedClick(e) {
     }
 }
 
-function mediaOpenModalDraft() {
-    const root = document.getElementById("modal-root");
-    if (root && root.querySelector("#quote-parts-list") && quoteDraft) return quoteDraft;
-    if (root && root.querySelector("#parts-list") && draft) return draft;
-    return null;
-}
-
 function mediaOnAddSpec(spec) {
-    let parts = String(spec || "").split("|");
-    if (parts.length === 1 && parts[0] === "vin") {
-        const d = mediaOpenModalDraft();
-        if (!d) return;
-        parts = [ "vin", d.id, "_order:vin" ];
-    }
+    const parts = String(spec || "").split("|");
     const surface = parts[0], orderId = parts[1], key = parts[2] || "_order";
     if (!orderId) return;
-    const isVin = key === "_order:vin";
     openMediaPicker({
         orderId: orderId,
         draftId: surface === "approved" ? null : orderId,
-        partId: isVin || key === "_order" ? null : key,
-        kind: isVin ? "vin" : key === "_order" ? "order" : "part",
+        partId: key === "_order" ? null : key,
+        kind: key === "_order" ? "order" : "part",
         surface: surface
     });
 }
@@ -5385,7 +5363,6 @@ function mediaOnAddSpec(spec) {
 function mediaCanAddTo(ctx) {
     if (!sb || !ctx || !ctx.orderId) return false;
     if (currentUserRole === "scrapyard") {
-        if (ctx.kind === "vin") return false;
         const o = quoteDraft && quoteDraft.id === ctx.orderId ? quoteDraft : (appData.orders || []).find(x => x.id === ctx.orderId);
         return !!(o && (o.isQuote || o.wasQuote));
     }
@@ -5393,8 +5370,7 @@ function mediaCanAddTo(ctx) {
 }
 
 function mediaTargetLabel(ctx) {
-    if (ctx.kind === "vin") return "صورة رقم الهيكل (الاستمارة أو لوحة VIN)";
-    if (!ctx.partId) return "صور الطلب — صور الزبون للطلبية كاملة";
+    if (!ctx.partId) return "صور الطلب (الاستمارة، صور الزبون…) — للطلبية كاملة";
     const d = draft && draft.id === ctx.orderId ? draft : quoteDraft && quoteDraft.id === ctx.orderId ? quoteDraft : (appData.orders || []).find(o => o.id === ctx.orderId);
     const p = d && (d.parts || []).find(x => x.id === ctx.partId);
     return "القطعة: " + (p && String(p.description || "").trim() || "بدون وصف");
@@ -5434,19 +5410,16 @@ function openMediaPicker(ctx) {
     mediaBindDelegationOnce();
     ensureMediaInputs();
     loadMediaConfig();
-    const isVin = ctx.kind === "vin";
-    const alt = mediaAltAudience(currentUserRole, ctx.kind);
+    const alt = mediaAltAudience(currentUserRole);
     const persisted = mediaTargetPersisted(ctx);
-    const isPurch = currentUserRole === "scrapyard";
     const altLabel = "🔒 داخلي";
     const altHint = "فواتير/لوحات محلات/محادثات/صوت يذكر المورد";
-    const offerVin = ctx.kind === "order" && !isPurch;
     mediaPickerState = {
         ctx: ctx,
         altOn: false
     };
     const root = document.getElementById("confirm-root");
-    root.innerHTML = '<div class="modal-backdrop" data-close-confirm data-media-picker>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">' + (isVin ? "🪪 صورة الاستمارة / رقم الهيكل" : "📷 صورة / فيديو") + "</div>" + '<p class="modal-sub">' + escapeHtml(mediaTargetLabel(ctx)) + "</p>" + (persisted ? "" : '<span class="stamp stamp-amber">' + (ctx.partId ? "القطعة لسه ما انحفظت" : "الطلبية لسه ما انحفظت") + " — بينرفع بعد الحفظ</span>") + '<div class="contact-options-col">' + (offerVin ? '<button type="button" class="btn" data-media-pick="vin">🪪 الاستمارة (بتنعرض أول الطلب للكل)</button>' : "") + '<button type="button" class="btn" data-media-pick="photo">📷 صورة</button>' + (isVin ? "" : '<button type="button" class="btn" data-media-pick="video">🎥 فيديو (حتى ' + mediaMaxSeconds() + " ثانية)</button>") + '<button type="button" class="btn" data-media-pick="gallery">🖼️ من المعرض</button>' + "</div>" + (alt ? '<div class="filter-chips" style="margin-top:14px;">' + '<button type="button" class="chip" data-media-toggle="alt" aria-pressed="false">' + altLabel + "</button>" + "</div>" + '<p class="add-part-hint" style="margin:6px 0 0;">' + escapeHtml(altLabel + ": " + altHint) + "</p>" : "") + (!persisted && !isVin ? '<p class="add-part-hint" style="margin:6px 0 0;">الملفات بتضل على الجهاز لحد الحفظ — لو انقفل التطبيق قبلها بتضيع</p>' : "") + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" data-media-pick="cancel">إلغاء</button>' + "</div>" + "</div>" + "</div>";
+    root.innerHTML = '<div class="modal-backdrop" data-close-confirm data-media-picker>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">📷 صورة / فيديو</div>' + '<p class="modal-sub">' + escapeHtml(mediaTargetLabel(ctx)) + "</p>" + (persisted ? "" : '<span class="stamp stamp-amber">' + (ctx.partId ? "القطعة لسه ما انحفظت" : "الطلبية لسه ما انحفظت") + " — بينرفع بعد الحفظ</span>") + '<div class="contact-options-col">' + '<button type="button" class="btn" data-media-pick="photo">📷 صورة</button>' + '<button type="button" class="btn" data-media-pick="video">🎥 فيديو (حتى ' + mediaMaxSeconds() + " ثانية)</button>" + '<button type="button" class="btn" data-media-pick="gallery">🖼️ من المعرض</button>' + "</div>" + (alt ? '<div class="filter-chips" style="margin-top:14px;">' + '<button type="button" class="chip" data-media-toggle="alt" aria-pressed="false">' + altLabel + "</button>" + "</div>" + '<p class="add-part-hint" style="margin:6px 0 0;">' + escapeHtml(altLabel + ": " + altHint) + "</p>" : "") + (!persisted ? '<p class="add-part-hint" style="margin:6px 0 0;">الملفات بتضل على الجهاز لحد الحفظ — لو انقفل التطبيق قبلها بتضيع</p>' : "") + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" data-media-pick="cancel">إلغاء</button>' + "</div>" + "</div>" + "</div>";
     root.classList.add("modal-open");
     root.querySelector("[data-media-picker]").addEventListener("click", e => {
         if (e.target.hasAttribute("data-media-picker")) {
@@ -5475,22 +5448,12 @@ function mediaPickerChoose(which) {
         return;
     }
     const ctx = st.ctx;
-    if (which === "vin") {
-        const vctx = Object.assign({}, ctx, {
-            kind: "vin",
-            partId: null
-        });
-        closeMediaPicker();
-        openMediaPicker(vctx);
-        return;
-    }
     const input = document.getElementById(which === "photo" ? "media-in-photo" : which === "video" ? "media-in-video" : "media-in-gallery");
     if (!input) {
         closeMediaPicker();
         return;
     }
-    if (which === "gallery") input.setAttribute("accept", ctx.kind === "vin" ? "image/*" : "image/*,video/*");
-    const alt = mediaAltAudience(currentUserRole, ctx.kind);
+    const alt = mediaAltAudience(currentUserRole);
     mediaPendingPick = {
         ctx: ctx,
         audience: st.altOn && alt ? alt : mediaDefaultAudience(currentUserRole, ctx.kind, currentUserIsElevated),
@@ -5589,10 +5552,6 @@ async function mediaProcessOneFile(file, pick) {
         showToast("نوع الملف مش مدعوم", "error");
         return;
     }
-    if (isVideo && pick.ctx.kind === "vin") {
-        showToast("رقم الهيكل: صورة بس", "error");
-        return;
-    }
     const gen = mediaStateGen;
     try {
         const c = isVideo ? await mediaCompressVideoWithSheet(file) : await compressPhotoFile(file);
@@ -5614,10 +5573,10 @@ function mediaAdd(ctx, c, audience) {
         id: newMediaId(),
         orderId: ctx.orderId,
         draftId: ctx.draftId || null,
-        partId: ctx.kind === "vin" ? null : ctx.partId || null,
+        partId: ctx.partId || null,
         partKey: mediaPartKey(ctx),
         audience: audience,
-        kind: mediaRowKind(ctx, currentUserRole),
+        kind: mediaRowKind(currentUserRole),
         mediaType: c.mediaType,
         full: c.full,
         thumb: c.thumb,
