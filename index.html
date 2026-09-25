@@ -750,12 +750,32 @@
      min-width:0) حتى ما يعرّض صف القطعة على 375px. الشريط الفاضي ما بياخد مكان (:empty). */
   .media-strip{display:flex;flex-wrap:wrap;gap:6px;min-width:0;align-items:center;}
   .media-strip:empty{display:none;}
-  .media-strip + .media-strip{margin-top:8px;}
   .purchase-history-row .media-strip{margin-top:6px;}
-  /* شريط صور رقم الهيكل: تحت حقل VIN بالنافذتين، ولحاله تحت رأس عرض التسعيرة المعتمدة */
-  .field > .media-strip{margin-top:8px;}
-  .modal-card > .media-strip{margin-bottom:10px;}
   .media-strip-label{flex-basis:100%;align-self:flex-start;width:fit-content;}
+  /* بلوك "صور الطلب" أول الطلبية (تحت رقم الهيكل): معاينات كاملة بلا قص (contain) بارتفاع 160px وعرض
+     حسب نسبة الصورة (aspect-ratio inline من أبعادها، فالمكان محجوز قبل ما توصل)، صف أفقي بيسكرول لحاله —
+     min-width:0 + overflow-x حتى ما يعرّض النافذة على 375px. عنصر واحد = عرض كامل لحد 260px ارتفاع. */
+  .media-block{min-width:0;max-width:100%;margin-bottom:16px;}
+  .media-block:empty{display:none;}
+  .media-block-row{display:flex;gap:8px;min-width:0;max-width:100%;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;padding-bottom:4px;scrollbar-width:thin;scrollbar-color:var(--border) transparent;}
+  .media-block-row::-webkit-scrollbar{height:6px;}
+  .media-block-row::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
+  .media-block-row::-webkit-scrollbar-track{background:transparent;}
+  .media-block-item{position:relative;flex:0 0 auto;height:160px;width:auto;min-width:64px;max-width:88%;padding:0;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);overflow:hidden;cursor:pointer;scroll-snap-align:start;display:block;font:inherit;color:inherit;}
+  .media-block-item::before{content:'🖼️';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:22px;opacity:.35;}
+  .media-block-item img{position:relative;z-index:1;width:100%;height:100%;object-fit:contain;display:block;}
+  .media-block-item img:not([src]),.media-block-item img.media-tile-broken{visibility:hidden;}
+  .media-block-single .media-block-item{flex:1 1 auto;width:100%;max-width:none;height:auto;max-height:260px;}
+  .media-block-item .media-tile-play{font-size:18px;padding:7px 10px;border-radius:50%;}
+  .media-block-item .media-tile-dur,.media-block-item .media-block-cap{bottom:6px;left:6px;font-size:11px;padding:3px 6px;}
+  .media-block-item .media-tile-lock{top:6px;right:6px;font-size:11px;padding:3px 5px;}
+  .media-block-item .media-tile-state{bottom:6px;right:6px;font-size:12px;padding:3px 5px;}
+  .media-block-item .media-tile-x{width:28px;height:28px;line-height:28px;font-size:13px;}
+  .media-block-add{flex:0 0 56px;height:160px;padding:0;border:1px dashed var(--green-line);border-radius:var(--radius-sm);background:var(--green-dim);color:var(--green);font-size:24px;font-weight:700;cursor:pointer;scroll-snap-align:end;font-family:'Cairo',system-ui,sans-serif;}
+  .media-block-single .media-block-add{height:auto;}
+  .media-block-empty{display:inline-block;max-width:100%;padding:8px 12px;border:1px dashed var(--border);border-radius:var(--radius-sm);background:transparent;color:var(--text-dim);font-family:'Tajawal',sans-serif;font-size:13px;font-weight:700;cursor:pointer;text-align:right;}
+  .media-block-empty:hover,.media-block-add:hover{border-color:var(--green);color:var(--green);}
+  .media-block .media-strip{margin-top:8px;}
   .media-tile{position:relative;width:48px;height:48px;flex:0 0 48px;padding:0;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--surface-2);cursor:pointer;display:block;}
   .media-tile::before{content:'🖼️';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:16px;opacity:.35;}
   .media-tile img{position:relative;z-index:1;width:100%;height:100%;object-fit:cover;display:block;}
@@ -2777,7 +2797,7 @@ function vinFieldHtml(d, mode, prefix) {
     const v = d.vin || "";
     const hint = ro ? "" : vinHintHtml(v);
     const btn = ro ? v ? '<button type="button" class="icon-btn" data-vin-copy="' + escapeHtml(v) + '" aria-label="نسخ رقم الهيكل">📋</button>' : "" : '<button type="button" class="icon-btn" data-media-add="' + escapeHtml("vin|" + d.id + "|_order:vin") + '" aria-label="صورة رقم الهيكل">📷</button>';
-    return '<div class="field">' + '<span class="field-label">رقم الهيكل VIN (اختياري)</span>' + '<div class="phone-field-row">' + '<input type="text" id="' + prefix + '-vin-input" dir="ltr" style="text-align:right;" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" placeholder="' + (ro ? "ما انكتب رقم هيكل" : "اكتبه أو صوّر الاستمارة") + '" value="' + escapeHtml(v) + '"' + (ro ? " readonly" : "") + ">" + btn + "</div>" + (ro ? "" : '<div class="add-part-hint" id="' + prefix + '-vin-hint" style="margin-top:4px;"' + (hint ? "" : " hidden") + ">" + hint + "</div>") + mediaStripHtml(d.id, "_order:vin", ro ? "view" : "edit") + "</div>";
+    return '<div class="field">' + '<span class="field-label">رقم الهيكل VIN (اختياري)</span>' + '<div class="phone-field-row">' + '<input type="text" id="' + prefix + '-vin-input" dir="ltr" style="text-align:right;" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" placeholder="' + (ro ? "ما انكتب رقم هيكل" : "اكتبه أو صوّر الاستمارة") + '" value="' + escapeHtml(v) + '"' + (ro ? " readonly" : "") + ">" + btn + "</div>" + (ro ? "" : '<div class="add-part-hint" id="' + prefix + '-vin-hint" style="margin-top:4px;"' + (hint ? "" : " hidden") + ">" + hint + "</div>") + "</div>";
 }
 
 function refreshVinHint(prefix, raw) {
@@ -2857,7 +2877,7 @@ function bindVinCopyButtons(root) {
 }
 
 function modalHtml(d) {
-    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلبية جديدة" : "تعديل الطلبية") + '</div><div class="modal-sub">البيانات تُحفظ تلقائيًا عند الضغط على حفظ</div></div>' + '<div style="display:flex;gap:8px;align-items:flex-start;">' + '<span id="modal-edit-toggle-wrap">' + editModeToggleButtonHtml(d) + "</span>" + '<button class="icon-btn" id="modal-close-btn" aria-label="إغلاق">✕</button>' + "</div></div>" + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + '<label class="field"><span class="field-label">رقم الطلب (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + '<div class="field">' + '<span class="field-label">العميل (اختياري)</span>' + '<div class="phone-field-row">' + '<div id="order-customer-select" style="flex:1;">' + orderCustomerFieldHtml(d) + "</div>" + '<button type="button" class="icon-btn" id="order-add-customer-btn" aria-label="عميل جديد">➕</button>' + "</div>" + "</div>" + '<div class="field">' + '<div class="field-label-row">' + '<span class="field-label">الطلبية</span>' + '<button type="button" id="btn-toggle-part-selection" class="chip' + (d.partsSelectionEnabled ? " chip-active" : "") + '">🎯 تحديد القطع' + (d.partsSelectionEnabled ? " (مفعّل)" : "") + "</button>" + '<button type="button" id="order-add-supplier-btn" class="chip">➕ مورد جديد</button>' + "</div>" + '<input type="text" id="order-label-input" placeholder="مثال: اسم الزبون / نوع السيارة / أي وصف مختصر" value="' + escapeHtml(d.orderLabel || "") + '">' + "</div>" + vinFieldHtml(d, "edit", "order") + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span></div>' + '<div id="parts-list" class="parts-list">' + d.parts.map(partRowHtml).join("") + "</div>" + '<div id="part-type-gate-wrap">' + partAddControlsHtml() + "</div>" + feeFieldRowHtml(d) + "</div>" + mediaOrderSectionHtml(d.id, "order", true) + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">قسم المبيعات — التسعير والتحصيل</span></div>' + '<div class="totals-row">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="total-cost-display">0 ر.س</span></div>' + '<div class="total-box"><span>مستحق من الزبون</span><span class="num text-green" id="total-sell-display">0 ر.س</span></div>' + '<div class="total-box"><span>الربح</span><span class="num" id="total-profit-display">0 ر.س</span><span class="total-box-sub" id="total-profit-sub"></span></div>' + "</div>" + (hasElevatedAccess() ? '<div id="cost-split-row-wrap">' + costSplitButtonsHtml(d, orderTotals(d)) + "</div>" : "") + '<div class="payments-block">' + '<div id="payments-list" class="payments-list">' + paymentsListInnerHtml() + "</div>" + '<button type="button" id="add-payment-btn" class="btn btn-ghost btn-sm">+ إضافة دفعة</button>' + '<div class="payment-summary-row">' + '<span>إجمالي المدفوع<span class="num" id="total-paid-display">0 ر.س</span></span>' + '<span><span id="customer-remaining-label">المتبقي عليه</span><span class="num payment-remaining-display" id="customer-remaining-display">0 ر.س</span></span>' + "</div>" + '<div id="customer-refund-status-wrap">' + orderCustomerRefundStatusHtml(d) + "</div>" + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + '<div id="order-action-buttons-wrap">' + orderActionButtonsHtml(d) + "</div>" + '<div class="parts-clipboard-mini">' + '<button type="button" class="btn-clip-mini" id="copy-parts-btn">📋 نسخ</button>' + '<button type="button" class="btn-clip-mini" id="paste-parts-btn">📥 لصق</button>' + "</div>" + "</div>" + (!d.isNew ? '<div class="modal-footer-docs"><button type="button" class="btn btn-ghost btn-sm" id="modal-quote-btn">🧾 عرض سعر</button><button type="button" class="btn btn-ghost btn-sm" id="modal-invoice-btn">🧾 فاتورة</button></div>' : "<span></span>") + '<div class="modal-footer-actions">' + '<button type="button" class="btn btn-ghost" id="modal-cancel-btn">إلغاء</button>' + (!d.isNew ? '<button type="button" class="btn btn-ghost" id="modal-return-to-quote-btn">إرجاع للتسعير</button>' : "") + '<button type="button" class="btn ' + (d.supplied ? "btn-supplied-on" : "btn-ghost") + '" id="modal-supplied-btn"' + (!d.confirmed ? ' disabled title="لازم تأكيد الطلبية أولًا"' : "") + ">" + (d.supplied ? "✅ تم التوريد" : "🚚 تم التوريد") + "</button>" + '<button type="button" class="btn btn-primary" id="modal-save-btn">حفظ الطلبية</button>' + "</div>" + "</div>" + "</div>" + "</div>";
+    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلبية جديدة" : "تعديل الطلبية") + '</div><div class="modal-sub">البيانات تُحفظ تلقائيًا عند الضغط على حفظ</div></div>' + '<div style="display:flex;gap:8px;align-items:flex-start;">' + '<span id="modal-edit-toggle-wrap">' + editModeToggleButtonHtml(d) + "</span>" + '<button class="icon-btn" id="modal-close-btn" aria-label="إغلاق">✕</button>' + "</div></div>" + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + '<label class="field"><span class="field-label">رقم الطلب (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + '<div class="field">' + '<span class="field-label">العميل (اختياري)</span>' + '<div class="phone-field-row">' + '<div id="order-customer-select" style="flex:1;">' + orderCustomerFieldHtml(d) + "</div>" + '<button type="button" class="icon-btn" id="order-add-customer-btn" aria-label="عميل جديد">➕</button>' + "</div>" + "</div>" + '<div class="field">' + '<div class="field-label-row">' + '<span class="field-label">الطلبية</span>' + '<button type="button" id="btn-toggle-part-selection" class="chip' + (d.partsSelectionEnabled ? " chip-active" : "") + '">🎯 تحديد القطع' + (d.partsSelectionEnabled ? " (مفعّل)" : "") + "</button>" + '<button type="button" id="order-add-supplier-btn" class="chip">➕ مورد جديد</button>' + "</div>" + '<input type="text" id="order-label-input" placeholder="مثال: اسم الزبون / نوع السيارة / أي وصف مختصر" value="' + escapeHtml(d.orderLabel || "") + '">' + "</div>" + vinFieldHtml(d, "edit", "order") + mediaOrderBlockHtml(d.id, "order", currentUserRole === "full") + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span></div>' + '<div id="parts-list" class="parts-list">' + d.parts.map(partRowHtml).join("") + "</div>" + '<div id="part-type-gate-wrap">' + partAddControlsHtml() + "</div>" + feeFieldRowHtml(d) + "</div>" + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">قسم المبيعات — التسعير والتحصيل</span></div>' + '<div class="totals-row">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="total-cost-display">0 ر.س</span></div>' + '<div class="total-box"><span>مستحق من الزبون</span><span class="num text-green" id="total-sell-display">0 ر.س</span></div>' + '<div class="total-box"><span>الربح</span><span class="num" id="total-profit-display">0 ر.س</span><span class="total-box-sub" id="total-profit-sub"></span></div>' + "</div>" + (hasElevatedAccess() ? '<div id="cost-split-row-wrap">' + costSplitButtonsHtml(d, orderTotals(d)) + "</div>" : "") + '<div class="payments-block">' + '<div id="payments-list" class="payments-list">' + paymentsListInnerHtml() + "</div>" + '<button type="button" id="add-payment-btn" class="btn btn-ghost btn-sm">+ إضافة دفعة</button>' + '<div class="payment-summary-row">' + '<span>إجمالي المدفوع<span class="num" id="total-paid-display">0 ر.س</span></span>' + '<span><span id="customer-remaining-label">المتبقي عليه</span><span class="num payment-remaining-display" id="customer-remaining-display">0 ر.س</span></span>' + "</div>" + '<div id="customer-refund-status-wrap">' + orderCustomerRefundStatusHtml(d) + "</div>" + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + '<div id="order-action-buttons-wrap">' + orderActionButtonsHtml(d) + "</div>" + '<div class="parts-clipboard-mini">' + '<button type="button" class="btn-clip-mini" id="copy-parts-btn">📋 نسخ</button>' + '<button type="button" class="btn-clip-mini" id="paste-parts-btn">📥 لصق</button>' + "</div>" + "</div>" + (!d.isNew ? '<div class="modal-footer-docs"><button type="button" class="btn btn-ghost btn-sm" id="modal-quote-btn">🧾 عرض سعر</button><button type="button" class="btn btn-ghost btn-sm" id="modal-invoice-btn">🧾 فاتورة</button></div>' : "<span></span>") + '<div class="modal-footer-actions">' + '<button type="button" class="btn btn-ghost" id="modal-cancel-btn">إلغاء</button>' + (!d.isNew ? '<button type="button" class="btn btn-ghost" id="modal-return-to-quote-btn">إرجاع للتسعير</button>' : "") + '<button type="button" class="btn ' + (d.supplied ? "btn-supplied-on" : "btn-ghost") + '" id="modal-supplied-btn"' + (!d.confirmed ? ' disabled title="لازم تأكيد الطلبية أولًا"' : "") + ">" + (d.supplied ? "✅ تم التوريد" : "🚚 تم التوريد") + "</button>" + '<button type="button" class="btn btn-primary" id="modal-save-btn">حفظ الطلبية</button>' + "</div>" + "</div>" + "</div>" + "</div>";
 }
 
 function openModal(mode, orderId) {
@@ -4140,6 +4160,10 @@ const mediaBlobLru = new Map;
 
 const mediaBlobInflight = new Map;
 
+const mediaBlockFullPending = new Set;
+
+const mediaBlockFullFailedAt = new Map;
+
 let mediaBlobLruBytes = 0;
 
 let orderMediaChannel = null;
@@ -4340,7 +4364,40 @@ function mediaPartKey(ctx) {
 function mediaRowKind(ctx, role) {
     if (ctx.kind === "vin") return "vin";
     if (role === "scrapyard") return "yard_part";
-    return ctx.partId ? "customer_ref" : "other";
+    return "customer_ref";
+}
+
+function mediaOrderBlockItems(rows, vinLocals, orderLocals) {
+    const t = r => String(r.created_at || "");
+    const lvl = (rows || []).filter(r => r && !r.part_id).sort((a, b) => t(a).localeCompare(t(b)));
+    const out = [];
+    lvl.forEach(r => {
+        if (r.kind === "vin") out.push({
+            row: r,
+            vin: true
+        });
+    });
+    (vinLocals || []).forEach(it => out.push({
+        local: it,
+        vin: true
+    }));
+    lvl.forEach(r => {
+        if (r.kind !== "vin") out.push({
+            row: r,
+            vin: false
+        });
+    });
+    (orderLocals || []).forEach(it => out.push({
+        local: it,
+        vin: false
+    }));
+    return out;
+}
+
+function mediaAspectRatioCss(w, h) {
+    w = Math.round(Number(w) || 0);
+    h = Math.round(Number(h) || 0);
+    return w > 0 && h > 0 ? w + " / " + h : "4 / 3";
 }
 
 function mediaStagePut(draftId, partKey, item) {
@@ -4394,6 +4451,8 @@ function mediaResetState() {
     mediaBlobLru.clear();
     mediaBlobLruBytes = 0;
     mediaBlobInflight.clear();
+    mediaBlockFullPending.clear();
+    mediaBlockFullFailedAt.clear();
     mediaConfig = null;
     mediaConfigAt = 0;
     mediaConfigPromise = null;
@@ -4911,6 +4970,11 @@ async function mediaUploadNow(item) {
     if (res.status === "ok" || landed) {
         mediaUploads.delete(item.localId);
         mediaRevokeItem(item);
+        if (res.row && !res.row.part_id && res.row.media_type === "image" && item.full) {
+            try {
+                mediaBlobLruPut(res.row.object_path, item.full);
+            } catch (e) {}
+        }
         if (res.row) mediaIndexApply(item.orderId, res.row.id, res.row);
         refreshMediaStrips(item.orderId);
         return;
@@ -4984,8 +5048,9 @@ function mediaStripRows(orderId, key) {
     const ent = orderMediaIndex.get(orderId);
     if (!ent) return [];
     const all = Array.from(ent.rows.values());
+    if (key === "_block") return mediaOrderBlockItems(all).map(x => x.row);
     let out;
-    if (key === "_order:vin") out = all.filter(r => r.kind === "vin"); else if (key === "_order") out = all.filter(r => !r.part_id && r.kind !== "vin"); else if (key === "_deleted") {
+    if (key === "_deleted") {
         const cur = mediaCurrentPartIds(orderId);
         out = cur ? all.filter(r => r.part_id && !cur.has(r.part_id)) : [];
     } else out = all.filter(r => r.part_id === key);
@@ -5029,7 +5094,9 @@ function mediaTileHtml(row) {
     return '<button type="button" class="media-tile" data-media-open="' + escapeHtml(row.id) + '" aria-label="' + (isVideo ? "فيديو" : "صورة") + '">' + '<img alt="" loading="lazy" decoding="async" data-media-thumb="' + escapeHtml(row.thumb_path) + '"' + (src ? ' src="' + escapeHtml(src) + '"' : "") + (mediaThumbBroken.has(row.thumb_path) ? ' class="media-tile-broken"' : "") + ">" + (isVideo ? '<span class="media-tile-badge media-tile-play">▶</span><span class="media-tile-badge media-tile-dur">' + formatMediaDuration(row.duration_ms) + "</span>" : "") + mediaLockBadgeHtml(row.audience) + "</button>";
 }
 
-function mediaLocalTileHtml(item, mode) {
+const MEDIA_VIN_CAPTION_HTML = '<span class="media-tile-badge media-block-cap">🪪 الاستمارة</span>';
+
+function mediaLocalTileHtml(item, mode, block) {
     const phase = item.phase || "staged";
     const badge = {
         staged: "💾",
@@ -5048,7 +5115,7 @@ function mediaLocalTileHtml(item, mode) {
         failed: "الرفع ما كمل"
     }[phase] || "";
     const id = escapeHtml(item.localId);
-    return '<div class="media-tile media-tile-local' + (phase === "failed" ? " media-tile-failed" : "") + '" role="button" tabindex="0" data-media-open-local="' + id + '" title="' + title + '" aria-label="' + title + '">' + (item.previewUrl ? '<img alt="" src="' + escapeHtml(item.previewUrl) + '">' : "") + (item.mediaType === "video" ? '<span class="media-tile-badge media-tile-play">▶</span>' : "") + mediaLockBadgeHtml(item.audience) + (phase === "failed" ? '<button type="button" class="media-tile-x media-tile-retry" data-media-retry="' + id + '" aria-label="إعادة المحاولة">↻</button>' : '<span class="media-tile-badge media-tile-state">' + badge + "</span>") + (mode === "edit" && (phase === "staged" || phase === "failed") ? '<button type="button" class="media-tile-x" data-media-cancel="' + id + '" aria-label="إزالة">✕</button>' : "") + "</div>";
+    return '<div class="' + (block ? "media-block-item" : "media-tile") + " media-tile-local" + (phase === "failed" ? " media-tile-failed" : "") + '" role="button" tabindex="0" data-media-open-local="' + id + '" title="' + title + '" aria-label="' + title + '"' + (block ? ' style="aspect-ratio:' + mediaAspectRatioCss(item.width, item.height) + '"' : "") + ">" + (item.previewUrl ? '<img alt="" src="' + escapeHtml(item.previewUrl) + '">' : "") + (item.mediaType === "video" ? '<span class="media-tile-badge media-tile-play">▶</span>' : "") + (block && block.vin ? MEDIA_VIN_CAPTION_HTML : "") + mediaLockBadgeHtml(item.audience) + (phase === "failed" ? '<button type="button" class="media-tile-x media-tile-retry" data-media-retry="' + id + '" aria-label="إعادة المحاولة">↻</button>' : '<span class="media-tile-badge media-tile-state">' + badge + "</span>") + (mode === "edit" && (phase === "staged" || phase === "failed") ? '<button type="button" class="media-tile-x" data-media-cancel="' + id + '" aria-label="إزالة">✕</button>' : "") + "</div>";
 }
 
 function mediaStripInnerHtml(orderId, key, mode) {
@@ -5073,9 +5140,45 @@ function mediaPartAddButtonHtml(surface, orderId, partId, cls) {
     return '<button type="button" class="' + cls + '" data-media-add="' + escapeHtml(surface + "|" + orderId + "|" + partId) + '" data-media-count="' + escapeHtml(orderId + "|" + partId) + '" aria-label="' + escapeHtml(mediaCountAria(orderId, partId)) + '">' + mediaCountLabel(orderId, partId) + "</button>";
 }
 
-function mediaOrderSectionHtml(orderId, surface, canAdd) {
+function mediaBlockRowItemHtml(row, isVin) {
+    const isVideo = row.media_type === "video";
+    const full = isVideo ? null : mediaBlobLru.get(row.object_path);
+    let img;
+    if (full) img = '<img alt="" decoding="async" src="' + escapeHtml(full.url) + '">'; else {
+        const memo = mediaThumbUrlMemo.get(row.thumb_path);
+        const src = memo && memo.expMs - Date.now() > 12e4 ? memo.url : "";
+        if (!src || !isVideo) mediaScheduleHydrate();
+        img = '<img alt="" decoding="async" data-media-thumb="' + escapeHtml(row.thumb_path) + '"' + (isVideo ? "" : ' data-media-full-id="' + escapeHtml(row.id) + '"') + (src ? ' src="' + escapeHtml(src) + '"' : "") + (mediaThumbBroken.has(row.thumb_path) ? ' class="media-tile-broken"' : "") + ">";
+    }
+    return '<button type="button" class="media-block-item" data-media-open="' + escapeHtml(row.id) + '" style="aspect-ratio:' + mediaAspectRatioCss(row.width, row.height) + '" aria-label="' + (isVin ? "صورة الاستمارة" : isVideo ? "فيديو" : "صورة") + '">' + img + (isVideo ? '<span class="media-tile-badge media-tile-play">▶</span><span class="media-tile-badge media-tile-dur">' + formatMediaDuration(row.duration_ms) + "</span>" : "") + (isVin ? MEDIA_VIN_CAPTION_HTML : "") + mediaLockBadgeHtml(row.audience) + "</button>";
+}
+
+function mediaOrderBlockHtml(orderId, surface, canAdd) {
     if (!orderId) return "";
-    return '<div class="section-block">' + '<div class="section-head"><span class="section-title">الصور والفيديو</span>' + (canAdd ? '<button type="button" class="btn btn-ghost btn-sm" data-media-add="' + escapeHtml(surface + "|" + orderId + "|_order") + '">📷 إضافة</button>' : "") + "</div>" + mediaStripHtml(orderId, "_order", canAdd ? "edit" : "view") + mediaStripHtml(orderId, "_deleted", "view") + "</div>";
+    const m = canAdd ? "edit" : "view";
+    return '<div class="media-block" data-media-block="' + escapeHtml(orderId) + '" data-media-mode="' + m + '" data-media-surface="' + escapeHtml(surface || "") + '">' + mediaOrderBlockInnerHtml(orderId, m, surface) + "</div>";
+}
+
+function mediaOrderBlockInnerHtml(orderId, mode, surface) {
+    const ent = orderMediaIndex.get(orderId);
+    const items = mediaOrderBlockItems(ent ? Array.from(ent.rows.values()) : [], mediaLocalItems(orderId, "_order:vin"), mediaLocalItems(orderId, "_order"));
+    const addSpec = escapeHtml((surface || "order") + "|" + orderId + "|_order");
+    let html = "";
+    if (items.length) {
+        html += '<span class="field-label">صور الطلب</span>' + '<div class="media-block-row' + (items.length === 1 ? " media-block-single" : "") + '" data-media-scope="' + escapeHtml(orderId + "|_block") + '">';
+        items.forEach(x => {
+            html += x.row ? mediaBlockRowItemHtml(x.row, x.vin) : mediaLocalTileHtml(x.local, mode, {
+                vin: x.vin
+            });
+        });
+        if (mode === "edit") html += '<button type="button" class="media-block-add" data-media-add="' + addSpec + '" aria-label="إضافة صور للطلب">＋</button>';
+        html += "</div>";
+    } else if (mode === "edit") {
+        html += '<button type="button" class="media-block-empty" data-media-add="' + addSpec + '">📎 صور الطلب (صور الزبون، الاستمارة…)</button>';
+    }
+    const deleted = mediaStripInnerHtml(orderId, "_deleted", "view");
+    if (deleted) html += '<div class="media-strip" data-media-scope="' + escapeHtml(orderId + "|_deleted") + '">' + deleted + "</div>";
+    return html;
 }
 
 function refreshMediaStrips(orderId) {
@@ -5085,6 +5188,14 @@ function refreshMediaStrips(orderId) {
         const k = el.getAttribute("data-media-strip") || "";
         if (k.indexOf(prefix) !== 0) return;
         el.innerHTML = mediaStripInnerHtml(orderId, k.slice(prefix.length), el.getAttribute("data-media-mode") || "view");
+    });
+    document.querySelectorAll("[data-media-block]").forEach(el => {
+        if (el.getAttribute("data-media-block") !== orderId) return;
+        const oldRow = el.querySelector(".media-block-row");
+        const x = oldRow ? oldRow.scrollLeft : 0;
+        el.innerHTML = mediaOrderBlockInnerHtml(orderId, el.getAttribute("data-media-mode") || "view", el.getAttribute("data-media-surface") || "");
+        const row = x ? el.querySelector(".media-block-row") : null;
+        if (row) row.scrollLeft = x;
     });
     document.querySelectorAll("[data-media-count]").forEach(el => {
         const k = el.getAttribute("data-media-count") || "";
@@ -5110,7 +5221,41 @@ function mediaScheduleHydrate() {
     mediaHydrateTimer = setTimeout(() => {
         mediaHydrateTimer = null;
         hydrateMediaThumbs();
+        hydrateMediaBlockFull();
     }, 0);
+}
+
+function hydrateMediaBlockFull() {
+    if (!sb) return;
+    document.querySelectorAll("img[data-media-full-id]").forEach(img => {
+        const block = img.closest("[data-media-block]");
+        const row = block ? mediaRowById(block.getAttribute("data-media-block"), img.getAttribute("data-media-full-id")) : null;
+        if (!row || mediaBlockFullPending.has(row.object_path)) return;
+        const failedAt = mediaBlockFullFailedAt.get(row.object_path);
+        if (failedAt && Date.now() - failedAt < 6e4 && !mediaBlobLru.has(row.object_path)) return;
+        const gen = mediaStateGen;
+        mediaBlockFullPending.add(row.object_path);
+        mediaLoadFullBlob(row).then(url => {
+            if (gen !== mediaStateGen) return;
+            mediaBlockFullPending.delete(row.object_path);
+            mediaBlockFullFailedAt.delete(row.object_path);
+            document.querySelectorAll("img[data-media-full-id]").forEach(el => {
+                if (el.getAttribute("data-media-full-id") !== row.id) return;
+                el.removeAttribute("data-media-thumb");
+                el.removeAttribute("data-media-full-id");
+                el.classList.remove("media-tile-broken");
+                el.setAttribute("src", url);
+            });
+        }, err => {
+            if (gen !== mediaStateGen) return;
+            mediaBlockFullPending.delete(row.object_path);
+            mediaBlockFullFailedAt.set(row.object_path, Date.now());
+            console.warn("media block full:", err);
+            setTimeout(() => {
+                if (gen === mediaStateGen) mediaScheduleHydrate();
+            }, 61e3);
+        });
+    });
 }
 
 async function hydrateMediaThumbs() {
@@ -5204,8 +5349,8 @@ function mediaDelegatedClick(e) {
     el = t.closest("[data-media-open]");
     if (el) {
         e.preventDefault();
-        const strip = el.closest("[data-media-strip]");
-        const k = strip ? strip.getAttribute("data-media-strip") || "" : "";
+        const strip = el.closest("[data-media-strip],[data-media-scope]");
+        const k = strip ? strip.getAttribute("data-media-strip") || strip.getAttribute("data-media-scope") || "" : "";
         const bar = k.indexOf("|");
         if (bar > 0) openMediaViewer(k.slice(0, bar), el.getAttribute("data-media-open"), k.slice(bar + 1));
     }
@@ -5249,7 +5394,7 @@ function mediaCanAddTo(ctx) {
 
 function mediaTargetLabel(ctx) {
     if (ctx.kind === "vin") return "صورة رقم الهيكل (الاستمارة أو لوحة VIN)";
-    if (!ctx.partId) return "الطلبية كاملة";
+    if (!ctx.partId) return "صور الطلب — صور الزبون للطلبية كاملة";
     const d = draft && draft.id === ctx.orderId ? draft : quoteDraft && quoteDraft.id === ctx.orderId ? quoteDraft : (appData.orders || []).find(o => o.id === ctx.orderId);
     const p = d && (d.parts || []).find(x => x.id === ctx.partId);
     return "القطعة: " + (p && String(p.description || "").trim() || "بدون وصف");
@@ -5295,13 +5440,14 @@ function openMediaPicker(ctx) {
     const isPurch = currentUserRole === "scrapyard";
     const altLabel = isPurch ? "🔒 داخلي" : "🔒 للمبيعات فقط";
     const altHint = isPurch ? "فواتير/لوحات محلات/محادثات/صوت يذكر المورد" : "لو فيها اسم/جوال/هوية/لوحة الزبون — غير هيك بتوصل للمشتريات";
+    const offerVin = ctx.kind === "order" && !isPurch;
     mediaPickerState = {
         ctx: ctx,
         altOn: false,
         muteOn: false
     };
     const root = document.getElementById("confirm-root");
-    root.innerHTML = '<div class="modal-backdrop" data-close-confirm data-media-picker>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">' + (isVin ? "📷 صورة رقم الهيكل" : "📷 صورة / فيديو") + "</div>" + '<p class="modal-sub">' + escapeHtml(mediaTargetLabel(ctx)) + "</p>" + (persisted ? "" : '<span class="stamp stamp-amber">' + (ctx.partId ? "القطعة لسه ما انحفظت" : "الطلبية لسه ما انحفظت") + " — بينرفع بعد الحفظ</span>") + '<div class="contact-options-col">' + '<button type="button" class="btn" data-media-pick="photo">📷 صورة</button>' + (isVin ? "" : '<button type="button" class="btn" data-media-pick="video">🎥 فيديو (حتى ' + mediaMaxSeconds() + " ثانية)</button>") + '<button type="button" class="btn" data-media-pick="gallery">🖼️ من المعرض</button>' + "</div>" + (alt ? '<div class="filter-chips" style="margin-top:14px;">' + '<button type="button" class="chip" data-media-toggle="alt" aria-pressed="false">' + altLabel + "</button>" + '<button type="button" class="chip" data-media-toggle="mute" aria-pressed="false">🔇 بدون صوت</button>' + "</div>" + '<p class="add-part-hint" style="margin:6px 0 0;">' + escapeHtml(altLabel + ": " + altHint) + "</p>" : "") + (!persisted && !isVin ? '<p class="add-part-hint" style="margin:6px 0 0;">الملفات بتضل على الجهاز لحد الحفظ — لو انقفل التطبيق قبلها بتضيع</p>' : "") + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" data-media-pick="cancel">إلغاء</button>' + "</div>" + "</div>" + "</div>";
+    root.innerHTML = '<div class="modal-backdrop" data-close-confirm data-media-picker>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">' + (isVin ? "🪪 صورة الاستمارة / رقم الهيكل" : "📷 صورة / فيديو") + "</div>" + '<p class="modal-sub">' + escapeHtml(mediaTargetLabel(ctx)) + "</p>" + (persisted ? "" : '<span class="stamp stamp-amber">' + (ctx.partId ? "القطعة لسه ما انحفظت" : "الطلبية لسه ما انحفظت") + " — بينرفع بعد الحفظ</span>") + '<div class="contact-options-col">' + (offerVin ? '<button type="button" class="btn" data-media-pick="vin">🪪 الاستمارة (بتنعرض أول الطلب للكل)</button>' : "") + '<button type="button" class="btn" data-media-pick="photo">📷 صورة</button>' + (isVin ? "" : '<button type="button" class="btn" data-media-pick="video">🎥 فيديو (حتى ' + mediaMaxSeconds() + " ثانية)</button>") + '<button type="button" class="btn" data-media-pick="gallery">🖼️ من المعرض</button>' + "</div>" + (alt ? '<div class="filter-chips" style="margin-top:14px;">' + '<button type="button" class="chip" data-media-toggle="alt" aria-pressed="false">' + altLabel + "</button>" + '<button type="button" class="chip" data-media-toggle="mute" aria-pressed="false">🔇 بدون صوت</button>' + "</div>" + '<p class="add-part-hint" style="margin:6px 0 0;">' + escapeHtml(altLabel + ": " + altHint) + "</p>" : "") + (!persisted && !isVin ? '<p class="add-part-hint" style="margin:6px 0 0;">الملفات بتضل على الجهاز لحد الحفظ — لو انقفل التطبيق قبلها بتضيع</p>' : "") + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" data-media-pick="cancel">إلغاء</button>' + "</div>" + "</div>" + "</div>";
     root.classList.add("modal-open");
     root.querySelector("[data-media-picker]").addEventListener("click", e => {
         if (e.target.hasAttribute("data-media-picker")) {
@@ -5332,6 +5478,15 @@ function mediaPickerChoose(which) {
         return;
     }
     const ctx = st.ctx;
+    if (which === "vin") {
+        const vctx = Object.assign({}, ctx, {
+            kind: "vin",
+            partId: null
+        });
+        closeMediaPicker();
+        openMediaPicker(vctx);
+        return;
+    }
     const input = document.getElementById(which === "photo" ? "media-in-photo" : which === "video" ? "media-in-video" : "media-in-gallery");
     if (!input) {
         closeMediaPicker();
@@ -6099,26 +6254,40 @@ async function mediaLoadFullBlob(row) {
         const clear = () => {
             if (mediaBlobInflight.get(row.object_path) === p) mediaBlobInflight.delete(row.object_path);
         };
-        p.then(clear, clear);
+        p.then(r => {
+            clear();
+            if (gen !== mediaStateGen || !r || r.error || !r.data) return;
+            try {
+                mediaBlobLruPut(row.object_path, r.data.type ? r.data : new Blob([ r.data ], {
+                    type: row.mime
+                }));
+            } catch (e) {
+                return;
+            }
+            mediaScheduleHydrate();
+        }, clear);
         mediaBlobInflight.set(row.object_path, p);
         dl = p;
     }
     const {data: data, error: error} = await withTimeout(dl, row.media_type === "video" ? 9e4 : 3e4, "media download");
     if (error || !data) throw error || new Error("download_failed");
     if (gen !== mediaStateGen) throw new Error("stale");
-    const again = mediaBlobLru.get(row.object_path);
-    if (again) return again.url;
-    const blob = data.type ? data : new Blob([ data ], {
+    return mediaBlobLruPut(row.object_path, data.type ? data : new Blob([ data ], {
         type: row.mime
-    });
+    }));
+}
+
+function mediaBlobLruPut(path, blob) {
+    const again = mediaBlobLru.get(path);
+    if (again) return again.url;
     const url = URL.createObjectURL(blob);
-    mediaBlobLru.set(row.object_path, {
+    mediaBlobLru.set(path, {
         url: url,
         bytes: blob.size || 0
     });
     mediaBlobLruBytes += blob.size || 0;
     for (const [k, e] of mediaBlobLru) {
-        if (mediaBlobLruBytes <= MEDIA_BLOB_LRU_MAX_BYTES || k === row.object_path) break;
+        if (mediaBlobLruBytes <= MEDIA_BLOB_LRU_MAX_BYTES || k === path) break;
         mediaBlobLru.delete(k);
         mediaBlobLruBytes -= e.bytes;
         try {
@@ -6552,7 +6721,7 @@ function openApprovedQuoteViewModal(orderId) {
     }
     const root = document.getElementById("modal-root");
     mediaSeedPersisted(order.id, order.parts);
-    root.innerHTML = '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">✅ ' + escapeHtml(order.orderNumber) + '</div><div class="modal-sub">' + escapeHtml(order.orderLabel || "تسعيرة معتمدة") + "</div></div>" + '<button type="button" class="icon-btn" id="approved-quote-close-btn" aria-label="إغلاق">✕</button></div>' + (order.vin ? '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:-6px 0 10px;min-width:0;">' + '<span class="num" dir="ltr" style="flex:1;min-width:0;overflow-wrap:anywhere;text-align:right;font-size:13px;">VIN: ' + escapeHtml(order.vin) + "</span>" + '<button type="button" class="icon-btn" data-vin-copy="' + escapeHtml(order.vin) + '" aria-label="نسخ رقم الهيكل">📋</button>' + "</div>" : "") + mediaStripHtml(order.id, "_order:vin", "view") + (order.parts || []).map(p => approvedQuotePartRowHtml(p, order.id)).join("") + '<div style="margin-top:12px;">' + mediaOrderSectionHtml(order.id, "approved", currentUserRole === "scrapyard" && !!(order.isQuote || order.wasQuote)) + "</div>" + "</div>" + "</div>";
+    root.innerHTML = '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">✅ ' + escapeHtml(order.orderNumber) + '</div><div class="modal-sub">' + escapeHtml(order.orderLabel || "تسعيرة معتمدة") + "</div></div>" + '<button type="button" class="icon-btn" id="approved-quote-close-btn" aria-label="إغلاق">✕</button></div>' + (order.vin ? '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:-6px 0 10px;min-width:0;">' + '<span class="num" dir="ltr" style="flex:1;min-width:0;overflow-wrap:anywhere;text-align:right;font-size:13px;">VIN: ' + escapeHtml(order.vin) + "</span>" + '<button type="button" class="icon-btn" data-vin-copy="' + escapeHtml(order.vin) + '" aria-label="نسخ رقم الهيكل">📋</button>' + "</div>" : "") + mediaOrderBlockHtml(order.id, "approved", false) + (order.parts || []).map(p => approvedQuotePartRowHtml(p, order.id)).join("") + "</div>" + "</div>";
     root.classList.add("modal-open");
     ensureOrderMediaLoaded(order.id, true);
     const close = () => {
@@ -6841,7 +7010,7 @@ function quoteModalHtml(d) {
     const partsControlsHtml = '<div id="quote-part-type-gate-wrap">' + quotePartAddControlsHtml() + "</div>";
     const footerUtilityHtml = !isPurchasing && !d.isNew ? '<button type="button" class="btn btn-sm btn-danger-ghost" id="quote-delete-btn">🗑️ حذف طلب التسعير</button>' : "";
     const footerActionsHtml = isPurchasing ? '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-ghost" id="quote-save-btn">حفظ</button>' + '<button type="button" class="btn btn-primary" id="quote-save-send-btn">حفظ و إرسال</button>' : '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-ghost" id="quote-save-btn">💾 حفظ</button>' + '<button type="button" class="btn btn-ghost" id="quote-send-btn">حفظ و اعادة طلب</button>' + '<button type="button" class="btn btn-primary" id="quote-approve-btn">✅ اعتماد</button>';
-    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلب تسعير جديد" : "تعديل طلب التسعير") + '</div><div class="modal-sub">البيانات تُحفظ عند الضغط على حفظ</div></div>' + '<button class="icon-btn" id="quote-modal-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + '<label class="field"><span class="field-label">رقم التسعيرة (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + customerFieldHtml + labelFieldHtml + vinFieldHtml(d, isPurchasing ? "readonly" : "edit", "quote") + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span>' + (isPurchasing ? '<button type="button" class="btn btn-ghost btn-sm" id="quote-add-supplier-btn">➕ مورد جديد</button>' : "") + "</div>" + '<div id="quote-parts-list" class="parts-list">' + d.parts.map((p, i) => quotePartRowHtml(p, i)).join("") + "</div>" + partsControlsHtml + "</div>" + mediaOrderSectionHtml(d.id, "quote", true) + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">ملخص التكلفة</span></div>' + '<div class="totals-row" style="grid-template-columns:1fr;">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="quote-total-cost-display">0 ر.س</span></div>' + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + footerUtilityHtml + "</div>" + "<span></span>" + '<div class="modal-footer-actions">' + footerActionsHtml + "</div>" + "</div>" + "</div>" + "</div>";
+    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلب تسعير جديد" : "تعديل طلب التسعير") + '</div><div class="modal-sub">البيانات تُحفظ عند الضغط على حفظ</div></div>' + '<button class="icon-btn" id="quote-modal-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + '<label class="field"><span class="field-label">رقم التسعيرة (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + customerFieldHtml + labelFieldHtml + vinFieldHtml(d, isPurchasing ? "readonly" : "edit", "quote") + mediaOrderBlockHtml(d.id, "quote", !isPurchasing) + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span>' + (isPurchasing ? '<button type="button" class="btn btn-ghost btn-sm" id="quote-add-supplier-btn">➕ مورد جديد</button>' : "") + "</div>" + '<div id="quote-parts-list" class="parts-list">' + d.parts.map((p, i) => quotePartRowHtml(p, i)).join("") + "</div>" + partsControlsHtml + "</div>" + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">ملخص التكلفة</span></div>' + '<div class="totals-row" style="grid-template-columns:1fr;">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="quote-total-cost-display">0 ر.س</span></div>' + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + footerUtilityHtml + "</div>" + "<span></span>" + '<div class="modal-footer-actions">' + footerActionsHtml + "</div>" + "</div>" + "</div>" + "</div>";
 }
 
 function quoteContentSnapshot(d) {
