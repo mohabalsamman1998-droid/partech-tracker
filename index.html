@@ -2050,7 +2050,7 @@ function computeAggregateFinancials(matchPeriodFn) {
     const confirmedOrders = realOrders.filter(o => o.confirmed).filter(o => matchPeriodFn ? matchPeriodFn(o) : true);
     let dueToScrapyard = 0, dueToSuppliers = 0, dueFromCustomers = 0, dueFromCustomersCount = 0, collectedProfit = 0, uncollectedProfit = 0;
     let dueToScrapyardCount = 0, dueToSuppliersCount = 0;
-    let paidToScrapyardTotal = 0, paidToSuppliersTotal = 0, customerReceiptsTotal = 0;
+    let directPaidTotal = 0, customerReceiptsTotal = 0;
     confirmedOrders.forEach(o => {
         const t = orderTotals(o);
         if (!scrapyardCostSettled(o, t)) {
@@ -2058,13 +2058,13 @@ function computeAggregateFinancials(matchPeriodFn) {
                 dueToScrapyard += t.costToScrapyard;
                 dueToScrapyardCount++;
             }
-        } else paidToScrapyardTotal += t.costToScrapyard;
+        } else if (o.paidToSupplier) directPaidTotal += t.costToScrapyard;
         if (!newPartsCostSettled(o, t)) {
             if (o.supplied && t.costToSupplier > 0) {
                 dueToSuppliers += t.costToSupplier;
                 dueToSuppliersCount++;
             }
-        } else paidToSuppliersTotal += t.costToSupplier;
+        } else if (orderIsMixedPartType(t) ? o.paidToSupplierNew : o.paidToSupplier) directPaidTotal += t.costToSupplier;
         if (o.supplied && t.hasChargeable && !t.customerFullyPaid) {
             dueFromCustomers += t.customerRemaining;
             dueFromCustomersCount++;
@@ -2086,8 +2086,7 @@ function computeAggregateFinancials(matchPeriodFn) {
         dueFromCustomersCount: dueFromCustomersCount,
         collectedProfit: collectedProfit,
         uncollectedProfit: uncollectedProfit,
-        paidToScrapyardTotal: paidToScrapyardTotal,
-        paidToSuppliersTotal: paidToSuppliersTotal,
+        directPaidTotal: directPaidTotal,
         customerReceiptsTotal: customerReceiptsTotal
     };
 }
@@ -10811,8 +10810,10 @@ function accountsActivityForDate(isoDate) {
             };
             if (p.returnAdjustment) customerRefunds.push(row); else customerPayments.push(row);
         });
+        const tBase = orderTotals(o);
+        const baseFallback = orderIsMixedPartType(tBase) ? tBase.costToScrapyard : tBase.costTotal;
         if (matchIso(o.paidToSupplierAt)) {
-            const amt = o.paidToSupplierAmountSnapshot != null ? Number(o.paidToSupplierAmountSnapshot) || 0 : orderTotals(o).costToSupplier;
+            const amt = o.paidToSupplierAmountSnapshot != null ? Number(o.paidToSupplierAmountSnapshot) || 0 : baseFallback;
             supplierPayments.push({
                 orderNumber: o.orderNumber,
                 orderLabel: o.orderLabel,
@@ -10821,7 +10822,7 @@ function accountsActivityForDate(isoDate) {
             });
         }
         if (matchIso(o.paidToAmerAt)) {
-            const amt = o.paidToAmerAmountSnapshot != null ? Number(o.paidToAmerAmountSnapshot) || 0 : orderTotals(o).costToScrapyard;
+            const amt = o.paidToAmerAmountSnapshot != null ? Number(o.paidToAmerAmountSnapshot) || 0 : baseFallback;
             supplierPayments.push({
                 orderNumber: o.orderNumber,
                 orderLabel: o.orderLabel,
@@ -10830,7 +10831,7 @@ function accountsActivityForDate(isoDate) {
             });
         }
         if (matchIso(o.paidToOmarAt)) {
-            const amt = o.paidToOmarAmountSnapshot != null ? Number(o.paidToOmarAmountSnapshot) || 0 : orderTotals(o).costToScrapyard;
+            const amt = o.paidToOmarAmountSnapshot != null ? Number(o.paidToOmarAmountSnapshot) || 0 : baseFallback;
             supplierPayments.push({
                 orderNumber: o.orderNumber,
                 orderLabel: o.orderLabel,
@@ -10898,7 +10899,7 @@ function accountsActivityForDate(isoDate) {
         });
     });
     const sum = arr => round2(arr.reduce((s, r) => s + (Number(r.amount) || 0), 0));
-    const supplierPaymentsDirect = supplierPayments.filter(r => r.kind === "مورد");
+    const supplierPaymentsDirect = supplierPayments.filter(r => r.kind === "مورد" || r.kind === "مورد (جديد)");
     return {
         customerPayments: customerPayments,
         customerRefunds: customerRefunds,
@@ -11017,7 +11018,7 @@ function treasuryTotals() {
     const custodyDeficit = round2(Math.max(0, -custodyBalance));
     const supplierReturnReceivables = totalSupplierReturnReceivables();
     const customerRefundsPending = totalCustomerRefundsPending();
-    const net = round2(fSnapshot.customerReceiptsTotal + supportAllTime - fSnapshot.paidToSuppliersTotal - custodyTopupsAllTime - allTimeExpenses);
+    const net = round2(fSnapshot.customerReceiptsTotal + supportAllTime - fSnapshot.directPaidTotal - custodyTopupsAllTime - allTimeExpenses);
     const netAfterSettlement = round2(net + fSnapshot.dueFromCustomers + custodyBalance - fSnapshot.dueToScrapyard - fSnapshot.dueToSuppliers + supplierReturnReceivables - customerRefundsPending);
     const debtsToSuppliers = round2(custodyDeficit + fSnapshot.dueToScrapyard + fSnapshot.dueToSuppliers);
     const volumes = computeTreasuryVolumes();
@@ -11029,7 +11030,7 @@ function treasuryTotals() {
         negative: amount < 0
     });
     const breakdowns = {
-        net: [ term("دفعات الزبائن (صافي)", fSnapshot.customerReceiptsTotal), term("الدعم الخارجي", supportAllTime), term("المدفوع للموردين", -fSnapshot.paidToSuppliersTotal), term("سداد عهدة المشتريات", -custodyTopupsAllTime), term("المصاريف", -allTimeExpenses) ],
+        net: [ term("دفعات الزبائن (صافي)", fSnapshot.customerReceiptsTotal), term("الدعم الخارجي", supportAllTime), term("سداد مباشر (تشليح وموردين)", -fSnapshot.directPaidTotal), term("سداد عهدة المشتريات", -custodyTopupsAllTime), term("المصاريف", -allTimeExpenses) ],
         netAfterSettlement: [ term("الصندوق حاليًا", net), term("مستحق من الزبائن", fSnapshot.dueFromCustomers), term("رصيد المشتريات", custodyBalance), term("مستحق للتشليح", -fSnapshot.dueToScrapyard), term("مستحق للموردين", -fSnapshot.dueToSuppliers), term("مرتجعات مستحقة لنا", supplierReturnReceivables), term("مرتجعات مستحقة للعملاء", -customerRefundsPending) ],
         uncollectedProfit: [ term("الربح المحصّل (كل الطلبيات)", fSnapshot.collectedProfit), term("الربح غير المحصّل", fSnapshot.uncollectedProfit) ],
         debtsToSuppliers: [ term("عجز عهدة المشتريات", custodyDeficit), term("مستحق للتشليح", fSnapshot.dueToScrapyard), term("مستحق للموردين", fSnapshot.dueToSuppliers) ],
