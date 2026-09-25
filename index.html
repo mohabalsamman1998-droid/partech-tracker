@@ -2751,6 +2751,7 @@ function friendlyErrorText(e) {
     const msg = String(e && e.message || e || "");
     if (code === "23505") return "قيمة مستخدمة أصلًا بسجل آخر (تعارض تكرار)";
     if (msg === "NO_DB") return "الاتصال بقاعدة البيانات غير متاح حاليًا";
+    if (code === "PGRST202") return "نسخة التطبيق عندك قديمة — حدّث الصفحة وحاول مرة تانية";
     if (/fetch|network|Network|timeout|Timeout/.test(msg)) return "تحقق من اتصال الإنترنت وحاول مرة تانية";
     if (/JWT|session|Session/.test(msg)) return "انتهت صلاحية الجلسة — سجّل دخول من جديد";
     if (/permission|policy|RLS|denied/i.test(msg)) return "ما عندك صلاحية على هالعملية";
@@ -4591,6 +4592,10 @@ async function checkQuoteSaveConflict() {
         return false;
     }
     if (!quoteOpenedAtUpdatedAt || !liveOrder.updatedAt || liveOrder.updatedAt === quoteOpenedAtUpdatedAt) return true;
+    if (quoteModalRole === "purchasing") {
+        await handleScrapyardQuoteConflict(quoteDraft.id);
+        return false;
+    }
     document.removeEventListener("keydown", quoteEscListener);
     const proceed = await new Promise(resolve => {
         confirmAction({
@@ -4737,34 +4742,95 @@ async function onApproveQuote() {
     openModal("edit", approvedId);
 }
 
-async function persistScrapyardQuotePricing(order, quoteReady) {
+function scrapyardQuotePricingRpcParams(order, quoteReady, expectedUpdatedAt) {
+    return {
+        p_order_id: order.id,
+        p_parts: (order.parts || []).map(p => ({
+            id: p.id,
+            description: p.description || "",
+            qty: Math.max(1, Number(p.qty) || 1),
+            costPrice: Math.max(0, Number(p.costPrice) || 0),
+            supplierId: p.supplierId || null,
+            purchasingNotes: p.purchasingNotes || "",
+            used: p.used === null ? null : !!p.used,
+            condition: p.condition || null
+        })),
+        p_quote_ready: !!quoteReady,
+        p_order_label: order.orderLabel || "",
+        p_expected_updated_at: expectedUpdatedAt
+    };
+}
+
+function isQuoteSaveConflictError(e) {
+    return !!e && (e.code === "PT409" || e.hint === "quote_conflict");
+}
+
+async function persistScrapyardQuotePricing(order, quoteReady, expectedUpdatedAt) {
+    if (!expectedUpdatedAt) return {
+        status: "conflict"
+    };
     try {
         if (!sb) throw new Error("NO_DB");
-        const {data: data, error: error} = await sb.rpc("scrapyard_save_quote_pricing", {
-            p_order_id: order.id,
-            p_parts: (order.parts || []).map(p => ({
-                id: p.id,
-                description: p.description || "",
-                qty: Math.max(1, Number(p.qty) || 1),
-                costPrice: Math.max(0, Number(p.costPrice) || 0),
-                supplierId: p.supplierId || null,
-                purchasingNotes: p.purchasingNotes || "",
-                used: p.used === null ? null : !!p.used,
-                condition: p.condition || null
-            })),
-            p_quote_ready: !!quoteReady,
-            p_order_label: order.orderLabel || ""
-        });
-        if (error) throw error;
-        if (data === false) {
-            showToast("تعذر الحفظ — التسعيرة ما عادت موجودة، أغلق النافذة وافتحها من جديد", "error");
-            return false;
+        const {data: data, error: error} = await sb.rpc("scrapyard_save_quote_pricing", scrapyardQuotePricingRpcParams(order, quoteReady, expectedUpdatedAt));
+        if (error) {
+            if (isQuoteSaveConflictError(error)) return {
+                status: "conflict"
+            };
+            throw error;
         }
-        return true;
+        if (!data) {
+            showToast("تعذر الحفظ — التسعيرة ما عادت موجودة، أغلق النافذة وافتحها من جديد", "error");
+            return {
+                status: "error"
+            };
+        }
+        const ts = new Date(data);
+        return {
+            status: "ok",
+            updatedAt: isNaN(ts) ? String(data) : ts.toISOString()
+        };
     } catch (e) {
         showToast("تعذر حفظ التسعيرة: " + friendlyErrorText(e), "error");
-        return false;
+        return {
+            status: "error"
+        };
     }
+}
+
+async function handleScrapyardQuoteConflict(draftId) {
+    let freshRows;
+    try {
+        const {data: data, error: error} = await withTimeout(sb.rpc("get_scrapyard_home_quotes"), GUARDED_AWAIT_TIMEOUT_MS, "get_scrapyard_home_quotes");
+        if (error) throw error;
+        freshRows = data || [];
+    } catch (e) {
+        console.error("handleScrapyardQuoteConflict:", e);
+        showToast("التسعيرة انعدّلت من مكان تاني وما قدرنا نحمّل آخر نسخة — تحقق من الاتصال وحاول مرة تانية", "error");
+        return;
+    }
+    appData.orders = [ ...freshRows.map(orderRowToObject), ...appData.orders.filter(o => !o.isQuote) ];
+    renderQuotesList();
+    if (!quoteModalStillOpen(draftId)) return;
+    const pendingReturn = modalCloseCallback;
+    modalCloseCallback = null;
+    closeQuoteModal();
+    modalCloseCallback = pendingReturn;
+    if (!appData.orders.some(o => o.id === draftId && o.isQuote)) {
+        showToast("هذه التسعيرة ما عادت متاحة للتسعير — يمكن المبيعات اعتمدتها أو حذفتها", "error");
+        if (modalCloseCallback) {
+            const cb = modalCloseCallback;
+            modalCloseCallback = null;
+            cb();
+        }
+        return;
+    }
+    openQuoteModal("edit", draftId, "purchasing");
+    confirmAction({
+        title: "التسعيرة انعدّلت وأنت فاتحها",
+        message: "حدا عدّل هالتسعيرة (غالبًا المبيعات ضافت أو عدّلت قطعة) بعد ما فتحتها، فما حفظنا تسعيرك حتى ما ينمسح تعديلهم. فتحنالك آخر نسخة — راجع القطع وأعد إدخال تسعيرك واحفظ من جديد.",
+        confirmLabel: "تمام",
+        onlyConfirm: true
+    });
 }
 
 async function onSaveQuotePricing() {
@@ -4784,14 +4850,19 @@ async function onSaveQuotePricing() {
     }
     quoteDraft.parts = cleanedParts;
     quoteDraft.orderLabel = (quoteDraft.orderLabel || "").trim();
-    quoteDraft.updatedAt = (new Date).toISOString();
     const draftId = quoteDraft.id;
-    const saved = await persistScrapyardQuotePricing(quoteDraft, !!quoteDraft.quoteReady);
-    if (!saved) return;
+    const savedDraft = quoteDraft;
+    const res = await persistScrapyardQuotePricing(quoteDraft, !!quoteDraft.quoteReady, quoteOpenedAtUpdatedAt);
+    if (res.status === "conflict") {
+        await handleScrapyardQuoteConflict(draftId);
+        return;
+    }
+    if (res.status !== "ok") return;
+    savedDraft.updatedAt = res.updatedAt;
+    const idx = appData.orders.findIndex(o => o.id === draftId);
+    if (idx >= 0) appData.orders[idx] = savedDraft;
     if (!quoteModalStillOpen(draftId)) return;
-    quoteOpenedAtUpdatedAt = quoteDraft.updatedAt;
-    const idx = appData.orders.findIndex(o => o.id === quoteDraft.id);
-    if (idx >= 0) appData.orders[idx] = quoteDraft;
+    quoteOpenedAtUpdatedAt = res.updatedAt;
     const root = document.getElementById("modal-root");
     const prevBackdrop = root.querySelector(".modal-backdrop");
     const prevScrollTop = prevBackdrop ? prevBackdrop.scrollTop : 0;
@@ -4821,16 +4892,17 @@ async function onSaveAndSendQuotePricing() {
     }
     quoteDraft.parts = cleanedParts;
     quoteDraft.orderLabel = (quoteDraft.orderLabel || "").trim();
-    quoteDraft.updatedAt = (new Date).toISOString();
     quoteDraft.quoteReady = true;
     const draftId = quoteDraft.id;
     const sentDraft = quoteDraft;
-    const saved = await persistScrapyardQuotePricing(quoteDraft, true);
-    if (!saved) {
+    const res = await persistScrapyardQuotePricing(quoteDraft, true, quoteOpenedAtUpdatedAt);
+    if (res.status !== "ok") {
         sentDraft.quoteReady = false;
+        if (res.status === "conflict") await handleScrapyardQuoteConflict(draftId);
         return;
     }
-    quoteOpenedAtUpdatedAt = sentDraft.updatedAt;
+    sentDraft.updatedAt = res.updatedAt;
+    if (quoteModalStillOpen(draftId)) quoteOpenedAtUpdatedAt = res.updatedAt;
     const idx = appData.orders.findIndex(o => o.id === draftId);
     if (idx >= 0) appData.orders[idx] = sentDraft;
     renderQuotesList();
