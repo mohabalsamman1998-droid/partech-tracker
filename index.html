@@ -11954,6 +11954,8 @@ function bindSupplierPerformanceSectionEvents(container, rerender) {
 
 let salesKpiPeriod = "all";
 
+let salesKpiCustomMonth = "";
+
 const SALES_KPI_PERIODS = [ {
     id: "all",
     label: "كامل"
@@ -11963,6 +11965,9 @@ const SALES_KPI_PERIODS = [ {
 }, {
     id: "month",
     label: "شهري"
+}, {
+    id: "customMonth",
+    label: "شهر محدد"
 } ];
 
 let quoteReadyFirstByOrderId = null;
@@ -11976,8 +11981,8 @@ function periodDateOf(iso) {
     return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-function salesSuccessStats(periodKey) {
-    const orders = (appData.orders || []).filter(o => dateMatchesPeriod(periodDateOf(o.createdAt), periodKey));
+function salesSuccessStats(periodKey, customMonth) {
+    const orders = (appData.orders || []).filter(o => dateMatchesPeriod(periodDateOf(o.createdAt), periodKey, customMonth));
     const total = orders.length;
     const successful = orders.filter(o => o.confirmed).length;
     return {
@@ -12125,12 +12130,12 @@ const SALES_KPI_BUSINESS_START_HOUR = 9;
 
 const SALES_KPI_BUSINESS_END_HOUR = 18;
 
-function stepTimingAverages(periodKey) {
+function stepTimingAverages(periodKey, customMonth) {
     if (!quoteReadyFirstByOrderId) return null;
     const toQuote = [], toSupply = [], total = [];
     (appData.orders || []).forEach(o => {
         if (!o.supplied || !o.suppliedAt || !o.createdAt) return;
-        if (!dateMatchesPeriod(periodDateOf(o.createdAt), periodKey)) return;
+        if (!dateMatchesPeriod(periodDateOf(o.createdAt), periodKey, customMonth)) return;
         const createdMs = new Date(o.createdAt).getTime();
         const suppliedMs = new Date(o.suppliedAt).getTime();
         if (isNaN(createdMs) || isNaN(suppliedMs) || suppliedMs <= createdMs) return;
@@ -12177,15 +12182,18 @@ async function loadSalesKpiStepTimings() {
 }
 
 function salesPerformanceSectionHtml() {
-    const success = salesSuccessStats(salesKpiPeriod);
-    const timing = stepTimingAverages(salesKpiPeriod);
+    const success = salesSuccessStats(salesKpiPeriod, salesKpiCustomMonth);
+    const timing = stepTimingAverages(salesKpiPeriod, salesKpiCustomMonth);
     const returning = returningCustomerRateLast30();
     const newCustomers = newCustomersLast60();
     const topConversion = topCustomerQuoteConversion(STAT_CHART_FETCH_ALL);
     const topOrderCounts = topEntitiesFromIndex(appData.customers, customerOrderCountIndex(), STAT_CHART_FETCH_ALL);
     const topCustomerValue = topEntitiesFromIndex(appData.customers, customerPurchaseTotalIndex(), STAT_CHART_FETCH_ALL);
     const growth = monthlySalesGrowth(12);
-    const periodChips = '<div class="filter-chips" id="sales-kpi-period-filter" style="margin-bottom:10px;">' + SALES_KPI_PERIODS.map(p => '<button type="button" class="chip' + (salesKpiPeriod === p.id ? " chip-active" : "") + '" data-sales-kpi-period="' + p.id + '">' + p.label + "</button>").join("") + "</div>";
+    const periodChips = '<div class="filter-chips" id="sales-kpi-period-filter" style="margin-bottom:10px;">' + SALES_KPI_PERIODS.map(p => {
+        const label = p.id === "customMonth" && salesKpiPeriod === "customMonth" && salesKpiCustomMonth ? p.label + " (" + arabicMonthLabel(salesKpiCustomMonth) + ")" : p.label;
+        return '<button type="button" class="chip' + (salesKpiPeriod === p.id ? " chip-active" : "") + '" data-sales-kpi-period="' + p.id + '">' + label + "</button>";
+    }).join("") + (salesKpiPeriod === "customMonth" ? '<input type="month" id="sales-kpi-month-input" class="extra-indicators-month-input" value="' + escapeHtml(salesKpiCustomMonth || "") + '">' : "") + "</div>";
     const successBlock = '<div class="stat-chart-block">' + '<div class="stat-chart-title">✅ نجاح الطلبات</div>' + periodChips + '<div class="treasury-summary">' + '<div class="treasury-summary-row"><span>طلبات ناجحة (مؤكدة)</span><span class="num text-green">' + success.successful + " من " + success.total + "</span></div>" + '<div class="treasury-summary-row net"><span>نسبة النجاح</span><span class="num">' + success.rate + "%</span></div>" + "</div>" + "</div>";
     const timingRows = timing ? '<div class="treasury-summary-row"><span>الطلب ← التسعير</span><span class="num">' + (timing.toQuoteCount ? arabicDurationLabelFromMinutes(timing.toQuote) : "—") + "</span></div>" + '<div class="treasury-summary-row"><span>التسعير ← التوريد</span><span class="num">' + (timing.toSupplyCount ? arabicDurationLabelFromMinutes(timing.toSupply) : "—") + "</span></div>" + '<div class="treasury-summary-row net"><span>الإجمالي (الطلب ← الإغلاق/التوريد)</span><span class="num">' + (timing.totalCount ? arabicDurationLabelFromMinutes(timing.total) : "—") + "</span></div>" : '<div class="expense-empty-hint">جارِ تحميل بيانات الاستجابة...</div>';
     const timingBlock = '<div class="stat-chart-block">' + '<div class="stat-chart-title">⏱ زمن الاستجابة (الطلب ← التسعير ← التوريد)</div>' + '<div class="treasury-summary">' + timingRows + "</div>" + "</div>";
@@ -12279,9 +12287,21 @@ function bindStatisticsViewEvents() {
     container.querySelectorAll("[data-sales-kpi-period]").forEach(btn => {
         btn.addEventListener("click", () => {
             salesKpiPeriod = btn.getAttribute("data-sales-kpi-period");
+            if (salesKpiPeriod === "customMonth" && !salesKpiCustomMonth) {
+                const now = new Date;
+                salesKpiCustomMonth = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
+            }
             renderStatisticsView();
         });
     });
+    const salesKpiMonthInput = document.getElementById("sales-kpi-month-input");
+    if (salesKpiMonthInput) {
+        salesKpiMonthInput.addEventListener("change", e => {
+            if (!e.target.value) return;
+            salesKpiCustomMonth = e.target.value;
+            renderStatisticsView();
+        });
+    }
 }
 
 function scrapyardSuppliersStatsViewHtml() {
