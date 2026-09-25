@@ -744,8 +744,40 @@
     width:34px;height:34px;border-radius:6px;cursor:pointer;font-size:13px;flex-shrink:0;align-self:flex-start;
   }
   .part-remove-btn:hover{border-color:var(--rust-line);color:var(--rust);}
-  .part-whatsapp-btn{flex-shrink:0;align-self:flex-end;color:var(--green);border-color:var(--green-line);background:var(--green-dim);white-space:nowrap;}
-  .part-whatsapp-btn:hover{background:rgba(34,208,122,.22);border-color:var(--green);}
+  .part-media-btn{flex-shrink:0;align-self:flex-end;color:var(--green);border-color:var(--green-line);background:var(--green-dim);white-space:nowrap;}
+  .part-media-btn:hover{background:rgba(34,208,122,.22);border-color:var(--green);}
+  /* وسائط الطلبية (صور/فيديو) — شريط مصغّرات 48px تحت القطعة، سطر لحاله دايمًا (flex-wrap +
+     min-width:0) حتى ما يعرّض صف القطعة على 375px. الشريط الفاضي ما بياخد مكان (:empty). */
+  .media-strip{display:flex;flex-wrap:wrap;gap:6px;min-width:0;align-items:center;}
+  .media-strip:empty{display:none;}
+  .media-strip + .media-strip{margin-top:8px;}
+  .purchase-history-row .media-strip{margin-top:6px;}
+  /* شريط صور رقم الهيكل: تحت حقل VIN بالنافذتين، ولحاله تحت رأس عرض التسعيرة المعتمدة */
+  .field > .media-strip{margin-top:8px;}
+  .modal-card > .media-strip{margin-bottom:10px;}
+  .media-strip-label{flex-basis:100%;align-self:flex-start;width:fit-content;}
+  .media-tile{position:relative;width:48px;height:48px;flex:0 0 48px;padding:0;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--surface-2);cursor:pointer;display:block;}
+  .media-tile::before{content:'🖼️';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:16px;opacity:.35;}
+  .media-tile img{position:relative;z-index:1;width:100%;height:100%;object-fit:cover;display:block;}
+  .media-tile img:not([src]),.media-tile img.media-tile-broken{visibility:hidden;}
+  .media-tile-local{border-style:dashed;border-color:var(--amber-line);}
+  .media-tile-failed{border-color:var(--rust);}
+  .media-tile-badge{position:absolute;z-index:2;font-size:9px;line-height:1;padding:2px 3px;border-radius:3px;background:rgba(0,0,0,.62);color:#fff;font-family:'Cairo',system-ui,sans-serif;font-weight:700;pointer-events:none;}
+  .media-tile-play{top:50%;left:50%;transform:translate(-50%,-50%);font-size:12px;padding:2px 4px;}
+  .media-tile-dur{bottom:2px;left:2px;}
+  .media-tile-lock{top:2px;right:2px;}
+  .media-tile-state{bottom:2px;right:2px;}
+  .media-tile-x{position:absolute;z-index:3;top:0;left:0;width:20px;height:20px;border:none;border-radius:0 0 6px 0;background:rgba(0,0,0,.72);color:#fff;font-size:11px;line-height:20px;cursor:pointer;padding:0;}
+  .media-tile-x.media-tile-retry{top:auto;bottom:0;left:auto;right:0;border-radius:6px 0 0 0;}
+  .media-viewer{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);width:100%;max-width:720px;padding:12px;display:flex;flex-direction:column;gap:10px;animation:pop .15s ease;min-width:0;}
+  .media-viewer-head{display:flex;justify-content:space-between;align-items:center;gap:8px;min-width:0;}
+  .media-viewer-meta{font-size:12.5px;color:var(--text-dim);min-width:0;overflow-wrap:anywhere;}
+  .media-viewer-stage{display:flex;align-items:center;justify-content:center;min-height:200px;background:#000;color:#ccc;border-radius:var(--radius-sm);overflow:hidden;font-size:13px;}
+  .media-viewer-stage img,.media-viewer-stage video{max-width:100%;max-height:70vh;display:block;}
+  .media-viewer-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;}
+  .media-viewer-foot .num{font-size:12.5px;color:var(--text-dim);}
+  /* شيت ضغط الفيديو بجذر خاص فوق #confirm-root (90) وتحت التوستات (100) — ما بيكتب فوق أي مربع مفتوح */
+  #media-progress-root .modal-backdrop{z-index:95;}
 
   .searchable-select{position:relative;}
   .searchable-select-input{
@@ -1281,6 +1313,7 @@
 
   <div id="modal-root"></div>
   <div id="confirm-root"></div>
+  <div id="media-progress-root"></div>
   <div id="doc-root"></div>
   <div id="toast-root" class="toast-root"></div>
 
@@ -1337,6 +1370,41 @@ async function ensureLeaflet() {
     loadStylesheetOnce("https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css");
     if (typeof L !== "undefined") return;
     await loadScriptOnce("https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js");
+}
+
+const MB_URL = "https://cdn.jsdelivr.net/npm/mediabunny@1.60.0/+esm";
+
+const MB_AAC_URL = "https://cdn.jsdelivr.net/npm/@mediabunny/aac-encoder@1.60.0/+esm";
+
+let _mbPromise = null, _aacPromise = null;
+
+const MB_IMPORT_TIMEOUT_MS = 45e3;
+
+function ensureMediabunny() {
+    if (_mbPromise) return _mbPromise;
+    const p = withTimeout(import(MB_URL), MB_IMPORT_TIMEOUT_MS, "mediabunny import").catch(e => {
+        if (_mbPromise === p) _mbPromise = null;
+        throw e;
+    });
+    _mbPromise = p;
+    return p;
+}
+
+function ensureWasmAac(MB) {
+    if (_aacPromise) return _aacPromise;
+    const p = withTimeout(import(MB_AAC_URL), MB_IMPORT_TIMEOUT_MS, "aac encoder import").then(async m => {
+        m.registerAacEncoder();
+        const ok = await MB.canEncodeAudio("aac", {
+            numberOfChannels: 1,
+            sampleRate: 48e3
+        });
+        if (!ok) throw new Error("AAC_WASM_NOT_REGISTERED");
+    }).catch(e => {
+        if (_aacPromise === p) _aacPromise = null;
+        throw e;
+    });
+    _aacPromise = p;
+    return p;
 }
 
 async function withRetry(fn, attempts, delayMs) {
@@ -1426,6 +1494,8 @@ let archiveSearch = "";
 let draft = null;
 
 let draftOpenedAtUpdatedAt = null;
+
+let draftVinAtOpen = "";
 
 let modalCloseCallback = null;
 
@@ -2081,7 +2151,7 @@ function renderFilterButtons() {
 }
 
 function normalizeArabicSearch(s) {
-    return (s || "").toLowerCase().replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه");
+    return (s || "").toLowerCase().replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه").replace(/[\u0660-\u0669]/g, d => String(d.charCodeAt(0) - 1632)).replace(/[\u06F0-\u06F9]/g, d => String(d.charCodeAt(0) - 1776));
 }
 
 function orderMatchesFilterAndSearch(order, filter, search, customerIndex) {
@@ -2100,7 +2170,7 @@ function orderMatchesFilterAndSearch(order, filter, search, customerIndex) {
         const words = normalizeArabicSearch(search.trim()).split(/\s+/).filter(Boolean);
         if (words.length) {
             const customer = order.customerId ? customerIndex ? customerIndex.get(order.customerId) : (appData.customers || []).find(c => c.id === order.customerId) : null;
-            const haystack = normalizeArabicSearch([ order.orderNumber || "", order.orderLabel || "", order.customerPhone || "", customer && customer.name || "", ...(order.parts || []).map(p => p.description || "") ].join(" "));
+            const haystack = normalizeArabicSearch([ order.orderNumber || "", order.orderLabel || "", order.vin || "", order.customerPhone || "", customer && customer.name || "", ...(order.parts || []).map(p => p.description || "") ].join(" "));
             if (!words.every(w => haystack.includes(w))) return false;
         }
     }
@@ -2410,14 +2480,32 @@ function bindOrderActionButtons() {
     const root = document.getElementById("modal-root");
     const delBtn = root.querySelector("#modal-delete-btn");
     if (delBtn) {
-        delBtn.addEventListener("click", () => {
+        delBtn.addEventListener("click", async () => {
             if (orderDeleteGated()) {
                 requestOrderDelete();
                 return;
             }
+            if (orderDeleteCountPending) return;
             const id = draft.id;
+            const label = delBtn.textContent;
+            delBtn.disabled = true;
+            delBtn.textContent = "جاري التحقق…";
+            orderDeleteCountPending = true;
+            let mediaN = 0;
+            try {
+                mediaN = await orderMediaCountSafe(id);
+            } finally {
+                orderDeleteCountPending = false;
+                if (delBtn.isConnected) {
+                    delBtn.disabled = false;
+                    delBtn.textContent = label;
+                }
+            }
+            if (!orderModalStillOpen(id)) return;
+            const cr = document.getElementById("confirm-root");
+            if (cr && cr.classList.contains("modal-open")) return;
             closeModal();
-            confirmDelete(id);
+            confirmDelete(id, mediaN);
         });
     }
     const returnOrderBtn = root.querySelector("#modal-return-order-btn");
@@ -2629,7 +2717,7 @@ function partRowHtml(p, i) {
         const statusLabel = p.returnHasReceivable ? p.returnCollected ? "✅ مرتجعة — تم تحصيل المبلغ من المورد" : "🔄 مرتجعة — بانتظار تحصيل المبلغ من المورد" : "🔄 مرتجعة";
         const refundDone = !!p.customerRefundConfirmed;
         const canUndo = !p.returnCollected && !refundDone;
-        return '<div class="part-row part-row-returned" data-part-id="' + escapeHtml(p.id) + '">' + '<div class="part-desc-wrap">' + '<div class="part-desc-row"><span class="part-index-badge">' + ((i != null ? i : 0) + 1) + '</span><span class="part-desc-returned">' + escapeHtml(p.description) + "</span></div>" + '<span class="used-badge used-badge-off">' + statusLabel + (refundDone ? " · ✅ تم رد المبلغ للزبون" : "") + "</span>" + "</div>" + '<div class="part-price-group">' + '<span class="num">' + escapeHtml(qtyVal) + " × " + fmtMoney(Number(costVal) || 0) + "</span>" + "</div>" + (canUndo ? '<button type="button" class="icon-btn" data-undo-return-part="' + escapeHtml(p.id) + '" title="تراجع عن الإرجاع" aria-label="تراجع عن الإرجاع">↩️</button>' : "") + "</div>";
+        return '<div class="part-row part-row-returned" data-part-id="' + escapeHtml(p.id) + '">' + '<div class="part-desc-wrap">' + '<div class="part-desc-row"><span class="part-index-badge">' + ((i != null ? i : 0) + 1) + '</span><span class="part-desc-returned">' + escapeHtml(p.description) + "</span></div>" + '<span class="used-badge used-badge-off">' + statusLabel + (refundDone ? " · ✅ تم رد المبلغ للزبون" : "") + "</span>" + (draft ? mediaStripHtml(draft.id, p.id, "view") : "") + "</div>" + '<div class="part-price-group">' + '<span class="num">' + escapeHtml(qtyVal) + " × " + fmtMoney(Number(costVal) || 0) + "</span>" + "</div>" + (canUndo ? '<button type="button" class="icon-btn" data-undo-return-part="' + escapeHtml(p.id) + '" title="تراجع عن الإرجاع" aria-label="تراجع عن الإرجاع">↩️</button>' : "") + "</div>";
     }
     const descFieldUi = fieldRequestUiHtml("description", p.id, p.description, '<span class="field-readonly-value field-readonly-desc">' + escapeHtml(p.description || "") + "</span>");
     const descHtml = descFieldUi != null ? descFieldUi : '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="' + escapeHtml(p.description) + '">';
@@ -2649,7 +2737,7 @@ function partRowHtml(p, i) {
     })), p.supplierId, p.used ? "— بدون تشليح —" : "— بدون مورد —");
     const excludeProposal = pendingPartActionProposal("part_exclude", p.id);
     const includeCheckHtml = !selectionOn ? "" : excludeProposal ? editProposalPendingHtml(excludeProposal) : '<input type="checkbox" class="part-include-check" ' + (included ? "checked" : "") + ' title="مشمولة بالطلبية">';
-    return '<div class="part-row' + (selectionOn && !included ? " part-row-excluded" : "") + '" data-part-id="' + escapeHtml(p.id) + '">' + includeCheckHtml + '<div class="part-desc-wrap">' + '<div class="part-desc-row">' + '<span class="part-index-badge">' + ((i != null ? i : 0) + 1) + "</span>" + descHtml + "</div>" + usedBadgeHtml + partConditionBadgeHtml(p) + "</div>" + '<div class="part-price-group">' + '<label class="mini-label">العدد' + qtyHtml + "</label>" + '<label class="mini-label mini-label-cost">سعر الشراء' + costHtml + "</label>" + '<label class="mini-label mini-label-sell">سعر البيع' + sellHtml + "</label>" + (hasElevatedAccess() ? '<label class="mini-label mini-label-supplier">' + (p.used ? "التشليح" : "المورد") + supplierFieldHtml + "</label>" : "") + "</div>" + '<button type="button" class="part-remove-btn" data-part-actions="' + escapeHtml(p.id) + '" aria-label="خيارات القطعة (حذف أو إرجاع)">⋯</button>' + "</div>";
+    return '<div class="part-row' + (selectionOn && !included ? " part-row-excluded" : "") + '" data-part-id="' + escapeHtml(p.id) + '">' + includeCheckHtml + '<div class="part-desc-wrap">' + '<div class="part-desc-row">' + '<span class="part-index-badge">' + ((i != null ? i : 0) + 1) + "</span>" + descHtml + "</div>" + usedBadgeHtml + partConditionBadgeHtml(p) + (draft ? mediaStripHtml(draft.id, p.id, "edit") : "") + "</div>" + '<div class="part-price-group">' + '<label class="mini-label">العدد' + qtyHtml + "</label>" + '<label class="mini-label mini-label-cost">سعر الشراء' + costHtml + "</label>" + '<label class="mini-label mini-label-sell">سعر البيع' + sellHtml + "</label>" + (hasElevatedAccess() ? '<label class="mini-label mini-label-supplier">' + (p.used ? "التشليح" : "المورد") + supplierFieldHtml + "</label>" : "") + "</div>" + '<button type="button" class="part-remove-btn" data-part-actions="' + escapeHtml(p.id) + '" aria-label="خيارات القطعة (حذف أو إرجاع)">⋯</button>' + "</div>";
 }
 
 function costSplitButtonsHtml(d, t) {
@@ -2659,8 +2747,117 @@ function costSplitButtonsHtml(d, t) {
     return '<div class="cost-split-row">' + '<button type="button" class="cost-split-box' + (scrapyardCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-scrapyard">' + "<span>سداد التشليح</span>" + '<span class="num">' + fmtMoney(t.costToScrapyard) + "</span>" + '<span class="cost-split-status">' + costSplitStatusLabel(d) + "</span>" + "</button>" + '<button type="button" class="cost-split-box' + (newPartsCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-new">' + "<span>سداد الجديد</span>" + '<span class="num">' + fmtMoney(t.costToSupplier) + "</span>" + '<span class="cost-split-status">' + costSplitStatusLabel(d, "new") + "</span>" + "</button>" + "</div>";
 }
 
+function normalizeVin(s) {
+    return String(s == null ? "" : s).replace(/[\u0660-\u0669]/g, d => String(d.charCodeAt(0) - 1632)).replace(/[\u06F0-\u06F9]/g, d => String(d.charCodeAt(0) - 1776)).replace(/[\s\u061C\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u2022\u00B7]/g, "").toUpperCase().slice(0, 30);
+}
+
+function vinCharsetOk(s) {
+    return /^[A-Z0-9-]*$/.test(s || "");
+}
+
+function vinHasLetter(s) {
+    return /[A-Z]/.test(s || "");
+}
+
+function vinLooksValid(s) {
+    return /^[A-HJ-NPR-Z0-9]{17}$/.test(s || "");
+}
+
+function vinHintHtml(raw) {
+    const v = normalizeVin(raw);
+    if (!v) return "";
+    if (!vinCharsetOk(v)) return '<span class="text-rust">رقم الهيكل: حروف إنجليزية وأرقام فقط</span>';
+    if (!vinHasLetter(v)) return '<span class="text-rust">هذا مو رقم هيكل — رقم الهيكل فيه حروف إنجليزية</span>';
+    if (vinLooksValid(v)) return '<span class="text-green">✓ 17 خانة</span>';
+    return '<span class="text-amber">رقم الهيكل عادة 17 خانة بدون I/O/Q</span>';
+}
+
+function vinFieldHtml(d, mode, prefix) {
+    const ro = mode === "readonly";
+    const v = d.vin || "";
+    const hint = ro ? "" : vinHintHtml(v);
+    const btn = ro ? v ? '<button type="button" class="icon-btn" data-vin-copy="' + escapeHtml(v) + '" aria-label="نسخ رقم الهيكل">📋</button>' : "" : '<button type="button" class="icon-btn" data-media-add="' + escapeHtml("vin|" + d.id + "|_order:vin") + '" aria-label="صورة رقم الهيكل">📷</button>';
+    return '<div class="field">' + '<span class="field-label">رقم الهيكل VIN (اختياري)</span>' + '<div class="phone-field-row">' + '<input type="text" id="' + prefix + '-vin-input" dir="ltr" style="text-align:right;" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" placeholder="' + (ro ? "ما انكتب رقم هيكل" : "اكتبه أو صوّر الاستمارة") + '" value="' + escapeHtml(v) + '"' + (ro ? " readonly" : "") + ">" + btn + "</div>" + (ro ? "" : '<div class="add-part-hint" id="' + prefix + '-vin-hint" style="margin-top:4px;"' + (hint ? "" : " hidden") + ">" + hint + "</div>") + mediaStripHtml(d.id, "_order:vin", ro ? "view" : "edit") + "</div>";
+}
+
+function refreshVinHint(prefix, raw) {
+    const el = document.getElementById(prefix + "-vin-hint");
+    if (!el) return;
+    const h = vinHintHtml(raw);
+    el.innerHTML = h;
+    el.hidden = !h;
+}
+
+function bindVinInput(prefix, getDraft) {
+    const input = document.getElementById(prefix + "-vin-input");
+    if (!input || input.readOnly) return;
+    input.addEventListener("input", e => {
+        const d = getDraft();
+        if (!d) return;
+        d.vin = e.target.value;
+        const hintEl = document.getElementById(prefix + "-vin-hint");
+        if (hintEl && !hintEl.hidden) refreshVinHint(prefix, d.vin);
+    });
+    input.addEventListener("blur", e => {
+        const d = getDraft();
+        if (!d) return;
+        const n = normalizeVin(e.target.value);
+        if (vinCharsetOk(n)) {
+            d.vin = n;
+            if (e.target.value !== n) e.target.value = n;
+        }
+        refreshVinHint(prefix, e.target.value);
+    });
+}
+
+function vinApplyForSave(d, prefix) {
+    const v = normalizeVin(d && d.vin);
+    if (!vinCharsetOk(v)) {
+        showToast("رقم الهيكل: حروف إنجليزية وأرقام فقط", "error");
+        refreshVinHint(prefix, d.vin);
+        return false;
+    }
+    if (v && !vinHasLetter(v)) {
+        showToast("هذا مو رقم هيكل — رقم الهيكل فيه حروف إنجليزية", "error");
+        refreshVinHint(prefix, d.vin);
+        return false;
+    }
+    if (v) d.vin = v; else delete d.vin;
+    const input = document.getElementById(prefix + "-vin-input");
+    if (input && input.value !== (d.vin || "")) input.value = d.vin || "";
+    return true;
+}
+
+function syncDraftVinFromOrder(order) {
+    if (!draft || !order || draft.id !== order.id) return;
+    if ((draft.vin || "") !== (draftVinAtOpen || "")) return;
+    if (order.vin) draft.vin = order.vin; else delete draft.vin;
+    draftVinAtOpen = draft.vin || "";
+    const input = document.getElementById("order-vin-input");
+    if (input) {
+        input.value = draft.vin || "";
+        refreshVinHint("order", draft.vin);
+    }
+}
+
+async function copyVinFromButton(btn) {
+    const v = btn.getAttribute("data-vin-copy") || "";
+    if (!v) return;
+    const ok = await writeTextToClipboard(v);
+    showToast(ok ? "تم نسخ رقم الهيكل" : "تعذر النسخ التلقائي، انسخه يدويًا", ok ? "ok" : "error");
+}
+
+function bindVinCopyButtons(root) {
+    if (!root) return;
+    root.querySelectorAll("[data-vin-copy]").forEach(b => b.addEventListener("click", e => {
+        e.preventDefault();
+        e.stopPropagation();
+        copyVinFromButton(b);
+    }));
+}
+
 function modalHtml(d) {
-    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلبية جديدة" : "تعديل الطلبية") + '</div><div class="modal-sub">البيانات تُحفظ تلقائيًا عند الضغط على حفظ</div></div>' + '<div style="display:flex;gap:8px;align-items:flex-start;">' + '<span id="modal-edit-toggle-wrap">' + editModeToggleButtonHtml(d) + "</span>" + '<button class="icon-btn" id="modal-close-btn" aria-label="إغلاق">✕</button>' + "</div></div>" + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + '<label class="field"><span class="field-label">رقم الطلب (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + '<div class="field">' + '<span class="field-label">العميل (اختياري)</span>' + '<div class="phone-field-row">' + '<div id="order-customer-select" style="flex:1;">' + orderCustomerFieldHtml(d) + "</div>" + '<button type="button" class="icon-btn" id="order-add-customer-btn" aria-label="عميل جديد">➕</button>' + "</div>" + "</div>" + '<div class="field">' + '<div class="field-label-row">' + '<span class="field-label">الطلبية</span>' + '<button type="button" id="btn-toggle-part-selection" class="chip' + (d.partsSelectionEnabled ? " chip-active" : "") + '">🎯 تحديد القطع' + (d.partsSelectionEnabled ? " (مفعّل)" : "") + "</button>" + '<button type="button" id="order-add-supplier-btn" class="chip">➕ مورد جديد</button>' + "</div>" + '<input type="text" id="order-label-input" placeholder="مثال: اسم الزبون / نوع السيارة / أي وصف مختصر" value="' + escapeHtml(d.orderLabel || "") + '">' + "</div>" + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span></div>' + '<div id="parts-list" class="parts-list">' + d.parts.map(partRowHtml).join("") + "</div>" + '<div id="part-type-gate-wrap">' + partAddControlsHtml() + "</div>" + feeFieldRowHtml(d) + "</div>" + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">قسم المبيعات — التسعير والتحصيل</span></div>' + '<div class="totals-row">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="total-cost-display">0 ر.س</span></div>' + '<div class="total-box"><span>مستحق من الزبون</span><span class="num text-green" id="total-sell-display">0 ر.س</span></div>' + '<div class="total-box"><span>الربح</span><span class="num" id="total-profit-display">0 ر.س</span><span class="total-box-sub" id="total-profit-sub"></span></div>' + "</div>" + (hasElevatedAccess() ? '<div id="cost-split-row-wrap">' + costSplitButtonsHtml(d, orderTotals(d)) + "</div>" : "") + '<div class="payments-block">' + '<div id="payments-list" class="payments-list">' + paymentsListInnerHtml() + "</div>" + '<button type="button" id="add-payment-btn" class="btn btn-ghost btn-sm">+ إضافة دفعة</button>' + '<div class="payment-summary-row">' + '<span>إجمالي المدفوع<span class="num" id="total-paid-display">0 ر.س</span></span>' + '<span><span id="customer-remaining-label">المتبقي عليه</span><span class="num payment-remaining-display" id="customer-remaining-display">0 ر.س</span></span>' + "</div>" + '<div id="customer-refund-status-wrap">' + orderCustomerRefundStatusHtml(d) + "</div>" + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + '<div id="order-action-buttons-wrap">' + orderActionButtonsHtml(d) + "</div>" + '<div class="parts-clipboard-mini">' + '<button type="button" class="btn-clip-mini" id="copy-parts-btn">📋 نسخ</button>' + '<button type="button" class="btn-clip-mini" id="paste-parts-btn">📥 لصق</button>' + "</div>" + "</div>" + (!d.isNew ? '<div class="modal-footer-docs"><button type="button" class="btn btn-ghost btn-sm" id="modal-quote-btn">🧾 عرض سعر</button><button type="button" class="btn btn-ghost btn-sm" id="modal-invoice-btn">🧾 فاتورة</button></div>' : "<span></span>") + '<div class="modal-footer-actions">' + '<button type="button" class="btn btn-ghost" id="modal-cancel-btn">إلغاء</button>' + (!d.isNew ? '<button type="button" class="btn btn-ghost" id="modal-return-to-quote-btn">إرجاع للتسعير</button>' : "") + '<button type="button" class="btn ' + (d.supplied ? "btn-supplied-on" : "btn-ghost") + '" id="modal-supplied-btn"' + (!d.confirmed ? ' disabled title="لازم تأكيد الطلبية أولًا"' : "") + ">" + (d.supplied ? "✅ تم التوريد" : "🚚 تم التوريد") + "</button>" + '<button type="button" class="btn btn-primary" id="modal-save-btn">حفظ الطلبية</button>' + "</div>" + "</div>" + "</div>" + "</div>";
+    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلبية جديدة" : "تعديل الطلبية") + '</div><div class="modal-sub">البيانات تُحفظ تلقائيًا عند الضغط على حفظ</div></div>' + '<div style="display:flex;gap:8px;align-items:flex-start;">' + '<span id="modal-edit-toggle-wrap">' + editModeToggleButtonHtml(d) + "</span>" + '<button class="icon-btn" id="modal-close-btn" aria-label="إغلاق">✕</button>' + "</div></div>" + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + '<label class="field"><span class="field-label">رقم الطلب (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + '<div class="field">' + '<span class="field-label">العميل (اختياري)</span>' + '<div class="phone-field-row">' + '<div id="order-customer-select" style="flex:1;">' + orderCustomerFieldHtml(d) + "</div>" + '<button type="button" class="icon-btn" id="order-add-customer-btn" aria-label="عميل جديد">➕</button>' + "</div>" + "</div>" + '<div class="field">' + '<div class="field-label-row">' + '<span class="field-label">الطلبية</span>' + '<button type="button" id="btn-toggle-part-selection" class="chip' + (d.partsSelectionEnabled ? " chip-active" : "") + '">🎯 تحديد القطع' + (d.partsSelectionEnabled ? " (مفعّل)" : "") + "</button>" + '<button type="button" id="order-add-supplier-btn" class="chip">➕ مورد جديد</button>' + "</div>" + '<input type="text" id="order-label-input" placeholder="مثال: اسم الزبون / نوع السيارة / أي وصف مختصر" value="' + escapeHtml(d.orderLabel || "") + '">' + "</div>" + vinFieldHtml(d, "edit", "order") + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span></div>' + '<div id="parts-list" class="parts-list">' + d.parts.map(partRowHtml).join("") + "</div>" + '<div id="part-type-gate-wrap">' + partAddControlsHtml() + "</div>" + feeFieldRowHtml(d) + "</div>" + mediaOrderSectionHtml(d.id, "order", true) + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">قسم المبيعات — التسعير والتحصيل</span></div>' + '<div class="totals-row">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="total-cost-display">0 ر.س</span></div>' + '<div class="total-box"><span>مستحق من الزبون</span><span class="num text-green" id="total-sell-display">0 ر.س</span></div>' + '<div class="total-box"><span>الربح</span><span class="num" id="total-profit-display">0 ر.س</span><span class="total-box-sub" id="total-profit-sub"></span></div>' + "</div>" + (hasElevatedAccess() ? '<div id="cost-split-row-wrap">' + costSplitButtonsHtml(d, orderTotals(d)) + "</div>" : "") + '<div class="payments-block">' + '<div id="payments-list" class="payments-list">' + paymentsListInnerHtml() + "</div>" + '<button type="button" id="add-payment-btn" class="btn btn-ghost btn-sm">+ إضافة دفعة</button>' + '<div class="payment-summary-row">' + '<span>إجمالي المدفوع<span class="num" id="total-paid-display">0 ر.س</span></span>' + '<span><span id="customer-remaining-label">المتبقي عليه</span><span class="num payment-remaining-display" id="customer-remaining-display">0 ر.س</span></span>' + "</div>" + '<div id="customer-refund-status-wrap">' + orderCustomerRefundStatusHtml(d) + "</div>" + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + '<div id="order-action-buttons-wrap">' + orderActionButtonsHtml(d) + "</div>" + '<div class="parts-clipboard-mini">' + '<button type="button" class="btn-clip-mini" id="copy-parts-btn">📋 نسخ</button>' + '<button type="button" class="btn-clip-mini" id="paste-parts-btn">📥 لصق</button>' + "</div>" + "</div>" + (!d.isNew ? '<div class="modal-footer-docs"><button type="button" class="btn btn-ghost btn-sm" id="modal-quote-btn">🧾 عرض سعر</button><button type="button" class="btn btn-ghost btn-sm" id="modal-invoice-btn">🧾 فاتورة</button></div>' : "<span></span>") + '<div class="modal-footer-actions">' + '<button type="button" class="btn btn-ghost" id="modal-cancel-btn">إلغاء</button>' + (!d.isNew ? '<button type="button" class="btn btn-ghost" id="modal-return-to-quote-btn">إرجاع للتسعير</button>' : "") + '<button type="button" class="btn ' + (d.supplied ? "btn-supplied-on" : "btn-ghost") + '" id="modal-supplied-btn"' + (!d.confirmed ? ' disabled title="لازم تأكيد الطلبية أولًا"' : "") + ">" + (d.supplied ? "✅ تم التوريد" : "🚚 تم التوريد") + "</button>" + '<button type="button" class="btn btn-primary" id="modal-save-btn">حفظ الطلبية</button>' + "</div>" + "</div>" + "</div>" + "</div>";
 }
 
 function openModal(mode, orderId) {
@@ -2709,11 +2906,17 @@ function openModal(mode, orderId) {
         draft.isNew = false;
     }
     draftOpenedAtUpdatedAt = draft.updatedAt || null;
+    draftVinAtOpen = draft.vin || "";
+    if (draft.isNew) {
+        persistedPartIds.delete(draft.id);
+        mediaIndexInitEmpty(draft.id);
+    } else mediaSeedPersisted(draft.id, draft.parts);
     const root = document.getElementById("modal-root");
     root.innerHTML = modalHtml(draft);
     root.classList.add("modal-open");
     attachModalHandlers();
     updateModalTotals();
+    if (!draft.isNew) ensureOrderMediaLoaded(draft.id, true);
     document.addEventListener("keydown", escListener);
     const firstInput = root.querySelector(".order-number-input");
     if (firstInput) firstInput.focus();
@@ -2723,6 +2926,8 @@ function closeModal() {
     const root = document.getElementById("modal-root");
     root.innerHTML = "";
     root.classList.remove("modal-open");
+    if (draft) mediaDiscardStaged(draft.id);
+    closeMediaOverlays();
     draft = null;
     pendingScrapyardCancellations.clear();
     pendingEditProposalsCancellation = false;
@@ -2750,6 +2955,9 @@ function friendlyErrorText(e) {
     const code = e && e.code;
     const msg = String(e && e.message || e || "");
     if (code === "23505") return "قيمة مستخدمة أصلًا بسجل آخر (تعارض تكرار)";
+    if (code === "PT422" || e && e.hint === "media_part_not_saved") return "القطعة لسه ما انحفظت";
+    if (code === "PT412" || e && e.hint === "media_objects_missing") return "الرفع ما كمل — جرّب مرة تانية";
+    if (code === "PT410" || e && e.hint === "media_deleted") return "الملف انحذف";
     if (msg === "NO_DB") return "الاتصال بقاعدة البيانات غير متاح حاليًا";
     if (code === "PGRST202") return "نسخة التطبيق عندك قديمة — حدّث الصفحة وحاول مرة تانية";
     if (/fetch|network|Network|timeout|Timeout/.test(msg)) return "تحقق من اتصال الإنترنت وحاول مرة تانية";
@@ -2977,6 +3185,7 @@ function attachModalHandlers() {
     root.querySelector("#order-label-input").addEventListener("input", e => {
         draft.orderLabel = e.target.value;
     });
+    bindVinInput("order", () => draft);
     bindOrderCustomerSelectEvents();
     root.querySelector("#order-add-customer-btn").addEventListener("click", () => orderQuickAddCustomer());
     root.querySelector("#order-add-supplier-btn").addEventListener("click", () => {
@@ -3225,6 +3434,7 @@ function refreshPartsList() {
     bindPartRowEvents();
     refreshPartAddControls();
     updateModalTotals();
+    refreshMediaStrips(draft.id);
 }
 
 function confirmReturnWholeOrder() {
@@ -3301,7 +3511,7 @@ function openPartActionChoice(part) {
     const pendingReturn = pendingPartActionProposal("part_return", part.id);
     const pendingExclude = pendingPartActionProposal("part_exclude", part.id);
     const anyPending = pendingDelete || pendingReturn || pendingExclude;
-    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="alertdialog" aria-modal="true">' + '<div class="modal-title">' + escapeHtml(part.description || "القطعة") + "</div>" + '<p class="modal-sub">اختر الإجراء المطلوب لهذه القطعة</p>' + (anyPending ? '<div class="part-action-pending-wrap">' + editProposalPendingHtml(anyPending) + "</div>" : "") + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;flex-wrap:wrap;">' + '<button type="button" class="btn btn-ghost" id="part-action-cancel-btn">إلغاء</button>' + (canReturn && !anyPending ? '<button type="button" class="btn btn-ghost" id="part-action-return-btn">🔄 ' + (gated ? "طلب إرجاع" : "إرجاع") + "</button>" : "") + (!anyPending ? '<button type="button" class="btn btn-danger" id="part-action-delete-btn">🗑️ ' + (gated ? "طلب حذف" : "حذف") + "</button>" : "") + "</div>" + "</div>" + "</div>";
+    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="alertdialog" aria-modal="true">' + '<div class="modal-title">' + escapeHtml(part.description || "القطعة") + "</div>" + '<p class="modal-sub">اختر الإجراء المطلوب لهذه القطعة</p>' + (anyPending ? '<div class="part-action-pending-wrap">' + editProposalPendingHtml(anyPending) + "</div>" : "") + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;flex-wrap:wrap;">' + '<button type="button" class="btn btn-ghost" id="part-action-cancel-btn">إلغاء</button>' + (currentUserRole === "full" ? '<button type="button" class="btn btn-ghost" id="part-action-media-btn">📷 صورة/فيديو</button>' : "") + (canReturn && !anyPending ? '<button type="button" class="btn btn-ghost" id="part-action-return-btn">🔄 ' + (gated ? "طلب إرجاع" : "إرجاع") + "</button>" : "") + (!anyPending ? '<button type="button" class="btn btn-danger" id="part-action-delete-btn">🗑️ ' + (gated ? "طلب حذف" : "حذف") + "</button>" : "") + "</div>" + "</div>" + "</div>";
     root.classList.add("modal-open");
     const close = () => {
         root.innerHTML = "";
@@ -3311,6 +3521,18 @@ function openPartActionChoice(part) {
         if (e.target.hasAttribute("data-close-confirm")) close();
     });
     root.querySelector("#part-action-cancel-btn").addEventListener("click", close);
+    const mediaBtn = root.querySelector("#part-action-media-btn");
+    if (mediaBtn) mediaBtn.addEventListener("click", () => {
+        close();
+        if (!draft) return;
+        openMediaPicker({
+            orderId: draft.id,
+            draftId: draft.id,
+            partId: part.id,
+            kind: "part",
+            surface: "order"
+        });
+    });
     const acceptBtn = root.querySelector("[data-accept-proposal]");
     if (acceptBtn) acceptBtn.addEventListener("click", () => {
         close();
@@ -3341,6 +3563,7 @@ function openPartActionChoice(part) {
                 dangerous: true,
                 onConfirm: () => {
                     draft.parts = draft.parts.filter(p => p.id !== part.id);
+                    mediaDiscardStagedForPart(draft.id, part.id);
                     pendingPartProposalPurges.add(part.id);
                     pendingScrapyardCancellations.add(part.id);
                     refreshPartsList();
@@ -3767,6 +3990,8 @@ async function onSaveOrder() {
         showToast("رقم الطلب مستخدم من قبل، غيّره", "error");
         return false;
     }
+    if (!vinApplyForSave(draft, "order")) return false;
+    if (mediaStagedOnBlankParts(draft.id, draft.parts)) return false;
     const cleanedParts = draft.parts.filter(p => p.description && p.description.trim()).map(p => Object.assign({}, p, {
         id: p.id,
         description: p.description.trim(),
@@ -3814,11 +4039,17 @@ async function onSaveOrder() {
     const scrapyardCancellationsSnapshot = new Set(pendingScrapyardCancellations);
     const editProposalsCancellationSnapshot = pendingEditProposalsCancellation;
     const partProposalPurgesSnapshot = new Set(pendingPartProposalPurges);
+    const mediaSnap = mediaTakeStagedSnapshot(draftId);
+    const savedVin = savingOrder.vin || "";
     const saved = await persistOrder(savingOrder, orderWasNew);
-    if (!saved) return false;
+    if (!saved) {
+        mediaRestoreStagedSnapshot(mediaSnap);
+        return false;
+    }
     delete savingOrder.isNew;
     const idx = appData.orders.findIndex(o => o.id === savingOrder.id);
     if (idx >= 0) appData.orders[idx] = savingOrder; else appData.orders.push(savingOrder);
+    mediaAfterSaveSuccess(savingOrder.id, mediaSnap, cleanedParts);
     if (scrapyardCancellationsSnapshot.size) {
         for (const partId of scrapyardCancellationsSnapshot) {
             await cancelPendingScrapyardProposalsForPart(partId);
@@ -3840,6 +4071,7 @@ async function onSaveOrder() {
     showToast("تم حفظ الطلبية", "ok");
     if (!orderModalStillOpen(draftId)) return true;
     draftOpenedAtUpdatedAt = draft.updatedAt;
+    draftVinAtOpen = savedVin;
     editingPayments = {};
     pendingScrapyardCancellations.clear();
     pendingEditProposalsCancellation = false;
@@ -3880,16 +4112,2251 @@ let quoteModalRole = "sales";
 
 let quoteOpenedAtUpdatedAt = null;
 
-const WHATSAPP_OPS_GROUP_LINK = "https://chat.whatsapp.com/GRWLhskD8kXJemXSRrFouj?s=cl&p=i&mlu=0&ilr=0";
+const MEDIA_VIDEO_MAX_BYTES = 6291456;
 
-function openWhatsAppForPart(part) {
-    const caption = [ quoteDraft.orderNumber, quoteDraft.orderLabel, part.description ].filter(Boolean).join(" — ");
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(caption).catch(() => {});
-    }
-    window.open(WHATSAPP_OPS_GROUP_LINK, "_blank");
-    showToast('نُسخ "' + caption + '" — الصقه كابشن قبل ما ترسل الصورة/الفيديو بجروب العمليات', "ok");
+const MEDIA_BLOB_LRU_MAX_BYTES = 40 * 1024 * 1024;
+
+let mediaStateGen = 0;
+
+const orderMediaIndex = new Map;
+
+const mediaIdToOrderId = new Map;
+
+const mediaStaged = new Map;
+
+const mediaInFlightSnaps = new Map;
+
+const mediaUploads = new Map;
+
+const persistedPartIds = new Map;
+
+const mediaThumbUrlMemo = new Map;
+
+const mediaThumbInflight = new Set;
+
+const mediaThumbBroken = new Set;
+
+const mediaBlobLru = new Map;
+
+const mediaBlobInflight = new Map;
+
+let mediaBlobLruBytes = 0;
+
+let orderMediaChannel = null;
+
+let mediaConfig = null, mediaConfigAt = 0, mediaConfigPromise = null;
+
+let mediaPickerState = null;
+
+let mediaPendingPick = null;
+
+let mediaViewer = null, mediaViewerGen = 0;
+
+let mediaActiveSheet = null, mediaProgressSeq = 0;
+
+let mediaFileQueue = Promise.resolve();
+
+let mediaUploadChain = Promise.resolve();
+
+let mediaHydrateTimer = null;
+
+let mediaDelegationBound = false;
+
+function newMediaId() {
+    const c = typeof crypto !== "undefined" ? crypto : null;
+    if (c && typeof c.randomUUID === "function") return String(c.randomUUID()).toLowerCase();
+    const b = new Uint8Array(16);
+    if (c && typeof c.getRandomValues === "function") c.getRandomValues(b); else for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+    b[6] = b[6] & 15 | 64;
+    b[8] = b[8] & 63 | 128;
+    let h = "";
+    for (let i = 0; i < 16; i++) h += (b[i] < 16 ? "0" : "") + b[i].toString(16);
+    return h.slice(0, 8) + "-" + h.slice(8, 12) + "-" + h.slice(12, 16) + "-" + h.slice(16, 20) + "-" + h.slice(20);
 }
+
+function mediaObjectPath(aud, orderId, partId, id, ext) {
+    return aud + "/" + orderId + "/" + (partId || "_order") + "/" + id + "." + ext;
+}
+
+function mediaThumbPathFor(objectPath) {
+    return String(objectPath).replace(/\.(jpg|mp4)$/, "_t.jpg");
+}
+
+function mediaPathValid(path, bucket) {
+    const head = "^(shared|purch|sales)/[A-Za-z0-9_-]{1,64}/[A-Za-z0-9_-]{1,64}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+    const tail = bucket === "order-photos" ? "(_t)?\\.jpg$" : bucket === "order-videos" ? "\\.mp4$" : "\\.(jpg|mp4)$";
+    return typeof path === "string" && new RegExp(head + tail).test(path);
+}
+
+function mediaFitDims(w, h, shortSide) {
+    w = Math.max(1, Number(w) || 1);
+    h = Math.max(1, Number(h) || 1);
+    const s = Math.min(1, (Number(shortSide) || 480) / Math.min(w, h));
+    const f = n => Math.max(16, Math.floor((n * s + 1e-6) / 16) * 16);
+    return {
+        W: f(w),
+        H: f(h)
+    };
+}
+
+function mediaVideoPreset(name) {
+    return name === "eco" ? {
+        name: "eco",
+        shortSide: 352,
+        fps: 20,
+        kfi: 4,
+        vbps: 3e5,
+        abps: 24e3
+    } : {
+        name: "std",
+        shortSide: 480,
+        fps: 24,
+        kfi: 4,
+        vbps: 45e4,
+        abps: 32e3
+    };
+}
+
+function mediaVideoPlan(src, presetName, maxSec) {
+    const p = mediaVideoPreset(presetName);
+    const d = mediaFitDims(src && src.w, src && src.h, p.shortSide);
+    const avg = Number(src && src.avgBps) || 0;
+    const vbps = avg > 0 ? Math.round(Math.min(p.vbps, Math.max(15e4, .8 * avg))) : p.vbps;
+    const cap = Math.min(30, Math.max(1, Number(maxSec) || 15));
+    const dur = Math.max(0, Number(src && src.durSec) || 0);
+    const trimEnd = dur > cap ? cap : null;
+    const outSec = trimEnd != null ? trimEnd : dur;
+    const budgetAbps = Number(src && src.copiedAbps) > 0 ? Number(src.copiedAbps) : p.abps;
+    return {
+        preset: p.name,
+        W: d.W,
+        H: d.H,
+        fps: p.fps,
+        kfi: p.kfi,
+        vbps: vbps,
+        abps: p.abps,
+        trimEnd: trimEnd,
+        outSec: outSec,
+        budgetBytes: Math.round((vbps + budgetAbps) * outSec / 8)
+    };
+}
+
+function mediaDefaultAudience(role, kind, isElevated) {
+    return role === "scrapyard" || role === "full" ? "shared" : null;
+}
+
+function mediaAltAudience(role, kind) {
+    if (kind === "vin") return null;
+    return role === "scrapyard" ? "purch" : role === "full" ? "sales" : null;
+}
+
+function mediaCanDelete(row, email, isElevated, nowMs) {
+    if (!row) return false;
+    if (isElevated) return true;
+    if (!email || String(row.uploaded_by || "").toLowerCase() !== String(email).toLowerCase()) return false;
+    const t = Date.parse(row.created_at);
+    return isFinite(t) && nowMs - t < 15 * 60 * 1e3;
+}
+
+function mediaStagedFlushPlan(snapshot, savedPartIds) {
+    const has = savedPartIds && typeof savedPartIds.has === "function" ? k => savedPartIds.has(k) : k => Array.isArray(savedPartIds) && savedPartIds.indexOf(k) >= 0;
+    const flush = [], dropped = [];
+    const visit = (items, key) => {
+        if (!items || !items.length) return;
+        (key === "_order" || key === "_order:vin" || has(key) ? flush : dropped).push({
+            key: key,
+            items: items
+        });
+    };
+    if (snapshot && typeof snapshot.forEach === "function" && typeof snapshot.get === "function") snapshot.forEach(visit); else if (snapshot) Object.keys(snapshot).forEach(k => visit(snapshot[k], k));
+    return {
+        flush: flush,
+        dropped: dropped
+    };
+}
+
+function formatMediaDuration(ms) {
+    const s = Math.max(0, Math.round((Number(ms) || 0) / 1e3));
+    return Math.floor(s / 60) + ":" + (s % 60 < 10 ? "0" : "") + s % 60;
+}
+
+function bytesHasExifApp1(u8) {
+    if (!u8) return false;
+    const n = Math.min(u8.length, 65536);
+    for (let i = 0; i + 9 < n; i++) {
+        if (u8[i] === 255 && u8[i + 1] === 225 && u8[i + 4] === 69 && u8[i + 5] === 120 && u8[i + 6] === 105 && u8[i + 7] === 102 && u8[i + 8] === 0 && u8[i + 9] === 0) return true;
+    }
+    return false;
+}
+
+function bytesHasLocationAtom(u8) {
+    if (!u8 || u8.length < 8) return true;
+    const pats = [ [ 169, 120, 121, 122 ] ];
+    [ "loci", "ISO6709", "com.apple.quicktime.location" ].forEach(s => {
+        const a = [];
+        for (let i = 0; i < s.length; i++) a.push(s.charCodeAt(i));
+        pats.push(a);
+    });
+    const hit = (from, to) => {
+        for (let i = from; i < to; i++) {
+            for (let k = 0; k < pats.length; k++) {
+                const p = pats[k];
+                if (i + p.length > to || u8[i] !== p[0]) continue;
+                let j = 1;
+                while (j < p.length && u8[i + j] === p[j]) j++;
+                if (j === p.length) return true;
+            }
+        }
+        return false;
+    };
+    const n = u8.length;
+    let off = 0, sawMoov = false;
+    while (off < n) {
+        if (off + 8 > n) return true;
+        let size = u8[off] * 16777216 + (u8[off + 1] << 16) + (u8[off + 2] << 8) + u8[off + 3];
+        const type = String.fromCharCode(u8[off + 4], u8[off + 5], u8[off + 6], u8[off + 7]);
+        let hdr = 8;
+        if (size === 1) {
+            if (off + 16 > n) return true;
+            size = (u8[off + 8] * 16777216 + (u8[off + 9] << 16) + (u8[off + 10] << 8) + u8[off + 11]) * 4294967296 + (u8[off + 12] * 16777216 + (u8[off + 13] << 16) + (u8[off + 14] << 8) + u8[off + 15]);
+            hdr = 16;
+        } else if (size === 0) {
+            size = n - off;
+        }
+        if (size < hdr || off + size > n) return true;
+        if (type === "moov") {
+            sawMoov = true;
+            if (hit(off + hdr, off + size)) return true;
+        }
+        off += size;
+    }
+    return !sawMoov;
+}
+
+function mediaPartKey(ctx) {
+    return ctx.kind === "vin" ? "_order:vin" : ctx.partId || "_order";
+}
+
+function mediaRowKind(ctx, role) {
+    if (ctx.kind === "vin") return "vin";
+    if (role === "scrapyard") return "yard_part";
+    return ctx.partId ? "customer_ref" : "other";
+}
+
+function mediaStagePut(draftId, partKey, item) {
+    let st = mediaStaged.get(draftId);
+    let n = 0, bytes = 0;
+    if (st) st.forEach(arr => arr.forEach(it => {
+        n++;
+        bytes += it.bytes || 0;
+    }));
+    if (n >= 10 || bytes + (item.bytes || 0) > 20 * 1024 * 1024) return false;
+    if (!st) {
+        st = new Map;
+        mediaStaged.set(draftId, st);
+    }
+    const arr = st.get(partKey) || [];
+    arr.push(item);
+    st.set(partKey, arr);
+    item.phase = "staged";
+    return true;
+}
+
+function mediaRevokeItem(it) {
+    if (it && it.previewUrl) {
+        try {
+            URL.revokeObjectURL(it.previewUrl);
+        } catch (e) {}
+        it.previewUrl = null;
+    }
+}
+
+function mediaResetState() {
+    mediaStateGen++;
+    closeMediaOverlays();
+    mediaStaged.forEach(m => m.forEach(arr => arr.forEach(mediaRevokeItem)));
+    mediaInFlightSnaps.forEach(m => m.forEach(arr => arr.forEach(mediaRevokeItem)));
+    mediaUploads.forEach(mediaRevokeItem);
+    mediaStaged.clear();
+    mediaInFlightSnaps.clear();
+    mediaUploads.clear();
+    orderMediaIndex.clear();
+    mediaIdToOrderId.clear();
+    persistedPartIds.clear();
+    mediaThumbUrlMemo.clear();
+    mediaThumbInflight.clear();
+    mediaThumbBroken.clear();
+    mediaBlobLru.forEach(e => {
+        try {
+            URL.revokeObjectURL(e.url);
+        } catch (err) {}
+    });
+    mediaBlobLru.clear();
+    mediaBlobLruBytes = 0;
+    mediaBlobInflight.clear();
+    mediaConfig = null;
+    mediaConfigAt = 0;
+    mediaConfigPromise = null;
+    mediaPendingPick = null;
+    mediaFileQueue = Promise.resolve();
+    mediaUploadChain = Promise.resolve();
+    if (orderMediaChannel) {
+        try {
+            if (sb) sb.removeChannel(orderMediaChannel);
+        } catch (e) {}
+        orderMediaChannel = null;
+    }
+    if (mediaActiveSheet) mediaCancelSheet(mediaActiveSheet);
+    mediaHideProgressSheet();
+}
+
+function mediaMaxSeconds() {
+    const n = Number(mediaConfig && mediaConfig.video_max_seconds);
+    return n >= 5 && n <= 30 ? n : 15;
+}
+
+function loadMediaConfig() {
+    if (mediaConfig && Date.now() - mediaConfigAt < 10 * 60 * 1e3) {
+        return Promise.resolve({
+            video_preset: mediaConfig.video_preset === "eco" ? "eco" : "std",
+            video_max_seconds: mediaMaxSeconds()
+        });
+    }
+    if (mediaConfigPromise) return mediaConfigPromise;
+    const gen = mediaStateGen;
+    const p = (async () => {
+        try {
+            if (!sb) throw new Error("NO_DB");
+            const {data: data, error: error} = await withTimeout(sb.from("app_limits").select("id, media_quota_bytes, db_quota_bytes, thresholds, video_preset, video_max_seconds").eq("id", 1).maybeSingle(), 8e3, "app_limits");
+            if (error) throw error;
+            if (data && gen === mediaStateGen) {
+                mediaConfig = data;
+                mediaConfigAt = Date.now();
+            }
+        } catch (e) {
+            console.warn("loadMediaConfig:", e);
+        }
+        return {
+            video_preset: mediaConfig && mediaConfig.video_preset === "eco" ? "eco" : "std",
+            video_max_seconds: mediaMaxSeconds()
+        };
+    })();
+    mediaConfigPromise = p;
+    p.then(() => {
+        if (mediaConfigPromise === p) mediaConfigPromise = null;
+    });
+    return p;
+}
+
+function mediaIndexInitEmpty(orderId) {
+    if (orderId && !orderMediaIndex.has(orderId)) orderMediaIndex.set(orderId, {
+        state: "loaded",
+        gen: 0,
+        rows: new Map,
+        pending: new Map,
+        promise: null
+    });
+}
+
+function ensureOrderMediaLoaded(orderId, force) {
+    if (!sb || !orderId) return Promise.resolve();
+    const cur = orderMediaIndex.get(orderId);
+    if (cur && cur.state === "loading") return cur.promise;
+    if (cur && cur.state === "loaded" && !force) return Promise.resolve();
+    const stateGen = mediaStateGen;
+    const gen = (cur ? cur.gen : 0) + 1;
+    const ent = {
+        state: "loading",
+        gen: gen,
+        rows: cur ? cur.rows : new Map,
+        pending: new Map,
+        promise: null
+    };
+    orderMediaIndex.set(orderId, ent);
+    ent.promise = (async () => {
+        let data = null, failed = false;
+        try {
+            const res = await withTimeout(sb.from("order_media").select("*").eq("order_id", orderId).order("created_at", {
+                ascending: true
+            }), GUARDED_AWAIT_TIMEOUT_MS, "order_media");
+            if (res.error) throw res.error;
+            data = res.data || [];
+        } catch (e) {
+            console.error("ensureOrderMediaLoaded:", e);
+            failed = true;
+        }
+        if (stateGen !== mediaStateGen || orderMediaIndex.get(orderId) !== ent || ent.gen !== gen) return;
+        if (!failed) {
+            ent.rows.forEach((r, id) => mediaIdToOrderId.delete(id));
+            ent.rows = new Map;
+            data.forEach(r => {
+                ent.rows.set(r.id, r);
+                mediaIdToOrderId.set(r.id, orderId);
+            });
+        }
+        ent.pending.forEach((row, id) => {
+            if (row) {
+                ent.rows.set(id, row);
+                mediaIdToOrderId.set(id, orderId);
+            } else {
+                ent.rows.delete(id);
+                mediaIdToOrderId.delete(id);
+            }
+        });
+        ent.pending = new Map;
+        ent.state = failed ? "error" : "loaded";
+        ent.rows.forEach((r, id) => mediaDropLocalForRow(id));
+        refreshMediaStrips(orderId);
+    })();
+    return ent.promise;
+}
+
+function mediaIndexApply(orderId, id, row) {
+    const ent = orderMediaIndex.get(orderId);
+    if (!ent) return false;
+    if (ent.state === "loading") ent.pending.set(id, row || null);
+    if (row) {
+        ent.rows.set(id, row);
+        mediaIdToOrderId.set(id, orderId);
+    } else {
+        ent.rows.delete(id);
+        mediaIdToOrderId.delete(id);
+    }
+    return true;
+}
+
+function mediaRowById(orderId, id) {
+    const ent = orderMediaIndex.get(orderId);
+    return ent && ent.rows.get(id) || null;
+}
+
+function mediaDropLocalForRow(id) {
+    let hit = false;
+    mediaUploads.forEach((it, localId) => {
+        if (it.id === id && it.phase === "failed") {
+            mediaUploads.delete(localId);
+            mediaRevokeItem(it);
+            hit = true;
+        }
+    });
+    return hit;
+}
+
+function mediaForgetOrder(orderId) {
+    const ent = orderMediaIndex.get(orderId);
+    if (ent) ent.rows.forEach((r, id) => mediaIdToOrderId.delete(id));
+    orderMediaIndex.delete(orderId);
+    persistedPartIds.delete(orderId);
+}
+
+function subscribeOrderMediaRealtime() {
+    if (!sb || orderMediaChannel) return;
+    orderMediaChannel = sb.channel("order-media-changes").on("postgres_changes", {
+        event: "INSERT",
+        schema: "public",
+        table: "order_media"
+    }, mediaApplyRealtime).on("postgres_changes", {
+        event: "DELETE",
+        schema: "public",
+        table: "order_media"
+    }, mediaApplyRealtime).subscribe();
+}
+
+function mediaApplyRealtime(payload) {
+    if (!payload) return;
+    if (payload.eventType === "INSERT") {
+        const row = payload.new;
+        if (!row || !row.id || !row.order_id) return;
+        const dropped = mediaDropLocalForRow(row.id);
+        if (mediaIndexApply(row.order_id, row.id, row) || dropped) refreshMediaStrips(row.order_id);
+    } else if (payload.eventType === "DELETE") {
+        const id = payload.old && payload.old.id;
+        if (!id) return;
+        const orderId = mediaIdToOrderId.get(id);
+        if (!orderId) {
+            orderMediaIndex.forEach(ent => {
+                if (ent.state === "loading") ent.pending.set(id, null);
+            });
+            return;
+        }
+        mediaIndexApply(orderId, id, null);
+        refreshMediaStrips(orderId);
+    }
+}
+
+function mediaSeedPersisted(orderId, parts) {
+    if (!orderId) return;
+    persistedPartIds.set(orderId, new Set((parts || []).map(p => p && p.id).filter(Boolean)));
+}
+
+function mediaTargetPersisted(ctx) {
+    const s = persistedPartIds.get(ctx.orderId);
+    if (!s) return false;
+    if (ctx.kind === "vin" || !ctx.partId) return true;
+    return s.has(ctx.partId);
+}
+
+function mediaDraftStillOpen(draftId) {
+    return !!draftId && (!!draft && draft.id === draftId || !!quoteDraft && quoteDraft.id === draftId);
+}
+
+function mediaCurrentPartIds(orderId) {
+    const d = draft && draft.id === orderId ? draft : quoteDraft && quoteDraft.id === orderId ? quoteDraft : (appData.orders || []).find(o => o.id === orderId);
+    return d ? new Set((d.parts || []).map(p => p.id)) : null;
+}
+
+function mediaDiscardStaged(draftId) {
+    const st = mediaStaged.get(draftId);
+    if (!st) return;
+    mediaStaged.delete(draftId);
+    st.forEach(arr => arr.forEach(mediaRevokeItem));
+}
+
+function mediaDiscardStagedForPart(draftId, partKey) {
+    const st = mediaStaged.get(draftId);
+    if (!st || !st.has(partKey)) return;
+    st.get(partKey).forEach(mediaRevokeItem);
+    st.delete(partKey);
+    if (!st.size) mediaStaged.delete(draftId);
+}
+
+function mediaStagedOnBlankParts(draftId, parts) {
+    const st = mediaStaged.get(draftId);
+    if (!st) return false;
+    const blank = (parts || []).some(p => p && !(p.description && String(p.description).trim()) && (st.get(p.id) || []).length > 0);
+    if (blank) showToast("القطعة بدون وصف — صورها ما رح تنحفظ", "error");
+    return blank;
+}
+
+function mediaTakeStagedSnapshot(draftId) {
+    const st = mediaStaged.get(draftId);
+    if (!st || !st.size) return null;
+    mediaStaged.delete(draftId);
+    st.forEach(arr => arr.forEach(it => {
+        it.phase = "saving";
+    }));
+    mediaInFlightSnaps.set(draftId, st);
+    return {
+        draftId: draftId,
+        map: st
+    };
+}
+
+function mediaReleaseSnapshot(snap) {
+    if (snap && mediaInFlightSnaps.get(snap.draftId) === snap.map) mediaInFlightSnaps.delete(snap.draftId);
+}
+
+function mediaRestoreStagedSnapshot(snap) {
+    if (!snap) return;
+    mediaReleaseSnapshot(snap);
+    if (!mediaDraftStillOpen(snap.draftId)) {
+        let n = 0;
+        snap.map.forEach(arr => arr.forEach(it => {
+            n++;
+            mediaRevokeItem(it);
+        }));
+        if (n) showToast(n + " صورة/فيديو ما انحفظت (النافذة انسكّرت قبل الحفظ)", "error");
+        return;
+    }
+    let st = mediaStaged.get(snap.draftId);
+    if (!st) {
+        st = new Map;
+        mediaStaged.set(snap.draftId, st);
+    }
+    snap.map.forEach((arr, key) => {
+        arr.forEach(it => {
+            it.phase = "staged";
+        });
+        st.set(key, arr.concat(st.get(key) || []));
+    });
+    refreshMediaStrips(snap.draftId);
+}
+
+function mediaFlushStaged(orderId, snap, savedIds) {
+    if (!snap) return;
+    mediaReleaseSnapshot(snap);
+    const plan = mediaStagedFlushPlan(snap.map, savedIds || new Set);
+    let dropped = 0;
+    plan.dropped.forEach(g => g.items.forEach(it => {
+        dropped++;
+        mediaRevokeItem(it);
+    }));
+    plan.flush.forEach(g => g.items.forEach(it => {
+        it.orderId = orderId;
+        mediaEnqueueUpload(it);
+    }));
+    if (dropped) showToast(dropped + " صورة/فيديو ما انحفظت — قطعتها ما انحفظت", "error");
+}
+
+function mediaDrainPersistedStaged(draftId) {
+    const st = mediaStaged.get(draftId);
+    if (!st) return;
+    st.forEach((arr, key) => {
+        const ctx = {
+            orderId: draftId,
+            partId: key === "_order" || key === "_order:vin" ? null : key,
+            kind: key === "_order:vin" ? "vin" : key === "_order" ? "order" : "part"
+        };
+        if (!mediaTargetPersisted(ctx)) return;
+        st.delete(key);
+        arr.forEach(mediaEnqueueUpload);
+    });
+    if (!st.size) mediaStaged.delete(draftId);
+}
+
+function mediaAfterSaveSuccess(orderId, snap, savedParts) {
+    persistedPartIds.set(orderId, new Set((savedParts || []).map(p => p && p.id).filter(Boolean)));
+    mediaIndexInitEmpty(orderId);
+    mediaFlushStaged(orderId, snap, persistedPartIds.get(orderId));
+    mediaDrainPersistedStaged(orderId);
+    refreshMediaStrips(orderId);
+}
+
+function mediaAfterQuoteConflict(draftId, snap, reopened) {
+    if (!snap) return;
+    if (reopened && quoteModalStillOpen(draftId) && persistedPartIds.has(draftId)) mediaFlushStaged(draftId, snap, persistedPartIds.get(draftId)); else mediaRestoreStagedSnapshot(snap);
+    refreshMediaStrips(draftId);
+}
+
+function mediaSleep(ms) {
+    return new Promise(r => setTimeout(r, ms));
+}
+
+function mediaEnqueueUpload(item) {
+    item.phase = "queued";
+    item.error = null;
+    mediaUploads.set(item.localId, item);
+    refreshMediaStrips(item.orderId);
+    const gen = mediaStateGen;
+    mediaUploadChain = mediaUploadChain.then(() => gen === mediaStateGen && mediaUploads.get(item.localId) === item ? mediaUploadNow(item) : null).catch(e => console.error("mediaUploadNow:", e));
+}
+
+async function mediaAwaitRequest(item, promise, softMs, hardMs) {
+    const settled = Promise.resolve(promise).then(v => ({
+        v: v
+    }), e => ({
+        e: e || new Error("request_failed")
+    }));
+    let r = await Promise.race([ settled, mediaSleep(softMs).then(() => null) ]);
+    if (r) return r;
+    if (mediaUploads.get(item.localId) === item) {
+        item.phase = "verifying";
+        refreshMediaStrips(item.orderId);
+    }
+    r = await Promise.race([ settled, mediaSleep(hardMs).then(() => null) ]);
+    return r || {
+        timeout: true
+    };
+}
+
+function mediaStorageDup(err) {
+    if (!err) return false;
+    return String(err.statusCode) === "409" || err.status === 409 || /already exists|duplicate/i.test(String(err.message || err.error || ""));
+}
+
+function mediaStorageDenied(err) {
+    if (!err) return false;
+    const m = String(err.message || err.error || "");
+    return /row-level security/i.test(m) || (String(err.statusCode) === "403" || err.status === 403) && !/jwt|token/i.test(m);
+}
+
+function mediaInsertDeleted(err) {
+    return !!err && (err.code === "PT410" || err.hint === "media_deleted" || err.message === "media_deleted");
+}
+
+async function mediaSelectRowById(id) {
+    try {
+        const {data: data, error: error} = await withTimeout(sb.from("order_media").select("*").eq("id", id).maybeSingle(), GUARDED_AWAIT_TIMEOUT_MS, "order_media by id");
+        return error ? null : data || null;
+    } catch (e) {
+        return null;
+    }
+}
+
+async function mediaRemoveObjects(pairs) {
+    const byBucket = {};
+    (pairs || []).forEach(p => {
+        if (p && p[0] && p[1]) (byBucket[p[0]] = byBucket[p[0]] || []).push(p[1]);
+    });
+    for (const bucket of Object.keys(byBucket)) {
+        try {
+            const {error: error} = await withTimeout(sb.storage.from(bucket).remove(byBucket[bucket]), 15e3, "storage remove");
+            if (error) console.warn("mediaRemoveObjects:", bucket, error);
+        } catch (e) {
+            console.warn("mediaRemoveObjects:", bucket, e);
+        }
+    }
+}
+
+async function mediaUploadPipeline(item, wasUnverified) {
+    const isVideo = item.mediaType === "video";
+    const bucket = isVideo ? "order-videos" : "order-photos";
+    const objectPath = mediaObjectPath(item.audience, item.orderId, item.partId, item.id, isVideo ? "mp4" : "jpg");
+    const thumbPath = mediaThumbPathFor(objectPath);
+    if (!mediaPathValid(objectPath) || !mediaPathValid(thumbPath, "order-photos")) return {
+        status: "failed",
+        error: new Error("bad_path")
+    };
+    if (wasUnverified) {
+        const f = await mediaSelectRowById(item.id);
+        if (f) return {
+            status: "ok",
+            row: f
+        };
+    }
+    const settleDenied = async () => {
+        const f = await mediaSelectRowById(item.id);
+        return f ? {
+            status: "ok",
+            row: f
+        } : {
+            status: "deleted"
+        };
+    };
+    const T = isVideo ? 9e4 : 3e4;
+    const opts = {
+        upsert: false,
+        cacheControl: "3600"
+    };
+    let r = await mediaAwaitRequest(item, sb.storage.from("order-photos").upload(thumbPath, item.thumb, opts), T, 18e4);
+    if (r.timeout) return {
+        status: "unverified"
+    };
+    let err = r.e || r.v && r.v.error;
+    if (err && !mediaStorageDup(err)) {
+        if (wasUnverified && mediaStorageDenied(err)) return await settleDenied();
+        return {
+            status: "failed",
+            error: err
+        };
+    }
+    r = await mediaAwaitRequest(item, sb.storage.from(bucket).upload(objectPath, item.full, opts), T, 18e4);
+    if (r.timeout) return {
+        status: "unverified"
+    };
+    err = r.e || r.v && r.v.error;
+    if (err && !mediaStorageDup(err)) {
+        const denied = wasUnverified && mediaStorageDenied(err);
+        const res = denied ? await settleDenied() : {
+            status: "failed",
+            error: err
+        };
+        if (res.status !== "ok") await mediaRemoveObjects([ [ "order-photos", thumbPath ] ]);
+        return res;
+    }
+    const row = {
+        id: item.id,
+        order_id: item.orderId,
+        part_id: item.partId || null,
+        audience: item.audience,
+        kind: item.kind,
+        media_type: item.mediaType,
+        mime: isVideo ? "video/mp4" : "image/jpeg",
+        object_path: objectPath,
+        thumb_path: thumbPath,
+        width: item.width,
+        height: item.height,
+        duration_ms: isVideo ? item.durationMs : null,
+        audio: isVideo ? item.audio || "none" : null
+    };
+    r = await mediaAwaitRequest(item, sb.from("order_media").insert(row).select("*"), 15e3, 12e4);
+    if (!r.timeout && !r.e && r.v && !r.v.error && r.v.data && r.v.data.length) return {
+        status: "ok",
+        row: r.v.data[0]
+    };
+    const found = await mediaSelectRowById(item.id);
+    if (found) return {
+        status: "ok",
+        row: found
+    };
+    if (r.timeout) return {
+        status: "unverified"
+    };
+    err = r.e || r.v && r.v.error || new Error("insert_empty");
+    if (err.code === "23505") return {
+        status: "unverified"
+    };
+    await mediaRemoveObjects([ [ bucket, objectPath ], [ "order-photos", thumbPath ] ]);
+    if (mediaInsertDeleted(err)) return {
+        status: "deleted"
+    };
+    return {
+        status: err.code === "PT422" || err.hint === "media_part_not_saved" ? "restage" : "failed",
+        error: err
+    };
+}
+
+async function mediaUploadNow(item) {
+    const gen = mediaStateGen;
+    if (!sb) {
+        item.phase = "failed";
+        refreshMediaStrips(item.orderId);
+        return;
+    }
+    const wasUnverified = !!item.unverified;
+    item.phase = "uploading";
+    item.unverified = false;
+    refreshMediaStrips(item.orderId);
+    let res;
+    try {
+        res = await mediaUploadPipeline(item, wasUnverified);
+    } catch (e) {
+        res = {
+            status: "failed",
+            error: e
+        };
+    }
+    if (gen !== mediaStateGen || mediaUploads.get(item.localId) !== item) return;
+    const landed = (res.status === "failed" || res.status === "unverified") && mediaRowById(item.orderId, item.id);
+    if (res.status === "ok" || landed) {
+        mediaUploads.delete(item.localId);
+        mediaRevokeItem(item);
+        if (res.row) mediaIndexApply(item.orderId, res.row.id, res.row);
+        refreshMediaStrips(item.orderId);
+        return;
+    }
+    if (res.status === "deleted") {
+        mediaUploads.delete(item.localId);
+        mediaRevokeItem(item);
+        refreshMediaStrips(item.orderId);
+        showToast(item.mediaType === "video" ? "الفيديو انحذف" : "الصورة انحذفت", "error");
+        return;
+    }
+    if (res.status === "restage") {
+        mediaUploads.delete(item.localId);
+        const s = persistedPartIds.get(item.orderId);
+        if (s && item.partId) s.delete(item.partId);
+        if (mediaDraftStillOpen(item.draftId) && mediaStagePut(item.draftId, item.partKey, item)) {
+            showToast("احفظ الطلبية أولًا — الملف بينرفع بعد الحفظ", "error");
+        } else {
+            mediaRevokeItem(item);
+            showToast("القطعة ما عادت موجودة بالطلبية — الملف ما انحفظ", "error");
+        }
+        refreshMediaStrips(item.orderId);
+        return;
+    }
+    item.phase = "failed";
+    item.unverified = res.status === "unverified";
+    item.error = res.error || null;
+    refreshMediaStrips(item.orderId);
+    showToast(item.unverified ? "الرفع ما تأكد (الشبكة بطيئة) — اضغط ↻ على المصغّرة لإعادة المحاولة" : "تعذر رفع " + (item.mediaType === "video" ? "الفيديو" : "الصورة") + ": " + friendlyErrorText(res.error), "error");
+}
+
+function mediaCancelLocal(localId) {
+    const up = mediaUploads.get(localId);
+    if (up) {
+        if (up.phase !== "failed") return;
+        mediaUploads.delete(localId);
+        mediaRevokeItem(up);
+        if (up.unverified && sb) {
+            const isV = up.mediaType === "video";
+            const op = mediaObjectPath(up.audience, up.orderId, up.partId, up.id, isV ? "mp4" : "jpg");
+            mediaRemoveObjects([ [ isV ? "order-videos" : "order-photos", op ], [ "order-photos", mediaThumbPathFor(op) ] ]);
+        }
+        refreshMediaStrips(up.orderId);
+        return;
+    }
+    let found = null;
+    mediaStaged.forEach((m, draftId) => m.forEach((arr, key) => {
+        const i = arr.findIndex(it => it.localId === localId);
+        if (i >= 0) found = {
+            draftId: draftId,
+            key: key,
+            arr: arr,
+            i: i,
+            m: m
+        };
+    }));
+    if (!found) return;
+    const it = found.arr.splice(found.i, 1)[0];
+    mediaRevokeItem(it);
+    if (!found.arr.length) found.m.delete(found.key);
+    if (!found.m.size) mediaStaged.delete(found.draftId);
+    refreshMediaStrips(it.orderId);
+}
+
+function mediaRetryLocal(localId) {
+    const up = mediaUploads.get(localId);
+    if (up && up.phase === "failed") mediaEnqueueUpload(up);
+}
+
+function mediaStripRows(orderId, key) {
+    const ent = orderMediaIndex.get(orderId);
+    if (!ent) return [];
+    const all = Array.from(ent.rows.values());
+    let out;
+    if (key === "_order:vin") out = all.filter(r => r.kind === "vin"); else if (key === "_order") out = all.filter(r => !r.part_id && r.kind !== "vin"); else if (key === "_deleted") {
+        const cur = mediaCurrentPartIds(orderId);
+        out = cur ? all.filter(r => r.part_id && !cur.has(r.part_id)) : [];
+    } else out = all.filter(r => r.part_id === key);
+    return out.sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")));
+}
+
+function mediaLocalItems(orderId, key) {
+    const out = [];
+    const add = m => {
+        const arr = m && m.get(key);
+        if (arr) arr.forEach(it => out.push(it));
+    };
+    add(mediaStaged.get(orderId));
+    add(mediaInFlightSnaps.get(orderId));
+    mediaUploads.forEach(it => {
+        if (it.orderId === orderId && it.partKey === key) out.push(it);
+    });
+    return out;
+}
+
+function mediaCountLabel(orderId, key) {
+    const n = mediaStripRows(orderId, key).length + mediaLocalItems(orderId, key).length;
+    return n > 0 ? "📷 " + n : "📷 صورة";
+}
+
+function mediaCountAria(orderId, key) {
+    const n = mediaStripRows(orderId, key).length + mediaLocalItems(orderId, key).length;
+    return n > 0 ? "صور/فيديو القطعة: " + n + " — إضافة" : "صورة أو فيديو للقطعة";
+}
+
+function mediaLockBadgeHtml(aud) {
+    if (aud !== "purch" && aud !== "sales") return "";
+    return '<span class="media-tile-badge media-tile-lock" title="' + (aud === "purch" ? "داخلي للمشتريات" : "للمبيعات فقط") + '">🔒</span>';
+}
+
+function mediaTileHtml(row) {
+    const memo = mediaThumbUrlMemo.get(row.thumb_path);
+    const src = memo && memo.expMs - Date.now() > 12e4 ? memo.url : "";
+    if (!src) mediaScheduleHydrate();
+    const isVideo = row.media_type === "video";
+    return '<button type="button" class="media-tile" data-media-open="' + escapeHtml(row.id) + '" aria-label="' + (isVideo ? "فيديو" : "صورة") + '">' + '<img alt="" loading="lazy" decoding="async" data-media-thumb="' + escapeHtml(row.thumb_path) + '"' + (src ? ' src="' + escapeHtml(src) + '"' : "") + (mediaThumbBroken.has(row.thumb_path) ? ' class="media-tile-broken"' : "") + ">" + (isVideo ? '<span class="media-tile-badge media-tile-play">▶</span><span class="media-tile-badge media-tile-dur">' + formatMediaDuration(row.duration_ms) + "</span>" : "") + mediaLockBadgeHtml(row.audience) + "</button>";
+}
+
+function mediaLocalTileHtml(item, mode) {
+    const phase = item.phase || "staged";
+    const badge = {
+        staged: "💾",
+        saving: "💾",
+        queued: "⏳",
+        uploading: "⏫",
+        verifying: "…",
+        failed: "⚠️"
+    }[phase] || "⏳";
+    const title = {
+        staged: "بينرفع بعد الحفظ",
+        saving: "عم ينحفظ…",
+        queued: "بالدور للرفع",
+        uploading: "عم ينرفع…",
+        verifying: "عم نتأكد من الرفع…",
+        failed: "الرفع ما كمل"
+    }[phase] || "";
+    const id = escapeHtml(item.localId);
+    return '<div class="media-tile media-tile-local' + (phase === "failed" ? " media-tile-failed" : "") + '" role="button" tabindex="0" data-media-open-local="' + id + '" title="' + title + '" aria-label="' + title + '">' + (item.previewUrl ? '<img alt="" src="' + escapeHtml(item.previewUrl) + '">' : "") + (item.mediaType === "video" ? '<span class="media-tile-badge media-tile-play">▶</span>' : "") + mediaLockBadgeHtml(item.audience) + (phase === "failed" ? '<button type="button" class="media-tile-x media-tile-retry" data-media-retry="' + id + '" aria-label="إعادة المحاولة">↻</button>' : '<span class="media-tile-badge media-tile-state">' + badge + "</span>") + (mode === "edit" && (phase === "staged" || phase === "failed") ? '<button type="button" class="media-tile-x" data-media-cancel="' + id + '" aria-label="إزالة">✕</button>' : "") + "</div>";
+}
+
+function mediaStripInnerHtml(orderId, key, mode) {
+    const rows = mediaStripRows(orderId, key);
+    let html = key === "_deleted" && rows.length ? '<span class="stamp stamp-amber media-strip-label">⚠️ صور/فيديو لقطع محذوفة</span>' : "";
+    rows.forEach(r => {
+        html += mediaTileHtml(r);
+    });
+    if (key !== "_deleted") mediaLocalItems(orderId, key).forEach(it => {
+        html += mediaLocalTileHtml(it, mode);
+    });
+    return html;
+}
+
+function mediaStripHtml(orderId, partKey, mode) {
+    if (!orderId || !partKey) return "";
+    const m = mode === "edit" ? "edit" : "view";
+    return '<div class="media-strip" data-media-strip="' + escapeHtml(orderId + "|" + partKey) + '" data-media-mode="' + m + '">' + mediaStripInnerHtml(orderId, partKey, m) + "</div>";
+}
+
+function mediaPartAddButtonHtml(surface, orderId, partId, cls) {
+    return '<button type="button" class="' + cls + '" data-media-add="' + escapeHtml(surface + "|" + orderId + "|" + partId) + '" data-media-count="' + escapeHtml(orderId + "|" + partId) + '" aria-label="' + escapeHtml(mediaCountAria(orderId, partId)) + '">' + mediaCountLabel(orderId, partId) + "</button>";
+}
+
+function mediaOrderSectionHtml(orderId, surface, canAdd) {
+    if (!orderId) return "";
+    return '<div class="section-block">' + '<div class="section-head"><span class="section-title">الصور والفيديو</span>' + (canAdd ? '<button type="button" class="btn btn-ghost btn-sm" data-media-add="' + escapeHtml(surface + "|" + orderId + "|_order") + '">📷 إضافة</button>' : "") + "</div>" + mediaStripHtml(orderId, "_order", canAdd ? "edit" : "view") + mediaStripHtml(orderId, "_deleted", "view") + "</div>";
+}
+
+function refreshMediaStrips(orderId) {
+    if (!orderId) return;
+    const prefix = orderId + "|";
+    document.querySelectorAll("[data-media-strip]").forEach(el => {
+        const k = el.getAttribute("data-media-strip") || "";
+        if (k.indexOf(prefix) !== 0) return;
+        el.innerHTML = mediaStripInnerHtml(orderId, k.slice(prefix.length), el.getAttribute("data-media-mode") || "view");
+    });
+    document.querySelectorAll("[data-media-count]").forEach(el => {
+        const k = el.getAttribute("data-media-count") || "";
+        if (k.indexOf(prefix) !== 0) return;
+        el.textContent = mediaCountLabel(orderId, k.slice(prefix.length));
+        el.setAttribute("aria-label", mediaCountAria(orderId, k.slice(prefix.length)));
+    });
+    const v = mediaViewer;
+    if (v && !v.local && v.orderId === orderId) {
+        const curId = v.ids[v.idx];
+        v.ids = v.ids.filter(id => !!mediaRowById(orderId, id));
+        const ni = v.ids.indexOf(curId);
+        if (!v.ids.length) closeMediaViewer(); else if (ni >= 0) v.idx = ni; else {
+            v.idx = Math.max(0, Math.min(v.idx, v.ids.length - 1));
+            mediaRenderViewer();
+        }
+    }
+    mediaScheduleHydrate();
+}
+
+function mediaScheduleHydrate() {
+    if (mediaHydrateTimer) return;
+    mediaHydrateTimer = setTimeout(() => {
+        mediaHydrateTimer = null;
+        hydrateMediaThumbs();
+    }, 0);
+}
+
+async function hydrateMediaThumbs() {
+    if (!sb) return;
+    const now = Date.now();
+    const need = [];
+    document.querySelectorAll("img[data-media-thumb]").forEach(img => {
+        const p = img.getAttribute("data-media-thumb");
+        if (mediaThumbBroken.has(p)) {
+            img.classList.add("media-tile-broken");
+            return;
+        }
+        const m = mediaThumbUrlMemo.get(p);
+        if (m && m.expMs - now > 12e4) {
+            if (img.getAttribute("src") !== m.url) img.setAttribute("src", m.url);
+            return;
+        }
+        if (!mediaThumbInflight.has(p) && need.indexOf(p) < 0) need.push(p);
+    });
+    if (!need.length) return;
+    const gen = mediaStateGen;
+    need.forEach(p => mediaThumbInflight.add(p));
+    try {
+        for (let i = 0; i < need.length; i += 100) {
+            const batch = need.slice(i, i + 100);
+            const {data: data, error: error} = await withTimeout(sb.storage.from("order-photos").createSignedUrls(batch, 900), GUARDED_AWAIT_TIMEOUT_MS, "thumb urls");
+            if (gen !== mediaStateGen) return;
+            if (error) throw error;
+            const exp = Date.now() + 9e5;
+            (data || []).forEach((d, k) => {
+                const p = d && d.path || batch[k];
+                if (d && d.signedUrl) mediaThumbUrlMemo.set(p, {
+                    url: d.signedUrl,
+                    expMs: exp
+                }); else if (p) mediaThumbBroken.add(p);
+            });
+        }
+    } catch (e) {
+        console.warn("hydrateMediaThumbs:", e);
+    } finally {
+        if (gen === mediaStateGen) need.forEach(p => mediaThumbInflight.delete(p));
+    }
+    if (gen !== mediaStateGen) return;
+    document.querySelectorAll("img[data-media-thumb]").forEach(img => {
+        const p = img.getAttribute("data-media-thumb");
+        const m = mediaThumbUrlMemo.get(p);
+        if (m && img.getAttribute("src") !== m.url) img.setAttribute("src", m.url); else if (!m && mediaThumbBroken.has(p)) img.classList.add("media-tile-broken");
+    });
+}
+
+function mediaBindDelegationOnce() {
+    if (mediaDelegationBound) return;
+    mediaDelegationBound = true;
+    document.addEventListener("click", mediaDelegatedClick);
+    document.addEventListener("error", e => {
+        const t = e.target;
+        if (t && t.tagName === "IMG" && t.hasAttribute && t.hasAttribute("data-media-thumb")) {
+            t.classList.add("media-tile-broken");
+            mediaThumbUrlMemo.delete(t.getAttribute("data-media-thumb"));
+        }
+    }, true);
+}
+
+function mediaDelegatedClick(e) {
+    const t = e.target;
+    if (!t || !t.closest) return;
+    let el = t.closest("[data-media-cancel]");
+    if (el) {
+        e.preventDefault();
+        mediaCancelLocal(el.getAttribute("data-media-cancel"));
+        return;
+    }
+    el = t.closest("[data-media-retry]");
+    if (el) {
+        e.preventDefault();
+        mediaRetryLocal(el.getAttribute("data-media-retry"));
+        return;
+    }
+    el = t.closest("[data-media-add]");
+    if (el) {
+        e.preventDefault();
+        mediaOnAddSpec(el.getAttribute("data-media-add"));
+        return;
+    }
+    el = t.closest("[data-media-open-local]");
+    if (el) {
+        e.preventDefault();
+        openMediaViewerLocal(el.getAttribute("data-media-open-local"));
+        return;
+    }
+    el = t.closest("[data-media-open]");
+    if (el) {
+        e.preventDefault();
+        const strip = el.closest("[data-media-strip]");
+        const k = strip ? strip.getAttribute("data-media-strip") || "" : "";
+        const bar = k.indexOf("|");
+        if (bar > 0) openMediaViewer(k.slice(0, bar), el.getAttribute("data-media-open"), k.slice(bar + 1));
+    }
+}
+
+function mediaOpenModalDraft() {
+    const root = document.getElementById("modal-root");
+    if (root && root.querySelector("#quote-parts-list") && quoteDraft) return quoteDraft;
+    if (root && root.querySelector("#parts-list") && draft) return draft;
+    return null;
+}
+
+function mediaOnAddSpec(spec) {
+    let parts = String(spec || "").split("|");
+    if (parts.length === 1 && parts[0] === "vin") {
+        const d = mediaOpenModalDraft();
+        if (!d) return;
+        parts = [ "vin", d.id, "_order:vin" ];
+    }
+    const surface = parts[0], orderId = parts[1], key = parts[2] || "_order";
+    if (!orderId) return;
+    const isVin = key === "_order:vin";
+    openMediaPicker({
+        orderId: orderId,
+        draftId: surface === "approved" ? null : orderId,
+        partId: isVin || key === "_order" ? null : key,
+        kind: isVin ? "vin" : key === "_order" ? "order" : "part",
+        surface: surface
+    });
+}
+
+function mediaCanAddTo(ctx) {
+    if (!sb || !ctx || !ctx.orderId) return false;
+    if (currentUserRole === "scrapyard") {
+        if (ctx.kind === "vin") return false;
+        const o = quoteDraft && quoteDraft.id === ctx.orderId ? quoteDraft : (appData.orders || []).find(x => x.id === ctx.orderId);
+        return !!(o && (o.isQuote || o.wasQuote));
+    }
+    return currentUserRole === "full";
+}
+
+function mediaTargetLabel(ctx) {
+    if (ctx.kind === "vin") return "صورة رقم الهيكل (الاستمارة أو لوحة VIN)";
+    if (!ctx.partId) return "الطلبية كاملة";
+    const d = draft && draft.id === ctx.orderId ? draft : quoteDraft && quoteDraft.id === ctx.orderId ? quoteDraft : (appData.orders || []).find(o => o.id === ctx.orderId);
+    const p = d && (d.parts || []).find(x => x.id === ctx.partId);
+    return "القطعة: " + (p && String(p.description || "").trim() || "بدون وصف");
+}
+
+function ensureMediaInputs() {
+    if (document.getElementById("media-in-photo")) return;
+    const mk = (id, accept, capture, multiple) => {
+        const el = document.createElement("input");
+        el.type = "file";
+        el.id = id;
+        el.accept = accept;
+        el.style.display = "none";
+        if (capture) el.setAttribute("capture", "environment");
+        if (multiple) el.multiple = true;
+        el.addEventListener("change", () => {
+            const files = Array.from(el.files || []);
+            el.value = "";
+            const pick = mediaPendingPick;
+            mediaPendingPick = null;
+            if (!pick || pick.gen !== mediaStateGen || !files.length) return;
+            mediaProcessFiles(files, pick);
+        });
+        document.body.appendChild(el);
+    };
+    mk("media-in-photo", "image/*", true, false);
+    mk("media-in-video", "video/*", true, false);
+    mk("media-in-gallery", "image/*,video/*", false, true);
+}
+
+function openMediaPicker(ctx) {
+    if (!ctx || !ctx.orderId) return;
+    if (!mediaCanAddTo(ctx)) {
+        showToast("غير متاح", "error");
+        return;
+    }
+    mediaBindDelegationOnce();
+    ensureMediaInputs();
+    loadMediaConfig();
+    const isVin = ctx.kind === "vin";
+    const alt = mediaAltAudience(currentUserRole, ctx.kind);
+    const persisted = mediaTargetPersisted(ctx);
+    const isPurch = currentUserRole === "scrapyard";
+    const altLabel = isPurch ? "🔒 داخلي" : "🔒 للمبيعات فقط";
+    const altHint = isPurch ? "فواتير/لوحات محلات/محادثات/صوت يذكر المورد" : "لو فيها اسم/جوال/هوية/لوحة الزبون — غير هيك بتوصل للمشتريات";
+    mediaPickerState = {
+        ctx: ctx,
+        altOn: false,
+        muteOn: false
+    };
+    const root = document.getElementById("confirm-root");
+    root.innerHTML = '<div class="modal-backdrop" data-close-confirm data-media-picker>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">' + (isVin ? "📷 صورة رقم الهيكل" : "📷 صورة / فيديو") + "</div>" + '<p class="modal-sub">' + escapeHtml(mediaTargetLabel(ctx)) + "</p>" + (persisted ? "" : '<span class="stamp stamp-amber">' + (ctx.partId ? "القطعة لسه ما انحفظت" : "الطلبية لسه ما انحفظت") + " — بينرفع بعد الحفظ</span>") + '<div class="contact-options-col">' + '<button type="button" class="btn" data-media-pick="photo">📷 صورة</button>' + (isVin ? "" : '<button type="button" class="btn" data-media-pick="video">🎥 فيديو (حتى ' + mediaMaxSeconds() + " ثانية)</button>") + '<button type="button" class="btn" data-media-pick="gallery">🖼️ من المعرض</button>' + "</div>" + (alt ? '<div class="filter-chips" style="margin-top:14px;">' + '<button type="button" class="chip" data-media-toggle="alt" aria-pressed="false">' + altLabel + "</button>" + '<button type="button" class="chip" data-media-toggle="mute" aria-pressed="false">🔇 بدون صوت</button>' + "</div>" + '<p class="add-part-hint" style="margin:6px 0 0;">' + escapeHtml(altLabel + ": " + altHint) + "</p>" : "") + (!persisted && !isVin ? '<p class="add-part-hint" style="margin:6px 0 0;">الملفات بتضل على الجهاز لحد الحفظ — لو انقفل التطبيق قبلها بتضيع</p>' : "") + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" data-media-pick="cancel">إلغاء</button>' + "</div>" + "</div>" + "</div>";
+    root.classList.add("modal-open");
+    root.querySelector("[data-media-picker]").addEventListener("click", e => {
+        if (e.target.hasAttribute("data-media-picker")) {
+            closeMediaPicker();
+            return;
+        }
+        const tg = e.target.closest("[data-media-toggle]");
+        if (tg) {
+            const st = mediaPickerState;
+            if (!st) return;
+            const k = tg.getAttribute("data-media-toggle");
+            if (k === "alt") st.altOn = !st.altOn; else st.muteOn = !st.muteOn;
+            const on = k === "alt" ? st.altOn : st.muteOn;
+            tg.classList.toggle("chip-active", on);
+            tg.setAttribute("aria-pressed", on ? "true" : "false");
+            return;
+        }
+        const b = e.target.closest("[data-media-pick]");
+        if (b) mediaPickerChoose(b.getAttribute("data-media-pick"));
+    });
+    window.addEventListener("keydown", mediaOverlayEscListener, true);
+}
+
+function mediaPickerChoose(which) {
+    const st = mediaPickerState;
+    if (which === "cancel" || !st) {
+        closeMediaPicker();
+        return;
+    }
+    const ctx = st.ctx;
+    const input = document.getElementById(which === "photo" ? "media-in-photo" : which === "video" ? "media-in-video" : "media-in-gallery");
+    if (!input) {
+        closeMediaPicker();
+        return;
+    }
+    if (which === "gallery") input.setAttribute("accept", ctx.kind === "vin" ? "image/*" : "image/*,video/*");
+    const alt = mediaAltAudience(currentUserRole, ctx.kind);
+    mediaPendingPick = {
+        ctx: ctx,
+        audience: st.altOn && alt ? alt : mediaDefaultAudience(currentUserRole, ctx.kind, currentUserIsElevated),
+        mute: !!st.muteOn,
+        source: which,
+        gen: mediaStateGen
+    };
+    input.value = "";
+    input.click();
+    closeMediaPicker();
+}
+
+function closeMediaPicker() {
+    mediaPickerState = null;
+    const root = document.getElementById("confirm-root");
+    if (root && root.querySelector("[data-media-picker]")) {
+        root.innerHTML = "";
+        root.classList.remove("modal-open");
+    }
+    mediaMaybeRemoveEsc();
+}
+
+function closeMediaOverlays() {
+    closeMediaViewer();
+    closeMediaPicker();
+}
+
+function mediaProgressSheetOpen() {
+    return !!document.querySelector("#media-progress-root [data-media-progress]");
+}
+
+function mediaMaybeRemoveEsc() {
+    const root = document.getElementById("confirm-root");
+    if (mediaProgressSheetOpen()) return;
+    if (!root || !root.querySelector("[data-media-viewer],[data-media-picker]")) window.removeEventListener("keydown", mediaOverlayEscListener, true);
+}
+
+function mediaOverlayEscListener(e) {
+    if (e.key !== "Escape") return;
+    if (mediaProgressSheetOpen()) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+    }
+    const root = document.getElementById("confirm-root");
+    const isViewer = !!(root && root.querySelector("[data-media-viewer]"));
+    const isPicker = !!(root && root.querySelector("[data-media-picker]"));
+    if (!isViewer && !isPicker) {
+        window.removeEventListener("keydown", mediaOverlayEscListener, true);
+        return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    if (isViewer) closeMediaViewer(); else closeMediaPicker();
+}
+
+function mediaErr(code) {
+    const e = new Error(code);
+    e.mediaCode = code;
+    return e;
+}
+
+function mediaErrorText(e) {
+    const c = e && e.mediaCode;
+    if (c === "canceled") return "";
+    if (c === "no_library") return "الفيديو غير متاح حاليًا — الصور شغالة";
+    if (c === "too_big") return "الفيديو كبير — صوّر مقطع أقصر";
+    if (c === "too_big_photo") return "الصورة كبيرة كتير — جرّب صورة تانية";
+    if (c === "location") return "الفيديو فيه بيانات موقع وما قدرنا نشيلها — ما انرفع";
+    if (c === "too_short") return "الفيديو قصير كتير";
+    if (c === "too_long") return "الفيديو أطول من المسموح";
+    if (c === "decode") return "الصورة ما انقرأت — جرّب صورة تانية (أو إعداد الكاميرا Most Compatible)";
+    if (c === "exif" || c === "encode") return "ما قدرنا نجهّز الصورة — جرّب مرة تانية";
+    if (c === "unsupported") return "نوع الملف مش مدعوم";
+    if (c) return "الجهاز ما قدر يحوّل هالفيديو — جرّب مقطع تاني أو صوّر من جديد";
+    return "تعذر تجهيز الملف: " + friendlyErrorText(e);
+}
+
+function mediaFileIsVideo(f) {
+    return /^video\//i.test(f.type || "") || /\.(mov|mp4|m4v|3gp|webm|mkv)$/i.test(f.name || "");
+}
+
+function mediaFileIsImage(f) {
+    return /^image\//i.test(f.type || "") || /\.(jpe?g|png|heic|heif|webp|gif|bmp)$/i.test(f.name || "");
+}
+
+function mediaProcessFiles(files, pick) {
+    files.forEach(f => {
+        mediaFileQueue = mediaFileQueue.then(() => mediaProcessOneFile(f, pick)).catch(e => console.error("mediaProcessOneFile:", e));
+    });
+}
+
+async function mediaProcessOneFile(file, pick) {
+    if (pick.gen !== mediaStateGen) return;
+    const isVideo = mediaFileIsVideo(file);
+    if (!isVideo && !mediaFileIsImage(file)) {
+        showToast("نوع الملف مش مدعوم", "error");
+        return;
+    }
+    if (isVideo && pick.ctx.kind === "vin") {
+        showToast("رقم الهيكل: صورة بس", "error");
+        return;
+    }
+    const gen = mediaStateGen;
+    try {
+        const c = isVideo ? await mediaCompressVideoWithSheet(file, pick) : await compressPhotoFile(file);
+        if (!c || gen !== mediaStateGen) return;
+        mediaAdd(pick.ctx, c, pick.audience);
+    } catch (e) {
+        if (gen === mediaStateGen) {
+            const msg = mediaErrorText(e);
+            if (msg) showToast(msg, "error");
+        }
+        if (!(e && e.mediaCode)) console.error("media process:", e);
+    }
+}
+
+function mediaAdd(ctx, c, audience) {
+    if (!audience || !c || !c.full || !c.thumb) return;
+    const item = {
+        localId: uid("mloc"),
+        id: newMediaId(),
+        orderId: ctx.orderId,
+        draftId: ctx.draftId || null,
+        partId: ctx.kind === "vin" ? null : ctx.partId || null,
+        partKey: mediaPartKey(ctx),
+        audience: audience,
+        kind: mediaRowKind(ctx, currentUserRole),
+        mediaType: c.mediaType,
+        full: c.full,
+        thumb: c.thumb,
+        width: c.width,
+        height: c.height,
+        durationMs: c.durationMs || null,
+        audio: c.audio || null,
+        bytes: (c.full.size || 0) + (c.thumb.size || 0),
+        previewUrl: null,
+        phase: "staged"
+    };
+    try {
+        item.previewUrl = URL.createObjectURL(c.thumb);
+    } catch (e) {}
+    if (mediaTargetPersisted(ctx)) {
+        mediaEnqueueUpload(item);
+        return;
+    }
+    if (!mediaDraftStillOpen(item.draftId)) {
+        mediaRevokeItem(item);
+        showToast("النافذة انسكّرت قبل الحفظ — الملف ما انضاف", "error");
+        return;
+    }
+    if (!mediaStagePut(item.draftId, item.partKey, item)) {
+        mediaRevokeItem(item);
+        showToast("احفظ أولًا — في صور/فيديو كتير معلّقة بدون حفظ", "error");
+        return;
+    }
+    refreshMediaStrips(item.orderId);
+}
+
+function mediaCanvasToJpeg(canvas, q) {
+    if (typeof canvas.convertToBlob === "function") return canvas.convertToBlob({
+        type: "image/jpeg",
+        quality: q
+    }).then(b => new Blob([ b ], {
+        type: "image/jpeg"
+    }));
+    return new Promise((resolve, reject) => canvas.toBlob(b => b ? resolve(new Blob([ b ], {
+        type: "image/jpeg"
+    })) : reject(mediaErr("encode")), "image/jpeg", q));
+}
+
+function mediaCanvasJpeg(src, w0, h0, maxSide, q) {
+    const s = Math.min(1, maxSide / Math.max(w0, h0));
+    const w = Math.min(4096, Math.max(16, Math.round(w0 * s))), h = Math.min(4096, Math.max(16, Math.round(h0 * s)));
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    const g = c.getContext("2d");
+    g.fillStyle = "#fff";
+    g.fillRect(0, 0, w, h);
+    g.drawImage(src, 0, 0, w, h);
+    return mediaCanvasToJpeg(c, q).then(blob => {
+        c.width = 0;
+        c.height = 0;
+        return {
+            blob: blob,
+            w: w,
+            h: h
+        };
+    }, e => {
+        c.width = 0;
+        c.height = 0;
+        throw e;
+    });
+}
+
+async function compressPhotoFile(file) {
+    const url = URL.createObjectURL(file);
+    try {
+        const img = new Image;
+        img.decoding = "async";
+        img.src = url;
+        try {
+            await img.decode();
+        } catch (e) {
+            throw mediaErr("decode");
+        }
+        const w0 = img.naturalWidth, h0 = img.naturalHeight;
+        if (!w0 || !h0) throw mediaErr("decode");
+        let full = await mediaCanvasJpeg(img, w0, h0, 1600, .75);
+        if (full.blob.size > 19e5) full = await mediaCanvasJpeg(img, w0, h0, 1280, .6);
+        if (full.blob.size > 2e6) throw mediaErr("too_big_photo");
+        const thumb = await mediaCanvasJpeg(img, w0, h0, 320, .7);
+        for (const b of [ full.blob, thumb.blob ]) {
+            if (bytesHasExifApp1(new Uint8Array(await b.slice(0, 65536).arrayBuffer()))) throw mediaErr("exif");
+        }
+        return {
+            mediaType: "image",
+            full: full.blob,
+            thumb: thumb.blob,
+            width: full.w,
+            height: full.h
+        };
+    } finally {
+        URL.revokeObjectURL(url);
+    }
+}
+
+function mediaShowProgressSheet() {
+    const sheet = {
+        canceled: false,
+        cancelFn: null,
+        onCancel: null,
+        token: String(++mediaProgressSeq)
+    };
+    const root = document.getElementById("media-progress-root");
+    root.innerHTML = '<div class="modal-backdrop" data-media-progress="' + sheet.token + '">' + '<div class="modal-card modal-card-sm" role="alertdialog" aria-modal="true">' + '<div class="modal-title">🎥 جاري ضغط الفيديو <span class="num" id="media-progress-pct"></span></div>' + '<p class="modal-sub" id="media-progress-sub">خلّي التطبيق مفتوح لحد ما يخلص</p>' + '<div class="stat-bar-track" style="margin-top:12px;"><span class="stat-bar-fill" id="media-progress-fill" style="width:0%"></span></div>' + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="media-progress-cancel">إلغاء</button>' + "</div>" + "</div>" + "</div>";
+    root.querySelector("#media-progress-cancel").addEventListener("click", () => {
+        mediaCancelSheet(sheet);
+        mediaHideProgressSheet(sheet);
+    });
+    mediaActiveSheet = sheet;
+    window.addEventListener("keydown", mediaOverlayEscListener, true);
+    return sheet;
+}
+
+function mediaCallCancelFn(fn) {
+    try {
+        const r = fn();
+        if (r && typeof r.catch === "function") r.catch(() => {});
+    } catch (e) {}
+}
+
+function mediaCancelSheet(sheet) {
+    if (!sheet || sheet.canceled) return;
+    sheet.canceled = true;
+    if (sheet.cancelFn) mediaCallCancelFn(sheet.cancelFn);
+    if (sheet.onCancel) sheet.onCancel();
+}
+
+function mediaUpdateProgressSheet(sheet, p, label) {
+    if (sheet.canceled) return;
+    const box = document.querySelector('#media-progress-root [data-media-progress="' + sheet.token + '"]');
+    if (!box) {
+        mediaCancelSheet(sheet);
+        return;
+    }
+    const pct = Math.max(0, Math.min(100, Math.round((Number(p) || 0) * 100)));
+    const fill = box.querySelector("#media-progress-fill");
+    if (fill) fill.style.width = pct + "%";
+    const pctEl = box.querySelector("#media-progress-pct");
+    if (pctEl) pctEl.textContent = pct + "%";
+    if (label) {
+        const sub = box.querySelector("#media-progress-sub");
+        if (sub) sub.textContent = label;
+    }
+}
+
+function mediaHideProgressSheet(sheet) {
+    const root = document.getElementById("media-progress-root");
+    const box = root && root.querySelector("[data-media-progress]");
+    if (!box || sheet && box.getAttribute("data-media-progress") !== sheet.token) return;
+    root.innerHTML = "";
+    if (!sheet || mediaActiveSheet === sheet) mediaActiveSheet = null;
+    mediaMaybeRemoveEsc();
+}
+
+async function mediaCompressVideoWithSheet(file, pick) {
+    const sheet = mediaShowProgressSheet();
+    const canceledP = new Promise((_, reject) => {
+        sheet.onCancel = () => reject(mediaErr("canceled"));
+    });
+    canceledP.catch(() => {});
+    const guard = p => Promise.race([ p, canceledP ]);
+    mediaUpdateProgressSheet(sheet, 0, "جاري تجهيز أداة الضغط…");
+    let wake = null;
+    try {
+        let MB;
+        try {
+            MB = await guard(ensureMediabunny());
+        } catch (e) {
+            if (e && e.mediaCode === "canceled") throw e;
+            console.warn("ensureMediabunny:", e);
+            throw mediaErr("no_library");
+        }
+        const cfg = await guard(loadMediaConfig());
+        try {
+            if (navigator.wakeLock && navigator.wakeLock.request) wake = await navigator.wakeLock.request("screen");
+        } catch (e) {}
+        if (sheet.canceled) throw mediaErr("canceled");
+        mediaUpdateProgressSheet(sheet, 0, "خلّي التطبيق مفتوح لحد ما يخلص");
+        const r = await guard(compressVideoFile(file, {
+            MB: MB,
+            preset: cfg.video_preset,
+            maxSec: cfg.video_max_seconds,
+            mute: pick.mute,
+            isCanceled: () => sheet.canceled,
+            setCancel: fn => {
+                sheet.cancelFn = fn;
+                if (fn && sheet.canceled) mediaCallCancelFn(fn);
+            },
+            onProgress: (p, stage) => mediaUpdateProgressSheet(sheet, p, stage === "eco" ? "محاولة بحجم أصغر…" : stage === "remux" ? "تجهيز بدون إعادة ضغط…" : null)
+        }));
+        if (sheet.canceled) throw mediaErr("canceled");
+        return {
+            mediaType: "video",
+            full: r.mp4,
+            thumb: r.poster,
+            width: r.width,
+            height: r.height,
+            durationMs: r.durationMs,
+            audio: r.audio
+        };
+    } finally {
+        if (wake) {
+            try {
+                wake.release();
+            } catch (e) {}
+        }
+        if (mediaActiveSheet === sheet) mediaActiveSheet = null;
+        mediaHideProgressSheet(sheet);
+    }
+}
+
+async function mediaInspectVideoSource(MB, file) {
+    const input = new MB.Input({
+        source: new MB.BlobSource(file),
+        formats: MB.ALL_FORMATS
+    });
+    try {
+        const vt = await input.getPrimaryVideoTrack();
+        if (!vt) throw mediaErr("no_video");
+        const out = {
+            w: await vt.getDisplayWidth(),
+            h: await vt.getDisplayHeight(),
+            durSec: await input.computeDuration(),
+            avgBps: 0,
+            isAvc: false,
+            canDecode: false,
+            hdr: false,
+            hasAudio: false,
+            abps: 0
+        };
+        try {
+            out.avgBps = (await vt.computePacketStats(120)).averageBitrate || 0;
+        } catch (e) {}
+        try {
+            out.isAvc = await vt.getCodec() === "avc";
+        } catch (e) {}
+        try {
+            out.canDecode = await vt.canDecode();
+        } catch (e) {}
+        try {
+            const cs = await vt.getColorSpace();
+            out.hdr = !!cs && (cs.transfer === "hlg" || cs.transfer === "pq");
+        } catch (e) {}
+        try {
+            const a = await input.getPrimaryAudioTrack();
+            if (a) {
+                out.hasAudio = true;
+                try {
+                    out.abps = (await a.computePacketStats(60)).averageBitrate || 0;
+                } catch (e) {}
+            }
+        } catch (e) {}
+        return out;
+    } finally {
+        try {
+            input.dispose();
+        } catch (e) {}
+    }
+}
+
+async function mediaAudioPlan(MB, at, decodable, codec, abps) {
+    if (!at) return {
+        opts: null,
+        mode: "none"
+    };
+    if (decodable) {
+        let ok = false;
+        if (typeof AudioEncoder !== "undefined") {
+            try {
+                const sr = await at.getSampleRate();
+                ok = !!(await AudioEncoder.isConfigSupported({
+                    codec: "mp4a.40.2",
+                    numberOfChannels: 1,
+                    sampleRate: sr,
+                    bitrate: abps
+                })).supported;
+            } catch (e) {}
+        }
+        if (!ok) {
+            try {
+                await ensureWasmAac(MB);
+                ok = true;
+            } catch (e) {
+                console.warn("ensureWasmAac:", e);
+            }
+        }
+        if (ok) return {
+            opts: {
+                codec: "aac",
+                numberOfChannels: 1,
+                quality: new MB.Quality({
+                    bitrate: abps
+                }),
+                forceTranscode: true
+            },
+            mode: "aac"
+        };
+    }
+    if (codec === "aac") return {
+        opts: {},
+        mode: "copied"
+    };
+    return {
+        opts: {
+            discard: true
+        },
+        mode: "none",
+        lost: true
+    };
+}
+
+async function mediaVideoAttempt(MB, file, plan, o, mode) {
+    if (o.isCanceled && o.isCanceled()) throw mediaErr("canceled");
+    const input = new MB.Input({
+        source: new MB.BlobSource(file),
+        formats: MB.ALL_FORMATS
+    });
+    try {
+        const vt = await input.getPrimaryVideoTrack();
+        if (!vt) throw mediaErr("no_video");
+        let at = null, decodable = false, codec = null;
+        if (!o.mute) {
+            at = await input.getPrimaryAudioTrack({
+                filter: async t => await t.getCodec() !== null && await t.canDecode()
+            });
+            decodable = !!at;
+            if (!at) at = await input.getPrimaryAudioTrack({
+                filter: async t => await t.getCodec() === "aac"
+            });
+            if (at) codec = await at.getCodec();
+        }
+        const aPlan = await mediaAudioPlan(MB, at, decodable, codec, plan.abps);
+        const videoOpts = mode === "transcode" ? {
+            width: plan.W,
+            height: plan.H,
+            fit: "fill",
+            codec: "avc",
+            frameRate: plan.fps,
+            keyFrameInterval: plan.kfi,
+            quality: new MB.Quality(o.cbr ? {
+                bitrate: plan.vbps,
+                bitrateMode: "constant"
+            } : {
+                bitrate: plan.vbps
+            }),
+            forceTranscode: true,
+            hardwareAcceleration: "no-preference"
+        } : {};
+        const output = new MB.Output({
+            format: new MB.Mp4OutputFormat({
+                fastStart: "in-memory"
+            }),
+            target: new MB.BufferTarget
+        });
+        const conv = await MB.Conversion.init({
+            input: input,
+            output: output,
+            tags: {},
+            showWarnings: false,
+            trim: plan.trimEnd ? {
+                end: plan.trimEnd
+            } : undefined,
+            video: t => t.id === vt.id ? videoOpts : {
+                discard: true
+            },
+            audio: t => at && t.id === at.id && aPlan.opts ? aPlan.opts : {
+                discard: true
+            }
+        });
+        if (!conv.isValid || conv.discardedTracks.some(d => d.track.id === vt.id)) throw mediaErr("conv_invalid");
+        const audioLost = !!aPlan.lost || !!(at && aPlan.mode !== "none" && conv.discardedTracks.some(d => d.track.id === at.id));
+        if (o.setCancel) o.setCancel(() => conv.cancel());
+        conv.onProgress = p => {
+            if (o.onProgress) o.onProgress(p, o.stage || mode);
+        };
+        if (o.isCanceled && o.isCanceled()) throw mediaErr("canceled");
+        try {
+            await conv.execute();
+        } catch (e) {
+            if (o.isCanceled && o.isCanceled()) throw mediaErr("canceled");
+            throw e;
+        }
+        if (o.isCanceled && o.isCanceled()) throw mediaErr("canceled");
+        const buf = output.target.buffer;
+        if (!buf) throw mediaErr("conv_invalid");
+        return {
+            buf: buf,
+            bytes: buf.byteLength,
+            audio: audioLost ? "none" : aPlan.mode,
+            audioLost: audioLost,
+            path: mode
+        };
+    } finally {
+        if (o.setCancel) o.setCancel(null);
+        try {
+            input.dispose();
+        } catch (e) {}
+    }
+}
+
+async function mediaProbeVideoOutput(MB, blob, maxSec) {
+    const input = new MB.Input({
+        source: new MB.BlobSource(blob),
+        formats: MB.ALL_FORMATS
+    });
+    try {
+        const vt = await input.getPrimaryVideoTrack();
+        if (!vt) throw mediaErr("probe");
+        const cps = String(await vt.getCodecParameterString() || "");
+        if (!/^avc1\.(42|4d|64)/i.test(cps)) throw mediaErr("probe_codec");
+        const w = await vt.getDisplayWidth(), h = await vt.getDisplayHeight();
+        if (!(w >= 16 && h >= 16 && w <= 4096 && h <= 4096)) throw mediaErr("probe");
+        const auds = await input.getAudioTracks();
+        for (const a of auds) {
+            if (await a.getCodec() !== "aac") throw mediaErr("probe_audio");
+        }
+        const durationMs = Math.round(await input.computeDuration() * 1e3);
+        if (!(durationMs >= 300)) throw mediaErr("too_short");
+        if (durationMs > Math.min(31e3, (Number(maxSec) + .5) * 1e3)) throw mediaErr("too_long");
+        return {
+            w: w,
+            h: h,
+            durationMs: durationMs,
+            hasAudio: auds.length > 0
+        };
+    } finally {
+        try {
+            input.dispose();
+        } catch (e) {}
+    }
+}
+
+async function mediaPosterViaSink(MB, blob) {
+    if (typeof VideoDecoder === "undefined") throw new Error("no_decoder");
+    const input = new MB.Input({
+        source: new MB.BlobSource(blob),
+        formats: MB.ALL_FORMATS
+    });
+    try {
+        const vt = await input.getPrimaryVideoTrack();
+        const w = await vt.getDisplayWidth(), h = await vt.getDisplayHeight();
+        const s = Math.min(1, 320 / Math.max(w, h));
+        const sink = new MB.CanvasSink(vt, {
+            width: Math.max(16, Math.round(w * s)),
+            height: Math.max(16, Math.round(h * s)),
+            fit: "fill"
+        });
+        const first = await vt.getFirstTimestamp();
+        const dur = await vt.computeDuration();
+        const wc = await sink.getCanvas(first + Math.min(.5, Math.max(0, (dur - first) / 2))) || await sink.getCanvas(first);
+        if (!wc || !wc.canvas) throw new Error("no_frame");
+        return await mediaCanvasToJpeg(wc.canvas, .7);
+    } finally {
+        try {
+            input.dispose();
+        } catch (e) {}
+    }
+}
+
+async function mediaPosterViaVideoEl(blob) {
+    const url = URL.createObjectURL(blob);
+    const v = document.createElement("video");
+    v.muted = true;
+    v.playsInline = true;
+    v.setAttribute("playsinline", "");
+    v.preload = "auto";
+    const once = (ev, ms) => new Promise((res, rej) => {
+        const t = setTimeout(() => rej(new Error("poster_" + ev)), ms);
+        v.addEventListener(ev, () => {
+            clearTimeout(t);
+            res();
+        }, {
+            once: true
+        });
+    });
+    try {
+        const loaded = once("loadeddata", 1e4);
+        v.src = url;
+        await loaded;
+        const seeked = once("seeked", 1e4);
+        v.currentTime = isFinite(v.duration) && v.duration > 0 ? Math.min(.5, v.duration / 2) : .1;
+        await seeked;
+        const s = Math.min(1, 320 / Math.max(v.videoWidth || 1, v.videoHeight || 1));
+        const c = document.createElement("canvas");
+        c.width = Math.max(16, Math.round((v.videoWidth || 320) * s));
+        c.height = Math.max(16, Math.round((v.videoHeight || 180) * s));
+        c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+        return await mediaCanvasToJpeg(c, .7);
+    } finally {
+        try {
+            v.removeAttribute("src");
+            v.load();
+        } catch (e) {}
+        URL.revokeObjectURL(url);
+    }
+}
+
+function mediaPlaceholderPoster(w, h) {
+    const s = Math.min(1, 320 / Math.max(w || 320, h || 180));
+    const c = document.createElement("canvas");
+    c.width = Math.max(16, Math.round((w || 320) * s));
+    c.height = Math.max(16, Math.round((h || 180) * s));
+    const g = c.getContext("2d");
+    g.fillStyle = "#1E2521";
+    g.fillRect(0, 0, c.width, c.height);
+    g.fillStyle = "#EEF1ED";
+    g.font = "bold " + Math.round(Math.min(c.width, c.height) * .4) + "px sans-serif";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText("▶", c.width / 2, c.height / 2);
+    return mediaCanvasToJpeg(c, .7);
+}
+
+async function mediaMakePoster(MB, mp4, probe) {
+    try {
+        return await mediaPosterViaSink(MB, mp4);
+    } catch (e) {
+        console.warn("poster (sink):", e);
+    }
+    try {
+        return await mediaPosterViaVideoEl(mp4);
+    } catch (e) {
+        console.warn("poster (video):", e);
+    }
+    return await mediaPlaceholderPoster(probe.w, probe.h);
+}
+
+async function compressVideoFile(file, o) {
+    const MB = o.MB || await ensureMediabunny();
+    const canceled = () => !!(o.isCanceled && o.isCanceled());
+    const src = await mediaInspectVideoSource(MB, file);
+    if (canceled()) throw mediaErr("canceled");
+    if (src.hdr) showToast("لو الألوان باهتة: الإعدادات › الكاميرا › HDR Video إيقاف", "ok");
+    if (src.durSec > o.maxSec + .5) showToast("الفيديو أطول من " + o.maxSec + " ثانية — رح ينحفظ أول " + o.maxSec + " ثانية بس", "ok");
+    const srcPlan = {
+        w: src.w,
+        h: src.h,
+        durSec: src.durSec,
+        avgBps: src.avgBps
+    };
+    let plan = mediaVideoPlan(srcPlan, o.preset, o.maxSec);
+    let canTranscode = false;
+    if (typeof VideoEncoder !== "undefined" && typeof VideoDecoder !== "undefined" && src.canDecode) {
+        try {
+            canTranscode = await MB.canEncodeVideo("avc", {
+                width: plan.W,
+                height: plan.H,
+                quality: new MB.Quality({
+                    bitrate: plan.vbps
+                })
+            });
+        } catch (e) {}
+    }
+    const attempt = async (p, mode, extra) => {
+        try {
+            return await mediaVideoAttempt(MB, file, p, Object.assign({}, o, extra || {}), mode);
+        } catch (e) {
+            if (canceled() || e && e.mediaCode === "canceled") throw mediaErr("canceled");
+            console.warn("media video " + mode + ":", e);
+            return null;
+        }
+    };
+    let res = canTranscode ? await attempt(plan, "transcode") : null;
+    if (res && plan.preset === "std") {
+        const budget = res.audio === "copied" && src.abps > 0 ? mediaVideoPlan(Object.assign({
+            copiedAbps: src.abps
+        }, srcPlan), "std", o.maxSec).budgetBytes : plan.budgetBytes;
+        if (res.bytes > 1.3 * budget) {
+            const eco = mediaVideoPlan(srcPlan, "eco", o.maxSec);
+            const r2 = await attempt(eco, "transcode", {
+                cbr: true,
+                stage: "eco"
+            });
+            if (r2 && r2.bytes < res.bytes) {
+                res = r2;
+                plan = eco;
+            }
+        }
+    }
+    if (res && res.bytes >= file.size && src.isAvc && src.durSec <= o.maxSec + .5) {
+        const r3 = await attempt(plan, "remux", {
+            stage: "remux"
+        });
+        if (r3 && r3.bytes < res.bytes) res = r3;
+    }
+    if (!res) res = await attempt(plan, "remux", {
+        stage: "remux"
+    });
+    if (canceled()) throw mediaErr("canceled");
+    if (!res) throw mediaErr("conv_invalid");
+    if (res.bytes > MEDIA_VIDEO_MAX_BYTES) throw mediaErr("too_big");
+    if (bytesHasLocationAtom(new Uint8Array(res.buf))) throw mediaErr("location");
+    const mp4 = new Blob([ res.buf ], {
+        type: "video/mp4"
+    });
+    const probe = await mediaProbeVideoOutput(MB, mp4, o.maxSec);
+    if (canceled()) throw mediaErr("canceled");
+    const audio = probe.hasAudio ? res.audio === "none" ? "aac" : res.audio : "none";
+    if (!o.mute && src.hasAudio && audio === "none") showToast("الصوت ما انحفظ", "error");
+    const poster = await mediaMakePoster(MB, mp4, probe);
+    if (canceled()) throw mediaErr("canceled");
+    return {
+        mp4: mp4,
+        poster: poster,
+        width: probe.w,
+        height: probe.h,
+        durationMs: probe.durationMs,
+        audio: audio,
+        path: res.path
+    };
+}
+
+async function mediaLoadFullBlob(row) {
+    const hit = mediaBlobLru.get(row.object_path);
+    if (hit) {
+        mediaBlobLru.delete(row.object_path);
+        mediaBlobLru.set(row.object_path, hit);
+        return hit.url;
+    }
+    const gen = mediaStateGen;
+    const bucket = row.media_type === "video" ? "order-videos" : "order-photos";
+    let dl = mediaBlobInflight.get(row.object_path);
+    if (!dl) {
+        const p = Promise.resolve(sb.storage.from(bucket).download(row.object_path));
+        const clear = () => {
+            if (mediaBlobInflight.get(row.object_path) === p) mediaBlobInflight.delete(row.object_path);
+        };
+        p.then(clear, clear);
+        mediaBlobInflight.set(row.object_path, p);
+        dl = p;
+    }
+    const {data: data, error: error} = await withTimeout(dl, row.media_type === "video" ? 9e4 : 3e4, "media download");
+    if (error || !data) throw error || new Error("download_failed");
+    if (gen !== mediaStateGen) throw new Error("stale");
+    const again = mediaBlobLru.get(row.object_path);
+    if (again) return again.url;
+    const blob = data.type ? data : new Blob([ data ], {
+        type: row.mime
+    });
+    const url = URL.createObjectURL(blob);
+    mediaBlobLru.set(row.object_path, {
+        url: url,
+        bytes: blob.size || 0
+    });
+    mediaBlobLruBytes += blob.size || 0;
+    for (const [k, e] of mediaBlobLru) {
+        if (mediaBlobLruBytes <= MEDIA_BLOB_LRU_MAX_BYTES || k === row.object_path) break;
+        mediaBlobLru.delete(k);
+        mediaBlobLruBytes -= e.bytes;
+        try {
+            URL.revokeObjectURL(e.url);
+        } catch (err) {}
+    }
+    return url;
+}
+
+function mediaViewerMetaHtml(row) {
+    const who = displayNameForEmail(row.uploaded_by) || "";
+    const t = Date.parse(row.created_at);
+    const when = isFinite(t) ? arabicRelativeTime(t) : "";
+    const aud = row.audience === "purch" ? " · 🔒 داخلي (المشتريات)" : row.audience === "sales" ? " · 🔒 للمبيعات فقط" : "";
+    return escapeHtml(who + (when ? " — " + when : "") + aud);
+}
+
+function openMediaViewer(orderId, mediaId, key) {
+    let ids = mediaStripRows(orderId, key).map(r => r.id);
+    if (ids.indexOf(mediaId) < 0) ids = mediaRowById(orderId, mediaId) ? [ mediaId ] : [];
+    if (!ids.length) return;
+    closeMediaViewer();
+    mediaViewer = {
+        orderId: orderId,
+        key: key,
+        ids: ids,
+        idx: ids.indexOf(mediaId),
+        local: null,
+        localUrl: null,
+        armed: false,
+        busy: false
+    };
+    mediaRenderViewer();
+}
+
+function openMediaViewerLocal(localId) {
+    let item = mediaUploads.get(localId) || null;
+    if (!item) [ mediaStaged, mediaInFlightSnaps ].forEach(M => M.forEach(m => m.forEach(arr => arr.forEach(it => {
+        if (it.localId === localId) item = it;
+    }))));
+    if (!item || !item.full) return;
+    closeMediaViewer();
+    mediaViewer = {
+        orderId: item.orderId,
+        key: item.partKey,
+        ids: [],
+        idx: 0,
+        local: item,
+        localUrl: null,
+        armed: false,
+        busy: false
+    };
+    mediaRenderViewer();
+}
+
+function mediaRenderViewer() {
+    const v = mediaViewer;
+    if (!v) return;
+    const gen = ++mediaViewerGen;
+    if (v.localUrl) {
+        try {
+            URL.revokeObjectURL(v.localUrl);
+        } catch (e) {}
+        v.localUrl = null;
+    }
+    v.armed = false;
+    let row = null, metaHtml = "", canDel = false;
+    if (v.local) {
+        metaHtml = escapeHtml(v.local.phase === "staged" || v.local.phase === "saving" ? "بينرفع بعد حفظ الطلبية" : "قيد الرفع");
+    } else {
+        row = mediaRowById(v.orderId, v.ids[v.idx]);
+        if (!row) {
+            closeMediaViewer();
+            return;
+        }
+        metaHtml = mediaViewerMetaHtml(row);
+        canDel = mediaCanDelete(row, shownForEmail || presenceEmail, currentUserIsElevated, Date.now());
+    }
+    const n = v.local ? 1 : v.ids.length;
+    const root = document.getElementById("confirm-root");
+    root.innerHTML = '<div class="modal-backdrop" data-close-confirm data-media-viewer>' + '<div class="media-viewer" role="dialog" aria-modal="true">' + '<div class="media-viewer-head"><span class="media-viewer-meta">' + metaHtml + "</span>" + '<button type="button" class="icon-btn" data-mv="close" aria-label="إغلاق">✕</button></div>' + '<div class="media-viewer-stage" id="media-viewer-stage">جاري التحميل…</div>' + '<div class="media-viewer-foot">' + (n > 1 ? '<button type="button" class="icon-btn" data-mv="prev"' + (v.idx <= 0 ? " disabled" : "") + ">→ السابق</button>" + '<span class="num">' + (v.idx + 1) + " / " + n + "</span>" + '<button type="button" class="icon-btn" data-mv="next"' + (v.idx >= n - 1 ? " disabled" : "") + ">التالي ←</button>" : "<span></span>") + (canDel ? '<button type="button" class="icon-btn icon-btn-danger" data-mv="del">🗑️ حذف</button>' : "") + "</div>" + "</div>" + "</div>";
+    root.classList.add("modal-open");
+    root.querySelector("[data-media-viewer]").addEventListener("click", mediaViewerClick);
+    window.addEventListener("keydown", mediaOverlayEscListener, true);
+    const isVideo = v.local ? v.local.mediaType === "video" : row.media_type === "video";
+    let srcP;
+    if (v.local) {
+        try {
+            v.localUrl = URL.createObjectURL(v.local.full);
+            srcP = Promise.resolve(v.localUrl);
+        } catch (e) {
+            srcP = Promise.reject(e);
+        }
+    } else srcP = mediaLoadFullBlob(row);
+    srcP.then(url => mediaViewerShow(gen, url, isVideo, row), err => {
+        console.warn("media viewer:", err);
+        mediaViewerFail(gen);
+    });
+}
+
+function mediaViewerShow(gen, url, isVideo, row) {
+    if (gen !== mediaViewerGen || !mediaViewer) return;
+    const stage = document.getElementById("media-viewer-stage");
+    if (!stage) return;
+    if (isVideo) {
+        const memo = row ? mediaThumbUrlMemo.get(row.thumb_path) : null;
+        stage.innerHTML = '<video controls playsinline webkit-playsinline preload="metadata"' + (memo && memo.url ? ' poster="' + escapeHtml(memo.url) + '"' : "") + ' src="' + escapeHtml(url) + '"></video>';
+    } else {
+        stage.innerHTML = '<img alt="" src="' + escapeHtml(url) + '">';
+    }
+}
+
+function mediaViewerFail(gen) {
+    if (gen !== mediaViewerGen || !mediaViewer) return;
+    const stage = document.getElementById("media-viewer-stage");
+    if (stage) stage.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:16px;text-align:center;">' + "<span>تعذر تحميل الملف — تحقق من الاتصال</span>" + (mediaViewer.local ? "" : '<button type="button" class="btn btn-ghost btn-sm" data-mv="retry">↻ إعادة المحاولة</button>') + "</div>";
+}
+
+function mediaViewerClick(e) {
+    const v = mediaViewer;
+    if (!v) return;
+    if (e.target.hasAttribute("data-media-viewer")) {
+        closeMediaViewer();
+        return;
+    }
+    const b = e.target.closest("[data-mv]");
+    if (!b) return;
+    const act = b.getAttribute("data-mv");
+    if (act === "close") {
+        closeMediaViewer();
+        return;
+    }
+    if (act === "retry") {
+        mediaRenderViewer();
+        return;
+    }
+    if (act === "prev" && v.idx > 0) {
+        v.idx--;
+        mediaRenderViewer();
+        return;
+    }
+    if (act === "next" && v.idx < v.ids.length - 1) {
+        v.idx++;
+        mediaRenderViewer();
+        return;
+    }
+    if (act === "del") mediaViewerDeleteTap(b);
+}
+
+async function mediaViewerDeleteTap(btn) {
+    const v = mediaViewer;
+    if (!v || v.local || v.busy) return;
+    if (!v.armed) {
+        v.armed = true;
+        btn.textContent = "اضغط مرة تانية للتأكيد";
+        const armedGen = mediaViewerGen;
+        setTimeout(() => {
+            if (mediaViewer !== v || mediaViewerGen !== armedGen || !v.armed || v.busy) return;
+            v.armed = false;
+            const b = document.querySelector('#confirm-root [data-mv="del"]');
+            if (b) b.textContent = "🗑️ حذف";
+        }, 4e3);
+        return;
+    }
+    const row = mediaRowById(v.orderId, v.ids[v.idx]);
+    if (!row) return;
+    v.busy = true;
+    btn.disabled = true;
+    btn.textContent = "جاري الحذف…";
+    const ok = await mediaDeleteItem(row);
+    v.busy = false;
+    if (mediaViewer !== v) return;
+    if (!ok) {
+        mediaRenderViewer();
+        return;
+    }
+    showToast("انحذف", "ok");
+    v.ids = v.ids.filter(id => id !== row.id);
+    if (!v.ids.length) {
+        closeMediaViewer();
+        return;
+    }
+    v.idx = Math.min(v.idx, v.ids.length - 1);
+    mediaRenderViewer();
+}
+
+function closeMediaViewer() {
+    const v = mediaViewer;
+    mediaViewer = null;
+    mediaViewerGen++;
+    if (v && v.localUrl) {
+        try {
+            URL.revokeObjectURL(v.localUrl);
+        } catch (e) {}
+    }
+    const root = document.getElementById("confirm-root");
+    if (root && root.querySelector("[data-media-viewer]")) {
+        root.innerHTML = "";
+        root.classList.remove("modal-open");
+    }
+    mediaMaybeRemoveEsc();
+}
+
+async function mediaDeleteItem(row) {
+    if (!sb || !row) return false;
+    const gen = mediaStateGen;
+    let res;
+    try {
+        res = await withTimeout(sb.from("order_media").delete().eq("id", row.id).select("id"), 15e3, "order_media delete");
+    } catch (e) {
+        showToast("تعذر الحذف: " + friendlyErrorText(e), "error");
+        return false;
+    }
+    if (res.error) {
+        showToast("تعذر الحذف: " + friendlyErrorText(res.error), "error");
+        return false;
+    }
+    if (!res.data || res.data.length !== 1) {
+        showToast("غير متاح", "error");
+        return false;
+    }
+    await mediaRemoveObjects([ [ row.media_type === "video" ? "order-videos" : "order-photos", row.object_path ], [ "order-photos", row.thumb_path ] ]);
+    if (gen !== mediaStateGen) return true;
+    const hit = mediaBlobLru.get(row.object_path);
+    if (hit) {
+        mediaBlobLru.delete(row.object_path);
+        mediaBlobLruBytes -= hit.bytes;
+        try {
+            URL.revokeObjectURL(hit.url);
+        } catch (e) {}
+    }
+    mediaThumbUrlMemo.delete(row.thumb_path);
+    mediaIndexApply(row.order_id, row.id, null);
+    refreshMediaStrips(row.order_id);
+    return true;
+}
+
+mediaBindDelegationOnce();
 
 let quoteOriginalSnapshot = null;
 
@@ -4047,7 +6514,7 @@ function approvedQuotesMatchingList() {
     const words = normalizeArabicSearch(approvedQuotesSearchQuery.trim()).split(/\s+/).filter(Boolean);
     if (!words.length) return rows;
     return rows.filter(o => {
-        const haystack = normalizeArabicSearch([ o.orderNumber || "", o.orderLabel || "", ...(o.parts || []).map(p => p.description || "") ].join(" "));
+        const haystack = normalizeArabicSearch([ o.orderNumber || "", o.orderLabel || "", o.vin || "", ...(o.parts || []).map(p => p.description || "") ].join(" "));
         return words.every(w => haystack.includes(w));
     });
 }
@@ -4069,10 +6536,11 @@ function refreshApprovedQuotesList() {
     bindScrapyardApprovedQuoteRowEvents();
 }
 
-function approvedQuotePartRowHtml(p) {
+function approvedQuotePartRowHtml(p, orderId) {
     const supplier = (appData.suppliers || []).find(s => s.id === p.supplierId);
     const supplierName = supplier ? supplier.name || supplier.phone || "مورد" : null;
-    return '<div class="purchase-history-row" style="cursor:default;">' + '<div class="purchase-history-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(p.description || "") + "</span>" + '<span class="num text-rust">' + (p.qty || 1) + "× " + fmtMoney(Number(p.costPrice) || 0) + "</span>" + "</div>" + '<div class="purchase-history-row-sub"><span>' + (p.used ? "مستعمل" : "جديد") + (supplierName ? " — " + escapeHtml(supplierName) : "") + "</span></div>" + "</div>";
+    const canAddMedia = !!orderId && currentUserRole === "scrapyard";
+    return '<div class="purchase-history-row" style="cursor:default;">' + '<div class="purchase-history-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(p.description || "") + "</span>" + '<span class="num text-rust">' + (p.qty || 1) + "× " + fmtMoney(Number(p.costPrice) || 0) + "</span>" + "</div>" + '<div class="purchase-history-row-sub"><span>' + (p.used ? "مستعمل" : "جديد") + (supplierName ? " — " + escapeHtml(supplierName) : "") + "</span>" + (canAddMedia ? mediaPartAddButtonHtml("approved", orderId, p.id, "icon-btn") : "") + "</div>" + (orderId ? mediaStripHtml(orderId, p.id, canAddMedia ? "edit" : "view") : "") + "</div>";
 }
 
 function openApprovedQuoteViewModal(orderId) {
@@ -4083,9 +6551,12 @@ function openApprovedQuoteViewModal(orderId) {
         return;
     }
     const root = document.getElementById("modal-root");
-    root.innerHTML = '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">✅ ' + escapeHtml(order.orderNumber) + '</div><div class="modal-sub">' + escapeHtml(order.orderLabel || "تسعيرة معتمدة") + "</div></div>" + '<button type="button" class="icon-btn" id="approved-quote-close-btn" aria-label="إغلاق">✕</button></div>' + (order.parts || []).map(approvedQuotePartRowHtml).join("") + "</div>" + "</div>";
+    mediaSeedPersisted(order.id, order.parts);
+    root.innerHTML = '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">✅ ' + escapeHtml(order.orderNumber) + '</div><div class="modal-sub">' + escapeHtml(order.orderLabel || "تسعيرة معتمدة") + "</div></div>" + '<button type="button" class="icon-btn" id="approved-quote-close-btn" aria-label="إغلاق">✕</button></div>' + (order.vin ? '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:-6px 0 10px;min-width:0;">' + '<span class="num" dir="ltr" style="flex:1;min-width:0;overflow-wrap:anywhere;text-align:right;font-size:13px;">VIN: ' + escapeHtml(order.vin) + "</span>" + '<button type="button" class="icon-btn" data-vin-copy="' + escapeHtml(order.vin) + '" aria-label="نسخ رقم الهيكل">📋</button>' + "</div>" : "") + mediaStripHtml(order.id, "_order:vin", "view") + (order.parts || []).map(p => approvedQuotePartRowHtml(p, order.id)).join("") + '<div style="margin-top:12px;">' + mediaOrderSectionHtml(order.id, "approved", currentUserRole === "scrapyard" && !!(order.isQuote || order.wasQuote)) + "</div>" + "</div>" + "</div>";
     root.classList.add("modal-open");
+    ensureOrderMediaLoaded(order.id, true);
     const close = () => {
+        closeMediaOverlays();
         root.innerHTML = "";
         root.classList.remove("modal-open");
         if (modalCloseCallback) {
@@ -4098,6 +6569,7 @@ function openApprovedQuoteViewModal(orderId) {
         if (e.target.hasAttribute("data-close-backdrop")) close();
     });
     root.querySelector("#approved-quote-close-btn").addEventListener("click", close);
+    bindVinCopyButtons(root);
 }
 
 function bindScrapyardApprovedQuoteRowEvents() {
@@ -4268,7 +6740,7 @@ function quotePartRowHtml(p, i) {
     const conditionBadgeForSalesHtml = readOnly ? "" : partConditionBadgeHtml(p);
     const salesNotesHtml = readOnly ? p.notes ? '<div class="part-notes-readonly">' + escapeHtml(p.notes) + "</div>" : "" : '<input type="text" class="part-notes-input" placeholder="ملاحظات (اختياري)" value="' + escapeHtml(p.notes || "") + '">';
     const purchasingNotesHtml = readOnly ? '<input type="text" class="part-purchasing-notes-input" placeholder="ملاحظاتك (اختياري)" value="' + escapeHtml(p.purchasingNotes || "") + '">' : p.purchasingNotes ? '<div class="part-notes-readonly">' + escapeHtml(p.purchasingNotes) + "</div>" : "";
-    return '<div class="part-row" data-part-id="' + escapeHtml(p.id) + '">' + '<div class="part-desc-wrap">' + '<div class="part-desc-row">' + '<span class="part-index-badge">' + ((i != null ? i : 0) + 1) + "</span>" + '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="' + escapeHtml(p.description) + '">' + "</div>" + salesNotesHtml + purchasingNotesHtml + usedBadgeHtml + conditionBadgeForSalesHtml + "</div>" + '<div class="part-price-group">' + '<label class="mini-label">العدد<input type="number" min="1" step="1" class="part-qty-input num" value="' + escapeHtml(qtyVal) + '"></label>' + '<label class="mini-label mini-label-cost">سعر الشراء<input type="number" min="0" step="0.01" class="part-cost-input num" value="' + escapeHtml(costVal) + '"></label>' + supplierFieldHtml + conditionFieldHtml + "</div>" + '<button type="button" class="btn btn-sm part-whatsapp-btn" data-whatsapp-part="' + escapeHtml(p.id) + '" aria-label="إرسال صورة القطعة بجروب العمليات">📷 صورة</button>' + '<button type="button" class="part-remove-btn" data-remove-quote-part="' + escapeHtml(p.id) + '" aria-label="حذف القطعة">✕</button>' + "</div>";
+    return '<div class="part-row" data-part-id="' + escapeHtml(p.id) + '">' + '<div class="part-desc-wrap">' + '<div class="part-desc-row">' + '<span class="part-index-badge">' + ((i != null ? i : 0) + 1) + "</span>" + '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="' + escapeHtml(p.description) + '">' + "</div>" + salesNotesHtml + purchasingNotesHtml + usedBadgeHtml + conditionBadgeForSalesHtml + (quoteDraft ? mediaStripHtml(quoteDraft.id, p.id, "edit") : "") + "</div>" + '<div class="part-price-group">' + '<label class="mini-label">العدد<input type="number" min="1" step="1" class="part-qty-input num" value="' + escapeHtml(qtyVal) + '"></label>' + '<label class="mini-label mini-label-cost">سعر الشراء<input type="number" min="0" step="0.01" class="part-cost-input num" value="' + escapeHtml(costVal) + '"></label>' + supplierFieldHtml + conditionFieldHtml + "</div>" + (quoteDraft ? mediaPartAddButtonHtml("quote", quoteDraft.id, p.id, "btn btn-sm part-media-btn") : "") + '<button type="button" class="part-remove-btn" data-remove-quote-part="' + escapeHtml(p.id) + '" aria-label="حذف القطعة">✕</button>' + "</div>";
 }
 
 function bindQuotePartRowEvents() {
@@ -4282,8 +6754,6 @@ function bindQuotePartRowEvents() {
         if (descInput) descInput.addEventListener("input", e => {
             part.description = e.target.value;
         });
-        const whatsappBtn = row.querySelector("[data-whatsapp-part]");
-        if (whatsappBtn) whatsappBtn.addEventListener("click", () => openWhatsAppForPart(part));
         const toggleUsedBtn = row.querySelector("[data-toggle-used]");
         if (toggleUsedBtn) {
             toggleUsedBtn.addEventListener("click", () => {
@@ -4320,6 +6790,7 @@ function bindQuotePartRowEvents() {
         if (removeBtn) {
             removeBtn.addEventListener("click", () => {
                 quoteDraft.parts = quoteDraft.parts.filter(p => p.id !== pid);
+                mediaDiscardStagedForPart(quoteDraft.id, pid);
                 refreshQuotePartsList();
             });
         }
@@ -4350,6 +6821,7 @@ function refreshQuotePartsList() {
     bindQuotePartRowEvents();
     refreshQuotePartAddControls();
     updateQuoteModalTotals();
+    refreshMediaStrips(quoteDraft.id);
 }
 
 function updateQuoteModalTotals() {
@@ -4369,12 +6841,13 @@ function quoteModalHtml(d) {
     const partsControlsHtml = '<div id="quote-part-type-gate-wrap">' + quotePartAddControlsHtml() + "</div>";
     const footerUtilityHtml = !isPurchasing && !d.isNew ? '<button type="button" class="btn btn-sm btn-danger-ghost" id="quote-delete-btn">🗑️ حذف طلب التسعير</button>' : "";
     const footerActionsHtml = isPurchasing ? '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-ghost" id="quote-save-btn">حفظ</button>' + '<button type="button" class="btn btn-primary" id="quote-save-send-btn">حفظ و إرسال</button>' : '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-ghost" id="quote-save-btn">💾 حفظ</button>' + '<button type="button" class="btn btn-ghost" id="quote-send-btn">حفظ و اعادة طلب</button>' + '<button type="button" class="btn btn-primary" id="quote-approve-btn">✅ اعتماد</button>';
-    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلب تسعير جديد" : "تعديل طلب التسعير") + '</div><div class="modal-sub">البيانات تُحفظ عند الضغط على حفظ</div></div>' + '<button class="icon-btn" id="quote-modal-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + '<label class="field"><span class="field-label">رقم التسعيرة (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + customerFieldHtml + labelFieldHtml + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span>' + (isPurchasing ? '<button type="button" class="btn btn-ghost btn-sm" id="quote-add-supplier-btn">➕ مورد جديد</button>' : "") + "</div>" + '<div id="quote-parts-list" class="parts-list">' + d.parts.map((p, i) => quotePartRowHtml(p, i)).join("") + "</div>" + partsControlsHtml + "</div>" + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">ملخص التكلفة</span></div>' + '<div class="totals-row" style="grid-template-columns:1fr;">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="quote-total-cost-display">0 ر.س</span></div>' + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + footerUtilityHtml + "</div>" + "<span></span>" + '<div class="modal-footer-actions">' + footerActionsHtml + "</div>" + "</div>" + "</div>" + "</div>";
+    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلب تسعير جديد" : "تعديل طلب التسعير") + '</div><div class="modal-sub">البيانات تُحفظ عند الضغط على حفظ</div></div>' + '<button class="icon-btn" id="quote-modal-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + '<label class="field"><span class="field-label">رقم التسعيرة (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + customerFieldHtml + labelFieldHtml + vinFieldHtml(d, isPurchasing ? "readonly" : "edit", "quote") + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span>' + (isPurchasing ? '<button type="button" class="btn btn-ghost btn-sm" id="quote-add-supplier-btn">➕ مورد جديد</button>' : "") + "</div>" + '<div id="quote-parts-list" class="parts-list">' + d.parts.map((p, i) => quotePartRowHtml(p, i)).join("") + "</div>" + partsControlsHtml + "</div>" + mediaOrderSectionHtml(d.id, "quote", true) + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">ملخص التكلفة</span></div>' + '<div class="totals-row" style="grid-template-columns:1fr;">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="quote-total-cost-display">0 ر.س</span></div>' + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + footerUtilityHtml + "</div>" + "<span></span>" + '<div class="modal-footer-actions">' + footerActionsHtml + "</div>" + "</div>" + "</div>" + "</div>";
 }
 
 function quoteContentSnapshot(d) {
     return JSON.stringify({
         orderLabel: (d.orderLabel || "").trim(),
+        vin: normalizeVin(d.vin),
         customerId: d.customerId || null,
         parts: (d.parts || []).filter(p => p.description && p.description.trim()).map(p => ({
             description: (p.description || "").trim(),
@@ -4431,11 +6904,16 @@ function openQuoteModal(mode, orderId, role) {
     }
     quoteOriginalSnapshot = quoteContentSnapshot(quoteDraft);
     quoteOpenedAtUpdatedAt = quoteDraft.updatedAt || null;
+    if (quoteDraft.isNew) {
+        persistedPartIds.delete(quoteDraft.id);
+        mediaIndexInitEmpty(quoteDraft.id);
+    } else mediaSeedPersisted(quoteDraft.id, quoteDraft.parts);
     const root = document.getElementById("modal-root");
     root.innerHTML = quoteModalHtml(quoteDraft);
     root.classList.add("modal-open");
     attachQuoteModalHandlers();
     updateQuoteModalTotals();
+    if (!quoteDraft.isNew) ensureOrderMediaLoaded(quoteDraft.id, true);
     document.addEventListener("keydown", quoteEscListener);
 }
 
@@ -4443,6 +6921,8 @@ function closeQuoteModal() {
     const root = document.getElementById("modal-root");
     root.innerHTML = "";
     root.classList.remove("modal-open");
+    if (quoteDraft) mediaDiscardStaged(quoteDraft.id);
+    closeMediaOverlays();
     quoteDraft = null;
     document.removeEventListener("keydown", quoteEscListener);
     if (modalCloseCallback) {
@@ -4470,6 +6950,8 @@ function attachQuoteModalHandlers() {
     root.querySelector("#quote-label-input").addEventListener("input", e => {
         quoteDraft.orderLabel = e.target.value;
     });
+    bindVinInput("quote", () => quoteDraft);
+    bindVinCopyButtons(root);
     if (!isPurchasing) {
         const quoteQuickAddCustomer = prefill => {
             const openedForQuoteId = quoteDraft ? quoteDraft.id : null;
@@ -4519,18 +7001,30 @@ function attachQuoteModalHandlers() {
     bindBusyButton(root.querySelector("#quote-approve-btn"), onApproveQuote);
     const deleteBtn = root.querySelector("#quote-delete-btn");
     if (deleteBtn) {
-        deleteBtn.addEventListener("click", () => {
+        deleteBtn.addEventListener("click", async () => {
             if (!hasElevatedAccess()) {
                 showToast("غير متاح", "error");
                 return;
             }
             const id = quoteDraft.id;
             const number = quoteDraft.orderNumber;
+            if (orderDeleteCountPending) return;
+            orderDeleteCountPending = true;
+            let mediaN = 0;
+            try {
+                mediaN = await orderMediaCountSafe(id);
+            } finally {
+                orderDeleteCountPending = false;
+            }
+            if (!quoteModalStillOpen(id)) return;
+            const cr = document.getElementById("confirm-root");
+            if (cr && cr.classList.contains("modal-open")) return;
+            const mediaLine = orderMediaDeleteLine(mediaN);
             const live = appData.orders.find(o => o.id === id);
             const hasPayments = !!(live && (live.customerPayments || []).length);
             confirmAction({
                 title: hasPayments ? "حذف الطلبية " + number + " نهائيًا؟" : "حذف طلب التسعير هذا؟",
-                message: hasPayments ? "⚠️ هذه طلبية حقيقية رجعت للتسعير، وعليها دفعات مسجّلة للزبون — الحذف بيمسحها هي ودفعاتها نهائيًا." : "هذا الإجراء نهائي ولا يمكن التراجع عنه.",
+                message: (hasPayments ? "⚠️ هذه طلبية حقيقية رجعت للتسعير، وعليها دفعات مسجّلة للزبون — الحذف بيمسحها هي ودفعاتها نهائيًا." : "هذا الإجراء نهائي ولا يمكن التراجع عنه.") + (mediaLine ? " " + mediaLine : ""),
                 confirmLabel: "تأكيد الحذف",
                 dangerous: true,
                 onConfirm: async () => {
@@ -4627,6 +7121,8 @@ async function saveQuoteDraft(markSent) {
         showToast("رقم التسعيرة تضارب مع طلبية أخرى، أعد فتح النافذة", "error");
         return false;
     }
+    if (!vinApplyForSave(quoteDraft, "quote")) return false;
+    if (mediaStagedOnBlankParts(quoteDraft.id, quoteDraft.parts)) return false;
     const cleanedParts = cleanedQuoteParts();
     if (cleanedParts.length === 0) {
         showToast("لازم تضيف وصف لقطعة وحدة على الأقل", "error");
@@ -4647,14 +7143,17 @@ async function saveQuoteDraft(markSent) {
     const quoteWasNew = !!quoteDraft.isNew;
     const draftId = quoteDraft.id;
     const savingDraft = quoteDraft;
+    const mediaSnap = mediaTakeStagedSnapshot(draftId);
     const saved = await persistOrder(quoteDraft, quoteWasNew);
     if (!saved) {
         if (wasPendingReturn) {
             savingDraft.pendingReturnToQuote = true;
             savingDraft.isQuote = false;
         }
+        mediaRestoreStagedSnapshot(mediaSnap);
         return false;
     }
+    mediaAfterSaveSuccess(draftId, mediaSnap, cleanedParts);
     if (markSent) {
         const orderRef = "#" + savingDraft.orderNumber + (savingDraft.orderLabel ? " — " + savingDraft.orderLabel : "");
         try {
@@ -4704,6 +7203,8 @@ async function onApproveQuote() {
         showToast("رقم التسعيرة تضارب مع طلبية أخرى، أعد فتح النافذة", "error");
         return;
     }
+    if (!vinApplyForSave(quoteDraft, "quote")) return;
+    if (mediaStagedOnBlankParts(quoteDraft.id, quoteDraft.parts)) return;
     const cleanedParts = cleanedQuoteParts();
     if (cleanedParts.length === 0) {
         showToast("لازم تضيف وصف لقطعة وحدة على الأقل", "error");
@@ -4721,11 +7222,14 @@ async function onApproveQuote() {
     const approvedId = quoteDraft.id;
     const approvedNumber = quoteDraft.orderNumber;
     const approvedDraft = quoteDraft;
+    const mediaSnap = mediaTakeStagedSnapshot(approvedId);
     const saved = await persistOrder(quoteDraft, quoteWasNew);
     if (!saved) {
         approvedDraft.isQuote = true;
+        mediaRestoreStagedSnapshot(mediaSnap);
         return;
     }
+    mediaAfterSaveSuccess(approvedId, mediaSnap, cleanedParts);
     delete approvedDraft.isNew;
     quoteOpenedAtUpdatedAt = approvedDraft.updatedAt;
     const idx = appData.orders.findIndex(o => o.id === approvedId);
@@ -4806,35 +7310,40 @@ async function handleScrapyardQuoteConflict(draftId) {
     } catch (e) {
         console.error("handleScrapyardQuoteConflict:", e);
         showToast("التسعيرة انعدّلت من مكان تاني وما قدرنا نحمّل آخر نسخة — تحقق من الاتصال وحاول مرة تانية", "error");
-        return;
+        return "failed";
     }
     appData.orders = [ ...freshRows.map(orderRowToObject), ...appData.orders.filter(o => !o.isQuote) ];
     renderQuotesList();
-    if (!quoteModalStillOpen(draftId)) return;
+    if (!quoteModalStillOpen(draftId)) return "closed";
     const pendingReturn = modalCloseCallback;
     modalCloseCallback = null;
+    const mediaSnap = mediaTakeStagedSnapshot(draftId);
     closeQuoteModal();
     modalCloseCallback = pendingReturn;
     if (!appData.orders.some(o => o.id === draftId && o.isQuote)) {
         showToast("هذه التسعيرة ما عادت متاحة للتسعير — يمكن المبيعات اعتمدتها أو حذفتها", "error");
+        mediaRestoreStagedSnapshot(mediaSnap);
         if (modalCloseCallback) {
             const cb = modalCloseCallback;
             modalCloseCallback = null;
             cb();
         }
-        return;
+        return "closed";
     }
     openQuoteModal("edit", draftId, "purchasing");
+    mediaAfterQuoteConflict(draftId, mediaSnap, true);
     confirmAction({
         title: "التسعيرة انعدّلت وأنت فاتحها",
         message: "حدا عدّل هالتسعيرة (غالبًا المبيعات ضافت أو عدّلت قطعة) بعد ما فتحتها، فما حفظنا تسعيرك حتى ما ينمسح تعديلهم. فتحنالك آخر نسخة — راجع القطع وأعد إدخال تسعيرك واحفظ من جديد.",
         confirmLabel: "تمام",
         onlyConfirm: true
     });
+    return "reopened";
 }
 
 async function onSaveQuotePricing() {
     if (!await checkQuoteSaveConflict()) return;
+    if (mediaStagedOnBlankParts(quoteDraft.id, quoteDraft.parts)) return;
     const cleanedParts = cleanedQuoteParts();
     if (cleanedParts.length === 0) {
         showToast("لازم تضيف وصف لقطعة وحدة على الأقل", "error");
@@ -4852,12 +7361,18 @@ async function onSaveQuotePricing() {
     quoteDraft.orderLabel = (quoteDraft.orderLabel || "").trim();
     const draftId = quoteDraft.id;
     const savedDraft = quoteDraft;
+    const mediaSnap = mediaTakeStagedSnapshot(draftId);
     const res = await persistScrapyardQuotePricing(quoteDraft, !!quoteDraft.quoteReady, quoteOpenedAtUpdatedAt);
     if (res.status === "conflict") {
-        await handleScrapyardQuoteConflict(draftId);
+        const how = await handleScrapyardQuoteConflict(draftId);
+        mediaAfterQuoteConflict(draftId, mediaSnap, how === "reopened");
         return;
     }
-    if (res.status !== "ok") return;
+    if (res.status !== "ok") {
+        mediaRestoreStagedSnapshot(mediaSnap);
+        return;
+    }
+    mediaAfterSaveSuccess(draftId, mediaSnap, cleanedParts);
     savedDraft.updatedAt = res.updatedAt;
     const idx = appData.orders.findIndex(o => o.id === draftId);
     if (idx >= 0) appData.orders[idx] = savedDraft;
@@ -4877,6 +7392,7 @@ async function onSaveQuotePricing() {
 
 async function onSaveAndSendQuotePricing() {
     if (!await checkQuoteSaveConflict()) return;
+    if (mediaStagedOnBlankParts(quoteDraft.id, quoteDraft.parts)) return;
     const cleanedParts = cleanedQuoteParts();
     if (cleanedParts.length === 0) {
         showToast("لازم تضيف وصف لقطعة وحدة على الأقل", "error");
@@ -4895,12 +7411,17 @@ async function onSaveAndSendQuotePricing() {
     quoteDraft.quoteReady = true;
     const draftId = quoteDraft.id;
     const sentDraft = quoteDraft;
+    const mediaSnap = mediaTakeStagedSnapshot(draftId);
     const res = await persistScrapyardQuotePricing(quoteDraft, true, quoteOpenedAtUpdatedAt);
     if (res.status !== "ok") {
         sentDraft.quoteReady = false;
-        if (res.status === "conflict") await handleScrapyardQuoteConflict(draftId);
+        if (res.status === "conflict") {
+            const how = await handleScrapyardQuoteConflict(draftId);
+            mediaAfterQuoteConflict(draftId, mediaSnap, how === "reopened");
+        } else mediaRestoreStagedSnapshot(mediaSnap);
         return;
     }
+    mediaAfterSaveSuccess(draftId, mediaSnap, cleanedParts);
     sentDraft.updatedAt = res.updatedAt;
     if (quoteModalStillOpen(draftId)) quoteOpenedAtUpdatedAt = res.updatedAt;
     const idx = appData.orders.findIndex(o => o.id === draftId);
@@ -5114,11 +7635,45 @@ function confirmReminder(message) {
     });
 }
 
-function confirmDelete(orderId) {
+async function orderMediaCountSafe(orderId) {
+    try {
+        if (!sb || !orderId) return 0;
+        const {data: data, error: error} = await withTimeout(sb.rpc("order_media_count", {
+            p_order_id: orderId
+        }), 5e3, "order_media_count");
+        if (error) throw error;
+        const n = Math.floor(Number(data));
+        return n > 0 ? n : 0;
+    } catch (e) {
+        console.warn("order_media_count:", e);
+        return 0;
+    }
+}
+
+function orderMediaDeleteLine(n) {
+    return n > 0 ? "فيها " + n + " صورة/فيديو — بتنتقل لسلة الوسائط" : "";
+}
+
+let orderDeleteCountPending = false;
+
+async function confirmDelete(orderId, knownMediaN) {
+    let mediaN = 0;
+    if (typeof knownMediaN === "number") mediaN = knownMediaN; else {
+        if (orderDeleteCountPending) return;
+        orderDeleteCountPending = true;
+        try {
+            mediaN = await orderMediaCountSafe(orderId);
+        } finally {
+            orderDeleteCountPending = false;
+        }
+    }
     const order = appData.orders.find(o => o.id === orderId);
+    const cr = document.getElementById("confirm-root");
+    if (cr && cr.classList.contains("modal-open")) return;
+    const mediaLine = orderMediaDeleteLine(mediaN);
     confirmAction({
         title: "حذف الطلبية " + (order ? order.orderNumber : "") + "؟",
-        message: "هذا الإجراء نهائي ولا يمكن التراجع عنه.",
+        message: "هذا الإجراء نهائي ولا يمكن التراجع عنه." + (mediaLine ? " " + mediaLine : ""),
         confirmLabel: "تأكيد الحذف",
         dangerous: true,
         onConfirm: async () => {
@@ -5415,7 +7970,12 @@ function docSheetHtml(order, type, data) {
     const grand = t.sellTotal;
     const showVat = data.showVat !== false;
     const vatAmount = computeVatAmount(subtotal);
-    return '<div class="doc-overlay">' + '<div class="doc-toolbar no-print">' + '<div class="doc-toolbar-title">' + (isInvoice ? "إصدار فاتورة" : "إصدار عرض سعر") + " — طلبية " + escapeHtml(order.orderNumber) + "</div>" + '<div class="doc-toolbar-actions">' + '<button type="button" class="btn btn-danger-ghost btn-sm" id="doc-close-btn">إغلاق</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="doc-save-btn">حفظ البيانات</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="doc-copy-btn">نسخ نص للواتساب</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="doc-share-btn">📤 مشاركة</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="doc-pdf-btn">📄 تحميل PDF</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="doc-history-btn">📜 السجل</button>' + '<button type="button" class="btn btn-primary btn-sm" id="doc-print-btn">طباعة</button>' + "</div>" + "</div>" + '<div class="doc-sheet" id="doc-sheet">' + '<div class="doc-header-band">' + '<div class="doc-brand-col">' + '<img class="doc-logo-img" src="' + PARTECH_LOGO_DATA_URI + '" alt="PARTECH">' + '<div class="doc-co-info">س.ت: 1009069725 &nbsp;·&nbsp; ج: 0581206709</div>' + "</div>" + '<div class="doc-identity-col">' + '<div class="doc-type-badge">' + titleAr + "</div>" + '<div class="doc-type-badge-en">' + titleEn + "</div>" + '<div class="doc-identity-row"><span class="doc-identity-label">رقم المستند</span><input type="text" id="doc-number-input" class="doc-identity-input" value="' + escapeHtml(data.number) + '" readonly></div>' + '<div class="doc-identity-row"><span class="doc-identity-label">التاريخ</span><input type="text" id="doc-date-input" class="doc-identity-input" value="' + escapeHtml(data.date) + '"></div>' + "</div>" + "</div>" + '<div class="doc-billto">' + '<span class="doc-billto-label">العميل</span>' + '<div id="doc-customer-input" class="doc-customer-name-input" contenteditable="true">' + escapeHtml(data.customerName) + "</div>" + '<div class="doc-meta-field field-cr doc-cr-line"><span>ر.ض العميل</span><input type="text" id="doc-cr-input" value="' + escapeHtml(data.customerCR) + '"></div>' + '<div class="doc-billto-extra">' + '<div class="doc-meta-field field-car"><span>السيارة</span><input type="text" id="doc-car-input" value="' + escapeHtml(data.carModel) + '" placeholder="موديل السيارة"></div>' + '<div class="doc-meta-field field-vin"><span>رقم الهيكل VIN</span><input type="text" id="doc-vin-input" value="' + escapeHtml(data.vin) + '" placeholder="رقم الهيكل"></div>' + "</div>" + "</div>" + '<table class="doc-table"><thead><tr><th>البيـان</th><th>العدد</th><th>السعر الإفرادي</th><th>السعر الإجمالي</th></tr></thead>' + "<tbody>" + (Array.isArray(data.partsSnapshot) ? partsTableRowsHtmlFromSnapshot(data.partsSnapshot) : partsTableRowsHtml(order)) + "</tbody></table>" + '<label class="doc-vat-toggle no-print"><input type="checkbox" id="doc-vat-toggle-input" ' + (showVat ? "checked" : "") + "><span>إظهار تفاصيل الضريبة المضافة</span></label>" + '<div class="doc-totals">' + (showVat ? '<div class="doc-totals-row"><span>قيمة الضريبة المضافة (15%)</span><span class="num">' + fmtNum(vatAmount) + " ريال</span></div>" : "") + (showVat ? '<div class="doc-totals-row"><span>مجموع سعر القطع شامل الضريبة</span><span class="num">' + fmtNum(subtotal) + " ريال</span></div>" : "") + (feeEnabled ? '<div class="doc-totals-row doc-totals-row-fee"><span>' + feeLabel + " (" + feePercent + '%)</span><span class="num">' + fmtNum(fee) + " ريال</span></div>" : "") + (t.serviceFeeEnabled && t.serviceFeeAmount > 0 ? '<div class="doc-totals-row doc-totals-row-fee"><span>رسوم خدمات (' + t.serviceFeePercent + '%)</span><span class="num">' + fmtNum(t.serviceFeeAmount) + " ريال</span></div>" : "") + (t.deliveryFeeEnabled && t.deliveryFeeAmount > 0 ? '<div class="doc-totals-row doc-totals-row-fee"><span>أجور التوصيل</span><span class="num">' + fmtNum(t.deliveryFeeAmount) + " ريال</span></div>" : "") + '<div class="doc-totals-row grand"><span>الإجمالي المستحق</span><span class="num" id="doc-grand-total">' + fmtNum(grand) + " ريال</span></div>" + "</div>" + '<div id="doc-footer-input" class="doc-footer-note-input" contenteditable="true">' + footerNoteLinesHtml(data.footerNote) + "</div>" + "</div>" + "</div>";
+    return '<div class="doc-overlay">' + '<div class="doc-toolbar no-print">' + '<div class="doc-toolbar-title">' + (isInvoice ? "إصدار فاتورة" : "إصدار عرض سعر") + " — طلبية " + escapeHtml(order.orderNumber) + "</div>" + '<div class="doc-toolbar-actions">' + '<button type="button" class="btn btn-danger-ghost btn-sm" id="doc-close-btn">إغلاق</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="doc-save-btn">حفظ البيانات</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="doc-copy-btn">نسخ نص للواتساب</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="doc-share-btn">📤 مشاركة</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="doc-pdf-btn">📄 تحميل PDF</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="doc-history-btn">📜 السجل</button>' + '<button type="button" class="btn btn-primary btn-sm" id="doc-print-btn">طباعة</button>' + "</div>" + "</div>" + '<div class="doc-sheet" id="doc-sheet">' + '<div class="doc-header-band">' + '<div class="doc-brand-col">' + '<img class="doc-logo-img" src="' + PARTECH_LOGO_DATA_URI + '" alt="PARTECH">' + '<div class="doc-co-info">س.ت: 1009069725 &nbsp;·&nbsp; ج: 0581206709</div>' + "</div>" + '<div class="doc-identity-col">' + '<div class="doc-type-badge">' + titleAr + "</div>" + '<div class="doc-type-badge-en">' + titleEn + "</div>" + '<div class="doc-identity-row"><span class="doc-identity-label">رقم المستند</span><input type="text" id="doc-number-input" class="doc-identity-input" value="' + escapeHtml(data.number) + '" readonly></div>' + '<div class="doc-identity-row"><span class="doc-identity-label">التاريخ</span><input type="text" id="doc-date-input" class="doc-identity-input" value="' + escapeHtml(data.date) + '"></div>' + "</div>" + "</div>" + '<div class="doc-billto">' + '<span class="doc-billto-label">العميل</span>' + '<div id="doc-customer-input" class="doc-customer-name-input" contenteditable="true">' + escapeHtml(data.customerName) + "</div>" + '<div class="doc-meta-field field-cr doc-cr-line"><span>ر.ض العميل</span><input type="text" id="doc-cr-input" value="' + escapeHtml(data.customerCR) + '"></div>' + '<div class="doc-billto-extra">' + '<div class="doc-meta-field field-car"><span>السيارة</span><input type="text" id="doc-car-input" value="' + escapeHtml(data.carModel) + '" placeholder="موديل السيارة"></div>' + '<div class="doc-meta-field field-vin"><span>رقم الهيكل VIN</span><input type="text" id="doc-vin-input" value="' + escapeHtml(data.vin) + '" placeholder="رقم الهيكل"></div>' + "</div>" + (docVinMismatch(order, data) ? '<div class="doc-vat-toggle no-print" style="cursor:default;flex-wrap:wrap;color:#9C6A00;font-weight:700;">' + '<span>رقم الهيكل بالطلبية: <span dir="ltr" style="overflow-wrap:anywhere;">' + escapeHtml(order.vin) + "</span> —</span>" + '<button type="button" class="icon-btn" id="doc-vin-replace-btn" style="color:#171717;border-color:#BDBDBD;">استبدال؟</button>' + "</div>" : "") + "</div>" + '<table class="doc-table"><thead><tr><th>البيـان</th><th>العدد</th><th>السعر الإفرادي</th><th>السعر الإجمالي</th></tr></thead>' + "<tbody>" + (Array.isArray(data.partsSnapshot) ? partsTableRowsHtmlFromSnapshot(data.partsSnapshot) : partsTableRowsHtml(order)) + "</tbody></table>" + '<label class="doc-vat-toggle no-print"><input type="checkbox" id="doc-vat-toggle-input" ' + (showVat ? "checked" : "") + "><span>إظهار تفاصيل الضريبة المضافة</span></label>" + '<div class="doc-totals">' + (showVat ? '<div class="doc-totals-row"><span>قيمة الضريبة المضافة (15%)</span><span class="num">' + fmtNum(vatAmount) + " ريال</span></div>" : "") + (showVat ? '<div class="doc-totals-row"><span>مجموع سعر القطع شامل الضريبة</span><span class="num">' + fmtNum(subtotal) + " ريال</span></div>" : "") + (feeEnabled ? '<div class="doc-totals-row doc-totals-row-fee"><span>' + feeLabel + " (" + feePercent + '%)</span><span class="num">' + fmtNum(fee) + " ريال</span></div>" : "") + (t.serviceFeeEnabled && t.serviceFeeAmount > 0 ? '<div class="doc-totals-row doc-totals-row-fee"><span>رسوم خدمات (' + t.serviceFeePercent + '%)</span><span class="num">' + fmtNum(t.serviceFeeAmount) + " ريال</span></div>" : "") + (t.deliveryFeeEnabled && t.deliveryFeeAmount > 0 ? '<div class="doc-totals-row doc-totals-row-fee"><span>أجور التوصيل</span><span class="num">' + fmtNum(t.deliveryFeeAmount) + " ريال</span></div>" : "") + '<div class="doc-totals-row grand"><span>الإجمالي المستحق</span><span class="num" id="doc-grand-total">' + fmtNum(grand) + " ريال</span></div>" + "</div>" + '<div id="doc-footer-input" class="doc-footer-note-input" contenteditable="true">' + footerNoteLinesHtml(data.footerNote) + "</div>" + "</div>" + "</div>";
+}
+
+function docVinMismatch(order, data) {
+    const a = normalizeVin(order && order.vin), b = normalizeVin(data && data.vin);
+    return !!(a && b && a !== b);
 }
 
 function openDocumentView(orderId, type) {
@@ -5438,6 +7998,7 @@ function openDocumentView(orderId, type) {
         footerNote: defaultFooterNoteFor(type),
         showVat: false
     }, existing || {});
+    if (!String(data.vin || "").trim() && order.vin) data.vin = order.vin;
     docState = {
         orderId: orderId,
         type: type,
@@ -5634,6 +8195,16 @@ function bindDocHandlers() {
     root.querySelector("#doc-vin-input").addEventListener("input", e => {
         docState.data.vin = e.target.value;
     });
+    const vinReplaceBtn = root.querySelector("#doc-vin-replace-btn");
+    if (vinReplaceBtn) {
+        vinReplaceBtn.addEventListener("click", () => {
+            if (!docState) return;
+            const order = appData.orders.find(o => o.id === docState.orderId);
+            if (!order || !order.vin) return;
+            docState.data.vin = order.vin;
+            refreshDocSheet();
+        });
+    }
     root.querySelector("#doc-cr-input").addEventListener("input", e => {
         docState.data.customerCR = e.target.value;
     });
@@ -7545,6 +10116,7 @@ function proceedEditProposalDecision(proposalId, accept, keepFee) {
                         draft.returnKeptDeliveryAmount = order.returnKeptDeliveryAmount;
                         draft.returnKeptExcessAmount = order.returnKeptExcessAmount;
                         draft.updatedAt = order.updatedAt;
+                        syncDraftVinFromOrder(order);
                         draftOpenedAtUpdatedAt = order.updatedAt;
                         refreshPartsList();
                         refreshFeeFieldsBlock();
@@ -7604,6 +10176,7 @@ function proceedEditProposalDecision(proposalId, accept, keepFee) {
                                     draft.parts = JSON.parse(JSON.stringify(freshOrder.parts || []));
                                     draft.customerPayments = JSON.parse(JSON.stringify(freshOrder.customerPayments || []));
                                     draft.returnKeptExcessAmount = freshOrder.returnKeptExcessAmount;
+                                    syncDraftVinFromOrder(freshOrder);
                                     draftOpenedAtUpdatedAt = freshOrder.updatedAt;
                                     refreshPartsList();
                                     refreshPaymentsList();
@@ -7788,6 +10361,9 @@ function activityLogListHtml() {
     if (!activityEvents.length) return '<p class="add-part-locked-hint">ما فيه إشعارات حتى الآن</p>';
     return '<div class="task-items-list">' + activityEvents.map(ev => {
         const ms = new Date(ev.created_at).getTime();
+        if (ev.kind === "storage_threshold" && currentUserIsElevated && currentUserRole === "full") {
+            return '<div class="task-item-row activity-log-row" data-open-stats="1"><span class="task-item-text">' + escapeHtml(ev.message) + '</span><span class="muted" style="white-space:nowrap;">' + arabicRelativeTime(ms) + "</span></div>";
+        }
         const clickable = !!ev.order_id;
         return '<div class="task-item-row' + (clickable ? " activity-log-row" : "") + '"' + (clickable ? ' data-open-order-id="' + escapeHtml(ev.order_id) + '"' : "") + '><span class="task-item-text">' + escapeHtml(ev.message) + '</span><span class="muted" style="white-space:nowrap;">' + arabicRelativeTime(ms) + "</span></div>";
     }).join("") + "</div>";
@@ -7832,6 +10408,11 @@ async function openActivityLog() {
         root.querySelector("#activity-log-list").addEventListener("click", e => {
             const row = e.target.closest(".activity-log-row");
             if (!row) return;
+            if (row.hasAttribute("data-open-stats")) {
+                closeActivityLog();
+                openStatisticsView();
+                return;
+            }
             const orderId = row.getAttribute("data-open-order-id");
             if (!orderId) return;
             const order = appData.orders.find(o => o.id === orderId);
@@ -9298,6 +11879,7 @@ async function exportAllDataToExcel() {
         return {
             "رقم الطلب": o.orderNumber,
             "الطلبية": o.orderLabel || "",
+            "رقم الهيكل VIN": o.vin || "",
             "رقم جوال العميل": o.customerPhone || "",
             "مؤكدة": o.confirmed ? "نعم" : "لا",
             "تم التوريد": o.supplied ? "نعم" : "لا",
@@ -9926,6 +12508,7 @@ function applyRemoteOrderChange(payload) {
         const oldId = payload.old && payload.old.id;
         if (!oldId) return;
         appData.orders = appData.orders.filter(o => o.id !== oldId);
+        mediaForgetOrder(oldId);
         if (draft && draft.id === oldId) {
             closeModal();
             showToast("هذه الطلبية انحذفت من مكان تاني — سكّرنا النافذة", "error");
@@ -12321,8 +14904,122 @@ function salesRestrictedPerformanceSectionHtml() {
     });
 }
 
+let storageUsageState = null;
+
+let storageUsageGen = 0;
+
+function fmtStorageBytes(n) {
+    n = Math.max(0, Number(n) || 0);
+    if (n >= 1e9) return (n / 1e9).toFixed(2) + " جيجا";
+    if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e8 ? 0 : 1) + " ميجا";
+    return Math.round(n / 1e3) + " كيلو";
+}
+
+function storageUsageSummary(u) {
+    u = u || {};
+    const lim = u.limits || {};
+    const num = v => Math.max(0, Number(v) || 0);
+    const pct = (used, quota) => quota > 0 ? Math.round(used / quota * 1e3) / 10 : null;
+    const media = num(u.media_bytes), mediaQuota = num(lim.media_quota_bytes);
+    const db = num(u.db_bytes), dbQuota = num(lim.db_quota_bytes);
+    const groups = {
+        photos: {
+            n: 0,
+            bytes: 0
+        },
+        videos: {
+            n: 0,
+            bytes: 0
+        },
+        vin: {
+            n: 0,
+            bytes: 0
+        }
+    };
+    const bt = u.by_type || {};
+    Object.keys(bt).forEach(k => {
+        const v = bt[k] || {};
+        const g = k === "image:vin" ? groups.vin : k.indexOf("video:") === 0 ? groups.videos : groups.photos;
+        g.n += num(v.n);
+        g.bytes += num(v.bytes);
+    });
+    const last30 = num(u.last30d_bytes);
+    const runwayMonths = mediaQuota > 0 && last30 > 0 ? Math.max(0, Math.round((mediaQuota - media) / last30 * 10) / 10) : null;
+    return {
+        media: media,
+        mediaQuota: mediaQuota,
+        mediaPct: pct(media, mediaQuota),
+        db: db,
+        dbQuota: dbQuota,
+        dbPct: pct(db, dbQuota),
+        groups: groups,
+        trash: num(u.trash_bytes),
+        orphan: num(u.orphan_bytes),
+        last30: last30,
+        runwayMonths: runwayMonths,
+        fired: Array.isArray(u.fired) ? u.fired : []
+    };
+}
+
+function storageUsageBarRowHtml(label, pct) {
+    const w = pct == null ? 0 : Math.min(100, Math.max(2, pct));
+    const color = pct == null ? "" : pct >= 95 ? "var(--rust)" : pct >= 70 ? "var(--amber)" : "";
+    return '<div class="stat-bar-row">' + '<span class="stat-bar-label" title="' + escapeHtml(label) + '">' + escapeHtml(label) + "</span>" + '<span class="stat-bar-track"><span class="stat-bar-fill" style="width:' + w + "%" + (color ? ";background:" + color : "") + '"></span></span>' + '<span class="stat-bar-value">' + (pct == null ? "—" : pct + "%") + "</span>" + "</div>";
+}
+
+function storageUsageCardInnerHtml() {
+    const st = storageUsageState;
+    const head = '<div class="stat-chart-title">💾 مساحة التخزين</div>';
+    if (!st || st.status === "loading") return head + '<div class="expense-empty-hint">جارِ التحميل...</div>';
+    if (st.status === "error") return head + '<div class="expense-empty-hint">تعذر تحميل أرقام التخزين — ' + escapeHtml(st.msg || "") + "</div>";
+    const s = storageUsageSummary(st.data);
+    const row = (label, value) => '<div class="treasury-summary-row" style="gap:10px;"><span>' + label + '</span><span class="num" style="text-align:left;">' + value + "</span></div>";
+    const metricLabel = m => m === "db" ? "🗄️ القاعدة" : "📦 الوسائط";
+    const firedHtml = s.fired.length ? '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;">' + s.fired.map(f => {
+        const t = Number(f.threshold) || 0;
+        const ms = new Date(f.fired_at).getTime();
+        return '<span class="stamp ' + (t >= 95 ? "stamp-rust" : "stamp-amber") + '">' + metricLabel(f.metric) + " " + t + "%" + (isFinite(ms) ? " · " + escapeHtml(arabicRelativeTime(ms)) : "") + "</span>";
+    }).join("") + "</div>" : "";
+    return head + storageUsageBarRowHtml("الوسائط", s.mediaPct) + storageUsageBarRowHtml("القاعدة", s.dbPct) + '<div class="treasury-summary">' + row("📦 الصور والفيديو", fmtStorageBytes(s.media) + " من " + fmtStorageBytes(s.mediaQuota)) + row("🗄️ قاعدة البيانات", fmtStorageBytes(s.db) + " من " + fmtStorageBytes(s.dbQuota)) + row("📷 صور (" + s.groups.photos.n + ")", fmtStorageBytes(s.groups.photos.bytes)) + row("🎥 فيديو (" + s.groups.videos.n + ")", fmtStorageBytes(s.groups.videos.bytes)) + row("🪪 رقم الهيكل (" + s.groups.vin.n + ")", fmtStorageBytes(s.groups.vin.bytes)) + row("🗑️ سلة الوسائط", fmtStorageBytes(s.trash)) + row("❔ ملفات غير مرتبطة", fmtStorageBytes(s.orphan)) + row("📈 زيادة آخر 30 يوم", fmtStorageBytes(s.last30)) + row("⏳ المساحة بتكفي تقريبًا", s.runwayMonths == null ? "—" : s.runwayMonths > 99 ? "+99 شهر" : s.runwayMonths + " شهر") + "</div>" + firedHtml + '<p class="add-part-hint" style="margin:10px 0 0;">الترافيك (Egress) ما بينقاس من هون — راجع لوحة Supabase</p>';
+}
+
+function storageUsageCardHtml() {
+    return '<div id="storage-usage-card"><div class="stat-chart-block">' + storageUsageCardInnerHtml() + "</div></div>";
+}
+
+function refreshStorageUsageCard() {
+    const el = document.getElementById("storage-usage-card");
+    if (el) el.innerHTML = '<div class="stat-chart-block">' + storageUsageCardInnerHtml() + "</div>";
+}
+
+async function loadStorageUsageCard() {
+    const gen = ++storageUsageGen;
+    storageUsageState = {
+        status: "loading"
+    };
+    refreshStorageUsageCard();
+    try {
+        if (!sb) throw new Error("NO_DB");
+        const {data: data, error: error} = await withTimeout(sb.rpc("get_storage_usage"), GUARDED_AWAIT_TIMEOUT_MS, "get_storage_usage");
+        if (gen !== storageUsageGen) return;
+        if (error) throw error;
+        storageUsageState = {
+            status: "ok",
+            data: data || {}
+        };
+    } catch (e) {
+        if (gen !== storageUsageGen) return;
+        console.error("loadStorageUsageCard:", e);
+        storageUsageState = {
+            status: "error",
+            msg: friendlyErrorText(e)
+        };
+    }
+    refreshStorageUsageCard();
+}
+
 function statisticsViewHtml() {
-    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-statistics">→ رجوع للطلبيات</button>' + '<div class="tasks-title">📊 الإحصائيات</div>' + "</div>" + '<div class="treasury-block">' + (currentUserIsElevated ? supplierPerformanceSectionHtml() + salesPerformanceSectionHtml() : salesRestrictedPerformanceSectionHtml()) + "</div>";
+    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-statistics">→ رجوع للطلبيات</button>' + '<div class="tasks-title">📊 الإحصائيات</div>' + "</div>" + '<div class="treasury-block">' + (currentUserIsElevated ? storageUsageCardHtml() + supplierPerformanceSectionHtml() + salesPerformanceSectionHtml() : salesRestrictedPerformanceSectionHtml()) + "</div>";
 }
 
 async function openStatisticsView() {
@@ -12333,9 +15030,14 @@ async function openStatisticsView() {
     hideAllSecondaryViews();
     quoteReadyFirstByOrderId = null;
     if (archivedOrdersHydration) await archivedOrdersHydration;
+    storageUsageGen++;
+    storageUsageState = currentUserIsElevated ? {
+        status: "loading"
+    } : null;
     renderStatisticsView();
     document.getElementById("statistics-view").style.display = "block";
     loadSalesKpiStepTimings();
+    if (currentUserIsElevated) loadStorageUsageCard();
 }
 
 function closeStatisticsView() {
@@ -12744,6 +15446,7 @@ async function showAppIfAllowed(session) {
         if (shownForEmail === email) return;
         document.getElementById("auth-gate").classList.add("hidden");
         shownForEmail = email;
+        mediaResetState();
         if (role === "scrapyard") {
             document.getElementById("app-root").style.display = "none";
             document.getElementById("scrapyard-root").style.display = "";
@@ -12757,6 +15460,7 @@ async function showAppIfAllowed(session) {
         if (welcomeEl) welcomeEl.textContent = "اهلا " + displayNameForEmail(email);
         loadAnnouncement();
         subscribeAnnouncementRealtime();
+        subscribeOrderMediaRealtime();
         const treasuryBtn = document.getElementById("btn-open-treasury");
         if (treasuryBtn) treasuryBtn.style.display = currentUserIsElevated ? "" : "none";
         const announcementBtn = document.getElementById("btn-announcement");
@@ -12832,6 +15536,7 @@ async function initScrapyardView(email) {
     subscribeActivityEventsRealtime();
     loadAnnouncement();
     subscribeAnnouncementRealtime();
+    subscribeOrderMediaRealtime();
     await refreshEditProposals();
     subscribeEditProposalsRealtime();
     if (scrapyardSharedState.canManage) {
@@ -14528,6 +17233,7 @@ function teardownPresenceAndLocationResources() {
             scrapyardAppDataChannel = null;
         }
     }
+    mediaResetState();
     presenceEmail = null;
 }
 
