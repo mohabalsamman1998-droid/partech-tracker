@@ -985,10 +985,16 @@
 
   @media print{
     /* visibility:hidden بتخفي الشكل بس وبتحتفظ بمساحة العنصر — فطباعة من قائمة المتصفح كانت
-       تطلّع صفحات فاضية للتطبيق قبل/بعد المستند. display:none بتشيلها من التخطيط كليًا. */
-    body > *{display:none !important;}
-    #doc-root{display:block !important;position:absolute;inset:0;background:#fff;}
-    #doc-root *{visibility:visible;}
+       تطلّع صفحات فاضية للتطبيق قبل/بعد المستند. display:none بتشيلها من التخطيط كليًا.
+
+       الإخفاء كله مشروط بكلاس body.printing (يُضاف لحظة الطباعة فقط ويُشال بـ afterprint +
+       شبكات أمان — انظر beginPrintMode/endPrintMode). بدون هالشرط كانت القاعدة تخفي كل حاويات
+       التطبيق طول ما وسيط الطباعة فعّال، ولو علق هالوسيط — سلوك معروف بتطبيق iOS المثبّت
+       (PWA) — بيضل المستخدم قدام شاشة بيضا بالكامل: لا شريط عنوان، لا صفحة خطأ، ولا طريقة
+       يعيد التحميل، ومخرجه الوحيد إغلاق التطبيق بالقوة من مبدّل التطبيقات. */
+    body.printing > *{display:none !important;}
+    body.printing #doc-root{display:block !important;position:absolute;inset:0;background:#fff;}
+    body.printing #doc-root *{visibility:visible;}
     .doc-overlay{position:static;padding:0;background:#fff;overflow:visible;}
     .no-print{display:none !important;}
     .field-empty{display:none !important;}
@@ -5423,6 +5429,60 @@ function docEscListener(e) {
     if (e.key === "Escape") closeDocViewSavingAndReturn();
 }
 
+let printModeTimer = null;
+
+let printModeStartedAt = 0;
+
+function beginPrintMode() {
+    printModeStartedAt = Date.now();
+    document.body.classList.add("printing");
+    if (printModeTimer) clearTimeout(printModeTimer);
+    printModeTimer = setTimeout(endPrintMode, 2e4);
+}
+
+function endPrintMode() {
+    if (printModeTimer) {
+        clearTimeout(printModeTimer);
+        printModeTimer = null;
+    }
+    printModeStartedAt = 0;
+    document.body.classList.remove("printing");
+}
+
+function endPrintModeOnReturn() {
+    if (!printModeStartedAt) return;
+    if (Date.now() - printModeStartedAt < 1200) return;
+    endPrintMode();
+}
+
+window.addEventListener("beforeprint", () => {
+    const docRoot = document.getElementById("doc-root");
+    if (docRoot && docRoot.classList.contains("doc-open")) beginPrintMode();
+});
+
+window.addEventListener("afterprint", endPrintMode);
+
+const printMediaQuery = window.matchMedia ? window.matchMedia("print") : null;
+
+if (printMediaQuery) {
+    const onPrintMqChange = e => {
+        if (!e.matches) endPrintMode();
+    };
+    if (printMediaQuery.addEventListener) printMediaQuery.addEventListener("change", onPrintMqChange); else if (printMediaQuery.addListener) printMediaQuery.addListener(onPrintMqChange);
+}
+
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") endPrintModeOnReturn();
+});
+
+window.addEventListener("focus", endPrintModeOnReturn);
+
+window.addEventListener("pointerdown", endPrintModeOnReturn);
+
+window.addEventListener("keydown", endPrintModeOnReturn);
+
+window.addEventListener("pageshow", endPrintMode);
+
 function markEmptyDocFields() {
     const root = document.getElementById("doc-root");
     if (!root) return;
@@ -5448,6 +5508,7 @@ function bindDocHandlers() {
             return;
         }
         markEmptyDocFields();
+        beginPrintMode();
         window.print();
     });
     root.querySelector("#doc-copy-btn").addEventListener("click", copyDocToClipboard);
@@ -6122,7 +6183,10 @@ function openCustomerStatementView(customerId) {
     root.querySelector("#statement-copy-btn").addEventListener("click", copyStatementToClipboard);
     root.querySelector("#statement-share-btn").addEventListener("click", shareStatement);
     root.querySelector("#statement-pdf-btn").addEventListener("click", downloadStatementPdf);
-    root.querySelector("#statement-print-btn").addEventListener("click", () => window.print());
+    root.querySelector("#statement-print-btn").addEventListener("click", () => {
+        beginPrintMode();
+        window.print();
+    });
     root.querySelector("#statement-show-paid-input").addEventListener("change", e => {
         statementShowPaid = e.target.checked;
         openCustomerStatementView(customerId);
