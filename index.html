@@ -4271,7 +4271,7 @@ function mediaDefaultAudience(role, kind, isElevated) {
 
 function mediaAltAudience(role, kind) {
     if (kind === "vin") return null;
-    return role === "scrapyard" ? "purch" : role === "full" ? "sales" : null;
+    return role === "scrapyard" ? "purch" : null;
 }
 
 function mediaCanDelete(row, email, isElevated, nowMs) {
@@ -5438,16 +5438,15 @@ function openMediaPicker(ctx) {
     const alt = mediaAltAudience(currentUserRole, ctx.kind);
     const persisted = mediaTargetPersisted(ctx);
     const isPurch = currentUserRole === "scrapyard";
-    const altLabel = isPurch ? "🔒 داخلي" : "🔒 للمبيعات فقط";
-    const altHint = isPurch ? "فواتير/لوحات محلات/محادثات/صوت يذكر المورد" : "لو فيها اسم/جوال/هوية/لوحة الزبون — غير هيك بتوصل للمشتريات";
+    const altLabel = "🔒 داخلي";
+    const altHint = "فواتير/لوحات محلات/محادثات/صوت يذكر المورد";
     const offerVin = ctx.kind === "order" && !isPurch;
     mediaPickerState = {
         ctx: ctx,
-        altOn: false,
-        muteOn: false
+        altOn: false
     };
     const root = document.getElementById("confirm-root");
-    root.innerHTML = '<div class="modal-backdrop" data-close-confirm data-media-picker>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">' + (isVin ? "🪪 صورة الاستمارة / رقم الهيكل" : "📷 صورة / فيديو") + "</div>" + '<p class="modal-sub">' + escapeHtml(mediaTargetLabel(ctx)) + "</p>" + (persisted ? "" : '<span class="stamp stamp-amber">' + (ctx.partId ? "القطعة لسه ما انحفظت" : "الطلبية لسه ما انحفظت") + " — بينرفع بعد الحفظ</span>") + '<div class="contact-options-col">' + (offerVin ? '<button type="button" class="btn" data-media-pick="vin">🪪 الاستمارة (بتنعرض أول الطلب للكل)</button>' : "") + '<button type="button" class="btn" data-media-pick="photo">📷 صورة</button>' + (isVin ? "" : '<button type="button" class="btn" data-media-pick="video">🎥 فيديو (حتى ' + mediaMaxSeconds() + " ثانية)</button>") + '<button type="button" class="btn" data-media-pick="gallery">🖼️ من المعرض</button>' + "</div>" + (alt ? '<div class="filter-chips" style="margin-top:14px;">' + '<button type="button" class="chip" data-media-toggle="alt" aria-pressed="false">' + altLabel + "</button>" + '<button type="button" class="chip" data-media-toggle="mute" aria-pressed="false">🔇 بدون صوت</button>' + "</div>" + '<p class="add-part-hint" style="margin:6px 0 0;">' + escapeHtml(altLabel + ": " + altHint) + "</p>" : "") + (!persisted && !isVin ? '<p class="add-part-hint" style="margin:6px 0 0;">الملفات بتضل على الجهاز لحد الحفظ — لو انقفل التطبيق قبلها بتضيع</p>' : "") + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" data-media-pick="cancel">إلغاء</button>' + "</div>" + "</div>" + "</div>";
+    root.innerHTML = '<div class="modal-backdrop" data-close-confirm data-media-picker>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">' + (isVin ? "🪪 صورة الاستمارة / رقم الهيكل" : "📷 صورة / فيديو") + "</div>" + '<p class="modal-sub">' + escapeHtml(mediaTargetLabel(ctx)) + "</p>" + (persisted ? "" : '<span class="stamp stamp-amber">' + (ctx.partId ? "القطعة لسه ما انحفظت" : "الطلبية لسه ما انحفظت") + " — بينرفع بعد الحفظ</span>") + '<div class="contact-options-col">' + (offerVin ? '<button type="button" class="btn" data-media-pick="vin">🪪 الاستمارة (بتنعرض أول الطلب للكل)</button>' : "") + '<button type="button" class="btn" data-media-pick="photo">📷 صورة</button>' + (isVin ? "" : '<button type="button" class="btn" data-media-pick="video">🎥 فيديو (حتى ' + mediaMaxSeconds() + " ثانية)</button>") + '<button type="button" class="btn" data-media-pick="gallery">🖼️ من المعرض</button>' + "</div>" + (alt ? '<div class="filter-chips" style="margin-top:14px;">' + '<button type="button" class="chip" data-media-toggle="alt" aria-pressed="false">' + altLabel + "</button>" + "</div>" + '<p class="add-part-hint" style="margin:6px 0 0;">' + escapeHtml(altLabel + ": " + altHint) + "</p>" : "") + (!persisted && !isVin ? '<p class="add-part-hint" style="margin:6px 0 0;">الملفات بتضل على الجهاز لحد الحفظ — لو انقفل التطبيق قبلها بتضيع</p>' : "") + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" data-media-pick="cancel">إلغاء</button>' + "</div>" + "</div>" + "</div>";
     root.classList.add("modal-open");
     root.querySelector("[data-media-picker]").addEventListener("click", e => {
         if (e.target.hasAttribute("data-media-picker")) {
@@ -5458,11 +5457,9 @@ function openMediaPicker(ctx) {
         if (tg) {
             const st = mediaPickerState;
             if (!st) return;
-            const k = tg.getAttribute("data-media-toggle");
-            if (k === "alt") st.altOn = !st.altOn; else st.muteOn = !st.muteOn;
-            const on = k === "alt" ? st.altOn : st.muteOn;
-            tg.classList.toggle("chip-active", on);
-            tg.setAttribute("aria-pressed", on ? "true" : "false");
+            st.altOn = !st.altOn;
+            tg.classList.toggle("chip-active", st.altOn);
+            tg.setAttribute("aria-pressed", st.altOn ? "true" : "false");
             return;
         }
         const b = e.target.closest("[data-media-pick]");
@@ -5497,7 +5494,6 @@ function mediaPickerChoose(which) {
     mediaPendingPick = {
         ctx: ctx,
         audience: st.altOn && alt ? alt : mediaDefaultAudience(currentUserRole, ctx.kind, currentUserIsElevated),
-        mute: !!st.muteOn,
         source: which,
         gen: mediaStateGen
     };
@@ -5599,7 +5595,7 @@ async function mediaProcessOneFile(file, pick) {
     }
     const gen = mediaStateGen;
     try {
-        const c = isVideo ? await mediaCompressVideoWithSheet(file, pick) : await compressPhotoFile(file);
+        const c = isVideo ? await mediaCompressVideoWithSheet(file) : await compressPhotoFile(file);
         if (!c || gen !== mediaStateGen) return;
         mediaAdd(pick.ctx, c, pick.audience);
     } catch (e) {
@@ -5781,7 +5777,7 @@ function mediaHideProgressSheet(sheet) {
     mediaMaybeRemoveEsc();
 }
 
-async function mediaCompressVideoWithSheet(file, pick) {
+async function mediaCompressVideoWithSheet(file) {
     const sheet = mediaShowProgressSheet();
     const canceledP = new Promise((_, reject) => {
         sheet.onCancel = () => reject(mediaErr("canceled"));
@@ -5809,7 +5805,7 @@ async function mediaCompressVideoWithSheet(file, pick) {
             MB: MB,
             preset: cfg.video_preset,
             maxSec: cfg.video_max_seconds,
-            mute: pick.mute,
+            mute: false,
             isCanceled: () => sheet.canceled,
             setCancel: fn => {
                 sheet.cancelFn = fn;
