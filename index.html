@@ -1636,6 +1636,14 @@ function partIsIncludedInOrder(order, part) {
     return !order.partsSelectionEnabled || part.included !== false;
 }
 
+function partCostSellFlags(part) {
+    const returned = !!part.returned;
+    return {
+        keepCost: !returned || !!(part.returnHasReceivable && !part.returnCollected),
+        keepSell: !returned
+    };
+}
+
 function computeCustomerPaidAmount(order, excludePaymentId) {
     return (order.customerPayments || []).reduce((sum, p) => {
         if (excludePaymentId && p.id === excludePaymentId) return sum;
@@ -1768,6 +1776,12 @@ function orderPurchaseSettled(order, t) {
 function partPurchaseCostSettled(order, part, t) {
     t = t || orderTotals(order);
     return part && part.used ? scrapyardCostSettled(order, t) : newPartsCostSettled(order, t);
+}
+
+function bucketHasPaidFlag(order, t, used) {
+    if (used) return !!(order.paidToAmer || order.paidToOmar || order.paidToSupplier);
+    if (orderIsMixedPartType(t)) return !!(order.paidToAmerNew || order.paidToOmarNew || order.paidToSupplierNew);
+    return !!(order.paidToAmer || order.paidToOmar || order.paidToSupplier);
 }
 
 function costSplitStatusLabel(order, bucket) {
@@ -2049,24 +2063,15 @@ function showToast(msg, type) {
 
 function computeAggregateFinancials(matchPeriodFn) {
     const realOrders = appData.orders.filter(o => !o.isQuote);
-    const confirmedOrders = realOrders.filter(o => o.confirmed).filter(o => matchPeriodFn ? matchPeriodFn(o) : true);
+    const periodOrders = realOrders.filter(o => matchPeriodFn ? matchPeriodFn(o) : true);
+    const confirmedOrders = periodOrders.filter(o => o.confirmed);
     let dueToScrapyard = 0, dueToSuppliers = 0, dueFromCustomers = 0, dueFromCustomersCount = 0, collectedProfit = 0, uncollectedProfit = 0;
     let dueToScrapyardCount = 0, dueToSuppliersCount = 0;
     let directPaidTotal = 0, customerReceiptsTotal = 0;
-    confirmedOrders.forEach(o => {
+    periodOrders.forEach(o => {
         const t = orderTotals(o);
-        if (!scrapyardCostSettled(o, t)) {
-            if (o.supplied && t.costToScrapyard > 0) {
-                dueToScrapyard += t.costToScrapyard;
-                dueToScrapyardCount++;
-            }
-        } else if (o.paidToSupplier && o.paidToSupplierAt && o.paidToSupplierAt >= DIRECT_PAID_FIX_CUTOFF) directPaidTotal += t.costToScrapyard;
-        if (!newPartsCostSettled(o, t)) {
-            if (o.supplied && t.costToSupplier > 0) {
-                dueToSuppliers += t.costToSupplier;
-                dueToSuppliersCount++;
-            }
-        } else {
+        if (scrapyardCostSettled(o, t) && o.paidToSupplier && o.paidToSupplierAt && o.paidToSupplierAt >= DIRECT_PAID_FIX_CUTOFF) directPaidTotal += t.costToScrapyard;
+        if (newPartsCostSettled(o, t)) {
             const mixed = orderIsMixedPartType(t);
             const isDirectNew = mixed ? o.paidToSupplierNew : o.paidToSupplier;
             const settledAtNew = mixed ? o.paidToSupplierNewAt || o.paidToAmerNewAt || o.paidToOmarNewAt : o.paidToSupplierAt || o.paidToAmerAt || o.paidToOmarAt;
@@ -2074,11 +2079,24 @@ function computeAggregateFinancials(matchPeriodFn) {
                 if (isDirectNew) directPaidTotal += t.costToSupplier;
             } else directPaidTotal += t.costToSupplier;
         }
+        customerReceiptsTotal += t.customerPaidAmountForBox;
+        if (!o.confirmed) return;
+        if (!scrapyardCostSettled(o, t)) {
+            if (o.supplied && t.costToScrapyard > 0) {
+                dueToScrapyard += t.costToScrapyard;
+                dueToScrapyardCount++;
+            }
+        }
+        if (!newPartsCostSettled(o, t)) {
+            if (o.supplied && t.costToSupplier > 0) {
+                dueToSuppliers += t.costToSupplier;
+                dueToSuppliersCount++;
+            }
+        }
         if (o.supplied && t.hasChargeable && !t.customerFullyPaid) {
             dueFromCustomers += t.customerRemaining;
             dueFromCustomersCount++;
         }
-        customerReceiptsTotal += t.customerPaidAmountForBox;
         if (t.hasChargeable) {
             collectedProfit += t.collectedProfit;
             uncollectedProfit += t.uncollectedProfit;
@@ -10037,7 +10055,12 @@ function applyEditProposal(pr, orderOverride, opts) {
         const part = (order.parts || []).find(p => p.id === pr.part_id);
         if (!part || part.returned) return false;
         if (pr.field === "costPrice") part.costPrice = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "sellPrice") part.sellPrice = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "description") part.description = String(pr.proposed_value || ""); else if (pr.field === "qty") part.qty = Math.max(1, Number(pr.proposed_value) || 1); else if (pr.field === "used") {
-            part.used = !!pr.proposed_value;
+            const proposedUsed = !!pr.proposed_value;
+            if (proposedUsed !== !!part.used) {
+                const tBefore = orderTotals(order);
+                if (bucketHasPaidFlag(order, tBefore, !!part.used) || bucketHasPaidFlag(order, tBefore, proposedUsed)) return false;
+            }
+            part.used = proposedUsed;
             part.supplierId = null;
         } else if (pr.field === "supplierId") part.supplierId = pr.proposed_value || null; else return false;
     } else if (pr.kind === "order_field") {
@@ -10069,10 +10092,12 @@ function applyEditProposal(pr, orderOverride, opts) {
     } else if (pr.kind === "part_exclude") {
         const part = (order.parts || []).find(p => p.id === pr.part_id);
         if (!part) return false;
+        if (bucketHasPaidFlag(order, orderTotals(order), !!part.used)) return false;
         part.included = false;
     } else if (pr.kind === "part_delete") {
         const targetPart = (order.parts || []).find(p => p.id === pr.part_id);
         if (!targetPart || targetPart.returned) return false;
+        if (bucketHasPaidFlag(order, orderTotals(order), !!targetPart.used)) return false;
         order.parts = (order.parts || []).filter(p => p.id !== pr.part_id);
     } else if (pr.kind === "part_return") {
         const part = (order.parts || []).find(p => p.id === pr.part_id);
@@ -10798,6 +10823,20 @@ function isoDateMatches(d, isoDate) {
     return dateMatchesPeriod(d, "customRange", "", isoDate, isoDate);
 }
 
+function latestPaidFlagKind(candidates) {
+    let best = null, bestMs = -Infinity;
+    candidates.forEach(c => {
+        if (!c.at) return;
+        const ms = new Date(c.at).getTime();
+        if (isNaN(ms)) return;
+        if (ms > bestMs) {
+            bestMs = ms;
+            best = c.kind;
+        }
+    });
+    return best;
+}
+
 function accountsActivityForDate(isoDate) {
     const matchDmy = dateStr => isoDateMatches(parseDMY(dateStr), isoDate);
     const matchIso = isoStr => {
@@ -10821,7 +10860,17 @@ function accountsActivityForDate(isoDate) {
         });
         const tBase = orderTotals(o);
         const baseFallback = orderIsMixedPartType(tBase) ? tBase.costToScrapyard : tBase.costTotal;
-        if (matchIso(o.paidToSupplierAt)) {
+        const baseLatest = latestPaidFlagKind([ {
+            kind: "مورد",
+            at: o.paidToSupplierAt
+        }, {
+            kind: "تشليح (عامر)",
+            at: o.paidToAmerAt
+        }, {
+            kind: "تشليح (عمر)",
+            at: o.paidToOmarAt
+        } ]);
+        if (baseLatest === "مورد" && matchIso(o.paidToSupplierAt)) {
             const amt = o.paidToSupplierAmountSnapshot != null ? Number(o.paidToSupplierAmountSnapshot) || 0 : baseFallback;
             supplierPayments.push({
                 orderNumber: o.orderNumber,
@@ -10830,7 +10879,7 @@ function accountsActivityForDate(isoDate) {
                 kind: "مورد"
             });
         }
-        if (matchIso(o.paidToAmerAt)) {
+        if (baseLatest === "تشليح (عامر)" && matchIso(o.paidToAmerAt)) {
             const amt = o.paidToAmerAmountSnapshot != null ? Number(o.paidToAmerAmountSnapshot) || 0 : baseFallback;
             supplierPayments.push({
                 orderNumber: o.orderNumber,
@@ -10839,7 +10888,7 @@ function accountsActivityForDate(isoDate) {
                 kind: "تشليح (عامر)"
             });
         }
-        if (matchIso(o.paidToOmarAt)) {
+        if (baseLatest === "تشليح (عمر)" && matchIso(o.paidToOmarAt)) {
             const amt = o.paidToOmarAmountSnapshot != null ? Number(o.paidToOmarAmountSnapshot) || 0 : baseFallback;
             supplierPayments.push({
                 orderNumber: o.orderNumber,
@@ -10848,7 +10897,17 @@ function accountsActivityForDate(isoDate) {
                 kind: "تشليح (عمر)"
             });
         }
-        if (matchIso(o.paidToSupplierNewAt)) {
+        const newLatest = latestPaidFlagKind([ {
+            kind: "مورد (جديد)",
+            at: o.paidToSupplierNewAt
+        }, {
+            kind: "جديد (عامر)",
+            at: o.paidToAmerNewAt
+        }, {
+            kind: "جديد (عمر)",
+            at: o.paidToOmarNewAt
+        } ]);
+        if (newLatest === "مورد (جديد)" && matchIso(o.paidToSupplierNewAt)) {
             const amt = o.paidToSupplierNewAmountSnapshot != null ? Number(o.paidToSupplierNewAmountSnapshot) || 0 : orderTotals(o).costToSupplier;
             supplierPayments.push({
                 orderNumber: o.orderNumber,
@@ -10857,7 +10916,7 @@ function accountsActivityForDate(isoDate) {
                 kind: "مورد (جديد)"
             });
         }
-        if (matchIso(o.paidToAmerNewAt)) {
+        if (newLatest === "جديد (عامر)" && matchIso(o.paidToAmerNewAt)) {
             const amt = o.paidToAmerNewAmountSnapshot != null ? Number(o.paidToAmerNewAmountSnapshot) || 0 : orderTotals(o).costToSupplier;
             supplierPayments.push({
                 orderNumber: o.orderNumber,
@@ -10866,7 +10925,7 @@ function accountsActivityForDate(isoDate) {
                 kind: "جديد (عامر)"
             });
         }
-        if (matchIso(o.paidToOmarNewAt)) {
+        if (newLatest === "جديد (عمر)" && matchIso(o.paidToOmarNewAt)) {
             const amt = o.paidToOmarNewAmountSnapshot != null ? Number(o.paidToOmarNewAmountSnapshot) || 0 : orderTotals(o).costToSupplier;
             supplierPayments.push({
                 orderNumber: o.orderNumber,
@@ -10962,7 +11021,7 @@ function computeTreasuryVolumes() {
         if (scrapyardCostSettled(o, t)) paidToScrapyardTotal += t.costToScrapyard;
         costToSuppliersTotal += t.costToSupplier;
         costToScrapyardTotal += t.costToScrapyard;
-        customerReceiptsTotal += t.customerPaidAmount;
+        customerReceiptsTotal += t.customerPaidAmountForBox;
         sellTotalSum += t.sellTotal;
         if (t.hasChargeable) {
             collectedProfit += t.collectedProfit;
@@ -11142,7 +11201,7 @@ function accountsActivityModalHtml() {
     const a = accountsActivityForDate(iso);
     const paymentsRowsHtml = a.customerPayments.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.orderNumber + (r.orderLabel ? " — " + r.orderLabel : ""), r.method === "cash" ? "كاش" : r.method === "card" ? "شبكة" : "", r.amount, "text-green") + "</div>").join("");
     const refundsRowsHtml = a.customerRefunds.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.orderNumber + (r.orderLabel ? " — " + r.orderLabel : ""), "مرتجع", r.amount, "text-amber") + "</div>").join("");
-    const supplierRowsHtml = a.supplierPayments.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.orderNumber + (r.orderLabel ? " — " + r.orderLabel : ""), "تسديد " + r.kind + (r.kind.indexOf("تشليح") === 0 ? " (من عهدة المشتريات — مو داخل بالصافي)" : ""), r.amount, "text-rust") + "</div>").join("");
+    const supplierRowsHtml = a.supplierPayments.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.orderNumber + (r.orderLabel ? " — " + r.orderLabel : ""), "تسديد " + r.kind + (r.kind !== "مورد" && r.kind !== "مورد (جديد)" ? " (من عهدة المشتريات — مو داخل بالصافي)" : ""), r.amount, "text-rust") + "</div>").join("");
     const expensesRowsHtml = a.expenses.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.label, r.note, r.amount, "text-rust") + "</div>").join("");
     const supportRowsHtml = a.support.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml("دعم الصندوق من الخارج", r.note, r.amount, r.amount < 0 ? "text-rust" : "text-green") + "</div>").join("");
     const custodyRowsHtml = a.custody.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.amount < 0 ? "سحب من عهدة عامر" : "سداد لعهدة عامر", r.note, r.amount, r.amount < 0 ? "text-green" : "text-rust") + "</div>").join("");
@@ -11647,6 +11706,7 @@ function overdueCustomersCount() {
     const overdueCustomerIds = new Set;
     (appData.orders || []).forEach(o => {
         if (!o.customerId || overdueCustomerIds.has(o.customerId)) return;
+        if (o.isQuote) return;
         if (!o.supplied) return;
         const t = orderTotals(o);
         if (!t.hasChargeable || t.customerFullyPaid) return;
@@ -11709,8 +11769,8 @@ function paidToScrapyardTotalForCustody() {
         if (!o.confirmed || o.custodyLegacy || o.isQuote) return;
         const t = orderTotals(o);
         const mixed = orderIsMixedPartType(t);
-        if (o.paidToAmer) total += mixed ? t.costToScrapyard : t.costTotal;
-        if (o.paidToAmerNew && mixed) total += t.costToSupplier;
+        if (o.paidToAmer && !o.paidToSupplier) total += mixed ? t.costToScrapyard : t.costTotal;
+        if (o.paidToAmerNew && mixed && !o.paidToSupplierNew) total += t.costToSupplier;
     });
     return round2(total);
 }
@@ -11751,8 +11811,8 @@ function paidToScrapyardTotalForOmar() {
         if (!o.confirmed || o.custodyLegacy || o.isQuote) return;
         const t = orderTotals(o);
         const mixed = orderIsMixedPartType(t);
-        if (o.paidToOmar) total += mixed ? t.costToScrapyard : t.costTotal;
-        if (o.paidToOmarNew && mixed) total += t.costToSupplier;
+        if (o.paidToOmar && !o.paidToSupplier) total += mixed ? t.costToScrapyard : t.costTotal;
+        if (o.paidToOmarNew && mixed && !o.paidToSupplierNew) total += t.costToSupplier;
     });
     return round2(total);
 }
@@ -11977,11 +12037,15 @@ async function exportAllDataToExcel() {
             const supplier = p.supplierId ? analysisSupplierById.get(p.supplierId) : null;
             const qty = Number(p.qty) || 1;
             const costPrice = Number(p.costPrice) || 0;
-            const hasSell = p.sellPrice !== null && p.sellPrice !== undefined && p.sellPrice !== "";
+            const included = partIsIncludedInOrder(o, p);
+            const {keepCost: keepCost, keepSell: keepSell} = partCostSellFlags(p);
+            const countsCost = included && keepCost;
+            const countsSell = included && keepSell;
+            const hasSell = countsSell && p.sellPrice !== null && p.sellPrice !== undefined && p.sellPrice !== "";
             const sellPriceUnit = hasSell ? Number(p.sellPrice) : null;
-            const costTotal = round2(costPrice * qty);
+            const costTotal = countsCost ? round2(costPrice * qty) : null;
             const sellTotal = hasSell ? round2(sellPriceUnit * qty) : null;
-            const profit = hasSell ? round2(sellTotal - costTotal) : null;
+            const profit = countsCost && hasSell ? round2(sellTotal - costTotal) : null;
             analysisRows.push({
                 "رقم الطلب": o.orderNumber,
                 "الطلبية/السيارة": o.orderLabel || "",
@@ -11997,18 +12061,18 @@ async function exportAllDataToExcel() {
                 "التشليح/المورد": supplier ? supplier.name || supplier.phone || "" : "",
                 "العدد": qty,
                 "سعر الشراء (الوحدة)": costPrice,
-                "إجمالي الشراء": costTotal,
+                "إجمالي الشراء": countsCost ? costTotal : "",
                 "سعر البيع (الوحدة)": hasSell ? sellPriceUnit : "",
                 "إجمالي البيع": hasSell ? sellTotal : "",
-                "الربح": hasSell ? profit : "",
-                "هامش الربح %": hasSell && sellTotal > 0 ? round2(profit / sellTotal * 100) : "",
+                "الربح": profit !== null ? profit : "",
+                "هامش الربح %": profit !== null && sellTotal > 0 ? round2(profit / sellTotal * 100) : "",
                 "مرتجعة": p.returned ? "نعم" : "لا",
-                "ضمن الطلبية": !o.partsSelectionEnabled || p.included !== false ? "نعم" : "لا"
+                "ضمن الطلبية": included ? "نعم" : "لا"
             });
         });
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(analysisRows)), "تحليل شامل");
-    const ordersRows = appData.orders.map(o => {
+    const ordersRows = appData.orders.filter(o => !o.isQuote).map(o => {
         const t = orderTotals(o);
         return {
             "رقم الطلب": o.orderNumber,
@@ -12020,9 +12084,9 @@ async function exportAllDataToExcel() {
             "عدد القطع": o.parts.length,
             "إجمالي الشراء": t.costTotal,
             "مستحق للتشليح": t.costToScrapyard,
-            "مسدد للتشليح": o.paidToAmer ? "نعم (عامر)" : o.paidToOmar ? "نعم (عمر)" : o.paidToSupplier ? "مسدد مباشرة" : "لا",
+            "مسدد للتشليح": t.costToScrapyard > 0 ? o.paidToAmer ? "نعم (عامر)" : o.paidToOmar ? "نعم (عمر)" : o.paidToSupplier ? "مسدد مباشرة" : "لا" : "",
             "مستحق للمورد": t.costToSupplier,
-            "مسدد للمورد": orderIsMixedPartType(t) ? o.paidToSupplierNew ? "نعم" : newPartsCostSettled(o, t) ? "مسدد عن طريق العهدة" : "لا" : o.paidToSupplier ? "نعم" : newPartsCostSettled(o, t) ? "مسدد عن طريق العهدة" : "لا",
+            "مسدد للمورد": t.costToSupplier > 0 ? orderIsMixedPartType(t) ? o.paidToSupplierNew ? "نعم" : newPartsCostSettled(o, t) ? "مسدد عن طريق العهدة" : "لا" : o.paidToSupplier ? "نعم" : newPartsCostSettled(o, t) ? "مسدد عن طريق العهدة" : "لا" : "",
             "مسعّرة بالكامل": t.fullyPriced ? "نعم" : "لا",
             "إجمالي البيع": t.hasChargeable ? t.sellTotal : "",
             "نسبة رسوم الخدمة %": t.feeEnabled ? t.feePercent : "",
@@ -12038,7 +12102,7 @@ async function exportAllDataToExcel() {
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(ordersRows)), "الطلبيات");
     const partsRows = [];
-    appData.orders.forEach(o => {
+    appData.orders.filter(o => !o.isQuote).forEach(o => {
         (o.parts || []).forEach(p => {
             partsRows.push({
                 "رقم الطلب": o.orderNumber,
@@ -12046,7 +12110,7 @@ async function exportAllDataToExcel() {
                 "وصف القطعة": p.description,
                 "مستعملة": p.used ? "نعم" : "لا",
                 "حالة القطعة": p.used ? partConditionMeta(p.condition) ? partConditionMeta(p.condition).label : "غير محددة" : "",
-                "ضمن الطلبية": !o.partsSelectionEnabled || p.included !== false ? "نعم" : "لا",
+                "ضمن الطلبية": partIsIncludedInOrder(o, p) ? "نعم" : "لا",
                 "العدد": p.qty,
                 "سعر الشراء": p.costPrice,
                 "سعر البيع": p.sellPrice === null || p.sellPrice === undefined ? "" : p.sellPrice
@@ -12055,7 +12119,7 @@ async function exportAllDataToExcel() {
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(partsRows)), "تفاصيل القطع");
     const paymentsRows = [];
-    appData.orders.forEach(o => {
+    appData.orders.filter(o => !o.isQuote).forEach(o => {
         (o.customerPayments || []).forEach(p => {
             paymentsRows.push({
                 "رقم الطلب": o.orderNumber,
@@ -13314,6 +13378,7 @@ function closeSuppliersView() {
 function supplierOwedAmount(supplierId) {
     let total = 0;
     (appData.orders || []).forEach(o => {
+        if (o.isQuote) return;
         if (!o.supplied) return;
         (o.parts || []).forEach(p => {
             if (p.supplierId !== supplierId) return;
@@ -13330,6 +13395,7 @@ function supplierOwedAmount(supplierId) {
 function supplierOwedIndex() {
     const bySupplierRaw = {};
     (appData.orders || []).forEach(o => {
+        if (o.isQuote) return;
         if (!o.supplied) return;
         (o.parts || []).forEach(p => {
             if (!p.supplierId) return;
@@ -13434,6 +13500,7 @@ function supplierPurchaseHistory(supplierId) {
     const ongoingMap = {}, pastMap = {};
     const ongoing = [], past = [];
     (appData.orders || []).forEach(o => {
+        if (o.isQuote) return;
         if (!o.supplied) return;
         (o.parts || []).forEach(p => {
             if (p.supplierId !== supplierId) return;
@@ -13506,6 +13573,7 @@ function supplierPricedHistory(supplierId) {
 function supplierReturnReceivables(supplierId) {
     const rows = [];
     (appData.orders || []).forEach(o => {
+        if (o.isQuote) return;
         if (!o.confirmed) return;
         (o.parts || []).forEach(p => {
             if (p.supplierId !== supplierId) return;
@@ -13532,6 +13600,7 @@ function supplierReturnReceivableTotal(supplierId) {
 function supplierReturnReceivablesIndex() {
     const bySupplierRaw = {};
     (appData.orders || []).forEach(o => {
+        if (o.isQuote) return;
         if (!o.confirmed) return;
         (o.parts || []).forEach(p => {
             if (!p.supplierId) return;
@@ -14131,6 +14200,7 @@ function customerOrderStats(customerId) {
     let count = 0, remaining = 0;
     (appData.orders || []).forEach(o => {
         if (o.customerId !== customerId) return;
+        if (o.isQuote) return;
         if (!o.supplied) return;
         count++;
         const t = orderTotals(o);
@@ -14146,6 +14216,7 @@ function customerStatsIndex() {
     const byCustomer = {};
     (appData.orders || []).forEach(o => {
         if (!o.customerId) return;
+        if (o.isQuote) return;
         if (!o.supplied) return;
         if (!byCustomer[o.customerId]) byCustomer[o.customerId] = {
             count: 0,
@@ -14165,6 +14236,8 @@ function customerPurchaseTotalIndex() {
     const idx = {};
     (appData.orders || []).forEach(o => {
         if (!o.customerId) return;
+        if (o.isQuote) return;
+        if (!o.confirmed) return;
         if (!o.supplied) return;
         const t = orderTotals(o);
         if (!t.hasChargeable) return;
@@ -14180,6 +14253,7 @@ function customerRefundsPending(customerId) {
     const rows = [];
     (appData.orders || []).forEach(o => {
         if (o.customerId !== customerId) return;
+        if (o.isQuote) return;
         if (!o.confirmed) return;
         (o.parts || []).forEach(p => {
             if (!p.returned || p.customerRefundConfirmed) return;
@@ -14207,6 +14281,7 @@ function customerRefundsPendingIndex() {
     const byCustomerRaw = {};
     (appData.orders || []).forEach(o => {
         if (!o.customerId) return;
+        if (o.isQuote) return;
         if (!o.confirmed) return;
         (o.parts || []).forEach(p => {
             if (!p.returned || p.customerRefundConfirmed) return;
@@ -14250,6 +14325,7 @@ function customerOrderHistory(customerId) {
     const ongoing = [], past = [];
     (appData.orders || []).forEach(o => {
         if (o.customerId !== customerId) return;
+        if (o.isQuote) return;
         if (!o.supplied) return;
         const t = orderTotals(o);
         const row = {
@@ -14861,6 +14937,7 @@ function monthlySalesGrowth(monthsBack) {
     monthsBack = monthsBack || 6;
     const byMonth = {};
     (appData.orders || []).forEach(o => {
+        if (!o.confirmed || o.isQuote) return;
         if (!o.supplied || !o.suppliedAt) return;
         const d = new Date(o.suppliedAt);
         if (isNaN(d.getTime())) return;
@@ -15738,7 +15815,7 @@ function ownerScrapyardPartsFromAppData(kind) {
     const list = [];
     const isPaid = SETTLEMENT_KINDS[kind].isPaid;
     const wantUsed = kind === "used";
-    appData.orders.filter(o => o.supplied && !isPaid(o)).forEach(o => {
+    appData.orders.filter(o => !o.isQuote && o.supplied && !isPaid(o)).forEach(o => {
         (o.parts || []).forEach(p => {
             if (p.returned) return;
             if (!partIsIncludedInOrder(o, p)) return;
@@ -15771,7 +15848,7 @@ function ownerScrapyardPartsFromAppData(kind) {
 function ownerScrapyardReturnReceivablesFromAppData(kind) {
     const list = [];
     const wantUsed = kind === "used";
-    appData.orders.filter(o => o.confirmed).forEach(o => {
+    appData.orders.filter(o => !o.isQuote && o.confirmed).forEach(o => {
         (o.parts || []).forEach(p => {
             if (!p.returned || !p.returnHasReceivable || p.returnCollected) return;
             if (!!p.used !== wantUsed) return;
@@ -15877,11 +15954,7 @@ async function loadScrapyardData(kind) {
         if (scrapyardSharedState.viewerOnly) {
             const parts = ownerScrapyardPartsFromAppData(kind);
             const returnReceivables = ownerScrapyardReturnReceivablesFromAppData(kind);
-            const [amerCustodyRes, omarCustodyRes, supNamesRes, proposalsRes] = await Promise.all([ kind === "used" ? sb.rpc("get_amer_custody_balance") : Promise.resolve({
-                data: 0
-            }), kind === "used" ? sb.rpc("get_omar_custody_balance") : Promise.resolve({
-                data: 0
-            }), sb.rpc("get_settlement_supplier_names"), sb.from("scrapyard_proposals").select("*").eq("kind", kind).order("created_at", {
+            const [amerCustodyRes, omarCustodyRes, supNamesRes, proposalsRes] = await Promise.all([ sb.rpc("get_amer_custody_balance"), sb.rpc("get_omar_custody_balance"), sb.rpc("get_settlement_supplier_names"), sb.from("scrapyard_proposals").select("*").eq("kind", kind).order("created_at", {
                 ascending: false
             }) ]);
             result = {
@@ -15895,8 +15968,8 @@ async function loadScrapyardData(kind) {
         } else if (scrapyardSharedState.canManage) {
             const parts = ownerScrapyardPartsFromAppData(kind);
             const returnReceivables = ownerScrapyardReturnReceivablesFromAppData(kind);
-            const amerBalance = kind === "used" ? amerCustodyBalance() : 0;
-            const omarBalance = kind === "used" ? omarCustodyBalance() : 0;
+            const amerBalance = amerCustodyBalance();
+            const omarBalance = omarCustodyBalance();
             const [proposalsRes, confirmationsRes, suppliersRes] = await Promise.all([ sb.from("scrapyard_proposals").select("*").eq("kind", kind).order("created_at", {
                 ascending: false
             }), sb.from("scrapyard_order_confirmations").select("*").eq("kind", kind), sb.from("suppliers").select("*") ]);
@@ -15913,9 +15986,7 @@ async function loadScrapyardData(kind) {
             };
         } else {
             const myCustodyRpc = scrapyardSharedState.email === "iomar.aljohnii@gmail.com" ? "get_omar_custody_balance" : "get_amer_custody_balance";
-            const custodyPromise = kind === "used" ? sb.rpc(myCustodyRpc) : Promise.resolve({
-                data: 0
-            });
+            const custodyPromise = sb.rpc(myCustodyRpc);
             const [partsRes, returnReceivablesRes, proposalsRes, confirmationsRes, suppliersRes, custodyRes] = await Promise.all([ sb.rpc(SETTLEMENT_KINDS[kind].rpc), sb.rpc("get_scrapyard_return_receivables", {
                 p_kind: kind
             }), sb.from("scrapyard_proposals").select("*").eq("kind", kind).eq("submitted_by", scrapyardSharedState.email).order("created_at", {
