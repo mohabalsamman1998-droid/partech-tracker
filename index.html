@@ -1656,6 +1656,8 @@ function computeCustomerPaidAmountForBox(order) {
 
 const CUSTOMER_REMAINING_TOLERANCE = 1;
 
+const DIRECT_PAID_FIX_CUTOFF = "2026-09-25T21:57:33.000Z";
+
 function orderTotals(order) {
     let costTotal = 0, costToScrapyard = 0, costToSupplier = 0, partsSellTotal = 0, pricedCount = 0, sellEligibleCount = 0;
     const activeParts = orderActiveParts(order);
@@ -2058,13 +2060,20 @@ function computeAggregateFinancials(matchPeriodFn) {
                 dueToScrapyard += t.costToScrapyard;
                 dueToScrapyardCount++;
             }
-        } else if (o.paidToSupplier) directPaidTotal += t.costToScrapyard;
+        } else if (o.paidToSupplier && o.paidToSupplierAt && o.paidToSupplierAt >= DIRECT_PAID_FIX_CUTOFF) directPaidTotal += t.costToScrapyard;
         if (!newPartsCostSettled(o, t)) {
             if (o.supplied && t.costToSupplier > 0) {
                 dueToSuppliers += t.costToSupplier;
                 dueToSuppliersCount++;
             }
-        } else if (orderIsMixedPartType(t) ? o.paidToSupplierNew : o.paidToSupplier) directPaidTotal += t.costToSupplier;
+        } else {
+            const mixed = orderIsMixedPartType(t);
+            const isDirectNew = mixed ? o.paidToSupplierNew : o.paidToSupplier;
+            const settledAtNew = mixed ? o.paidToSupplierNewAt || o.paidToAmerNewAt || o.paidToOmarNewAt : o.paidToSupplierAt || o.paidToAmerAt || o.paidToOmarAt;
+            if (settledAtNew && settledAtNew >= DIRECT_PAID_FIX_CUTOFF) {
+                if (isDirectNew) directPaidTotal += t.costToSupplier;
+            } else directPaidTotal += t.costToSupplier;
+        }
         if (o.supplied && t.hasChargeable && !t.customerFullyPaid) {
             dueFromCustomers += t.customerRemaining;
             dueFromCustomersCount++;
