@@ -1280,6 +1280,7 @@
         <button id="btn-open-customers" class="btn btn-ghost btn-with-badge">👤 العملاء<span id="customers-overdue-badge" class="tasks-badge"></span></button>
         <button id="btn-open-archive" class="btn btn-ghost btn-with-badge">🗄️ الأرشيف<span id="archive-pending-badge" class="tasks-badge"></span></button>
         <button id="btn-open-statistics" class="btn btn-ghost">📊 الإحصائيات</button>
+        <button id="btn-open-delivery-agents" class="btn btn-ghost" style="display:none;">🚚 المناديب</button>
         <button id="btn-open-settlement-viewer" class="btn btn-ghost" style="display:none;">🧾 السداد</button>
       </div>
     </header>
@@ -1327,6 +1328,7 @@
     <div id="customers-view" style="display:none;"></div>
     <div id="archive-view" style="display:none;"></div>
     <div id="statistics-view" style="display:none;"></div>
+    <div id="delivery-agents-view" style="display:none;"></div>
   </div>
 
   <div class="page" id="scrapyard-root" style="display:none;"></div>
@@ -1954,12 +1956,13 @@ async function hydrateArchivedOrders() {
 async function loadData() {
     try {
         if (!sb) throw new Error("NO_DB");
-        const [ordersRes, treasuryRes, tasksRes, suppliersRes, customersRes, amerCustodyBalanceRes, omarCustodyBalanceRes] = await Promise.all([ sb.from("orders").select("*").or(ORDERS_ACTIVE_FILTER), sb.from("treasury_entries").select("*"), sb.from("tasks").select("*"), sb.from("suppliers").select("*"), sb.from("customers").select("*"), sb.rpc("get_amer_custody_balance"), sb.rpc("get_omar_custody_balance") ]);
+        const [ordersRes, treasuryRes, tasksRes, suppliersRes, customersRes, deliveryAgentsRes, amerCustodyBalanceRes, omarCustodyBalanceRes] = await Promise.all([ sb.from("orders").select("*").or(ORDERS_ACTIVE_FILTER), sb.from("treasury_entries").select("*"), sb.from("tasks").select("*"), sb.from("suppliers").select("*"), sb.from("customers").select("*"), sb.from("delivery_agents").select("*"), sb.rpc("get_amer_custody_balance"), sb.rpc("get_omar_custody_balance") ]);
         if (ordersRes.error) throw ordersRes.error;
         if (treasuryRes.error) throw treasuryRes.error;
         if (tasksRes.error) throw tasksRes.error;
         if (suppliersRes.error) throw suppliersRes.error;
         if (customersRes.error) throw customersRes.error;
+        if (deliveryAgentsRes.error) console.error("delivery_agents:", deliveryAgentsRes.error);
         if (!amerCustodyBalanceRes.error) {
             serverAmerCustodyBalance = Number(amerCustodyBalanceRes.data) || 0;
         } else {
@@ -1975,7 +1978,8 @@ async function loadData() {
             treasury: groupTreasuryRows(treasuryRes.data),
             tasks: groupTaskRows(tasksRes.data),
             suppliers: groupSupplierOrCustomerRows(suppliersRes.data),
-            customers: groupSupplierOrCustomerRows(customersRes.data)
+            customers: groupSupplierOrCustomerRows(customersRes.data),
+            deliveryAgents: deliveryAgentsRes.error ? [] : (deliveryAgentsRes.data || []).map(deliveryAgentRowToObject)
         };
         archivedOrdersHydration = hydrateArchivedOrders();
     } catch (e) {
@@ -1984,7 +1988,8 @@ async function loadData() {
             treasury: defaultTreasury(),
             tasks: defaultTasks(),
             suppliers: [],
-            customers: []
+            customers: [],
+            deliveryAgents: []
         };
         showToast("تعذر الاتصال بقاعدة البيانات — تحقق من إعداد Supabase (SUPABASE_URL / SUPABASE_ANON_KEY)", "error");
     }
@@ -2582,13 +2587,15 @@ function feeFieldRowHtml(d) {
     const deliveryFeeInputHtml = deliveryFeeUi != null ? deliveryFeeUi : '<input type="number" min="0" step="0.5" id="order-delivery-fee-input" class="num" value="' + escapeHtml(d.deliveryFeeAmount ? d.deliveryFeeAmount : "") + '" placeholder="0">';
     const deliveryCostUi = fieldRequestUiHtml("deliveryCost", null, d.deliveryCost, '<span class="field-readonly-value num">' + fmtMoney(Number(d.deliveryCost) || 0) + "</span>");
     const deliveryCostInputHtml = deliveryCostUi != null ? deliveryCostUi : '<input type="number" min="0" step="0.5" id="order-delivery-cost-input" class="num" value="' + escapeHtml(d.deliveryCost ? d.deliveryCost : "") + '" placeholder="0">';
+    const agentsForSelect = (appData.deliveryAgents || []).filter(a => a.active || a.id === d.deliveryAgentId);
+    const deliveryAgentSelectHtml = '<select id="order-delivery-agent-select" class="num">' + '<option value="">— اختر مندوب —</option>' + agentsForSelect.map(a => '<option value="' + escapeHtml(a.id) + '"' + (d.deliveryAgentId === a.id ? " selected" : "") + ">" + escapeHtml(a.name) + "</option>").join("") + "</select>";
     const feeEnabledUi = fieldRequestUiHtml("feeEnabled", null, d.feeEnabled, '<span class="field-readonly-value">' + (d.feeEnabled ? "✓ مفعّلة" : "غير مفعّلة") + "</span>");
     const feeToggleHtml = feeEnabledUi != null ? feeEnabledUi : '<input type="checkbox" id="order-fee-toggle" ' + (d.feeEnabled ? "checked" : "") + ">";
     const serviceFeeEnabledUi = fieldRequestUiHtml("serviceFeeEnabled", null, d.serviceFeeEnabled, '<span class="field-readonly-value">' + (d.serviceFeeEnabled ? "✓ مفعّلة" : "غير مفعّلة") + "</span>");
     const serviceFeeToggleHtml = serviceFeeEnabledUi != null ? serviceFeeEnabledUi : '<input type="checkbox" id="order-service-fee-toggle" ' + (d.serviceFeeEnabled ? "checked" : "") + ">";
     const deliveryFeeEnabledUi = fieldRequestUiHtml("deliveryFeeEnabled", null, d.deliveryFeeEnabled, '<span class="field-readonly-value">' + (d.deliveryFeeEnabled ? "✓ مفعّلة" : "غير مفعّلة") + "</span>");
     const deliveryFeeToggleHtml = deliveryFeeEnabledUi != null ? deliveryFeeEnabledUi : '<input type="checkbox" id="order-delivery-fee-toggle" ' + (d.deliveryFeeEnabled ? "checked" : "") + ">";
-    return '<div id="order-fee-fields-wrap">' + '<label class="toggle-row">' + feeToggleHtml + '<span>احتساب نسبة رسوم خدمة وتوصيل (منفصلة عن مربع "أجور التوصيل" تحت — فعّل الاثنين لو فيه توصيل فعلي بالإضافة للنسبة)</span></label>' + '<div class="fee-percent-row" id="order-fee-percent-row" style="' + (d.feeEnabled ? "" : "display:none;") + '"><span>النسبة</span>' + feePercentInputHtml + '<span>%</span><span class="fee-amount-preview" id="fee-amount-preview"></span></div>' + (feePercentUi == null ? '<div class="fee-percent-row" id="order-fee-amount-row" style="' + (d.feeEnabled ? "" : "display:none;") + '"><span>أو المبلغ مباشرة</span><input type="number" min="0" step="0.5" id="order-fee-amount-input" class="num" placeholder="0"><span>ر.س</span></div>' : "") + '<label class="toggle-row">' + serviceFeeToggleHtml + "<span>احتساب نسبة رسوم خدمات</span></label>" + '<div class="fee-percent-row" id="order-service-fee-percent-row" style="' + (d.serviceFeeEnabled ? "" : "display:none;") + '"><span>النسبة</span>' + serviceFeePercentInputHtml + '<span>%</span><span class="service-fee-amount-preview" id="service-fee-amount-preview"></span></div>' + (serviceFeePercentUi == null ? '<div class="fee-percent-row" id="order-service-fee-amount-row" style="' + (d.serviceFeeEnabled ? "" : "display:none;") + '"><span>أو المبلغ مباشرة</span><input type="number" min="0" step="0.5" id="order-service-fee-amount-input" class="num" placeholder="0"><span>ر.س</span></div>' : "") + '<label class="toggle-row">' + deliveryFeeToggleHtml + "<span>احتساب أجور التوصيل</span></label>" + '<div class="fee-percent-row" id="order-delivery-fee-row" style="' + (d.deliveryFeeEnabled ? "" : "display:none;") + '"><span>المبلغ</span>' + deliveryFeeInputHtml + "<span>ر.س</span></div>" + '<div class="delivery-cost-box">' + '<div class="delivery-cost-title">🚚 تكلفة التوصيل</div>' + '<div class="delivery-cost-hint">داخلية — لا تظهر بالفاتورة، تُخصم من الربح فقط</div>' + '<div class="fee-percent-row delivery-cost-row"><span>المبلغ</span>' + deliveryCostInputHtml + "<span>ر.س</span></div>" + "</div>" + "</div>";
+    return '<div id="order-fee-fields-wrap">' + '<label class="toggle-row">' + feeToggleHtml + '<span>احتساب نسبة رسوم خدمة وتوصيل (منفصلة عن مربع "أجور التوصيل" تحت — فعّل الاثنين لو فيه توصيل فعلي بالإضافة للنسبة)</span></label>' + '<div class="fee-percent-row" id="order-fee-percent-row" style="' + (d.feeEnabled ? "" : "display:none;") + '"><span>النسبة</span>' + feePercentInputHtml + '<span>%</span><span class="fee-amount-preview" id="fee-amount-preview"></span></div>' + (feePercentUi == null ? '<div class="fee-percent-row" id="order-fee-amount-row" style="' + (d.feeEnabled ? "" : "display:none;") + '"><span>أو المبلغ مباشرة</span><input type="number" min="0" step="0.5" id="order-fee-amount-input" class="num" placeholder="0"><span>ر.س</span></div>' : "") + '<label class="toggle-row">' + serviceFeeToggleHtml + "<span>احتساب نسبة رسوم خدمات</span></label>" + '<div class="fee-percent-row" id="order-service-fee-percent-row" style="' + (d.serviceFeeEnabled ? "" : "display:none;") + '"><span>النسبة</span>' + serviceFeePercentInputHtml + '<span>%</span><span class="service-fee-amount-preview" id="service-fee-amount-preview"></span></div>' + (serviceFeePercentUi == null ? '<div class="fee-percent-row" id="order-service-fee-amount-row" style="' + (d.serviceFeeEnabled ? "" : "display:none;") + '"><span>أو المبلغ مباشرة</span><input type="number" min="0" step="0.5" id="order-service-fee-amount-input" class="num" placeholder="0"><span>ر.س</span></div>' : "") + '<label class="toggle-row">' + deliveryFeeToggleHtml + "<span>احتساب أجور التوصيل</span></label>" + '<div class="fee-percent-row" id="order-delivery-fee-row" style="' + (d.deliveryFeeEnabled ? "" : "display:none;") + '"><span>المبلغ</span>' + deliveryFeeInputHtml + "<span>ر.س</span></div>" + '<div class="delivery-cost-box">' + '<div class="delivery-cost-title">🚚 تكلفة التوصيل</div>' + '<div class="delivery-cost-hint">داخلية — لا تظهر بالفاتورة، تُخصم من الربح فقط</div>' + '<div class="fee-percent-row delivery-cost-row"><span>المبلغ</span>' + deliveryCostInputHtml + "<span>ر.س</span></div>" + '<div class="fee-percent-row delivery-cost-row"><span>المندوب</span>' + deliveryAgentSelectHtml + "</div>" + "</div>" + "</div>";
 }
 
 function bindFeeFieldEvents() {
@@ -2655,6 +2662,10 @@ function bindFeeFieldEvents() {
     if (deliveryCostInput) deliveryCostInput.addEventListener("input", e => {
         draft.deliveryCost = e.target.value === "" ? 0 : Math.max(0, Number(e.target.value) || 0);
         updateModalTotals();
+    });
+    const deliveryAgentSelect = root.querySelector("#order-delivery-agent-select");
+    if (deliveryAgentSelect) deliveryAgentSelect.addEventListener("change", e => {
+        draft.deliveryAgentId = e.target.value || null;
     });
 }
 
@@ -2937,6 +2948,8 @@ function openModal(mode, orderId) {
             deliveryFeeEnabled: false,
             deliveryFeeAmount: 0,
             deliveryCost: 0,
+            deliveryAgentId: null,
+            deliveryCostPaid: false,
             createdAt: (new Date).toISOString(),
             updatedAt: (new Date).toISOString(),
             isNew: true
@@ -7098,6 +7111,8 @@ function openQuoteModal(mode, orderId, role) {
             deliveryFeeEnabled: false,
             deliveryFeeAmount: 0,
             deliveryCost: 0,
+            deliveryAgentId: null,
+            deliveryCostPaid: false,
             createdAt: (new Date).toISOString(),
             updatedAt: (new Date).toISOString(),
             isQuote: true,
@@ -9269,6 +9284,8 @@ function hideAllSecondaryViews() {
     document.getElementById("customers-view").style.display = "none";
     document.getElementById("archive-view").style.display = "none";
     document.getElementById("statistics-view").style.display = "none";
+    const deliveryAgentsView = document.getElementById("delivery-agents-view");
+    if (deliveryAgentsView) deliveryAgentsView.style.display = "none";
 }
 
 async function openTreasuryView() {
@@ -11899,6 +11916,285 @@ function purchasingCustodyDeficit() {
     return round2(Math.max(0, -purchasingCustodyBalance()));
 }
 
+function deliveryAgentRowToObject(row) {
+    return {
+        id: row.id,
+        name: row.name || "",
+        phone: row.phone || "",
+        active: row.active !== false,
+        createdAt: row.created_at ? new Date(row.created_at).toISOString() : ""
+    };
+}
+
+function deliveryAgentById(id) {
+    return (appData.deliveryAgents || []).find(a => a.id === id) || null;
+}
+
+function deliveryOrderEligible(order) {
+    if (!order || order.isQuote || !order.supplied || !order.deliveryAgentId) return false;
+    return orderTotals(order).deliveryCost > 0;
+}
+
+function deliveryAgentOrders(agentId, paid) {
+    return (appData.orders || []).filter(o => o.deliveryAgentId === agentId && deliveryOrderEligible(o) && !!o.deliveryCostPaid === !!paid).sort((a, b) => (a.suppliedAt || "").localeCompare(b.suppliedAt || ""));
+}
+
+function deliveryAgentUnpaidTotal(agentId) {
+    return round2(deliveryAgentOrders(agentId, false).reduce((sum, o) => sum + orderTotals(o).deliveryCost, 0));
+}
+
+function deliveryAgentPaidTotal(agentId) {
+    return round2(deliveryAgentOrders(agentId, true).reduce((sum, o) => sum + orderTotals(o).deliveryCost, 0));
+}
+
+function deliveryAgentsSummary() {
+    return (appData.deliveryAgents || []).map(a => ({
+        id: a.id,
+        name: a.name,
+        phone: a.phone,
+        active: a.active,
+        unpaidCount: deliveryAgentOrders(a.id, false).length,
+        unpaidTotal: deliveryAgentUnpaidTotal(a.id),
+        paidTotal: deliveryAgentPaidTotal(a.id)
+    }));
+}
+
+async function saveDeliveryAgent(agent) {
+    if (!sb) return null;
+    const row = {
+        id: agent.id || uid("da"),
+        name: (agent.name || "").trim(),
+        phone: (agent.phone || "").trim() || null,
+        active: agent.active !== false
+    };
+    if (!row.name) return null;
+    const {data: data, error: error} = await sb.from("delivery_agents").upsert(row).select("*").maybeSingle();
+    if (error) {
+        showToast("تعذر حفظ المندوب", "error");
+        return null;
+    }
+    const obj = deliveryAgentRowToObject(data);
+    if (!Array.isArray(appData.deliveryAgents)) appData.deliveryAgents = [];
+    const idx = appData.deliveryAgents.findIndex(a => a.id === obj.id);
+    if (idx >= 0) appData.deliveryAgents[idx] = obj; else appData.deliveryAgents.push(obj);
+    return obj;
+}
+
+async function setDeliveryAgentActive(id, active) {
+    if (!sb) return false;
+    const {error: error} = await sb.from("delivery_agents").update({
+        active: !!active
+    }).eq("id", id);
+    if (error) {
+        showToast("تعذر التحديث", "error");
+        return false;
+    }
+    const a = deliveryAgentById(id);
+    if (a) a.active = !!active;
+    return true;
+}
+
+async function settleDeliveryOrders(agentId, orderIds) {
+    const okIds = [], failIds = [];
+    if (!sb || !Array.isArray(orderIds) || !orderIds.length) return {
+        okIds: okIds,
+        failIds: failIds
+    };
+    for (const id of orderIds) {
+        const {data: data, error: error} = await sb.from("orders").select("*").eq("id", id).maybeSingle();
+        if (error || !data) {
+            failIds.push(id);
+            continue;
+        }
+        const order = orderRowToObject(data);
+        if (order.deliveryAgentId !== agentId || order.deliveryCostPaid) {
+            failIds.push(id);
+            continue;
+        }
+        order.deliveryCostPaid = true;
+        order.deliveryCostPaidAt = (new Date).toISOString();
+        const ok = await persistOrder(order, false);
+        if (ok) {
+            okIds.push(id);
+            const idx = (appData.orders || []).findIndex(o => o.id === id);
+            if (idx >= 0) appData.orders[idx] = order;
+        } else failIds.push(id);
+    }
+    return {
+        okIds: okIds,
+        failIds: failIds
+    };
+}
+
+function deliveryAgentsViewHtml() {
+    const summary = deliveryAgentsSummary();
+    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-delivery-agents">→ رجوع للطلبيات</button>' + '<div class="tasks-title">🚚 المناديب</div>' + "</div>" + '<div class="treasury-block">' + '<div class="task-add-row">' + '<input type="text" id="new-delivery-agent-name-input" class="task-add-input" placeholder="اسم المندوب الجديد">' + '<input type="tel" id="new-delivery-agent-phone-input" class="task-add-input" placeholder="رقم الجوال (اختياري)">' + '<button type="button" class="btn btn-sm btn-add-part" id="add-delivery-agent-btn">+ إضافة</button>' + "</div>" + '<div class="task-items-list" id="delivery-agents-items-list">' + (summary.length ? summary.map(deliveryAgentRowHtml).join("") : '<div class="expense-empty-hint">ما فيه مناديب مضافين بعد</div>') + "</div>" + "</div>";
+}
+
+function deliveryAgentRowHtml(a) {
+    return '<div class="task-item-row" data-delivery-agent-id="' + escapeHtml(a.id) + '">' + '<div class="supplier-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(a.name || "بدون اسم") + (a.active ? "" : " (معطّل)") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(a.phone || "—") + "</span>" + '<span class="num ' + (a.unpaidTotal > 0 ? "text-rust" : "text-green") + '">' + fmtMoney(a.unpaidTotal) + "</span>" + '<button type="button" class="icon-btn delivery-agent-settle-btn" title="التسويات">📋 التسويات</button>' + '<button type="button" class="icon-btn delivery-agent-edit-btn" title="تعديل">✏️ تعديل</button>' + '<button type="button" class="icon-btn delivery-agent-toggle-active-btn" title="' + (a.active ? "تعطيل" : "تفعيل") + '">' + (a.active ? "🚫" : "✅") + "</button>" + "</div>" + '<div class="purchase-history-row-sub">' + "<span>عدد التوصيلات غير المسددة: " + a.unpaidCount + "</span>" + "<span>إجمالي مسدد سابقًا: " + fmtMoney(a.paidTotal) + "</span>" + "</div>" + "</div>";
+}
+
+function renderDeliveryAgentsView() {
+    const el = document.getElementById("delivery-agents-view");
+    if (!el) return;
+    el.innerHTML = deliveryAgentsViewHtml();
+    bindDeliveryAgentsViewEvents();
+}
+
+function bindDeliveryAgentsViewEvents() {
+    document.getElementById("btn-back-to-orders-from-delivery-agents").addEventListener("click", closeDeliveryAgentsView);
+    bindBusyButton(document.getElementById("add-delivery-agent-btn"), async () => {
+        const nameInput = document.getElementById("new-delivery-agent-name-input");
+        const phoneInput = document.getElementById("new-delivery-agent-phone-input");
+        const name = nameInput.value.trim();
+        if (!name) {
+            showToast("اكتب اسم المندوب", "error");
+            return;
+        }
+        const saved = await saveDeliveryAgent({
+            name: name,
+            phone: phoneInput.value.trim()
+        });
+        if (saved) renderDeliveryAgentsView();
+    });
+    document.querySelectorAll("#delivery-agents-items-list .delivery-agent-settle-btn").forEach(btn => {
+        btn.addEventListener("click", e => openDeliverySettlementModal(e.target.closest("[data-delivery-agent-id]").getAttribute("data-delivery-agent-id")));
+    });
+    document.querySelectorAll("#delivery-agents-items-list .delivery-agent-edit-btn").forEach(btn => {
+        btn.addEventListener("click", e => openDeliveryAgentEditModal(e.target.closest("[data-delivery-agent-id]").getAttribute("data-delivery-agent-id")));
+    });
+    document.querySelectorAll("#delivery-agents-items-list .delivery-agent-toggle-active-btn").forEach(btn => {
+        btn.addEventListener("click", async e => {
+            const id = e.target.closest("[data-delivery-agent-id]").getAttribute("data-delivery-agent-id");
+            const a = deliveryAgentById(id);
+            if (!a) return;
+            const ok = await setDeliveryAgentActive(id, !a.active);
+            if (ok) renderDeliveryAgentsView();
+        });
+    });
+}
+
+async function openDeliveryAgentsView() {
+    if (!hasElevatedAccess()) {
+        showToast("غير متاح", "error");
+        return;
+    }
+    hideAllSecondaryViews();
+    if (archivedOrdersHydration) await archivedOrdersHydration;
+    renderDeliveryAgentsView();
+    document.getElementById("delivery-agents-view").style.display = "block";
+}
+
+function closeDeliveryAgentsView() {
+    document.getElementById("delivery-agents-view").style.display = "none";
+    document.getElementById("orders-view").style.display = "";
+}
+
+function openDeliveryAgentEditModal(agentId) {
+    const a = deliveryAgentById(agentId);
+    if (!a) return;
+    const root = document.getElementById("modal-root");
+    root.innerHTML = '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-header"><div class="modal-title">تعديل مندوب</div><button type="button" class="icon-btn" id="delivery-agent-edit-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="modal-body">' + '<label class="field"><span class="field-label">الاسم</span><input type="text" id="delivery-agent-edit-name-input" value="' + escapeHtml(a.name) + '"></label>' + '<label class="field"><span class="field-label">رقم الجوال</span><input type="tel" id="delivery-agent-edit-phone-input" value="' + escapeHtml(a.phone || "") + '"></label>' + '<button type="button" class="btn btn-primary" id="delivery-agent-edit-save-btn" style="width:100%;margin-top:8px;">💾 حفظ</button>' + "</div>" + "</div>" + "</div>";
+    root.classList.add("modal-open");
+    const close = () => {
+        root.innerHTML = "";
+        root.classList.remove("modal-open");
+    };
+    root.querySelector("[data-close-backdrop]").addEventListener("click", e => {
+        if (e.target.hasAttribute("data-close-backdrop")) close();
+    });
+    root.querySelector("#delivery-agent-edit-close-btn").addEventListener("click", close);
+    root.querySelector("#delivery-agent-edit-save-btn").addEventListener("click", async () => {
+        const name = document.getElementById("delivery-agent-edit-name-input").value.trim();
+        const phone = document.getElementById("delivery-agent-edit-phone-input").value.trim();
+        if (!name) {
+            showToast("الاسم مطلوب", "error");
+            return;
+        }
+        const saved = await saveDeliveryAgent({
+            id: a.id,
+            name: name,
+            phone: phone,
+            active: a.active
+        });
+        if (saved) {
+            close();
+            renderDeliveryAgentsView();
+        }
+    });
+}
+
+let deliverySettlementCheckedIds = new Set;
+
+function deliverySettlementOrderRowHtml(order, paid) {
+    const t = orderTotals(order);
+    const customer = order.customerId ? (appData.customers || []).find(c => c.id === order.customerId) : null;
+    const dateLabel = order.suppliedAt ? fmtDateShort(order.suppliedAt) : "";
+    return '<div class="task-item-row" data-order-id="' + escapeHtml(order.id) + '">' + '<div class="supplier-row-main">' + (paid ? "" : '<input type="checkbox" class="delivery-settlement-order-check" data-order-id="' + escapeHtml(order.id) + '"' + (deliverySettlementCheckedIds.has(order.id) ? " checked" : "") + ">") + '<span class="purchase-history-desc">' + escapeHtml(order.orderNumber) + (customer ? " — " + escapeHtml(customer.name || customer.phone || "") : "") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(dateLabel) + "</span>" + '<span class="num">' + fmtMoney(t.deliveryCost) + "</span>" + "</div>" + "</div>";
+}
+
+function deliverySettlementModalHtml(agentId) {
+    const a = deliveryAgentById(agentId);
+    const label = a ? a.name : "مندوب";
+    const unpaid = deliveryAgentOrders(agentId, false);
+    const paid = deliveryAgentOrders(agentId, true);
+    const unpaidTotal = deliveryAgentUnpaidTotal(agentId);
+    const selectedTotal = round2(unpaid.filter(o => deliverySettlementCheckedIds.has(o.id)).reduce((s, o) => s + orderTotals(o).deliveryCost, 0));
+    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div class="modal-title">تسويات التوصيل — ' + escapeHtml(label) + '</div><button type="button" class="icon-btn" id="delivery-settlement-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="modal-body">' + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>غير مسددة</span><span class="num text-rust">' + fmtMoney(unpaidTotal) + "</span></div>" + (unpaid.length ? '<label class="toggle-row"><input type="checkbox" id="delivery-settlement-select-all"' + (unpaid.every(o => deliverySettlementCheckedIds.has(o.id)) ? " checked" : "") + "><span>تحديد الكل</span></label>" + unpaid.map(o => deliverySettlementOrderRowHtml(o, false)).join("") : '<div class="expense-empty-hint">ما فيه توصيلات غير مسددة لهالمندوب</div>') + "</div>" + (unpaid.length ? '<button type="button" class="btn btn-primary" id="delivery-settlement-pay-btn" style="width:100%;margin:8px 0;" ' + (deliverySettlementCheckedIds.size ? "" : "disabled") + ">✅ تسديد المحدد (" + fmtMoney(selectedTotal) + ")</button>" : "") + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>مسددة سابقًا</span><span class="num text-green">' + fmtMoney(deliveryAgentPaidTotal(agentId)) + "</span></div>" + (paid.length ? paid.map(o => deliverySettlementOrderRowHtml(o, true)).join("") : '<div class="expense-empty-hint">ما فيه تسويات سابقة</div>') + "</div>" + "</div>" + "</div>" + "</div>";
+}
+
+function openDeliverySettlementModal(agentId) {
+    deliverySettlementCheckedIds = new Set;
+    renderDeliverySettlementModal(agentId);
+}
+
+function renderDeliverySettlementModal(agentId) {
+    const root = document.getElementById("modal-root");
+    root.innerHTML = deliverySettlementModalHtml(agentId);
+    root.classList.add("modal-open");
+    bindDeliverySettlementModalEvents(agentId);
+}
+
+function bindDeliverySettlementModalEvents(agentId) {
+    const root = document.getElementById("modal-root");
+    const close = () => {
+        root.innerHTML = "";
+        root.classList.remove("modal-open");
+        deliverySettlementCheckedIds = new Set;
+        renderDeliveryAgentsView();
+    };
+    root.querySelector("[data-close-backdrop]").addEventListener("click", e => {
+        if (e.target.hasAttribute("data-close-backdrop")) close();
+    });
+    root.querySelector("#delivery-settlement-close-btn").addEventListener("click", close);
+    const selectAll = root.querySelector("#delivery-settlement-select-all");
+    if (selectAll) selectAll.addEventListener("change", e => {
+        const unpaid = deliveryAgentOrders(agentId, false);
+        if (e.target.checked) unpaid.forEach(o => deliverySettlementCheckedIds.add(o.id)); else deliverySettlementCheckedIds.clear();
+        renderDeliverySettlementModal(agentId);
+    });
+    root.querySelectorAll(".delivery-settlement-order-check").forEach(chk => {
+        chk.addEventListener("change", e => {
+            const id = e.target.getAttribute("data-order-id");
+            if (e.target.checked) deliverySettlementCheckedIds.add(id); else deliverySettlementCheckedIds.delete(id);
+            renderDeliverySettlementModal(agentId);
+        });
+    });
+    const payBtn = root.querySelector("#delivery-settlement-pay-btn");
+    if (payBtn) payBtn.addEventListener("click", async () => {
+        if (!deliverySettlementCheckedIds.size) return;
+        payBtn.disabled = true;
+        payBtn.textContent = "⏳ جارٍ التسديد…";
+        const ids = Array.from(deliverySettlementCheckedIds);
+        const {okIds: okIds, failIds: failIds} = await settleDeliveryOrders(agentId, ids);
+        deliverySettlementCheckedIds = new Set;
+        if (okIds.length) showToast("تم تسديد " + okIds.length + " توصيلة");
+        if (failIds.length) showToast("تعذر تسديد " + failIds.length + " توصيلة — حاول تحديث الصفحة", "error");
+        renderDeliverySettlementModal(agentId);
+    });
+}
+
 function myCustodyBalance() {
     return scrapyardSharedState.email === "iomar.aljohnii@gmail.com" ? omarCustodyBalance() : amerCustodyBalance();
 }
@@ -12158,6 +12454,8 @@ async function exportAllDataToExcel() {
             "نسبة رسوم الخدمات %": t.serviceFeeEnabled ? t.serviceFeePercent : "",
             "أجور التوصيل": t.deliveryFeeEnabled ? t.deliveryFeeAmount : "",
             "تكلفة التوصيل (داخلية)": t.deliveryCost || "",
+            "مندوب التوصيل": t.deliveryCost > 0 ? (deliveryAgentById(o.deliveryAgentId) || {}).name || "" : "",
+            "تسديد أجرة التوصيل": t.deliveryCost > 0 && o.deliveryAgentId ? o.deliveryCostPaid ? "نعم" : "لا" : "",
             "الربح": t.hasChargeable ? t.profit : "",
             "المدفوع من الزبون": t.customerPaidAmount,
             "المتبقي على الزبون": t.hasChargeable ? t.customerRemaining : "",
@@ -12362,6 +12660,8 @@ function normalizeImportedOrder(o) {
         deliveryFeeEnabled: false,
         deliveryFeeAmount: 0,
         deliveryCost: 0,
+        deliveryAgentId: null,
+        deliveryCostPaid: false,
         createdAt: (new Date).toISOString(),
         updatedAt: (new Date).toISOString()
     };
@@ -12477,6 +12777,11 @@ function bindToolbar() {
     if (statisticsBtn2) statisticsBtn2.addEventListener("click", () => {
         const view = document.getElementById("statistics-view");
         if (view.style.display !== "none") closeStatisticsView(); else openStatisticsView();
+    });
+    const deliveryAgentsBtn2 = document.getElementById("btn-open-delivery-agents");
+    if (deliveryAgentsBtn2) deliveryAgentsBtn2.addEventListener("click", () => {
+        const view = document.getElementById("delivery-agents-view");
+        if (view.style.display !== "none") closeDeliveryAgentsView(); else openDeliveryAgentsView();
     });
     const settlementViewerBtn = document.getElementById("btn-open-settlement-viewer");
     if (settlementViewerBtn) settlementViewerBtn.addEventListener("click", openSettlementViewer);
@@ -15749,6 +16054,8 @@ async function showAppIfAllowed(session) {
         if (attendanceChartBtnVis) attendanceChartBtnVis.style.display = currentUserIsElevated ? "" : "none";
         const suppliersBtn = document.getElementById("btn-open-suppliers");
         if (suppliersBtn) suppliersBtn.style.display = currentUserIsElevated ? "" : "none";
+        const deliveryAgentsBtn = document.getElementById("btn-open-delivery-agents");
+        if (deliveryAgentsBtn) deliveryAgentsBtn.style.display = currentUserIsElevated ? "" : "none";
         const settlementViewerBtn = document.getElementById("btn-open-settlement-viewer");
         if (settlementViewerBtn) settlementViewerBtn.style.display = !currentUserIsElevated && SETTLEMENT_VIEWER_EMAILS.includes(email) ? "" : "none";
         if (!appInitDone) {
