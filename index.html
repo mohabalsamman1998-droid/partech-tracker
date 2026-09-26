@@ -6359,7 +6359,7 @@ function mediaRenderViewer() {
     }
     const n = v.local ? 1 : v.ids.length;
     const root = document.getElementById("confirm-root");
-    root.innerHTML = '<div class="modal-backdrop" data-close-confirm data-media-viewer>' + '<div class="media-viewer" role="dialog" aria-modal="true">' + '<div class="media-viewer-head"><span class="media-viewer-meta">' + metaHtml + "</span>" + '<button type="button" class="icon-btn" data-mv="close" aria-label="إغلاق">✕</button></div>' + '<div class="media-viewer-stage" id="media-viewer-stage">جاري التحميل…</div>' + '<div class="media-viewer-foot">' + (n > 1 ? '<button type="button" class="icon-btn" data-mv="prev"' + (v.idx <= 0 ? " disabled" : "") + ">→ السابق</button>" + '<span class="num">' + (v.idx + 1) + " / " + n + "</span>" + '<button type="button" class="icon-btn" data-mv="next"' + (v.idx >= n - 1 ? " disabled" : "") + ">التالي ←</button>" : "<span></span>") + (canDel ? '<button type="button" class="icon-btn icon-btn-danger" data-mv="del">🗑️ حذف</button>' : "") + "</div>" + "</div>" + "</div>";
+    root.innerHTML = '<div class="modal-backdrop" data-close-confirm data-media-viewer>' + '<div class="media-viewer" role="dialog" aria-modal="true">' + '<div class="media-viewer-head"><span class="media-viewer-meta">' + metaHtml + "</span>" + '<button type="button" class="icon-btn" data-mv="close" aria-label="إغلاق">✕</button></div>' + '<div class="media-viewer-stage" id="media-viewer-stage">جاري التحميل…</div>' + '<div class="media-viewer-foot">' + (n > 1 ? '<button type="button" class="icon-btn" data-mv="prev"' + (v.idx <= 0 ? " disabled" : "") + ">→ السابق</button>" + '<span class="num">' + (v.idx + 1) + " / " + n + "</span>" + '<button type="button" class="icon-btn" data-mv="next"' + (v.idx >= n - 1 ? " disabled" : "") + ">التالي ←</button>" : "<span></span>") + (mediaViewerShareSupported() ? '<button type="button" class="icon-btn" data-mv="share">🔗 مشاركة</button>' : "") + (canDel ? '<button type="button" class="icon-btn icon-btn-danger" data-mv="del">🗑️ حذف</button>' : "") + "</div>" + "</div>" + "</div>";
     root.classList.add("modal-open");
     root.querySelector("[data-media-viewer]").addEventListener("click", mediaViewerClick);
     window.addEventListener("keydown", mediaOverlayEscListener, true);
@@ -6426,6 +6426,40 @@ function mediaViewerClick(e) {
         return;
     }
     if (act === "del") mediaViewerDeleteTap(b);
+    if (act === "share") mediaViewerShareTap(b);
+}
+
+function mediaViewerShareSupported() {
+    return typeof navigator !== "undefined" && typeof navigator.share === "function" && typeof navigator.canShare === "function";
+}
+
+async function mediaViewerShareTap(btn) {
+    const v = mediaViewer;
+    if (!v || v.busy) return;
+    const stage = document.getElementById("media-viewer-stage");
+    const mediaEl = stage ? stage.querySelector("img,video") : null;
+    const url = mediaEl ? mediaEl.currentSrc || mediaEl.src : null;
+    if (!url) {
+        showToast("الملف لسا عم يتحمّل — انتظر شوي وجرّب", "error");
+        return;
+    }
+    const isVideo = mediaEl.tagName === "VIDEO";
+    btn.disabled = true;
+    try {
+        const blob = await fetch(url).then(r => r.blob());
+        const file = new File([ blob ], isVideo ? "video.mp4" : "photo.jpg", {
+            type: blob.type || (isVideo ? "video/mp4" : "image/jpeg")
+        });
+        if (navigator.canShare({
+            files: [ file ]
+        })) await navigator.share({
+            files: [ file ]
+        }); else showToast("المشاركة غير مدعومة على هالجهاز", "error");
+    } catch (e) {
+        if (e && e.name !== "AbortError") showToast("تعذرت المشاركة", "error");
+    } finally {
+        if (document.body.contains(btn)) btn.disabled = false;
+    }
 }
 
 async function mediaViewerDeleteTap(btn) {
