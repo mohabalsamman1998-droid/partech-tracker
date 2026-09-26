@@ -3744,7 +3744,7 @@ function applyPartReturnOnOrder(order, part, extraRefundCap) {
     let leftoverExcess = 0;
     if (overpay > .01) {
         const cap = round2(sellAmount + extraRefundCap);
-        const refundAmount = round2(cap > 0 ? Math.min(overpay, cap) : overpay);
+        const refundAmount = round2(Math.min(overpay, cap));
         leftoverExcess = round2(Math.max(0, overpay - refundAmount));
         part.customerRefundConfirmed = false;
         if (!Array.isArray(order.customerPayments)) order.customerPayments = [];
@@ -6587,13 +6587,11 @@ function quotesListHtml() {
     return rows.map((o, i) => quoteRowHtml(o, i, rows.length)).join("");
 }
 
-async function moveQuotePriority(orderId, dir) {
-    if (!canReorderQuotePriority()) return;
-    const list = quotesMatchingList();
+function computeQuotePriorityReorder(list, orderId, dir) {
     const idx = list.findIndex(o => o.id === orderId);
-    if (idx < 0) return;
+    if (idx < 0) return null;
     const targetIdx = dir === "up" ? idx - 1 : idx + 1;
-    if (targetIdx < 0 || targetIdx >= list.length) return;
+    if (targetIdx < 0 || targetIdx >= list.length) return null;
     const reordered = list.slice();
     const tmp = reordered[idx];
     reordered[idx] = reordered[targetIdx];
@@ -6605,30 +6603,95 @@ async function moveQuotePriority(orderId, dir) {
         if (prevPriority !== newPriority) updates.push({
             id: o.id,
             newPriority: newPriority,
-            prevPriority: prevPriority
+            prevPriority: prevPriority,
+            expectedUpdatedAt: o.updatedAt || null
         });
     });
-    if (!updates.length) return;
+    return updates;
+}
+
+function isQuotePriorityConflictError(e) {
+    return !!e && (e.code === "PT411" || e.hint === "quote_priority_conflict");
+}
+
+async function persistQuotePriority(orderId, priority, expectedUpdatedAt) {
+    if (!expectedUpdatedAt) return {
+        status: "conflict"
+    };
+    try {
+        if (!sb) throw new Error("NO_DB");
+        const {data: data, error: error} = await sb.rpc("set_quote_priority", {
+            p_order_id: orderId,
+            p_priority: priority,
+            p_expected_updated_at: expectedUpdatedAt
+        });
+        if (error) {
+            if (isQuotePriorityConflictError(error)) return {
+                status: "conflict"
+            };
+            throw error;
+        }
+        if (!data) {
+            showToast("تعذر تحديث الترتيب — الطلبية ما عادت موجودة، أغلق النافذة وحدّث القائمة", "error");
+            return {
+                status: "error"
+            };
+        }
+        const ts = new Date(data);
+        return {
+            status: "ok",
+            updatedAt: isNaN(ts) ? String(data) : ts.toISOString()
+        };
+    } catch (e) {
+        showToast("تعذر حفظ ترتيب الأولوية: " + friendlyErrorText(e), "error");
+        return {
+            status: "error"
+        };
+    }
+}
+
+async function moveQuotePriority(orderId, dir) {
+    if (!canReorderQuotePriority()) return;
+    const updates = computeQuotePriorityReorder(quotesMatchingList(), orderId, dir);
+    if (!updates || !updates.length) return;
     updates.forEach(u => {
         const o = appData.orders.find(x => x.id === u.id);
         if (o) o.priority = u.newPriority;
     });
     renderQuotesList();
-    const results = await Promise.all(updates.map(async u => {
-        const fresh = appData.orders.find(x => x.id === u.id);
-        if (!fresh) return true;
-        fresh.priority = u.newPriority;
-        fresh.updatedAt = (new Date).toISOString();
-        return await persistOrder(fresh, false);
-    }));
-    if (results.some(r => !r)) {
+    const applied = [];
+    let conflict = false, failed = false;
+    for (const u of updates) {
+        const r = await persistQuotePriority(u.id, u.newPriority, u.expectedUpdatedAt);
+        if (r.status === "ok") {
+            applied.push({
+                u: u,
+                newUpdatedAt: r.updatedAt
+            });
+        } else {
+            if (r.status === "conflict") conflict = true; else failed = true;
+            break;
+        }
+    }
+    if (conflict || failed) {
+        let rollbackFailed = false;
+        for (const a of applied) {
+            const rb = await persistQuotePriority(a.u.id, a.u.prevPriority, a.newUpdatedAt);
+            if (rb.status !== "ok") rollbackFailed = true;
+        }
         updates.forEach(u => {
             const o = appData.orders.find(x => x.id === u.id);
             if (o) o.priority = u.prevPriority;
         });
         renderQuotesList();
-        showToast("تعذر تحديث ترتيب الأولوية", "error");
+        showToast(conflict ? "ترتيب طلبات التسعير اتغيّر من مكان تاني — أعد المحاولة" : "تعذر تحديث ترتيب الأولوية", "error");
+        if (rollbackFailed) showToast("تعذر التأكد من إرجاع كل الترتيب — حدّث الصفحة للتأكد", "error");
+        return;
     }
+    applied.forEach(a => {
+        const o = appData.orders.find(x => x.id === a.u.id);
+        if (o && a.newUpdatedAt) o.updatedAt = a.newUpdatedAt;
+    });
 }
 
 function bindQuotePriorityMoveButtons(row) {
@@ -7304,7 +7367,7 @@ async function saveQuoteDraft(markSent) {
         return false;
     }
     mediaAfterSaveSuccess(draftId, mediaSnap, cleanedParts);
-    if (markSent) {
+    if (markSent || quoteWasNew) {
         const orderRef = "#" + savingDraft.orderNumber + (savingDraft.orderLabel ? " — " + savingDraft.orderLabel : "");
         try {
             await sb.from("activity_events").insert({
@@ -9248,8 +9311,8 @@ function bindScrapyardEntryEvents() {
     });
 }
 
-function applyScrapyardProposal(pr) {
-    const order = appData.orders.find(o => o.id === pr.order_id);
+function applyScrapyardProposal(pr, orderOverride) {
+    const order = orderOverride || appData.orders.find(o => o.id === pr.order_id);
     if (!order) return false;
     if (pr.action === "edit") {
         const part = (order.parts || []).find(p => p.id === pr.part_id);
@@ -9306,10 +9369,14 @@ function handleScrapyardProposalDecision(proposalId, accept) {
             };
             if (accept) {
                 const claimed = deletedRows[0];
-                const order = appData.orders.find(o => o.id === claimed.order_id);
-                const partsSnapshot = order ? JSON.parse(JSON.stringify(order.parts || [])) : null;
-                const prevUpdatedAt = order ? order.updatedAt : null;
-                const applied = applyScrapyardProposal(claimed);
+                const {data: freshRow, error: fetchError} = await sb.from("orders").select("*").eq("id", claimed.order_id).maybeSingle();
+                if (fetchError || !freshRow) {
+                    showToast("تعذر تطبيق الاقتراح — الطلبية غير موجودة. رجّعنا الاقتراح مكانه", "error");
+                    await restoreProposal();
+                    return;
+                }
+                const order = orderRowToObject(freshRow);
+                const applied = applyScrapyardProposal(claimed, order);
                 if (!applied) {
                     showToast("تعذر تطبيق الاقتراح — الطلبية أو القطعة غير موجودة. رجّعنا الاقتراح مكانه", "error");
                     await restoreProposal();
@@ -9317,14 +9384,12 @@ function handleScrapyardProposalDecision(proposalId, accept) {
                 }
                 const saved = await persistOrder(order);
                 if (!saved) {
-                    if (partsSnapshot) {
-                        order.parts = partsSnapshot;
-                        order.updatedAt = prevUpdatedAt;
-                    }
                     showToast("تعذر حفظ التعديل على الطلبية — رجّعنا الاقتراح مكانه، جرّب مرة تانية", "error");
                     await restoreProposal();
                     return;
                 }
+                const idx = appData.orders.findIndex(o => o.id === order.id);
+                if (idx >= 0) appData.orders[idx] = order; else appData.orders.push(order);
                 renderKPIs();
                 renderTable();
             }
