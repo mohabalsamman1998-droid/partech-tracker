@@ -1461,6 +1461,8 @@ const GUARDED_AWAIT_TIMEOUT_MS = 12e3;
 
 const RESUME_REFRESH_TIMEOUT_MS = 3e4;
 
+const NATIVE_SHARE_TIMEOUT_MS = 6e4;
+
 function withTimeout(promise, ms, label) {
     return Promise.race([ Promise.resolve(promise), new Promise((_, reject) => setTimeout(() => reject(new Error("TIMEOUT: " + (label || "await"))), ms || GUARDED_AWAIT_TIMEOUT_MS)) ]);
 }
@@ -6463,9 +6465,9 @@ async function mediaViewerShareTap(btn) {
         });
         if (navigator.canShare({
             files: [ file ]
-        })) await navigator.share({
+        })) await withTimeout(navigator.share({
             files: [ file ]
-        }); else showToast("المشاركة غير مدعومة على هالجهاز", "error");
+        }), NATIVE_SHARE_TIMEOUT_MS, "navigator.share media"); else showToast("المشاركة غير مدعومة على هالجهاز", "error");
     } catch (e) {
         if (e && e.name !== "AbortError") showToast("تعذرت المشاركة", "error");
     } finally {
@@ -8774,11 +8776,11 @@ async function shareDoc() {
                 const file = new File([ blob ], docPdfFilename(), {
                     type: "application/pdf"
                 });
-                await navigator.share({
+                await withTimeout(navigator.share({
                     files: [ file ],
                     title: shareTitle,
                     text: shareTitle
-                });
+                }), NATIVE_SHARE_TIMEOUT_MS, "navigator.share files");
                 return;
             } catch (errFile) {
                 if (errFile && errFile.name === "AbortError") return;
@@ -8786,10 +8788,10 @@ async function shareDoc() {
         }
         if (navigator.share) {
             try {
-                await navigator.share({
+                await withTimeout(navigator.share({
                     title: shareTitle,
                     text: fullText
-                });
+                }), NATIVE_SHARE_TIMEOUT_MS, "navigator.share text");
                 return;
             } catch (errText) {
                 if (errText && errText.name === "AbortError") return;
@@ -8971,11 +8973,11 @@ async function shareStatement() {
                 const file = new File([ blob ], statementPdfFilename(customer), {
                     type: "application/pdf"
                 });
-                await navigator.share({
+                await withTimeout(navigator.share({
                     files: [ file ],
                     title: shareTitle,
                     text: shareTitle
-                });
+                }), NATIVE_SHARE_TIMEOUT_MS, "navigator.share files");
                 return;
             } catch (errFile) {
                 if (errFile && errFile.name === "AbortError") return;
@@ -8983,10 +8985,10 @@ async function shareStatement() {
         }
         if (navigator.share) {
             try {
-                await navigator.share({
+                await withTimeout(navigator.share({
                     title: shareTitle,
                     text: fullText
-                });
+                }), NATIVE_SHARE_TIMEOUT_MS, "navigator.share text");
                 return;
             } catch (errText) {
                 if (errText && errText.name === "AbortError") return;
