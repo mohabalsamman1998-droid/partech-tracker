@@ -1353,21 +1353,32 @@ try {
     console.error("Supabase init failed — تحقق من SUPABASE_URL / SUPABASE_ANON_KEY أعلاه", e);
 }
 
+const LAZY_SCRIPT_TIMEOUT_MS = 2e4;
+
 const _lazyScriptPromises = {};
 
 function loadScriptOnce(url) {
     if (_lazyScriptPromises[url]) return _lazyScriptPromises[url];
-    _lazyScriptPromises[url] = new Promise((resolve, reject) => {
+    const p = new Promise((resolve, reject) => {
         const el = document.createElement("script");
         el.src = url;
-        el.onload = () => resolve();
+        const timer = setTimeout(() => {
+            if (_lazyScriptPromises[url] === p) delete _lazyScriptPromises[url];
+            reject(new Error("SCRIPT_LOAD_TIMEOUT"));
+        }, LAZY_SCRIPT_TIMEOUT_MS);
+        el.onload = () => {
+            clearTimeout(timer);
+            resolve();
+        };
         el.onerror = () => {
-            delete _lazyScriptPromises[url];
+            clearTimeout(timer);
+            if (_lazyScriptPromises[url] === p) delete _lazyScriptPromises[url];
             reject(new Error("SCRIPT_LOAD_FAILED"));
         };
         document.head.appendChild(el);
     });
-    return _lazyScriptPromises[url];
+    _lazyScriptPromises[url] = p;
+    return p;
 }
 
 async function ensureHtml2pdf() {
@@ -3019,7 +3030,7 @@ function friendlyErrorText(e) {
     if (code === "PT410" || e && e.hint === "media_deleted") return "الملف انحذف";
     if (msg === "NO_DB") return "الاتصال بقاعدة البيانات غير متاح حاليًا";
     if (code === "PGRST202") return "نسخة التطبيق عندك قديمة — حدّث الصفحة وحاول مرة تانية";
-    if (/fetch|network|Network|timeout|Timeout/.test(msg)) return "تحقق من اتصال الإنترنت وحاول مرة تانية";
+    if (/fetch|network|timeout/i.test(msg)) return "تحقق من اتصال الإنترنت وحاول مرة تانية";
     if (/JWT|session|Session/.test(msg)) return "انتهت صلاحية الجلسة — سجّل دخول من جديد";
     if (/permission|policy|RLS|denied/i.test(msg)) return "ما عندك صلاحية على هالعملية";
     return "خطأ غير متوقع — لو تكرر بلّغ الدعم الفني";
@@ -13142,7 +13153,7 @@ async function persistOrder(order, isNew) {
     try {
         if (!sb) throw new Error("NO_DB");
         const row = orderObjectToRow(order);
-        const {data: data, error: error} = isNew ? await sb.from("orders").insert(row).select("id") : await sb.from("orders").update(row).eq("id", order.id).select("id");
+        const {data: data, error: error} = isNew ? await withTimeout(sb.from("orders").insert(row).select("id"), 2e4, "persistOrder insert") : await withTimeout(sb.from("orders").update(row).eq("id", order.id).select("id"), 2e4, "persistOrder update");
         if (error) throw error;
         if (!data || !data.length) {
             showToast("تعذر حفظ الطلبية — يبدو إنها اتغيّرت أو انحذفت من مكان تاني، أو ما عندك صلاحية عليها. أغلق النافذة وافتحها من جديد", "error");
