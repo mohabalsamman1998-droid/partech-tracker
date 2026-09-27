@@ -12864,13 +12864,42 @@ const PUSH_VAPID_PUBLIC_KEY = "BB9zm8sK51bFS0x1IpndeGgINd0evXox9pm6B7x6Rt6QgNSki
 
 let pendingOpenActivityLogFromPush = false;
 
+let swRegistrationForUpdateCheck = null;
+
 if ("serviceWorker" in navigator) {
     navigator.serviceWorker.addEventListener("message", event => {
         if (event.data && event.data.type === "open-activity-log") requestOpenActivityLogFromPush();
     });
     window.addEventListener("load", () => {
-        navigator.serviceWorker.register("sw.js").catch(e => console.error("sw register:", e));
+        navigator.serviceWorker.register("sw.js").then(reg => {
+            swRegistrationForUpdateCheck = reg;
+            if (reg) checkForAppUpdate(reg);
+        }).catch(e => console.error("sw register:", e));
     });
+    let swUpdateReloading = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (swUpdateReloading) return;
+        showAppUpdateBanner();
+    });
+}
+
+async function checkForAppUpdate(reg) {
+    try {
+        await reg.update();
+    } catch (e) {}
+}
+
+function showAppUpdateBanner() {
+    if (document.getElementById("app-update-banner")) return;
+    const el = document.createElement("div");
+    el.id = "app-update-banner";
+    el.style.cssText = "position:fixed;left:12px;right:12px;bottom:12px;z-index:99999;background:#22D07A;color:#06170F;border-radius:12px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;box-shadow:0 4px 16px rgba(0,0,0,.3);font-family:inherit;font-size:14px;font-weight:700;";
+    el.innerHTML = '<span>🆕 في نسخة جديدة من التطبيق</span><button type="button" style="background:#06170F;color:#22D07A;border:0;border-radius:8px;padding:8px 14px;font-weight:800;font-size:13.5px;">تحديث الآن</button>';
+    el.querySelector("button").addEventListener("click", () => {
+        swUpdateReloading = true;
+        location.reload();
+    });
+    document.body.appendChild(el);
 }
 
 function requestOpenActivityLogFromPush() {
@@ -18551,6 +18580,7 @@ let lastResumeRefreshAt = 0;
 let resumeRefreshGeneration = 0;
 
 async function refreshOnResume() {
+    if (swRegistrationForUpdateCheck) checkForAppUpdate(swRegistrationForUpdateCheck);
     if (!shownForEmail || resumeRefreshInFlight) return;
     const now = Date.now();
     if (now - lastResumeRefreshAt < 4e3) return;
