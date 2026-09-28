@@ -12075,6 +12075,22 @@ async function settleDeliveryOrders(agentId, orderIds) {
     };
 }
 
+async function unsettleDeliveryOrder(orderId) {
+    if (!sb) return false;
+    const {data: data, error: error} = await sb.from("orders").select("*").eq("id", orderId).maybeSingle();
+    if (error || !data) return false;
+    const order = orderRowToObject(data);
+    if (!order.deliveryCostPaid) return true;
+    order.deliveryCostPaid = false;
+    order.deliveryCostPaidAt = null;
+    const ok = await persistOrder(order, false);
+    if (ok) {
+        const idx = (appData.orders || []).findIndex(o => o.id === orderId);
+        if (idx >= 0) appData.orders[idx] = order;
+    }
+    return ok;
+}
+
 function deliveryAgentsViewHtml() {
     const summary = deliveryAgentsSummary();
     return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-delivery-agents">→ رجوع للطلبيات</button>' + '<div class="tasks-title">🚚 المناديب</div>' + "</div>" + '<div class="treasury-block">' + '<div class="task-add-row">' + '<input type="text" id="new-delivery-agent-name-input" class="task-add-input" placeholder="اسم المندوب الجديد">' + '<input type="tel" id="new-delivery-agent-phone-input" class="task-add-input" placeholder="رقم الجوال (اختياري)">' + '<button type="button" class="btn btn-sm btn-add-part" id="add-delivery-agent-btn">+ إضافة</button>' + "</div>" + '<div class="task-items-list" id="delivery-agents-items-list">' + (summary.length ? summary.map(deliveryAgentRowHtml).join("") : '<div class="expense-empty-hint">ما فيه مناديب مضافين بعد</div>') + "</div>" + "</div>";
@@ -12180,7 +12196,7 @@ function deliverySettlementOrderRowHtml(order, paid) {
     const t = orderTotals(order);
     const customer = order.customerId ? (appData.customers || []).find(c => c.id === order.customerId) : null;
     const dateLabel = order.suppliedAt ? fmtDateShort(order.suppliedAt) : "";
-    return '<div class="task-item-row activity-log-row" data-order-id="' + escapeHtml(order.id) + '">' + '<div class="supplier-row-main">' + (paid ? "" : '<input type="checkbox" class="delivery-settlement-order-check" data-order-id="' + escapeHtml(order.id) + '"' + (deliverySettlementCheckedIds.has(order.id) ? " checked" : "") + ">") + '<span class="purchase-history-desc">' + escapeHtml(order.orderNumber) + (customer ? " — " + escapeHtml(customer.name || customer.phone || "") : "") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(dateLabel) + "</span>" + '<span class="num">' + fmtMoney(t.deliveryCost) + "</span>" + "</div>" + "</div>";
+    return '<div class="task-item-row activity-log-row" data-order-id="' + escapeHtml(order.id) + '">' + '<div class="supplier-row-main">' + (paid ? "" : '<input type="checkbox" class="delivery-settlement-order-check" data-order-id="' + escapeHtml(order.id) + '"' + (deliverySettlementCheckedIds.has(order.id) ? " checked" : "") + ">") + '<span class="purchase-history-desc">' + escapeHtml(order.orderNumber) + (customer ? " — " + escapeHtml(customer.name || customer.phone || "") : "") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(dateLabel) + "</span>" + '<span class="num">' + fmtMoney(t.deliveryCost) + "</span>" + (paid ? '<button type="button" class="icon-btn" data-unsettle-delivery-order="' + escapeHtml(order.id) + '" title="تراجع عن تسديد أجرة التوصيل" aria-label="تراجع عن التسديد">↩️</button>' : "") + "</div>" + "</div>";
 }
 
 function deliverySettlementModalHtml(agentId) {
@@ -12233,6 +12249,7 @@ function bindDeliverySettlementModalEvents(agentId) {
     root.querySelectorAll(".task-item-row[data-order-id]").forEach(row => {
         row.addEventListener("click", e => {
             if (e.target.closest(".delivery-settlement-order-check")) return;
+            if (e.target.closest("[data-unsettle-delivery-order]")) return;
             const orderId = row.getAttribute("data-order-id");
             const order = (appData.orders || []).find(o => o.id === orderId);
             if (!order) {
@@ -12241,6 +12258,21 @@ function bindDeliverySettlementModalEvents(agentId) {
             }
             modalCloseCallback = () => renderDeliverySettlementModal(agentId);
             openModal("edit", orderId);
+        });
+    });
+    root.querySelectorAll("[data-unsettle-delivery-order]").forEach(btn => {
+        btn.addEventListener("click", async e => {
+            e.stopPropagation();
+            const orderId = btn.getAttribute("data-unsettle-delivery-order");
+            btn.disabled = true;
+            const ok = await unsettleDeliveryOrder(orderId);
+            if (ok) {
+                showToast("تراجعت عن تسديد التوصيلة");
+                renderDeliverySettlementModal(agentId);
+            } else {
+                btn.disabled = false;
+                showToast("تعذر التراجع — حاول مرة تانية", "error");
+            }
         });
     });
     const payBtn = root.querySelector("#delivery-settlement-pay-btn");
