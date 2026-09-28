@@ -12261,31 +12261,48 @@ function bindDeliverySettlementModalEvents(agentId) {
         });
     });
     root.querySelectorAll("[data-unsettle-delivery-order]").forEach(btn => {
-        btn.addEventListener("click", async e => {
+        btn.addEventListener("click", e => {
             e.stopPropagation();
             const orderId = btn.getAttribute("data-unsettle-delivery-order");
-            btn.disabled = true;
-            const ok = await unsettleDeliveryOrder(orderId);
-            if (ok) {
-                showToast("تراجعت عن تسديد التوصيلة");
-                renderDeliverySettlementModal(agentId);
-            } else {
-                btn.disabled = false;
-                showToast("تعذر التراجع — حاول مرة تانية", "error");
-            }
+            const order = (appData.orders || []).find(o => o.id === orderId);
+            const amountLabel = order ? fmtMoney(orderTotals(order).deliveryCost) : "";
+            confirmAction({
+                title: "التراجع عن تسديد التوصيلة؟",
+                message: order ? order.orderNumber + " — " + amountLabel + ' — رح ترجع لقائمة "غير مسددة"' : undefined,
+                confirmLabel: "تراجع",
+                onConfirm: async () => {
+                    btn.disabled = true;
+                    const ok = await unsettleDeliveryOrder(orderId);
+                    if (ok) {
+                        showToast("تراجعت عن تسديد التوصيلة");
+                        renderDeliverySettlementModal(agentId);
+                    } else {
+                        btn.disabled = false;
+                        showToast("تعذر التراجع — حاول مرة تانية", "error");
+                    }
+                }
+            });
         });
     });
     const payBtn = root.querySelector("#delivery-settlement-pay-btn");
-    if (payBtn) payBtn.addEventListener("click", async () => {
+    if (payBtn) payBtn.addEventListener("click", () => {
         if (!deliverySettlementCheckedIds.size) return;
-        payBtn.disabled = true;
-        payBtn.textContent = "⏳ جارٍ التسديد…";
         const ids = Array.from(deliverySettlementCheckedIds);
-        const {okIds: okIds, failIds: failIds} = await settleDeliveryOrders(agentId, ids);
-        deliverySettlementCheckedIds = new Set;
-        if (okIds.length) showToast("تم تسديد " + okIds.length + " توصيلة");
-        if (failIds.length) showToast("تعذر تسديد " + failIds.length + " توصيلة — حاول تحديث الصفحة", "error");
-        renderDeliverySettlementModal(agentId);
+        const selectedTotal = round2(deliveryAgentOrders(agentId, false).filter(o => deliverySettlementCheckedIds.has(o.id)).reduce((s, o) => s + orderTotals(o).deliveryCost, 0));
+        confirmAction({
+            title: "تسديد التوصيلات المحددة؟",
+            message: ids.length + " توصيلة بمبلغ " + fmtMoney(selectedTotal),
+            confirmLabel: "تسديد",
+            onConfirm: async () => {
+                payBtn.disabled = true;
+                payBtn.textContent = "⏳ جارٍ التسديد…";
+                const {okIds: okIds, failIds: failIds} = await settleDeliveryOrders(agentId, ids);
+                deliverySettlementCheckedIds = new Set;
+                if (okIds.length) showToast("تم تسديد " + okIds.length + " توصيلة");
+                if (failIds.length) showToast("تعذر تسديد " + failIds.length + " توصيلة — حاول تحديث الصفحة", "error");
+                renderDeliverySettlementModal(agentId);
+            }
+        });
     });
 }
 
