@@ -9622,6 +9622,10 @@ const BOOLEAN_FIELD_LABELS = {
     deliveryFeeEnabled: {
         true: "مفعّلة",
         false: "غير مفعّلة"
+    },
+    deliveryCostPaid: {
+        true: "مسددة",
+        false: "غير مسددة"
     }
 };
 
@@ -10195,7 +10199,10 @@ function applyEditProposal(pr, orderOverride, opts) {
             part.supplierId = null;
         } else if (pr.field === "supplierId") part.supplierId = pr.proposed_value || null; else return false;
     } else if (pr.kind === "order_field") {
-        if (pr.field === "feePercent") order.feePercent = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "serviceFeePercent") order.serviceFeePercent = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "deliveryFeeAmount") order.deliveryFeeAmount = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "deliveryCost") order.deliveryCost = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "feeEnabled") order.feeEnabled = !!pr.proposed_value; else if (pr.field === "serviceFeeEnabled") order.serviceFeeEnabled = !!pr.proposed_value; else if (pr.field === "deliveryFeeEnabled") order.deliveryFeeEnabled = !!pr.proposed_value; else if (pr.field === "customerId") {
+        if (pr.field === "feePercent") order.feePercent = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "serviceFeePercent") order.serviceFeePercent = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "deliveryFeeAmount") order.deliveryFeeAmount = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "deliveryCost") order.deliveryCost = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "deliveryCostPaid") {
+            order.deliveryCostPaid = !!pr.proposed_value;
+            order.deliveryCostPaidAt = pr.proposed_value ? (new Date).toISOString() : null;
+        } else if (pr.field === "feeEnabled") order.feeEnabled = !!pr.proposed_value; else if (pr.field === "serviceFeeEnabled") order.serviceFeeEnabled = !!pr.proposed_value; else if (pr.field === "deliveryFeeEnabled") order.deliveryFeeEnabled = !!pr.proposed_value; else if (pr.field === "customerId") {
             order.customerId = pr.proposed_value || null;
             const c = (appData.customers || []).find(c => c.id === order.customerId);
             order.customerPhone = c ? c.phone || "" : "";
@@ -10791,6 +10798,7 @@ const EDIT_PROPOSAL_FIELD_LABELS = {
     serviceFeeEnabled: "تفعيل رسوم الخدمة",
     deliveryFeeEnabled: "تفعيل رسوم التوصيل",
     deliveryCost: "تكلفة التوصيل (داخلية)",
+    deliveryCostPaid: "تسديد أجرة التوصيل للمندوب",
     supplierId: "المورد/التشليح",
     customerId: "العميل"
 };
@@ -12091,6 +12099,57 @@ async function unsettleDeliveryOrder(orderId) {
     return ok;
 }
 
+async function requestSettleDeliveryOrders(orderIds) {
+    const okIds = [], failIds = [];
+    if (!sb || !Array.isArray(orderIds) || !orderIds.length) return {
+        okIds: okIds,
+        failIds: failIds
+    };
+    const rows = orderIds.filter(id => !pendingDeliverySettleProposal(id)).map(id => ({
+        order_id: id,
+        kind: "order_field",
+        field: "deliveryCostPaid",
+        part_id: null,
+        current_value: false,
+        proposed_value: true,
+        submitted_by: presenceEmail
+    }));
+    if (!rows.length) return {
+        okIds: okIds,
+        failIds: orderIds.slice()
+    };
+    const {data: data, error: error} = await sb.from("edit_proposals").insert(rows).select("order_id");
+    if (error) {
+        return {
+            okIds: okIds,
+            failIds: orderIds.slice()
+        };
+    }
+    const succeededIds = new Set((data || []).map(r => r.order_id));
+    orderIds.forEach(id => succeededIds.has(id) ? okIds.push(id) : failIds.push(id));
+    await refreshEditProposals();
+    return {
+        okIds: okIds,
+        failIds: failIds
+    };
+}
+
+async function requestUnsettleDeliveryOrder(orderId) {
+    if (!sb || pendingDeliverySettleProposal(orderId)) return false;
+    const {error: error} = await sb.from("edit_proposals").insert({
+        order_id: orderId,
+        kind: "order_field",
+        field: "deliveryCostPaid",
+        part_id: null,
+        current_value: true,
+        proposed_value: false,
+        submitted_by: presenceEmail
+    });
+    if (error) return false;
+    await refreshEditProposals();
+    return true;
+}
+
 function deliveryAgentsViewHtml() {
     const summary = deliveryAgentsSummary();
     return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-delivery-agents">→ رجوع للطلبيات</button>' + '<div class="tasks-title">🚚 المناديب</div>' + "</div>" + '<div class="treasury-block">' + '<div class="task-add-row">' + '<input type="text" id="new-delivery-agent-name-input" class="task-add-input" placeholder="اسم المندوب الجديد">' + '<input type="tel" id="new-delivery-agent-phone-input" class="task-add-input" placeholder="رقم الجوال (اختياري)">' + '<button type="button" class="btn btn-sm btn-add-part" id="add-delivery-agent-btn">+ إضافة</button>' + "</div>" + '<div class="task-items-list" id="delivery-agents-items-list">' + (summary.length ? summary.map(deliveryAgentRowHtml).join("") : '<div class="expense-empty-hint">ما فيه مناديب مضافين بعد</div>') + "</div>" + "</div>";
@@ -12141,7 +12200,7 @@ function bindDeliveryAgentsViewEvents() {
 }
 
 async function openDeliveryAgentsView() {
-    if (!hasElevatedAccess()) {
+    if (currentUserRole !== "full") {
         showToast("غير متاح", "error");
         return;
     }
@@ -12192,11 +12251,17 @@ function openDeliveryAgentEditModal(agentId) {
 
 let deliverySettlementCheckedIds = new Set;
 
+function pendingDeliverySettleProposal(orderId) {
+    return (editProposals || []).find(pr => pr.order_id === orderId && pr.kind === "order_field" && pr.field === "deliveryCostPaid");
+}
+
 function deliverySettlementOrderRowHtml(order, paid) {
     const t = orderTotals(order);
     const customer = order.customerId ? (appData.customers || []).find(c => c.id === order.customerId) : null;
     const dateLabel = order.suppliedAt ? fmtDateShort(order.suppliedAt) : "";
-    return '<div class="task-item-row activity-log-row" data-order-id="' + escapeHtml(order.id) + '">' + '<div class="supplier-row-main">' + (paid ? "" : '<input type="checkbox" class="delivery-settlement-order-check" data-order-id="' + escapeHtml(order.id) + '"' + (deliverySettlementCheckedIds.has(order.id) ? " checked" : "") + ">") + '<span class="purchase-history-desc">' + escapeHtml(order.orderNumber) + (order.orderLabel ? " — " + escapeHtml(order.orderLabel) : "") + (customer ? " — " + escapeHtml(customer.name || customer.phone || "") : "") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(dateLabel) + "</span>" + '<span class="num">' + fmtMoney(t.deliveryCost) + "</span>" + (paid ? '<button type="button" class="icon-btn" data-unsettle-delivery-order="' + escapeHtml(order.id) + '" title="تراجع عن تسديد أجرة التوصيل" aria-label="تراجع عن التسديد">↩️</button>' : "") + "</div>" + "</div>";
+    const pending = pendingDeliverySettleProposal(order.id);
+    const actionHtml = pending ? editProposalPendingHtml(pending) : paid ? '<button type="button" class="icon-btn" data-unsettle-delivery-order="' + escapeHtml(order.id) + '" title="تراجع عن تسديد أجرة التوصيل" aria-label="تراجع عن التسديد">↩️</button>' : '<input type="checkbox" class="delivery-settlement-order-check" data-order-id="' + escapeHtml(order.id) + '"' + (deliverySettlementCheckedIds.has(order.id) ? " checked" : "") + ">";
+    return '<div class="task-item-row activity-log-row" data-order-id="' + escapeHtml(order.id) + '">' + '<div class="supplier-row-main">' + actionHtml + '<span class="purchase-history-desc">' + escapeHtml(order.orderNumber) + (order.orderLabel ? " — " + escapeHtml(order.orderLabel) : "") + (customer ? " — " + escapeHtml(customer.name || customer.phone || "") : "") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(dateLabel) + "</span>" + '<span class="num">' + fmtMoney(t.deliveryCost) + "</span>" + "</div>" + "</div>";
 }
 
 function deliverySettlementModalHtml(agentId) {
@@ -12204,9 +12269,11 @@ function deliverySettlementModalHtml(agentId) {
     const label = a ? a.name : "مندوب";
     const unpaid = deliveryAgentOrders(agentId, false);
     const paid = deliveryAgentOrders(agentId, true);
+    const selectableUnpaid = unpaid.filter(o => !pendingDeliverySettleProposal(o.id));
+    const elevated = hasElevatedAccess();
     const unpaidTotal = deliveryAgentUnpaidTotal(agentId);
-    const selectedTotal = round2(unpaid.filter(o => deliverySettlementCheckedIds.has(o.id)).reduce((s, o) => s + orderTotals(o).deliveryCost, 0));
-    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div class="modal-title">تسويات التوصيل — ' + escapeHtml(label) + '</div><button type="button" class="icon-btn" id="delivery-settlement-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="modal-body">' + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>غير مسددة</span><span class="num text-rust">' + fmtMoney(unpaidTotal) + "</span></div>" + (unpaid.length ? '<label class="toggle-row"><input type="checkbox" id="delivery-settlement-select-all"' + (unpaid.every(o => deliverySettlementCheckedIds.has(o.id)) ? " checked" : "") + "><span>تحديد الكل</span></label>" + unpaid.map(o => deliverySettlementOrderRowHtml(o, false)).join("") : '<div class="expense-empty-hint">ما فيه توصيلات غير مسددة لهالمندوب</div>') + "</div>" + (unpaid.length ? '<button type="button" class="btn btn-primary" id="delivery-settlement-pay-btn" style="width:100%;margin:8px 0;" ' + (deliverySettlementCheckedIds.size ? "" : "disabled") + ">✅ تسديد المحدد (" + fmtMoney(selectedTotal) + ")</button>" : "") + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>مسددة سابقًا</span><span class="num text-green">' + fmtMoney(deliveryAgentPaidTotal(agentId)) + "</span></div>" + (paid.length ? paid.map(o => deliverySettlementOrderRowHtml(o, true)).join("") : '<div class="expense-empty-hint">ما فيه تسويات سابقة</div>') + "</div>" + "</div>" + "</div>" + "</div>";
+    const selectedTotal = round2(selectableUnpaid.filter(o => deliverySettlementCheckedIds.has(o.id)).reduce((s, o) => s + orderTotals(o).deliveryCost, 0));
+    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div class="modal-title">تسويات التوصيل — ' + escapeHtml(label) + '</div><button type="button" class="icon-btn" id="delivery-settlement-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="modal-body">' + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>غير مسددة</span><span class="num text-rust">' + fmtMoney(unpaidTotal) + "</span></div>" + (unpaid.length ? (selectableUnpaid.length ? '<label class="toggle-row"><input type="checkbox" id="delivery-settlement-select-all"' + (selectableUnpaid.every(o => deliverySettlementCheckedIds.has(o.id)) ? " checked" : "") + "><span>تحديد الكل</span></label>" : "") + unpaid.map(o => deliverySettlementOrderRowHtml(o, false)).join("") : '<div class="expense-empty-hint">ما فيه توصيلات غير مسددة لهالمندوب</div>') + "</div>" + (selectableUnpaid.length ? '<button type="button" class="btn btn-primary" id="delivery-settlement-pay-btn" style="width:100%;margin:8px 0;" ' + (deliverySettlementCheckedIds.size ? "" : "disabled") + ">" + (elevated ? "✅ تسديد المحدد" : "📨 إرسال طلب تسديد المحدد") + " (" + fmtMoney(selectedTotal) + ")</button>" : "") + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>مسددة سابقًا</span><span class="num text-green">' + fmtMoney(deliveryAgentPaidTotal(agentId)) + "</span></div>" + (paid.length ? paid.map(o => deliverySettlementOrderRowHtml(o, true)).join("") : '<div class="expense-empty-hint">ما فيه تسويات سابقة</div>') + "</div>" + "</div>" + "</div>" + "</div>";
 }
 
 function openDeliverySettlementModal(agentId) {
@@ -12235,8 +12302,8 @@ function bindDeliverySettlementModalEvents(agentId) {
     root.querySelector("#delivery-settlement-close-btn").addEventListener("click", close);
     const selectAll = root.querySelector("#delivery-settlement-select-all");
     if (selectAll) selectAll.addEventListener("change", e => {
-        const unpaid = deliveryAgentOrders(agentId, false);
-        if (e.target.checked) unpaid.forEach(o => deliverySettlementCheckedIds.add(o.id)); else deliverySettlementCheckedIds.clear();
+        const selectableUnpaid = deliveryAgentOrders(agentId, false).filter(o => !pendingDeliverySettleProposal(o.id));
+        if (e.target.checked) selectableUnpaid.forEach(o => deliverySettlementCheckedIds.add(o.id)); else deliverySettlementCheckedIds.clear();
         renderDeliverySettlementModal(agentId);
     });
     root.querySelectorAll(".delivery-settlement-order-check").forEach(chk => {
@@ -12250,6 +12317,7 @@ function bindDeliverySettlementModalEvents(agentId) {
         row.addEventListener("click", e => {
             if (e.target.closest(".delivery-settlement-order-check")) return;
             if (e.target.closest("[data-unsettle-delivery-order]")) return;
+            if (e.target.closest(".proposal-pending-banner")) return;
             const orderId = row.getAttribute("data-order-id");
             const order = (appData.orders || []).find(o => o.id === orderId);
             if (!order) {
@@ -12266,19 +12334,20 @@ function bindDeliverySettlementModalEvents(agentId) {
             const orderId = btn.getAttribute("data-unsettle-delivery-order");
             const order = (appData.orders || []).find(o => o.id === orderId);
             const amountLabel = order ? fmtMoney(orderTotals(order).deliveryCost) : "";
+            const elevated = hasElevatedAccess();
             confirmAction({
-                title: "التراجع عن تسديد التوصيلة؟",
-                message: order ? order.orderNumber + " — " + amountLabel + ' — رح ترجع لقائمة "غير مسددة"' : undefined,
-                confirmLabel: "تراجع",
+                title: elevated ? "التراجع عن تسديد التوصيلة؟" : "إرسال طلب التراجع عن تسديد التوصيلة؟",
+                message: order ? order.orderNumber + " — " + amountLabel + (elevated ? ' — رح ترجع لقائمة "غير مسددة"' : "") : undefined,
+                confirmLabel: elevated ? "تراجع" : "إرسال الطلب",
                 onConfirm: async () => {
                     btn.disabled = true;
-                    const ok = await unsettleDeliveryOrder(orderId);
+                    const ok = elevated ? await unsettleDeliveryOrder(orderId) : await requestUnsettleDeliveryOrder(orderId);
                     if (ok) {
-                        showToast("تراجعت عن تسديد التوصيلة");
+                        showToast(elevated ? "تراجعت عن تسديد التوصيلة" : "تم إرسال الطلب");
                         renderDeliverySettlementModal(agentId);
                     } else {
                         btn.disabled = false;
-                        showToast("تعذر التراجع — حاول مرة تانية", "error");
+                        showToast(elevated ? "تعذر التراجع — حاول مرة تانية" : "تعذر إرسال الطلب — حاول مرة تانية", "error");
                     }
                 }
             });
@@ -12288,18 +12357,19 @@ function bindDeliverySettlementModalEvents(agentId) {
     if (payBtn) payBtn.addEventListener("click", () => {
         if (!deliverySettlementCheckedIds.size) return;
         const ids = Array.from(deliverySettlementCheckedIds);
+        const elevated = hasElevatedAccess();
         const selectedTotal = round2(deliveryAgentOrders(agentId, false).filter(o => deliverySettlementCheckedIds.has(o.id)).reduce((s, o) => s + orderTotals(o).deliveryCost, 0));
         confirmAction({
-            title: "تسديد التوصيلات المحددة؟",
+            title: elevated ? "تسديد التوصيلات المحددة؟" : "إرسال طلب تسديد التوصيلات المحددة؟",
             message: ids.length + " توصيلة بمبلغ " + fmtMoney(selectedTotal),
-            confirmLabel: "تسديد",
+            confirmLabel: elevated ? "تسديد" : "إرسال الطلب",
             onConfirm: async () => {
                 payBtn.disabled = true;
-                payBtn.textContent = "⏳ جارٍ التسديد…";
-                const {okIds: okIds, failIds: failIds} = await settleDeliveryOrders(agentId, ids);
+                payBtn.textContent = elevated ? "⏳ جارٍ التسديد…" : "⏳ جارٍ الإرسال…";
+                const {okIds: okIds, failIds: failIds} = elevated ? await settleDeliveryOrders(agentId, ids) : await requestSettleDeliveryOrders(ids);
                 deliverySettlementCheckedIds = new Set;
-                if (okIds.length) showToast("تم تسديد " + okIds.length + " توصيلة");
-                if (failIds.length) showToast("تعذر تسديد " + failIds.length + " توصيلة — حاول تحديث الصفحة", "error");
+                if (okIds.length) showToast(elevated ? "تم تسديد " + okIds.length + " توصيلة" : "تم إرسال طلب لـ" + okIds.length + " توصيلة");
+                if (failIds.length) showToast(elevated ? "تعذر تسديد " + failIds.length + " توصيلة — حاول تحديث الصفحة" : "تعذر إرسال الطلب لـ" + failIds.length + " توصيلة — حاول تحديث الصفحة", "error");
                 renderDeliverySettlementModal(agentId);
             }
         });
@@ -16195,7 +16265,7 @@ async function showAppIfAllowed(session) {
         const suppliersBtn = document.getElementById("btn-open-suppliers");
         if (suppliersBtn) suppliersBtn.style.display = currentUserIsElevated ? "" : "none";
         const deliveryAgentsBtn = document.getElementById("btn-open-delivery-agents");
-        if (deliveryAgentsBtn) deliveryAgentsBtn.style.display = currentUserIsElevated ? "" : "none";
+        if (deliveryAgentsBtn) deliveryAgentsBtn.style.display = currentUserRole === "full" ? "" : "none";
         const settlementViewerBtn = document.getElementById("btn-open-settlement-viewer");
         if (settlementViewerBtn) settlementViewerBtn.style.display = !currentUserIsElevated && SETTLEMENT_VIEWER_EMAILS.includes(email) ? "" : "none";
         if (!appInitDone) {
