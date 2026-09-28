@@ -12180,7 +12180,7 @@ function deliverySettlementOrderRowHtml(order, paid) {
     const t = orderTotals(order);
     const customer = order.customerId ? (appData.customers || []).find(c => c.id === order.customerId) : null;
     const dateLabel = order.suppliedAt ? fmtDateShort(order.suppliedAt) : "";
-    return '<div class="task-item-row" data-order-id="' + escapeHtml(order.id) + '">' + '<div class="supplier-row-main">' + (paid ? "" : '<input type="checkbox" class="delivery-settlement-order-check" data-order-id="' + escapeHtml(order.id) + '"' + (deliverySettlementCheckedIds.has(order.id) ? " checked" : "") + ">") + '<span class="purchase-history-desc">' + escapeHtml(order.orderNumber) + (customer ? " — " + escapeHtml(customer.name || customer.phone || "") : "") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(dateLabel) + "</span>" + '<span class="num">' + fmtMoney(t.deliveryCost) + "</span>" + "</div>" + "</div>";
+    return '<div class="task-item-row activity-log-row" data-order-id="' + escapeHtml(order.id) + '">' + '<div class="supplier-row-main">' + (paid ? "" : '<input type="checkbox" class="delivery-settlement-order-check" data-order-id="' + escapeHtml(order.id) + '"' + (deliverySettlementCheckedIds.has(order.id) ? " checked" : "") + ">") + '<span class="purchase-history-desc">' + escapeHtml(order.orderNumber) + (customer ? " — " + escapeHtml(customer.name || customer.phone || "") : "") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(dateLabel) + "</span>" + '<span class="num">' + fmtMoney(t.deliveryCost) + "</span>" + "</div>" + "</div>";
 }
 
 function deliverySettlementModalHtml(agentId) {
@@ -12228,6 +12228,19 @@ function bindDeliverySettlementModalEvents(agentId) {
             const id = e.target.getAttribute("data-order-id");
             if (e.target.checked) deliverySettlementCheckedIds.add(id); else deliverySettlementCheckedIds.delete(id);
             renderDeliverySettlementModal(agentId);
+        });
+    });
+    root.querySelectorAll(".task-item-row[data-order-id]").forEach(row => {
+        row.addEventListener("click", e => {
+            if (e.target.closest(".delivery-settlement-order-check")) return;
+            const orderId = row.getAttribute("data-order-id");
+            const order = (appData.orders || []).find(o => o.id === orderId);
+            if (!order) {
+                showToast("هذه الطلبية ما عادت متوفرة", "error");
+                return;
+            }
+            modalCloseCallback = () => renderDeliverySettlementModal(agentId);
+            openModal("edit", orderId);
         });
     });
     const payBtn = root.querySelector("#delivery-settlement-pay-btn");
