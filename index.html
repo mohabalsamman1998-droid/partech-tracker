@@ -10666,8 +10666,12 @@ function subscribeActivityEventsRealtime() {
         event: "INSERT",
         schema: "public",
         table: "activity_events"
-    }, () => {
+    }, payload => {
         refreshActivityEvents();
+        const ev = payload && payload.new;
+        if (currentUserRole === "scrapyard" && ev && ev.kind === "order_needs_pricing") {
+            refreshScrapyardHomeQuotes();
+        }
     }).subscribe();
 }
 
@@ -16504,6 +16508,24 @@ async function loadScrapyardHomeTotals() {
     scrapyardSharedState.homeLoadFailed = !!(usedRes.error || newRes.error || tasksRes.error || ordersRes.error || approvedRes.error || usedReturnsRes.error || newReturnsRes.error || suppliersRes.error || custodyRes.error);
     if (scrapyardSharedState.homeLoadFailed) {
         showToast("تعذر تحميل بعض البيانات — الأرقام تحت ممكن تكون ناقصة. تحقق من الاتصال وحدّث الصفحة", "error");
+    }
+}
+
+let scrapyardHomeQuotesRefreshInFlight = false;
+
+async function refreshScrapyardHomeQuotes() {
+    if (!sb || scrapyardHomeQuotesRefreshInFlight) return;
+    scrapyardHomeQuotesRefreshInFlight = true;
+    try {
+        const {data: data, error: error} = await sb.rpc("get_scrapyard_home_quotes");
+        if (error) {
+            console.error("refreshScrapyardHomeQuotes:", error);
+            return;
+        }
+        appData.orders = appData.orders.filter(o => !o.isQuote).concat((data || []).map(orderRowToObject));
+        if (scrapyardCurrentScreen === "home") renderScrapyardHomeView();
+    } finally {
+        scrapyardHomeQuotesRefreshInFlight = false;
     }
 }
 
