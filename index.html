@@ -13968,7 +13968,6 @@ function suppliersViewContainer() {
 }
 
 function openSuppliersView() {
-    newSupplierCarMakes = [];
     if (currentUserRole === "scrapyard") {
         scrapyardCurrentScreen = null;
         renderSuppliersView();
@@ -14414,7 +14413,7 @@ function supplierRowHtml(s, receivablesIdx, owedIdx, sortIdx, rank) {
         const phones = [ s.phone ].concat(extraPhones).filter(Boolean).join(" / ");
         const returnTotal = receivablesIdx ? receivablesIdx[s.id] || 0 : supplierReturnReceivableTotal(s.id);
         const owedAmount = owedIdx ? owedIdx[s.id] || 0 : supplierOwedAmount(s.id);
-        const sortBadge = sortIdx ? '<span class="stamp stamp-green">#' + rank + " — " + (suppliersSortBy === "purchases" ? "⭐ اعتمادية" : "🤝 تعاون") + ": " + fmtMoney(sortIdx[s.id] || 0) + "</span>" : "";
+        const sortBadge = sortIdx ? suppliersSortBy === "purchases" ? '<span class="stamp stamp-green">#' + rank + " — ⭐ اعتمادية: " + (sortIdx[s.id] || 0) + " عملية شراء</span>" : '<span class="stamp stamp-green">#' + rank + " — 🤝 تعاون: " + fmtMoney(sortIdx[s.id] || 0) + "</span>" : "";
         return '<div class="task-item-row supplier-item-row" data-supplier-id="' + escapeHtml(s.id) + '">' + '<div class="supplier-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(s.name || "بدون اسم") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(phones || "—") + "</span>" + '<span class="num ' + (owedAmount > 0 ? "text-rust" : "text-green") + '">' + fmtMoney(owedAmount) + "</span>" + ((s.phone || "").trim() ? '<button type="button" class="icon-btn supplier-contact-btn" title="اتصال" aria-label="اتصال">📞</button>' : "") + '<button type="button" class="icon-btn supplier-history-btn" title="سجل المشتريات" aria-label="سجل المشتريات">📋</button>' + '<button type="button" class="icon-btn supplier-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' + "</div>" + '<div class="purchase-history-row-sub"><span>' + escapeHtml(kindsLabel) + "</span>" + "<span>" + escapeHtml(Array.isArray(s.carMakes) && s.carMakes.length ? s.carMakes.join("، ") : "بلا سيارات محددة") + "</span>" + sortBadge + (returnTotal > 0 ? '<span class="text-green">مسترجع بانتظار التحصيل: ' + fmtMoney(returnTotal) + "</span>" : "") + "</div>" + "</div>";
     }
     return '<div class="task-item-row supplier-item-row" data-supplier-id="' + escapeHtml(s.id) + '">' + '<div class="supplier-row-main">' + '<input type="text" class="supplier-name-input" placeholder="اسم المورد" value="' + escapeHtml(s.name || "") + '">' + '<input type="tel" class="supplier-phone-input" placeholder="رقم الجوال" value="' + escapeHtml(s.phone || "") + '">' + (() => {
@@ -14424,8 +14423,6 @@ function supplierRowHtml(s, receivablesIdx, owedIdx, sortIdx, rank) {
 }
 
 let suppliersSearchQuery = "";
-
-let newSupplierCarMakes = [];
 
 let suppliersKindFilter = "all";
 
@@ -14506,7 +14503,7 @@ function suppliersMatchingSearch(receivablesIdx, sortIdx) {
 function suppliersItemsListHtml() {
     const receivablesIdx = supplierReturnReceivablesIndex().bySupplier;
     const owedIdx = supplierOwedIndex();
-    const sortIdx = suppliersSortBy === "purchases" ? supplierPurchaseTotalIndex() : suppliersSortBy === "pricing" ? supplierPricedTotalIndex() : null;
+    const sortIdx = suppliersSortBy === "purchases" ? supplierPurchaseCountIndex() : suppliersSortBy === "pricing" ? supplierPricedTotalIndex() : null;
     const rows = suppliersMatchingSearch(receivablesIdx, sortIdx);
     if (!rows.length) return '<div class="expense-empty-hint">' + (suppliersSearchQuery.trim() ? "ما فيه نتائج مطابقة" : "ما فيه موردين مضافين بعد") + "</div>";
     return rows.map((s, i) => supplierRowHtml(s, receivablesIdx, owedIdx, sortIdx, i + 1)).join("");
@@ -14514,7 +14511,7 @@ function suppliersItemsListHtml() {
 
 function suppliersViewHtml() {
     const backLabel = currentUserRole === "scrapyard" ? "→ رجوع للرئيسية" : "→ رجوع للطلبيات";
-    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-suppliers">' + backLabel + "</button>" + '<div class="tasks-title">🏭 الموردين</div>' + "</div>" + '<div class="treasury-block">' + '<div class="task-add-row">' + '<input type="text" id="new-supplier-name-input" class="task-add-input" placeholder="اسم المورد الجديد">' + '<input type="tel" id="new-supplier-phone-input" class="task-add-input" placeholder="رقم الجوال (اختياري)">' + '<button type="button" class="btn btn-sm btn-add-part" id="add-supplier-btn">+ إضافة</button>' + "</div>" + '<div class="supplier-kinds-row" style="margin-bottom:12px;">' + '<label class="supplier-kind-toggle"><input type="checkbox" id="new-supplier-handles-new-check"><span>قطع جديدة</span></label>' + '<label class="supplier-kind-toggle"><input type="checkbox" id="new-supplier-handles-used-check"><span>قطع مستعملة (تشليح)</span></label>' + "</div>" + '<div class="mini-label" id="new-supplier-car-makes-wrap" style="margin-bottom:12px;">السيارات' + carMakesPickerHtml(newSupplierCarMakes) + "</div>" + '<div class="filter-chips" id="suppliers-kind-filter-buttons" style="margin-bottom:12px;"></div>' + '<div class="filter-chips" id="suppliers-sort-buttons" style="margin-bottom:12px;"></div>' + '<div class="data-mgmt-row" style="margin-bottom:12px;">' + '<span class="data-mgmt-label">إدارة البيانات</span>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-export-suppliers-excel">⬇️ تصدير Excel</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-suppliers-excel">⬆️ استيراد Excel</button>' + '<input type="file" id="suppliers-excel-import-input" accept=".xlsx" style="display:none;">' + "</div>" + '<input type="text" id="suppliers-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث بالاسم أو رقم الجوال..." value="' + escapeHtml(suppliersSearchQuery) + '">' + '<div class="task-items-list" id="suppliers-items-list">' + suppliersItemsListHtml() + "</div>" + "</div>";
+    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-suppliers">' + backLabel + "</button>" + '<div class="tasks-title">🏭 الموردين</div>' + "</div>" + '<div class="treasury-block">' + '<div class="new-order-btn-row" style="margin-bottom:12px;">' + '<button type="button" class="btn btn-primary" id="btn-add-supplier">+ مورد جديد</button>' + "</div>" + '<div class="filter-chips" id="suppliers-kind-filter-buttons" style="margin-bottom:12px;"></div>' + '<div class="filter-chips" id="suppliers-sort-buttons" style="margin-bottom:12px;"></div>' + '<div class="data-mgmt-row" style="margin-bottom:12px;">' + '<span class="data-mgmt-label">إدارة البيانات</span>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-export-suppliers-excel">⬇️ تصدير Excel</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-suppliers-excel">⬆️ استيراد Excel</button>' + '<input type="file" id="suppliers-excel-import-input" accept=".xlsx" style="display:none;">' + "</div>" + '<input type="text" id="suppliers-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث بالاسم أو رقم الجوال..." value="' + escapeHtml(suppliersSearchQuery) + '">' + '<div class="task-items-list" id="suppliers-items-list">' + suppliersItemsListHtml() + "</div>" + "</div>";
 }
 
 function refreshSuppliersList() {
@@ -14553,65 +14550,11 @@ function bindSuppliersViewEvents() {
         if (file) importSuppliersFromExcelFile(file);
         e.target.value = "";
     });
-    const newSupplierCarMakesWrap = document.getElementById("new-supplier-car-makes-wrap");
-    if (newSupplierCarMakesWrap) {
-        bindCarMakesPicker(newSupplierCarMakesWrap, () => newSupplierCarMakes, (make, nowSelected) => {
-            newSupplierCarMakes = nowSelected ? newSupplierCarMakes.concat([ make ]) : newSupplierCarMakes.filter(m => m !== make);
+    document.getElementById("btn-add-supplier").addEventListener("click", () => {
+        openQuickAddSupplierModal(() => {
+            refreshSuppliersList();
+            updateSuppliersBadge();
         });
-    }
-    bindBusyButton(document.getElementById("add-supplier-btn"), async () => {
-        const nameInput = document.getElementById("new-supplier-name-input");
-        const phoneInput = document.getElementById("new-supplier-phone-input");
-        const handlesNewCheck = document.getElementById("new-supplier-handles-new-check");
-        const handlesUsedCheck = document.getElementById("new-supplier-handles-used-check");
-        const name = nameInput.value.trim();
-        const phone = phoneInput.value.trim();
-        if (!name && !phone) {
-            showToast("اكتب اسم أو رقم جوال على الأقل", "error");
-            return;
-        }
-        if (!handlesNewCheck.checked && !handlesUsedCheck.checked) {
-            showToast("لازم تحدد نوع واحد على الأقل (قطع جديدة/مستعملة)", "error");
-            return;
-        }
-        if (!newSupplierCarMakes.length) {
-            showToast("لازم تحدد سيارة وحدة على الأقل", "error");
-            return;
-        }
-        const dup = findDuplicateSupplier(name, phone);
-        if (dup) {
-            showToast("مورد موجود مسبقًا بنفس الاسم أو الرقم: " + (dup.name || dup.phone || "مورد"), "error");
-            return;
-        }
-        const newSupplier = {
-            id: uid("sup"),
-            name: name,
-            phone: phone,
-            notes: "",
-            extraPhones: [],
-            handlesNew: handlesNewCheck.checked,
-            handlesUsed: handlesUsedCheck.checked,
-            carMakes: newSupplierCarMakes.slice(),
-            createdAt: (new Date).toISOString()
-        };
-        if (!Array.isArray(appData.suppliers)) appData.suppliers = [];
-        const saved = await persistSupplier(newSupplier);
-        if (!saved) return;
-        appData.suppliers.push(newSupplier);
-        nameInput.value = "";
-        phoneInput.value = "";
-        handlesNewCheck.checked = false;
-        handlesUsedCheck.checked = false;
-        newSupplierCarMakes = [];
-        refreshSuppliersList();
-        updateSuppliersBadge();
-        const wrap = document.getElementById("new-supplier-car-makes-wrap");
-        if (wrap) {
-            const chipsWrap = wrap.querySelector(".car-makes-chips");
-            if (chipsWrap) chipsWrap.querySelectorAll(".chip-active").forEach(c => c.classList.remove("chip-active"));
-            const searchInput = wrap.querySelector(".car-makes-search-input");
-            if (searchInput) searchInput.value = "";
-        }
     });
     const searchInput = document.getElementById("suppliers-search-input");
     let suppliersDebounceTimer;
