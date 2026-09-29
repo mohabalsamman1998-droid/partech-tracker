@@ -1470,6 +1470,27 @@ async function withRetry(fn, attempts, delayMs) {
     return lastResult;
 }
 
+async function fetchAllRows(queryPageFn, pageSize) {
+    pageSize = pageSize || 1e3;
+    const all = [];
+    let from = 0;
+    while (true) {
+        const {data: data, error: error} = await queryPageFn(from, from + pageSize - 1);
+        if (error) return {
+            data: null,
+            error: error
+        };
+        const rows = data || [];
+        for (let i = 0; i < rows.length; i++) all.push(rows[i]);
+        if (rows.length < pageSize) break;
+        from += pageSize;
+    }
+    return {
+        data: all,
+        error: null
+    };
+}
+
 const GUARDED_AWAIT_TIMEOUT_MS = 12e3;
 
 const RESUME_REFRESH_TIMEOUT_MS = 3e4;
@@ -1958,7 +1979,9 @@ const ORDERS_ACTIVE_FILTER = "extra->archived.is.null,extra->>archived.eq.false"
 async function hydrateArchivedOrders() {
     try {
         if (!sb) return;
-        const {data: data, error: error} = await withRetry(() => sb.from("orders").select("*"), 3, 1500);
+        const {data: data, error: error} = await withRetry(() => fetchAllRows((from, to) => sb.from("orders").select("*").order("id", {
+            ascending: true
+        }).range(from, to)), 3, 1500);
         if (error) throw error;
         const existingIds = new Set(appData.orders.map(o => o.id));
         let addedAny = false;
@@ -1982,7 +2005,9 @@ async function hydrateArchivedOrders() {
 async function loadData() {
     try {
         if (!sb) throw new Error("NO_DB");
-        const [ordersRes, treasuryRes, tasksRes, suppliersRes, customersRes, deliveryAgentsRes, amerCustodyBalanceRes, omarCustodyBalanceRes] = await Promise.all([ sb.from("orders").select("*").or(ORDERS_ACTIVE_FILTER), sb.from("treasury_entries").select("*"), sb.from("tasks").select("*"), sb.from("suppliers").select("*"), sb.from("customers").select("*"), sb.from("delivery_agents").select("*"), sb.rpc("get_amer_custody_balance"), sb.rpc("get_omar_custody_balance") ]);
+        const [ordersRes, treasuryRes, tasksRes, suppliersRes, customersRes, deliveryAgentsRes, amerCustodyBalanceRes, omarCustodyBalanceRes] = await Promise.all([ fetchAllRows((from, to) => sb.from("orders").select("*").or(ORDERS_ACTIVE_FILTER).order("id", {
+            ascending: true
+        }).range(from, to)), sb.from("treasury_entries").select("*"), sb.from("tasks").select("*"), sb.from("suppliers").select("*"), sb.from("customers").select("*"), sb.from("delivery_agents").select("*"), sb.rpc("get_amer_custody_balance"), sb.rpc("get_omar_custody_balance") ]);
         if (ordersRes.error) throw ordersRes.error;
         if (treasuryRes.error) throw treasuryRes.error;
         if (tasksRes.error) throw tasksRes.error;
@@ -17900,7 +17925,7 @@ async function loadEmployeeLocations() {
 
 async function loadEmployeeLocationHistoryEmails() {
     if (!sb) return [];
-    const {data: data, error: error} = await sb.from("employee_location_history").select("email");
+    const {data: data, error: error} = await sb.from("employee_latest_location").select("email");
     if (error) {
         console.error("loadEmployeeLocationHistoryEmails:", error);
         return [];
