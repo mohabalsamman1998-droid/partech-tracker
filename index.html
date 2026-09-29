@@ -7154,7 +7154,7 @@ function quoteModalHtml(d) {
         sublabel: c.phone
     })), d.customerId, "— بدون عميل محدد —") + "</div>" + '<button type="button" class="icon-btn" id="quote-add-customer-btn" aria-label="عميل جديد">➕</button>' + "</div>" + "</div>";
     const labelFieldHtml = '<div class="field"><span class="field-label">الطلبية</span><input type="text" id="quote-label-input" placeholder="مثال: اسم الزبون / نوع السيارة / أي وصف مختصر" value="' + escapeHtml(d.orderLabel || "") + '"></div>';
-    const partsControlsHtml = '<div id="quote-part-type-gate-wrap">' + quotePartAddControlsHtml() + "</div>";
+    const partsControlsHtml = '<div id="quote-part-type-gate-wrap">' + quotePartAddControlsHtml() + "</div>" + (isPurchasing ? '<button type="button" class="btn btn-ghost btn-sm" id="quote-supplier-search-btn" style="width:100%;margin-top:10px;">🔍 بحث عن مورد</button>' : "");
     const footerUtilityHtml = !isPurchasing && !d.isNew ? '<button type="button" class="btn btn-sm btn-danger-ghost" id="quote-delete-btn">🗑️ حذف طلب التسعير</button>' : "";
     const footerActionsHtml = isPurchasing ? '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-ghost" id="quote-save-btn">حفظ</button>' + '<button type="button" class="btn btn-primary" id="quote-save-send-btn">حفظ و إرسال</button>' : '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-ghost" id="quote-save-btn">💾 حفظ</button>' + '<button type="button" class="btn btn-ghost" id="quote-send-btn">حفظ و اعادة طلب</button>' + '<button type="button" class="btn btn-primary" id="quote-approve-btn">✅ اعتماد</button>';
     return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلب تسعير جديد" : "تعديل طلب التسعير") + '</div><div class="modal-sub">البيانات تُحفظ عند الضغط على حفظ</div></div>' + '<button class="icon-btn" id="quote-modal-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + '<label class="field"><span class="field-label">رقم التسعيرة (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + customerFieldHtml + labelFieldHtml + vinFieldHtml(d, isPurchasing ? "readonly" : "edit", "quote") + mediaOrderBlockHtml(d.id, "quote", !isPurchasing) + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span>' + (isPurchasing ? '<button type="button" class="btn btn-ghost btn-sm" id="quote-add-supplier-btn">➕ مورد جديد</button>' : "") + "</div>" + '<div id="quote-parts-list" class="parts-list">' + d.parts.map((p, i) => quotePartRowHtml(p, i)).join("") + "</div>" + partsControlsHtml + "</div>" + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">ملخص التكلفة</span></div>' + '<div class="totals-row" style="grid-template-columns:1fr;">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="quote-total-cost-display">0 ر.س</span></div>' + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + footerUtilityHtml + "</div>" + "<span></span>" + '<div class="modal-footer-actions">' + footerActionsHtml + "</div>" + "</div>" + "</div>" + "</div>";
@@ -7312,6 +7312,8 @@ function attachQuoteModalHandlers() {
         if (addSupplierBtn) {
             addSupplierBtn.addEventListener("click", () => openQuickAddSupplierModal());
         }
+        const supplierSearchBtn = root.querySelector("#quote-supplier-search-btn");
+        if (supplierSearchBtn) supplierSearchBtn.addEventListener("click", () => openSupplierSearchModal());
         return;
     }
     bindBusyButton(root.querySelector("#quote-save-btn"), onSaveQuote);
@@ -7796,6 +7798,101 @@ function openContactModal(phone, label) {
     root.querySelector("#contact-modal-close-btn").addEventListener("click", close);
     root.querySelector("#contact-call-link").addEventListener("click", close);
     root.querySelector("#contact-wa-link").addEventListener("click", close);
+}
+
+let supplierSearchSelectedMake = null;
+
+function supplierSearchResultsHtml() {
+    const countIdx = supplierPurchaseCountIndex();
+    let rows = appData.suppliers || [];
+    if (supplierSearchSelectedMake) {
+        rows = rows.filter(s => Array.isArray(s.carMakes) && s.carMakes.includes(supplierSearchSelectedMake));
+    }
+    rows = [ ...rows ].sort((a, b) => (countIdx[b.id] || 0) - (countIdx[a.id] || 0));
+    if (!rows.length) {
+        return '<div class="expense-empty-hint">' + (supplierSearchSelectedMake ? "ما فيه موردين لهالسيارة" : "ما فيه موردين مضافين بعد") + "</div>";
+    }
+    return rows.map(s => {
+        const kindsLabel = [ s.handlesNew ? "قطع جديدة" : null, s.handlesUsed ? "قطع مستعملة (تشليح)" : null ].filter(Boolean).join(" + ") || "غير محدد";
+        return '<div class="task-item-row" data-supplier-id="' + escapeHtml(s.id) + '">' + '<div class="supplier-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(s.name || "بدون اسم") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(kindsLabel) + "</span>" + ((s.phone || "").trim() ? '<button type="button" class="btn btn-ghost btn-sm supplier-search-contact-btn">📞 تواصل</button>' : "") + "</div>" + "</div>";
+    }).join("");
+}
+
+function supplierSearchModalHtml() {
+    return '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div class="modal-title">🔍 بحث عن مورد</div>' + '<button type="button" class="icon-btn" id="supplier-search-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="mini-label" id="supplier-search-car-makes-wrap">نوع السيارة' + carMakesPickerHtml(supplierSearchSelectedMake ? [ supplierSearchSelectedMake ] : []) + "</div>" + '<div class="task-items-list" id="supplier-search-results-list" style="margin-top:12px;">' + supplierSearchResultsHtml() + "</div>" + "</div>" + "</div>";
+}
+
+function bindSupplierSearchResultsEvents() {
+    document.querySelectorAll("#supplier-search-results-list .supplier-search-contact-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const row = btn.closest("[data-supplier-id]");
+            const sid = row.getAttribute("data-supplier-id");
+            const supplier = (appData.suppliers || []).find(s => s.id === sid);
+            if (!supplier) return;
+            closeSupplierSearchModal();
+            openContactModal(supplier.phone, supplier.name || "المورد");
+        });
+    });
+}
+
+function bindCarMakeSingleFilter(wrapEl, getSelected, onSelect) {
+    const searchInput = wrapEl.querySelector(".car-makes-search-input");
+    const chipsWrap = wrapEl.querySelector(".car-makes-chips");
+    if (!searchInput || !chipsWrap) return;
+    const bindChips = () => {
+        chipsWrap.querySelectorAll("[data-car-make]").forEach(btn => {
+            btn.addEventListener("click", () => {
+                const make = btn.getAttribute("data-car-make");
+                const current = getSelected()[0] || null;
+                onSelect(current === make ? null : make);
+                chipsWrap.innerHTML = carMakesChipsInnerHtml(searchInput.value, getSelected());
+                bindChips();
+            });
+        });
+    };
+    bindChips();
+    searchInput.addEventListener("input", () => {
+        chipsWrap.innerHTML = carMakesChipsInnerHtml(searchInput.value, getSelected());
+        bindChips();
+    });
+}
+
+function bindSupplierSearchModalEvents() {
+    const root = document.getElementById("confirm-root");
+    root.querySelector("[data-close-confirm]").addEventListener("click", e => {
+        if (e.target.hasAttribute("data-close-confirm")) closeSupplierSearchModal();
+    });
+    root.querySelector("#supplier-search-close-btn").addEventListener("click", closeSupplierSearchModal);
+    const wrap = document.getElementById("supplier-search-car-makes-wrap");
+    if (wrap) {
+        bindCarMakeSingleFilter(wrap, () => supplierSearchSelectedMake ? [ supplierSearchSelectedMake ] : [], make => {
+            supplierSearchSelectedMake = make;
+            const list = document.getElementById("supplier-search-results-list");
+            if (list) {
+                list.innerHTML = supplierSearchResultsHtml();
+                bindSupplierSearchResultsEvents();
+            }
+        });
+    }
+    bindSupplierSearchResultsEvents();
+}
+
+function renderSupplierSearchModal() {
+    const root = document.getElementById("confirm-root");
+    root.innerHTML = supplierSearchModalHtml();
+    root.classList.add("modal-open");
+    bindSupplierSearchModalEvents();
+}
+
+function openSupplierSearchModal() {
+    supplierSearchSelectedMake = null;
+    renderSupplierSearchModal();
+}
+
+function closeSupplierSearchModal() {
+    const root = document.getElementById("confirm-root");
+    root.innerHTML = "";
+    root.classList.remove("modal-open");
 }
 
 function openQuickAddCustomerModal(onSaved, prefill) {
@@ -14511,7 +14608,7 @@ function suppliersItemsListHtml() {
 
 function suppliersViewHtml() {
     const backLabel = currentUserRole === "scrapyard" ? "→ رجوع للرئيسية" : "→ رجوع للطلبيات";
-    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-suppliers">' + backLabel + "</button>" + '<div class="tasks-title">🏭 الموردين</div>' + "</div>" + '<div class="treasury-block">' + '<div class="new-order-btn-row" style="margin-bottom:12px;">' + '<button type="button" class="btn btn-primary" id="btn-add-supplier">+ مورد جديد</button>' + "</div>" + '<div class="filter-chips" id="suppliers-kind-filter-buttons" style="margin-bottom:12px;"></div>' + '<div class="filter-chips" id="suppliers-sort-buttons" style="margin-bottom:12px;"></div>' + '<div class="data-mgmt-row" style="margin-bottom:12px;">' + '<span class="data-mgmt-label">إدارة البيانات</span>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-export-suppliers-excel">⬇️ تصدير Excel</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-suppliers-excel">⬆️ استيراد Excel</button>' + '<input type="file" id="suppliers-excel-import-input" accept=".xlsx" style="display:none;">' + "</div>" + '<input type="text" id="suppliers-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث بالاسم أو رقم الجوال..." value="' + escapeHtml(suppliersSearchQuery) + '">' + '<div class="task-items-list" id="suppliers-items-list">' + suppliersItemsListHtml() + "</div>" + "</div>";
+    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders-from-suppliers">' + backLabel + "</button>" + '<div class="tasks-title">🏭 الموردين</div>' + "</div>" + '<div class="treasury-block">' + '<div class="new-order-btn-row" style="margin-bottom:12px;">' + '<button type="button" class="btn btn-ghost" id="btn-search-supplier">🔍 بحث عن مورد</button>' + '<button type="button" class="btn btn-primary" id="btn-add-supplier">+ مورد جديد</button>' + "</div>" + '<div class="filter-chips" id="suppliers-kind-filter-buttons" style="margin-bottom:12px;"></div>' + '<div class="filter-chips" id="suppliers-sort-buttons" style="margin-bottom:12px;"></div>' + '<div class="data-mgmt-row" style="margin-bottom:12px;">' + '<span class="data-mgmt-label">إدارة البيانات</span>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-export-suppliers-excel">⬇️ تصدير Excel</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-suppliers-excel">⬆️ استيراد Excel</button>' + '<input type="file" id="suppliers-excel-import-input" accept=".xlsx" style="display:none;">' + "</div>" + '<input type="text" id="suppliers-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث بالاسم أو رقم الجوال..." value="' + escapeHtml(suppliersSearchQuery) + '">' + '<div class="task-items-list" id="suppliers-items-list">' + suppliersItemsListHtml() + "</div>" + "</div>";
 }
 
 function refreshSuppliersList() {
@@ -14556,6 +14653,7 @@ function bindSuppliersViewEvents() {
             updateSuppliersBadge();
         });
     });
+    document.getElementById("btn-search-supplier").addEventListener("click", () => openSupplierSearchModal());
     const searchInput = document.getElementById("suppliers-search-input");
     let suppliersDebounceTimer;
     searchInput.addEventListener("input", e => {
