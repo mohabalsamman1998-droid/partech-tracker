@@ -2002,7 +2002,9 @@ async function hydrateArchivedOrders() {
     }
 }
 
-async function loadData() {
+async function loadData(opts) {
+    const preserveOnFailure = !!(opts && opts.preserveOnFailure);
+    let ok = false;
     try {
         if (!sb) throw new Error("NO_DB");
         const [ordersRes, treasuryRes, tasksRes, suppliersRes, customersRes, deliveryAgentsRes, amerCustodyBalanceRes, omarCustodyBalanceRes] = await Promise.all([ fetchAllRows((from, to) => sb.from("orders").select("*").or(ORDERS_ACTIVE_FILTER).order("id", {
@@ -2033,21 +2035,27 @@ async function loadData() {
             deliveryAgents: deliveryAgentsRes.error ? [] : (deliveryAgentsRes.data || []).map(deliveryAgentRowToObject)
         };
         archivedOrdersHydration = hydrateArchivedOrders();
+        ok = true;
     } catch (e) {
-        appData = {
-            orders: [],
-            treasury: defaultTreasury(),
-            tasks: defaultTasks(),
-            suppliers: [],
-            customers: [],
-            deliveryAgents: []
-        };
-        showToast("تعذر الاتصال بقاعدة البيانات — تحقق من إعداد Supabase (SUPABASE_URL / SUPABASE_ANON_KEY)", "error");
+        if (preserveOnFailure) {
+            showToast("تعذر تحديث البيانات — البيانات المعروضة قد تكون قديمة شوي. تحقق من الاتصال", "error");
+        } else {
+            appData = {
+                orders: [],
+                treasury: defaultTreasury(),
+                tasks: defaultTasks(),
+                suppliers: [],
+                customers: [],
+                deliveryAgents: []
+            };
+            showToast("تعذر الاتصال بقاعدة البيانات — تحقق من إعداد Supabase (SUPABASE_URL / SUPABASE_ANON_KEY)", "error");
+        }
     }
     migrateLegacyCustomerPayment();
     migrateLegacyOrderLabel();
     migrateLegacyTreasury();
     migrateLegacyTasks();
+    return ok;
 }
 
 function migrateLegacyTreasury() {
@@ -12907,7 +12915,9 @@ function confirmImportOverwrite(parsedData) {
                 appData = previousAppData;
                 showToast("تعذر استبدال البيانات: " + friendlyErrorText(e) + " — جاري إعادة التحميل من قاعدة البيانات", "error");
                 try {
-                    await loadData();
+                    await loadData({
+                        preserveOnFailure: true
+                    });
                 } catch (e2) {}
                 if (document.getElementById("treasury-view").style.display !== "none") {
                     renderTreasuryView();
@@ -18751,6 +18761,19 @@ function getAuthErrorFromUrl() {
     }
 }
 
+async function ensureFreshSession() {
+    if (!sb) return;
+    try {
+        const {data: data} = await sb.auth.getSession();
+        const session = data && data.session;
+        if (!session || !session.expires_at) return;
+        const msRemaining = session.expires_at * 1e3 - Date.now();
+        if (msRemaining < 6e4) await sb.auth.refreshSession();
+    } catch (e) {
+        console.error("ensureFreshSession:", e);
+    }
+}
+
 let resumeRefreshInFlight = false;
 
 let lastResumeRefreshAt = 0;
@@ -18775,6 +18798,8 @@ async function refreshOnResume() {
 }
 
 async function refreshOnResumeWork(myGen) {
+    await ensureFreshSession();
+    if (myGen !== resumeRefreshGeneration) return;
     if (currentUserRole === "scrapyard") {
         if (document.getElementById("scrapyard-root").style.display === "none") return;
         if (scrapyardCurrentScreen === "settlement") {
@@ -18792,7 +18817,9 @@ async function refreshOnResumeWork(myGen) {
         loadAnnouncement();
         return;
     }
-    await loadData();
+    await loadData({
+        preserveOnFailure: true
+    });
     if (myGen !== resumeRefreshGeneration) return;
     renderKPIs();
     renderTable();
