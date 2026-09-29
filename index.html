@@ -13,6 +13,10 @@
 <meta name="theme-color" content="#22D07A">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- يبدأ TLS handshake مع Supabase بالتوازي مع تحميل باقي الصفحة، بدل ما ينتظر لحد ما سطر
+     createClient يشتغل — أول استعلام فعلي (allowed_emails بـshowAppIfAllowed) بيوفر جولة شبكة
+     كاملة (~200-250ms من السعودية، السيرفر بسيول). -->
+<link rel="preconnect" href="https://kbgvwphlgepfaarkjsjp.supabase.co" crossorigin>
 <!-- الخطوط تُحمّل بشكل غير حاجب للرسم (media="print" ثم تتحوّل لـall عند وصولها): وسم
      stylesheet عادي بالـhead بيوقف أول رسم للصفحة *وبيأخّر تنفيذ السكربت* لحد ما يوصل الملف.
      يعني لو fonts.googleapis.com علّق على شبكة الجوال، الصفحة كلها تظل فاضية — ولا حتى شاشة
@@ -1345,7 +1349,11 @@
   <div id="toast-root" class="toast-root"></div>
 
 <!-- html2pdf وxlsx وleaflet صارت تتحمّل عند الحاجة بس (ensureHtml2pdf/ensureXLSX/ensureLeaflet أول السكربت) — مو بكل تحميل صفحة -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<!-- إصدار مثبّت بدل @2 العائم (2026-09-29) — @2 يحل حاليًا لنفس 2.117.2 بالضبط (تأكدنا عبر
+     data.jsdelivr.com/v1/packages)، فهالسطر ما بيغيّر أي كود شغّال اليوم، بس بيمنع ترقية صامتة
+     مستقبلية بدون اختبار، وبيخلي كاش المتصفح immutable (سنة كاملة بدل إعادة تحقق كل أسبوع مع
+     @2 العائم) — تحديث النسخة قرار متعمّد لاحقًا، مو تلقائي. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.min.js"></script>
 <script>const SUPABASE_URL = "https://kbgvwphlgepfaarkjsjp.supabase.co";
 
 const SUPABASE_ANON_KEY = "sb_publishable_6EHXbpaVIocWUf10Agn-WQ_FIh3F0yy";
@@ -9281,23 +9289,9 @@ function formatDateDMY(yyyyMmDd) {
     return m[3] + "/" + m[2] + "/" + m[1];
 }
 
-const ELEVATED_ACCESS_EMAILS_FALLBACK = [ "mohabalsamman1998@gmail.com", "homam.techno@gmail.com", "sammaneng@gmail.com" ];
-
 let currentUserIsElevated = false;
 
 let currentUserRole = "full";
-
-async function refreshElevatedAccessEmails(email) {
-    try {
-        if (!sb || !email) return;
-        const {data: data, error: error} = await sb.from("allowed_emails").select("is_elevated").eq("email", email).maybeSingle();
-        if (error) throw error;
-        currentUserIsElevated = !!(data && data.is_elevated);
-    } catch (e) {
-        console.error("refreshElevatedAccessEmails:", e);
-        currentUserIsElevated = ELEVATED_ACCESS_EMAILS_FALLBACK.includes(email);
-    }
-}
 
 function hasElevatedAccess() {
     return currentUserIsElevated;
@@ -16219,7 +16213,7 @@ async function showAppIfAllowed(session) {
     try {
         let role = "full";
         try {
-            const {data: data, error: error} = await sb.from("allowed_emails").select("email, role").eq("email", email).maybeSingle();
+            const {data: data, error: error} = await sb.from("allowed_emails").select("email, role, is_elevated").eq("email", email).maybeSingle();
             if (error) throw error;
             if (!data) {
                 await sb.auth.signOut();
@@ -16228,12 +16222,12 @@ async function showAppIfAllowed(session) {
             }
             role = data.role || "full";
             currentUserRole = role;
+            currentUserIsElevated = !!data.is_elevated;
         } catch (e) {
             showAuthGate("تعذر التحقق من صلاحية الدخول — تحقق من الاتصال.", "error");
             showAuthRetry(session);
             return;
         }
-        await refreshElevatedAccessEmails(email);
         if (shownForEmail === email) return;
         document.getElementById("auth-gate").classList.add("hidden");
         shownForEmail = email;
@@ -16330,7 +16324,7 @@ async function initScrapyardView(email) {
     loadAnnouncement();
     subscribeAnnouncementRealtime();
     subscribeOrderMediaRealtime();
-    await refreshEditProposals();
+    refreshEditProposals();
     subscribeEditProposalsRealtime();
     if (scrapyardSharedState.canManage) {
         await loadScrapyardData("used");
@@ -16456,18 +16450,18 @@ function goToScrapyardHome() {
 }
 
 async function loadScrapyardHomeTotals() {
-    const [usedRes, newRes, tasksRes, suppliersRes, ordersRes, approvedRes, customersRes, custodyRes, usedReturnsRes, newReturnsRes] = await Promise.all([ sb.rpc("get_scrapyard_used_parts"), sb.rpc("get_new_parts_supplier"), sb.rpc("get_my_scrapyard_tasks"), sb.from("suppliers").select("*"), sb.rpc("get_scrapyard_home_quotes"), sb.rpc("get_scrapyard_approved_quotes"), sb.from("customers").select("*"), sb.from("treasury_entries").select("id").eq("category", scrapyardSharedState.email === "iomar.aljohnii@gmail.com" ? "omarCustody" : "amerCustody"), sb.rpc("get_scrapyard_return_receivables", {
+    const [usedRes, newRes, tasksRes, suppliersRes, ordersRes, approvedRes, custodyRes, usedReturnsRes, newReturnsRes] = await Promise.all([ sb.rpc("get_scrapyard_used_parts"), sb.rpc("get_new_parts_supplier"), sb.rpc("get_my_scrapyard_tasks"), sb.from("suppliers").select("*"), sb.rpc("get_scrapyard_home_quotes"), sb.rpc("get_scrapyard_approved_quotes"), sb.from("treasury_entries").select("id").eq("category", scrapyardSharedState.email === "iomar.aljohnii@gmail.com" ? "omarCustody" : "amerCustody"), sb.rpc("get_scrapyard_return_receivables", {
         p_kind: "used"
     }), sb.rpc("get_scrapyard_return_receivables", {
         p_kind: "new"
     }) ]);
+    appData.customers = [];
     if (usedRes.error) console.error("get_scrapyard_used_parts:", usedRes.error);
     if (newRes.error) console.error("get_new_parts_supplier:", newRes.error);
     if (tasksRes.error) console.error("get_my_scrapyard_tasks:", tasksRes.error);
     if (suppliersRes.error) console.error("suppliers:", suppliersRes.error);
     if (ordersRes.error) console.error("get_scrapyard_home_quotes:", ordersRes.error);
     if (approvedRes.error) console.error("get_scrapyard_approved_quotes:", approvedRes.error);
-    if (customersRes.error) console.error("customers:", customersRes.error);
     if (custodyRes.error) console.error("treasury_entries (amerCustody):", custodyRes.error);
     if (usedReturnsRes.error) console.error("get_scrapyard_return_receivables(used):", usedReturnsRes.error);
     if (newReturnsRes.error) console.error("get_scrapyard_return_receivables(new):", newReturnsRes.error);
@@ -16481,9 +16475,8 @@ async function loadScrapyardHomeTotals() {
     scrapyardSharedState.suppliers = suppliersRes.error ? [] : suppliersRes.data || [];
     appData.suppliers = suppliersRes.error ? [] : groupSupplierOrCustomerRows(suppliersRes.data);
     appData.orders = [ ...ordersRes.error ? [] : ordersRes.data || [], ...approvedRes.error ? [] : approvedRes.data || [] ].map(orderRowToObject);
-    appData.customers = customersRes.error ? [] : groupSupplierOrCustomerRows(customersRes.data);
     scrapyardSharedState.custodyEntryCount = custodyRes.error ? 0 : (custodyRes.data || []).length;
-    scrapyardSharedState.homeLoadFailed = !!(usedRes.error || newRes.error || tasksRes.error || ordersRes.error || approvedRes.error || usedReturnsRes.error || newReturnsRes.error || suppliersRes.error || customersRes.error || custodyRes.error);
+    scrapyardSharedState.homeLoadFailed = !!(usedRes.error || newRes.error || tasksRes.error || ordersRes.error || approvedRes.error || usedReturnsRes.error || newReturnsRes.error || suppliersRes.error || custodyRes.error);
     if (scrapyardSharedState.homeLoadFailed) {
         showToast("تعذر تحميل بعض البيانات — الأرقام تحت ممكن تكون ناقصة. تحقق من الاتصال وحدّث الصفحة", "error");
     }
