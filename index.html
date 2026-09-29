@@ -1291,6 +1291,7 @@
         <button id="btn-open-statistics" class="btn btn-ghost">📊 الإحصائيات</button>
         <button id="btn-open-delivery-agents" class="btn btn-ghost" style="display:none;">🚚 المناديب</button>
         <button id="btn-open-settlement-viewer" class="btn btn-ghost" style="display:none;">🧾 السداد</button>
+        <button id="btn-open-part-price-log" class="btn btn-ghost" style="display:none;">➕ إدخال بيانات الأسعار</button>
       </div>
     </header>
 
@@ -1338,6 +1339,7 @@
     <div id="archive-view" style="display:none;"></div>
     <div id="statistics-view" style="display:none;"></div>
     <div id="delivery-agents-view" style="display:none;"></div>
+    <div id="part-price-log-view" style="display:none;"></div>
   </div>
 
   <div class="page" id="scrapyard-root" style="display:none;"></div>
@@ -6683,7 +6685,8 @@ function quoteRowHtml(o, idx, total) {
     const badgeSeverity = quoteElapsedSeverity(o.createdAt);
     const rowState = quoteRowColorState(o);
     const priorityControls = canReorderQuotePriority() ? '<div class="quote-priority-controls">' + '<button type="button" class="quote-priority-btn" data-priority-move="up"' + (idx === 0 ? " disabled" : "") + ' title="رفع الأولوية">▲</button>' + '<button type="button" class="quote-priority-btn" data-priority-move="down"' + (idx === total - 1 ? " disabled" : "") + ' title="خفض الأولوية">▼</button>' + "</div>" : "";
-    return '<div class="task-item-row quote-row' + (rowState ? " quote-row-" + rowState : "") + '" data-quote-id="' + escapeHtml(o.id) + '">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(o.orderLabel || "—") + "</span>" + (elapsed ? '<span class="quote-row-elapsed' + (badgeSeverity ? " quote-row-elapsed-" + badgeSeverity : "") + '" data-created-at="' + escapeHtml(o.createdAt) + '">⏱ ' + escapeHtml(elapsed) + "</span>" : "") + priorityControls + "</div>";
+    const priceSelfBtn = currentUserRole === "full" && currentUserIsElevated ? '<button type="button" class="icon-btn" data-quote-price-self="' + escapeHtml(o.id) + '" title="سعّر هذه الطلبية بنفسك" aria-label="سعّر بنفسك">💰</button>' : "";
+    return '<div class="task-item-row quote-row' + (rowState ? " quote-row-" + rowState : "") + '" data-quote-id="' + escapeHtml(o.id) + '">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(o.orderLabel || "—") + "</span>" + (elapsed ? '<span class="quote-row-elapsed' + (badgeSeverity ? " quote-row-elapsed-" + badgeSeverity : "") + '" data-created-at="' + escapeHtml(o.createdAt) + '">⏱ ' + escapeHtml(elapsed) + "</span>" : "") + priceSelfBtn + priorityControls + "</div>";
 }
 
 function quotesListHtml() {
@@ -6903,6 +6906,13 @@ function renderQuotesList() {
         el.querySelectorAll(".quote-row").forEach(row => {
             row.addEventListener("click", () => openQuoteModal("edit", row.getAttribute("data-quote-id")));
             bindQuotePriorityMoveButtons(row);
+            const priceSelfBtn = row.querySelector("[data-quote-price-self]");
+            if (priceSelfBtn) {
+                priceSelfBtn.addEventListener("click", e => {
+                    e.stopPropagation();
+                    openQuoteModal("edit", priceSelfBtn.getAttribute("data-quote-price-self"), "purchasing");
+                });
+            }
         });
     }
     refreshScrapyardQuotesListIfOpen();
@@ -7632,6 +7642,51 @@ async function persistScrapyardQuotePricing(order, quoteReady, expectedUpdatedAt
 }
 
 async function handleScrapyardQuoteConflict(draftId) {
+    if (currentUserRole !== "scrapyard") {
+        let fresh;
+        try {
+            const {data: data, error: error} = await withTimeout(sb.from("orders").select("*").eq("id", draftId).maybeSingle(), GUARDED_AWAIT_TIMEOUT_MS, "orders_quote_conflict_refetch");
+            if (error) throw error;
+            fresh = data;
+        } catch (e) {
+            console.error("handleScrapyardQuoteConflict (elevated):", e);
+            showToast("التسعيرة انعدّلت من مكان تاني وما قدرنا نحمّل آخر نسخة — تحقق من الاتصال وحاول مرة تانية", "error");
+            return "failed";
+        }
+        if (fresh) {
+            const freshObj = orderRowToObject(fresh);
+            const idx = appData.orders.findIndex(o => o.id === draftId);
+            if (idx >= 0) appData.orders[idx] = freshObj; else appData.orders.push(freshObj);
+        } else {
+            appData.orders = appData.orders.filter(o => o.id !== draftId);
+        }
+        renderQuotesList();
+        if (!quoteModalStillOpen(draftId)) return "closed";
+        const pendingReturnEl = modalCloseCallback;
+        modalCloseCallback = null;
+        const mediaSnapEl = mediaTakeStagedSnapshot(draftId);
+        closeQuoteModal();
+        modalCloseCallback = pendingReturnEl;
+        if (!appData.orders.some(o => o.id === draftId && o.isQuote)) {
+            showToast("هذه التسعيرة ما عادت متاحة للتسعير — يمكن المبيعات اعتمدتها أو حذفتها", "error");
+            mediaRestoreStagedSnapshot(mediaSnapEl);
+            if (modalCloseCallback) {
+                const cb = modalCloseCallback;
+                modalCloseCallback = null;
+                cb();
+            }
+            return "closed";
+        }
+        openQuoteModal("edit", draftId, "purchasing");
+        mediaAfterQuoteConflict(draftId, mediaSnapEl, true);
+        confirmAction({
+            title: "التسعيرة انعدّلت وأنت فاتحها",
+            message: "حدا عدّل هالتسعيرة (غالبًا المبيعات ضافت أو عدّلت قطعة) بعد ما فتحتها، فما حفظنا تسعيرك حتى ما ينمسح تعديلهم. فتحنالك آخر نسخة — راجع القطع وأعد إدخال تسعيرك واحفظ من جديد.",
+            confirmLabel: "تمام",
+            onlyConfirm: true
+        });
+        return "reopened";
+    }
     let freshRows;
     try {
         const {data: data, error: error} = await withTimeout(sb.rpc("get_scrapyard_home_quotes"), GUARDED_AWAIT_TIMEOUT_MS, "get_scrapyard_home_quotes");
@@ -9469,6 +9524,8 @@ function hideAllSecondaryViews() {
     document.getElementById("statistics-view").style.display = "none";
     const deliveryAgentsView = document.getElementById("delivery-agents-view");
     if (deliveryAgentsView) deliveryAgentsView.style.display = "none";
+    const partPriceLogViewEl = document.getElementById("part-price-log-view");
+    if (partPriceLogViewEl) partPriceLogViewEl.style.display = "none";
 }
 
 async function openTreasuryView() {
@@ -13106,6 +13163,11 @@ function bindToolbar() {
     });
     const settlementViewerBtn = document.getElementById("btn-open-settlement-viewer");
     if (settlementViewerBtn) settlementViewerBtn.addEventListener("click", openSettlementViewer);
+    const partPriceLogBtn = document.getElementById("btn-open-part-price-log");
+    if (partPriceLogBtn) partPriceLogBtn.addEventListener("click", () => {
+        const view = document.getElementById("part-price-log-view");
+        if (view.style.display !== "none") closePartPriceLogView(); else openPartPriceLogView();
+    });
     document.getElementById("btn-who-online").addEventListener("click", showWhoIsOnline);
     document.getElementById("btn-theme-toggle").addEventListener("click", toggleTheme);
     const pushBtn = document.getElementById("btn-push-toggle");
@@ -16025,11 +16087,16 @@ function partPriceLogDraftPartRowHtml(part, total) {
 
 function partPriceLogViewHtml() {
     const partsHtml = partPriceLogDraft.parts.map(p => partPriceLogDraftPartRowHtml(p, partPriceLogDraft.parts.length)).join("");
-    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-from-part-price-log">→ رجوع للرئيسية</button>' + '<div class="tasks-title">➕ إدخال بيانات</div>' + "</div>" + '<div class="treasury-block">' + '<label class="field"><span class="field-label">نوع السيارة</span><input type="text" id="ppl-car-title-input" class="task-add-input" placeholder="مثلاً: كامري 2020" value="' + escapeHtml(partPriceLogDraft.carTitle) + '"></label>' + '<div class="data-mgmt-row" style="margin-bottom:8px;">' + '<span class="data-mgmt-label">القطع</span>' + '<button type="button" class="btn btn-ghost btn-sm" id="ppl-add-supplier-btn">+ مورد جديد</button>' + "</div>" + '<div class="task-items-list" id="ppl-parts-list">' + partsHtml + "</div>" + '<button type="button" class="btn btn-ghost btn-sm" id="ppl-add-part-btn" style="margin-top:10px;">+ إضافة قطعة</button>' + '<div><button type="button" class="btn btn-primary" id="ppl-save-btn" style="margin-top:14px;">💾 حفظ</button></div>' + "</div>" + '<div class="tasks-title" style="margin:18px 0 4px;">آخر الإدخالات</div>' + '<div class="treasury-block">' + partPriceLogListHtml() + "</div>";
+    const backLabel = currentUserRole === "scrapyard" ? "→ رجوع للرئيسية" : "→ رجوع للطلبيات";
+    return '<div class="tasks-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-from-part-price-log">' + backLabel + "</button>" + '<div class="tasks-title">➕ إدخال بيانات</div>' + "</div>" + '<div class="treasury-block">' + '<label class="field"><span class="field-label">نوع السيارة</span><input type="text" id="ppl-car-title-input" class="task-add-input" placeholder="مثلاً: كامري 2020" value="' + escapeHtml(partPriceLogDraft.carTitle) + '"></label>' + '<div class="data-mgmt-row" style="margin-bottom:8px;">' + '<span class="data-mgmt-label">القطع</span>' + '<button type="button" class="btn btn-ghost btn-sm" id="ppl-add-supplier-btn">+ مورد جديد</button>' + "</div>" + '<div class="task-items-list" id="ppl-parts-list">' + partsHtml + "</div>" + '<button type="button" class="btn btn-ghost btn-sm" id="ppl-add-part-btn" style="margin-top:10px;">+ إضافة قطعة</button>' + '<div><button type="button" class="btn btn-primary" id="ppl-save-btn" style="margin-top:14px;">💾 حفظ</button></div>' + "</div>" + '<div class="tasks-title" style="margin:18px 0 4px;">آخر الإدخالات</div>' + '<div class="treasury-block">' + partPriceLogListHtml() + "</div>";
+}
+
+function partPriceLogViewContainer() {
+    return currentUserRole === "scrapyard" ? document.getElementById("scrapyard-root") : document.getElementById("part-price-log-view");
 }
 
 function renderPartPriceLogView() {
-    const root = document.getElementById("scrapyard-root");
+    const root = partPriceLogViewContainer();
     root.innerHTML = partPriceLogViewHtml();
     bindPartPriceLogEvents();
 }
@@ -16068,7 +16135,7 @@ function bindPartPriceLogPartRowEvents() {
 
 function bindPartPriceLogEvents() {
     const backBtn = document.getElementById("btn-back-from-part-price-log");
-    if (backBtn) backBtn.addEventListener("click", goToScrapyardHome);
+    if (backBtn) backBtn.addEventListener("click", currentUserRole === "scrapyard" ? goToScrapyardHome : closePartPriceLogView);
     const carTitleInput = document.getElementById("ppl-car-title-input");
     if (carTitleInput) carTitleInput.addEventListener("input", e => {
         partPriceLogDraft.carTitle = e.target.value;
@@ -16125,13 +16192,23 @@ function bindPartPriceLogEvents() {
 }
 
 async function openPartPriceLogView() {
-    scrapyardCurrentScreen = null;
+    if (currentUserRole === "scrapyard") {
+        scrapyardCurrentScreen = null;
+    } else {
+        hideAllSecondaryViews();
+        document.getElementById("part-price-log-view").style.display = "block";
+    }
     partPriceLogDraft = freshPartPriceLogDraft();
     if (partPriceLogEntries === null) {
-        document.getElementById("scrapyard-root").innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
+        partPriceLogViewContainer().innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
         await loadPartPriceLog();
     }
     renderPartPriceLogView();
+}
+
+function closePartPriceLogView() {
+    document.getElementById("part-price-log-view").style.display = "none";
+    document.getElementById("orders-view").style.display = "";
 }
 
 async function openArchiveView() {
@@ -16352,6 +16429,8 @@ async function showAppIfAllowed(session) {
         if (deliveryAgentsBtn) deliveryAgentsBtn.style.display = currentUserRole === "full" ? "" : "none";
         const settlementViewerBtn = document.getElementById("btn-open-settlement-viewer");
         if (settlementViewerBtn) settlementViewerBtn.style.display = !currentUserIsElevated && SETTLEMENT_VIEWER_EMAILS.includes(email) ? "" : "none";
+        const partPriceLogBtn = document.getElementById("btn-open-part-price-log");
+        if (partPriceLogBtn) partPriceLogBtn.style.display = currentUserIsElevated ? "" : "none";
         if (!appInitDone) {
             appInitDone = true;
             init();
