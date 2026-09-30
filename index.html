@@ -9360,8 +9360,12 @@ function startEditStatementCustomerName(customerId, currentName, cellEl) {
             return;
         }
         saving = true;
-        const ok = await saveStatementCustomerName(customerId, val);
-        if (!ok) showToast("تعذر حفظ التعديل", "error");
+        if (customerEditGated()) {
+            await sendCustomerFieldRequest(customerId, "name", val);
+        } else {
+            const ok = await saveStatementCustomerName(customerId, val);
+            if (!ok) showToast("تعذر حفظ التعديل", "error");
+        }
         if (statementCustomerId) openCustomerStatementView(statementCustomerId);
     };
     input.addEventListener("click", e => e.stopPropagation());
@@ -9927,11 +9931,155 @@ function paymentMethodLabel(method) {
     return method === "cash" ? "كاش" : method === "card" ? "شبكة" : method === "مرتجع" ? "مرتجع" : "—";
 }
 
+const CUSTOMER_FIELD_LABELS = {
+    name: "اسم العميل",
+    phone: "جوال العميل"
+};
+
+function customerEditGated() {
+    return !hasElevatedAccess();
+}
+
+function pendingCustomerFieldProposal(customerId, field) {
+    return (editProposals || []).find(pr => pr.kind === "customer_field" && pr.customer_id === customerId && pr.field === field) || null;
+}
+
+function customerFieldProposalRow(customer, field, newValue, email) {
+    return {
+        kind: "customer_field",
+        order_id: null,
+        customer_id: customer.id,
+        field: field,
+        part_id: null,
+        current_value: customer[field] == null ? "" : String(customer[field]),
+        proposed_value: newValue,
+        submitted_by: email
+    };
+}
+
+async function sendCustomerFieldRequest(customerId, field, rawValue) {
+    const customer = (appData.customers || []).find(c => c.id === customerId);
+    if (!customer) {
+        showToast("العميل غير موجود", "error");
+        return false;
+    }
+    const label = CUSTOMER_FIELD_LABELS[field] || field;
+    const value = String(rawValue == null ? "" : rawValue).trim();
+    if (field === "name" && !value) {
+        showToast("اسم العميل ما يصير يكون فاضي", "error");
+        return false;
+    }
+    if (value === String(customer[field] || "").trim()) {
+        showToast("ما في تغيير على " + label, "error");
+        return false;
+    }
+    if (pendingCustomerFieldProposal(customerId, field)) {
+        showToast("في طلب تعديل معلّق أصلًا على " + label, "error");
+        return false;
+    }
+    if (field === "phone") {
+        const dup = findOtherCustomerWithPhone(customerId, value);
+        if (dup) {
+            showToast("رقم الجوال هذا مستخدم أصلًا لعميل آخر: " + (dup.name || dup.phone || "عميل"), "error");
+            return false;
+        }
+    }
+    const {error: error} = await sb.from("edit_proposals").insert(customerFieldProposalRow(customer, field, value, presenceEmail));
+    if (error) {
+        showToast(error.code === "23505" ? "في طلب تعديل معلّق أصلًا على " + label : "تعذر إرسال الطلب", "error");
+        await refreshEditProposals();
+        return false;
+    }
+    showToast("تم إرسال طلب تعديل " + label, "ok");
+    await refreshEditProposals();
+    return true;
+}
+
+function findOtherCustomerWithPhone(customerId, phone) {
+    const p = (phone || "").trim() ? normalizePhoneForWhatsapp(phone) : "";
+    if (!p) return null;
+    return (appData.customers || []).find(c => c.id !== customerId && (c.phone || "").trim() && normalizePhoneForWhatsapp(c.phone) === p) || null;
+}
+
+async function applyCustomerFieldProposal(pr) {
+    if (pr.field !== "name" && pr.field !== "phone") return "error";
+    const value = String(pr.proposed_value == null ? "" : pr.proposed_value).trim();
+    if (pr.field === "name" && !value) return "error";
+    if (pr.field === "phone" && findOtherCustomerWithPhone(pr.customer_id, value)) return "dup";
+    const {data: data, error: error} = await sb.from("customers").update({
+        [pr.field]: value
+    }).eq("id", pr.customer_id).select("id");
+    if (error) return "error";
+    if (!data || !data.length) return "missing";
+    const local = (appData.customers || []).find(c => c.id === pr.customer_id);
+    if (local) local[pr.field] = value;
+    return "ok";
+}
+
+function isCustomerProposalKind(kind) {
+    return kind === "customer_field" || kind === "customer_delete";
+}
+
+function pendingCustomerDeleteProposal(customerId) {
+    return (editProposals || []).find(pr => pr.kind === "customer_delete" && pr.customer_id === customerId) || null;
+}
+
+function customerDeleteProposalRow(customer, email) {
+    return {
+        kind: "customer_delete",
+        order_id: null,
+        customer_id: customer.id,
+        field: null,
+        part_id: null,
+        current_value: customer.name || customer.phone || "",
+        proposed_value: null,
+        submitted_by: email
+    };
+}
+
+async function sendCustomerDeleteRequest(customerId) {
+    const customer = (appData.customers || []).find(c => c.id === customerId);
+    if (!customer) {
+        showToast("العميل غير موجود", "error");
+        return false;
+    }
+    if (pendingCustomerDeleteProposal(customerId)) {
+        showToast("في طلب حذف معلّق أصلًا على هذا العميل", "error");
+        return false;
+    }
+    const {error: error} = await sb.from("edit_proposals").insert(customerDeleteProposalRow(customer, presenceEmail));
+    if (error) {
+        showToast(error.code === "23505" ? "في طلب حذف معلّق أصلًا على هذا العميل" : "تعذر إرسال الطلب", "error");
+        await refreshEditProposals();
+        return false;
+    }
+    showToast("تم إرسال طلب حذف العميل", "ok");
+    await refreshEditProposals();
+    return true;
+}
+
+async function applyCustomerDeleteProposal(pr) {
+    const {data: row, error: error} = await sb.from("customers").select("id").eq("id", pr.customer_id).maybeSingle();
+    if (error) return "error";
+    if (!row) return "missing";
+    const deleted = await deleteCustomer(pr.customer_id);
+    if (!deleted) return "error";
+    appData.customers = (appData.customers || []).filter(c => c.id !== pr.customer_id);
+    delete editingCustomers[pr.customer_id];
+    return "ok";
+}
+
 function editProposalPendingHtml(pr) {
     const mine = pr.submitted_by === presenceEmail;
     const elevated = hasElevatedAccess();
     let changeText;
-    if (pr.kind === "payment_delete") {
+    if (pr.kind === "customer_delete") {
+        changeText = "🗑️ طلب حذف العميل";
+    } else if (pr.kind === "customer_field") {
+        const cust = (appData.customers || []).find(c => c.id === pr.customer_id);
+        const liveCurrent = cust ? cust[pr.field] || "" : pr.current_value || "";
+        changeText = escapeHtml(CUSTOMER_FIELD_LABELS[pr.field] || pr.field) + ": " + escapeHtml(liveCurrent || "—") + " ← " + escapeHtml(pr.proposed_value || "");
+    } else if (pr.kind === "payment_delete") {
         changeText = "🗑️ طلب حذف الدفعة";
     } else if (pr.kind === "payment_add") {
         const pv = pr.proposed_value || {};
@@ -10608,13 +10756,19 @@ async function handleEditProposalDecision(proposalId, accept) {
 function proceedEditProposalDecision(proposalId, accept, keepFee) {
     const pr = (editProposals || []).find(p => p.id === proposalId);
     if (!pr) return;
+    const isCustomerRequest = isCustomerProposalKind(pr.kind);
+    const isCustomerDelete = pr.kind === "customer_delete";
     const orderRefForLog = (() => {
+        if (isCustomerRequest) {
+            const c = (appData.customers || []).find(c => c.id === pr.customer_id);
+            return c && (c.name || c.phone) || "عميل";
+        }
         const o = appData.orders.find(o => o.id === pr.order_id);
         return o ? "#" + o.orderNumber + (o.orderLabel ? " — " + o.orderLabel : "") : "طلبية #" + pr.order_id;
     })();
     confirmAction({
         title: accept ? "قبول هذا الطلب؟" : "رفض هذا الطلب؟",
-        message: accept ? "بيتطبّق التعديل مباشرة على الطلبية." : "الطلب بيُحذف بدون أي تغيير.",
+        message: accept ? isCustomerDelete ? "بيتحذف العميل نهائيًا (الطلبيات القديمة بتبقى بدون عميل محدد)." : isCustomerRequest ? "بيتطبّق التعديل مباشرة على بيانات العميل." : "بيتطبّق التعديل مباشرة على الطلبية." : "الطلب بيُحذف بدون أي تغيير.",
         confirmLabel: accept ? "قبول وتطبيق" : "تأكيد الرفض",
         dangerous: !accept,
         onConfirm: async () => {
@@ -10635,7 +10789,26 @@ function proceedEditProposalDecision(proposalId, accept, keepFee) {
             };
             if (accept) {
                 const claimed = deletedRows[0];
-                if (claimed.kind === "order_delete") {
+                if (isCustomerProposalKind(claimed.kind)) {
+                    const applyResult = claimed.kind === "customer_delete" ? await applyCustomerDeleteProposal(claimed) : await applyCustomerFieldProposal(claimed);
+                    if (applyResult === "missing") {
+                        showToast("العميل ما عاد موجود — انحذف الطلب", "error");
+                        await refreshEditProposals();
+                        return;
+                    }
+                    if (applyResult === "dup") {
+                        showToast("رقم الجوال صار مستخدم لعميل آخر — رجّعنا الطلب مكانه، ارفضه أو عدّل الرقم يدويًا", "error");
+                        await restoreProposal();
+                        return;
+                    }
+                    if (applyResult !== "ok") {
+                        showToast("تعذر حفظ التعديل على العميل — رجّعنا الطلب مكانه، جرّب مرة تانية", "error");
+                        await restoreProposal();
+                        return;
+                    }
+                    refreshCustomersViewIfOpen();
+                    if (claimed.kind === "customer_delete") updateCustomersBadge();
+                } else if (claimed.kind === "order_delete") {
                     const deleted = await deleteOrder(claimed.order_id);
                     if (!deleted) {
                         showToast("تعذر حذف الطلبية — رجّعنا الطلب مكانه، جرّب مرة تانية", "error");
@@ -10778,7 +10951,7 @@ function proceedEditProposalDecision(proposalId, accept, keepFee) {
                     order_ref: orderRefForLog,
                     actor_email: presenceEmail,
                     target_email: deletedRows[0].submitted_by,
-                    message: (accept ? "تم قبول طلب التعديل على الطلبية: " : "تم رفض طلب التعديل على الطلبية: ") + orderRefForLog
+                    message: (accept ? isCustomerDelete ? "تم قبول طلب حذف العميل: " : isCustomerRequest ? "تم قبول طلب التعديل على العميل: " : "تم قبول طلب التعديل على الطلبية: " : isCustomerDelete ? "تم رفض طلب حذف العميل: " : isCustomerRequest ? "تم رفض طلب التعديل على العميل: " : "تم رفض طلب التعديل على الطلبية: ") + orderRefForLog
                 });
             } catch (e) {
                 console.error("logEditProposalDecided:", e);
@@ -10817,6 +10990,7 @@ async function refreshEditProposals() {
     if (editProposalsModalOpen) refreshEditProposalsModal();
     if (openSupplierHistoryId) openSupplierHistoryModal(openSupplierHistoryId);
     if (openCustomerHistoryId) openCustomerHistoryModal(openCustomerHistoryId);
+    refreshCustomersViewIfOpen(true);
     renderTable();
     refreshArchiveViewIfOpen();
     if (document.getElementById("scrapyard-root") && document.getElementById("scrapyard-root").style.display !== "none" && scrapyardCurrentScreen === "settlement" && !scrapyardHasOpenEdit()) {
@@ -11094,6 +11268,8 @@ const EDIT_PROPOSAL_FIELD_LABELS = {
 };
 
 function editProposalKindLabel(pr) {
+    if (pr.kind === "customer_delete") return "حذف العميل";
+    if (pr.kind === "customer_field") return "تعديل " + (CUSTOMER_FIELD_LABELS[pr.field] || "معلومات العميل");
     if (pr.kind === "part_field" || pr.kind === "order_field") return EDIT_PROPOSAL_FIELD_LABELS[pr.field] || pr.field;
     if (pr.kind === "payment_add") return "دفعة زبون جديدة";
     if (pr.kind === "payment_edit") return "تعديل دفعة زبون";
@@ -11109,6 +11285,10 @@ function editProposalKindLabel(pr) {
 }
 
 function editProposalReviewRowHtml(pr) {
+    if (isCustomerProposalKind(pr.kind)) {
+        const cust = (appData.customers || []).find(c => c.id === pr.customer_id);
+        return '<div class="edit-proposal-review-row">' + '<div class="edit-proposal-review-head">' + '<span class="edit-proposal-review-order">👤 ' + escapeHtml(cust && (cust.name || cust.phone) || "عميل") + "</span>" + '<span class="edit-proposal-review-field">' + escapeHtml(editProposalKindLabel(pr)) + "</span>" + "</div>" + '<div class="edit-proposal-review-body">' + editProposalPendingHtml(pr) + "</div>" + '<div class="edit-proposal-review-meta">' + escapeHtml(displayNameForEmail(pr.submitted_by)) + "</div>" + "</div>";
+    }
     const order = appData.orders.find(o => o.id === pr.order_id);
     const orderLabel = order ? "#" + order.orderNumber + (order.orderLabel ? " — " + order.orderLabel : "") : "طلبية #" + pr.order_id;
     let partLabel = "";
@@ -11153,6 +11333,7 @@ function bindEditProposalsModalEvents() {
     });
     root.querySelector("#edit-proposals-close-btn").addEventListener("click", closeEditProposalsModal);
     root.querySelectorAll(".edit-proposal-review-head").forEach(head => {
+        if (!head.closest("[data-open-order-proposal]")) return;
         head.style.cursor = "pointer";
         head.addEventListener("click", () => {
             const orderId = head.closest("[data-open-order-proposal]").getAttribute("data-open-order-proposal");
@@ -14198,6 +14379,7 @@ function applyRemoteCustomerChange(payload) {
         const oldId = payload.old && payload.old.id;
         if (!oldId) return;
         appData.customers = appData.customers.filter(c => c.id !== oldId);
+        delete editingCustomers[oldId];
     } else {
         const row = payload.new;
         if (!row || !row.id) return;
@@ -15176,6 +15358,14 @@ function customerRefundRowHtml(row) {
 
 let editingCustomers = {};
 
+function customerPendingRequestsHtml(customerId) {
+    const pendingDelete = pendingCustomerDeleteProposal(customerId);
+    return (pendingDelete ? '<div class="purchase-history-row-sub">' + editProposalPendingHtml(pendingDelete) + "</div>" : "") + [ "name", "phone" ].map(f => {
+        const pr = pendingCustomerFieldProposal(customerId, f);
+        return pr ? '<div class="purchase-history-row-sub">' + editProposalPendingHtml(pr) + "</div>" : "";
+    }).join("");
+}
+
 function customerRowHtml(c, refundsIdx, statsIdx, sortIdx, rank) {
     const isEditing = !!editingCustomers[c.id];
     const stats = statsIdx ? statsIdx[c.id] || {
@@ -15185,9 +15375,17 @@ function customerRowHtml(c, refundsIdx, statsIdx, sortIdx, rank) {
     if (!isEditing) {
         const refundTotal = refundsIdx ? refundsIdx[c.id] || 0 : customerRefundTotal(c.id);
         const sortBadge = sortIdx ? '<div class="purchase-history-row-sub"><span class="stamp stamp-green">#' + rank + " — 💰 إجمالي الشراء: " + fmtMoney(sortIdx[c.id] || 0) + "</span></div>" : "";
-        return '<div class="task-item-row customer-item-row" data-customer-id="' + escapeHtml(c.id) + '">' + '<div class="customer-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(c.name || "بدون اسم") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(c.phone || "—") + "</span>" + '<span class="expense-entry-view-date">' + stats.count + " طلبية</span>" + '<span class="num ' + (stats.remaining > 0 ? "text-rust" : "text-green") + '">' + fmtMoney(stats.remaining) + "</span>" + ((c.phone || "").trim() ? '<button type="button" class="icon-btn customer-contact-btn" title="اتصال" aria-label="اتصال">📞</button>' : "") + '<button type="button" class="icon-btn customer-history-btn" title="سجل الطلبيات" aria-label="سجل الطلبيات">📋</button>' + '<button type="button" class="icon-btn customer-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' + "</div>" + sortBadge + (refundTotal > 0 ? '<div class="purchase-history-row-sub"><span class="text-rust">يجب إرجاع له: ' + fmtMoney(refundTotal) + "</span></div>" : "") + "</div>";
+        return '<div class="task-item-row customer-item-row" data-customer-id="' + escapeHtml(c.id) + '">' + '<div class="customer-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(c.name || "بدون اسم") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(c.phone || "—") + "</span>" + '<span class="expense-entry-view-date">' + stats.count + " طلبية</span>" + '<span class="num ' + (stats.remaining > 0 ? "text-rust" : "text-green") + '">' + fmtMoney(stats.remaining) + "</span>" + ((c.phone || "").trim() ? '<button type="button" class="icon-btn customer-contact-btn" title="اتصال" aria-label="اتصال">📞</button>' : "") + '<button type="button" class="icon-btn customer-history-btn" title="سجل الطلبيات" aria-label="سجل الطلبيات">📋</button>' + '<button type="button" class="icon-btn customer-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' + "</div>" + sortBadge + customerPendingRequestsHtml(c.id) + (refundTotal > 0 ? '<div class="purchase-history-row-sub"><span class="text-rust">يجب إرجاع له: ' + fmtMoney(refundTotal) + "</span></div>" : "") + "</div>";
     }
-    return '<div class="task-item-row customer-item-row" data-customer-id="' + escapeHtml(c.id) + '">' + '<div class="customer-row-main">' + '<input type="text" class="customer-name-input" placeholder="اسم العميل" value="' + escapeHtml(c.name || "") + '">' + '<input type="tel" class="customer-phone-input" placeholder="رقم الجوال" value="' + escapeHtml(c.phone || "") + '">' + '<span class="expense-entry-view-date">' + stats.count + " طلبية</span>" + '<span class="num ' + (stats.remaining > 0 ? "text-rust" : "text-green") + '">' + fmtMoney(stats.remaining) + "</span>" + '<button type="button" class="btn btn-sm expense-add-entry-btn customer-save-btn">💾 حفظ</button>' + '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' + "</div>" + "</div>";
+    const gated = customerEditGated();
+    const namePending = gated ? pendingCustomerFieldProposal(c.id, "name") : null;
+    const phonePending = gated ? pendingCustomerFieldProposal(c.id, "phone") : null;
+    const nameCell = namePending ? editProposalPendingHtml(namePending) : '<input type="text" class="customer-name-input" placeholder="اسم العميل" value="' + escapeHtml(c.name || "") + '">';
+    const phoneCell = phonePending ? editProposalPendingHtml(phonePending) : '<input type="tel" class="customer-phone-input" placeholder="رقم الجوال" value="' + escapeHtml(c.phone || "") + '">';
+    const saveBtnHtml = gated ? '<button type="button" class="btn btn-sm expense-add-entry-btn customer-send-request-btn">📨 إرسال طلب</button>' : '<button type="button" class="btn btn-sm expense-add-entry-btn customer-save-btn">💾 حفظ</button>';
+    const deletePending = gated ? pendingCustomerDeleteProposal(c.id) : null;
+    const removeBtnHtml = deletePending ? editProposalPendingHtml(deletePending) : '<button type="button" class="task-item-remove-btn" aria-label="' + (gated ? "طلب حذف" : "حذف") + '" title="' + (gated ? "طلب حذف العميل" : "حذف العميل") + '">✕</button>';
+    return '<div class="task-item-row customer-item-row" data-customer-id="' + escapeHtml(c.id) + '">' + '<div class="customer-row-main">' + nameCell + phoneCell + '<span class="expense-entry-view-date">' + stats.count + " طلبية</span>" + '<span class="num ' + (stats.remaining > 0 ? "text-rust" : "text-green") + '">' + fmtMoney(stats.remaining) + "</span>" + saveBtnHtml + removeBtnHtml + "</div>" + "</div>";
 }
 
 function customerOrderHistory(customerId) {
@@ -15384,6 +15582,13 @@ function refreshCustomersList() {
     bindCustomerRowEvents();
 }
 
+function refreshCustomersViewIfOpen(skipIfTyping) {
+    const view = document.getElementById("customers-view");
+    if (!view || view.style.display === "none") return;
+    if (skipIfTyping && Object.keys(editingCustomers).length) return;
+    refreshCustomersList();
+}
+
 function renderCustomersView() {
     const el = document.getElementById("customers-view");
     el.innerHTML = customersViewHtml();
@@ -15442,8 +15647,44 @@ function bindCustomerRowEvents() {
         const customer = (appData.customers || []).find(c => c.id === cid);
         if (!customer) return;
         const freshCustomer = () => (appData.customers || []).find(x => x.id === cid) || customer;
+        const gated = customerEditGated();
+        row.querySelectorAll("[data-accept-proposal]").forEach(btn => btn.addEventListener("click", e => {
+            e.stopPropagation();
+            handleEditProposalDecision(btn.getAttribute("data-accept-proposal"), true);
+        }));
+        row.querySelectorAll("[data-reject-proposal]").forEach(btn => btn.addEventListener("click", e => {
+            e.stopPropagation();
+            handleEditProposalDecision(btn.getAttribute("data-reject-proposal"), false);
+        }));
+        row.querySelectorAll("[data-withdraw-proposal]").forEach(btn => btn.addEventListener("click", e => {
+            e.stopPropagation();
+            withdrawEditProposal(btn.getAttribute("data-withdraw-proposal"));
+        }));
+        const sendRequestBtn = row.querySelector(".customer-send-request-btn");
+        if (sendRequestBtn) {
+            bindBusyButton(sendRequestBtn, async () => {
+                const c = freshCustomer();
+                const nameEl = row.querySelector(".customer-name-input");
+                const phoneEl = row.querySelector(".customer-phone-input");
+                const changes = [];
+                if (nameEl && nameEl.value.trim() !== (c.name || "").trim()) changes.push([ "name", nameEl.value ]);
+                if (phoneEl && phoneEl.value.trim() !== (c.phone || "").trim()) changes.push([ "phone", phoneEl.value ]);
+                if (!changes.length) {
+                    delete editingCustomers[cid];
+                    refreshCustomersList();
+                    return;
+                }
+                let allOk = true;
+                for (const [field, value] of changes) {
+                    const ok = await sendCustomerFieldRequest(cid, field, value);
+                    if (!ok) allOk = false;
+                }
+                if (allOk) delete editingCustomers[cid];
+                refreshCustomersList();
+            });
+        }
         const nameInput = row.querySelector(".customer-name-input");
-        if (nameInput) {
+        if (nameInput && !gated) {
             nameInput.addEventListener("change", async e => {
                 const c = freshCustomer();
                 const prev = {
@@ -15461,12 +15702,12 @@ function bindCustomerRowEvents() {
             });
         }
         const phoneInput = row.querySelector(".customer-phone-input");
-        if (phoneInput) {
+        if (phoneInput && !gated) {
             phoneInput.addEventListener("change", async e => {
                 const c = freshCustomer();
                 const newPhone = e.target.value;
-                const dup = findDuplicateCustomer(c.name, newPhone);
-                if (dup && dup.id !== c.id) {
+                const dup = findOtherCustomerWithPhone(c.id, newPhone);
+                if (dup) {
                     showToast("رقم الجوال هذا مستخدم أصلًا لعميل آخر: " + (dup.name || dup.phone || "عميل"), "error");
                     refreshCustomersList();
                     return;
@@ -15497,7 +15738,22 @@ function bindCustomerRowEvents() {
             });
         }
         const removeBtn = row.querySelector(".task-item-remove-btn");
-        if (removeBtn) {
+        if (removeBtn && gated) {
+            removeBtn.addEventListener("click", () => {
+                confirmAction({
+                    title: "إرسال طلب حذف هذا العميل؟",
+                    message: "ما بيتحذف العميل إلا بعد الموافقة على الطلب.",
+                    confirmLabel: "إرسال الطلب",
+                    onConfirm: async () => {
+                        const ok = await sendCustomerDeleteRequest(cid);
+                        if (ok) {
+                            delete editingCustomers[cid];
+                        }
+                        refreshCustomersList();
+                    }
+                });
+            });
+        } else if (removeBtn) {
             removeBtn.addEventListener("click", () => {
                 confirmAction({
                     title: "حذف هذا العميل؟",
