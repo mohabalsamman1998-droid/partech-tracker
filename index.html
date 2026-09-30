@@ -7514,9 +7514,11 @@ async function saveQuoteDraft(markSent) {
         quoteDraft.quoteReady = false;
     }
     const wasPendingReturn = !!quoteDraft.pendingReturnToQuote;
+    const approvalUntrackedAdded = markSent && wasPendingReturn && !quoteDraft.quoteApprovedAt && !quoteDraft.quoteApprovalUntracked;
     if (markSent && wasPendingReturn) {
         quoteDraft.isQuote = true;
         quoteDraft.quoteReady = false;
+        if (approvalUntrackedAdded) quoteDraft.quoteApprovalUntracked = true;
     }
     delete quoteDraft.pendingReturnToQuote;
     const quoteWasNew = !!quoteDraft.isNew;
@@ -7529,6 +7531,7 @@ async function saveQuoteDraft(markSent) {
             savingDraft.pendingReturnToQuote = true;
             savingDraft.isQuote = false;
         }
+        if (approvalUntrackedAdded) delete savingDraft.quoteApprovalUntracked;
         mediaRestoreStagedSnapshot(mediaSnap);
         return false;
     }
@@ -7575,6 +7578,14 @@ async function onSendQuote() {
     return saveQuoteDraft(true);
 }
 
+function shouldStampQuoteApproval(draft, liveOrder) {
+    if (!draft || draft.isQuote !== true || draft.pendingReturnToQuote) return false;
+    if (liveOrder && liveOrder.isQuote === false) return false;
+    const stamped = draft.quoteApprovedAt || liveOrder && liveOrder.quoteApprovedAt;
+    const untracked = draft.quoteApprovalUntracked || liveOrder && liveOrder.quoteApprovalUntracked;
+    return !stamped && !untracked;
+}
+
 async function onApproveQuote() {
     if (!await checkQuoteSaveConflict()) return;
     const dup = appData.orders.find(o => o.orderNumber.trim() === quoteDraft.orderNumber.trim() && o.id !== quoteDraft.id);
@@ -7601,10 +7612,17 @@ async function onApproveQuote() {
         showToast("في قطعة مستعملة مسعّرة بلا حالة نظافة محددة — لازم تتحدد قبل الاعتماد (أو ترجع لعامر للتصحيح)", "error");
         return;
     }
+    const liveApprovedOrder = (appData.orders || []).find(o => o.id === quoteDraft.id);
+    if (liveApprovedOrder) {
+        if (!quoteDraft.quoteApprovedAt && liveApprovedOrder.quoteApprovedAt) quoteDraft.quoteApprovedAt = liveApprovedOrder.quoteApprovedAt;
+        if (!quoteDraft.quoteApprovalUntracked && liveApprovedOrder.quoteApprovalUntracked) quoteDraft.quoteApprovalUntracked = true;
+    }
+    const approvalStampAdded = shouldStampQuoteApproval(quoteDraft, liveApprovedOrder);
     quoteDraft.parts = cleanedParts;
     quoteDraft.orderLabel = (quoteDraft.orderLabel || "").trim();
     quoteDraft.updatedAt = (new Date).toISOString();
     quoteDraft.isQuote = false;
+    if (approvalStampAdded) quoteDraft.quoteApprovedAt = quoteDraft.updatedAt;
     const quoteWasNew = !!quoteDraft.isNew;
     const approvedId = quoteDraft.id;
     const approvedNumber = quoteDraft.orderNumber;
@@ -7613,6 +7631,7 @@ async function onApproveQuote() {
     const saved = await persistOrder(quoteDraft, quoteWasNew);
     if (!saved) {
         approvedDraft.isQuote = true;
+        if (approvalStampAdded) delete approvedDraft.quoteApprovedAt;
         mediaRestoreStagedSnapshot(mediaSnap);
         return;
     }
@@ -14664,7 +14683,7 @@ function confirmCollectScrapyardReturn(orderId, partId, supplierId) {
 
 let editingSuppliers = {};
 
-const CAR_MAKES = [ "تويوتا", "لكزس", "فورد", "شفروليه", "جي إم سي", "كاديلاك", "دودج", "كرايسلر", "جيب", "نيسان", "إنفينيتي", "هيونداي", "كيا", "جينيسيس", "مرسيدس", "بي إم دبليو", "أودي", "فولكس فاجن", "بورش", "مازيراتي", "رنج روفر", "لاند روفر", "جاكوار", "فولفو", "هوندا", "مازدا", "ميتسوبيشي", "سوزوكي", "إيسوزو", "بيجو", "رينو", "سكودا", "جيلي", "شانجان", "جي إيه سي", "إم جي", "شيري", "هافال", "بي واي دي" ];
+const CAR_MAKES = [ "تويوتا", "لكزس", "فورد", "شفروليه", "جي إم سي", "كاديلاك", "دودج", "كرايسلر", "جيب", "رام", "لوسيد", "نيسان", "إنفينيتي", "هيونداي", "كيا", "جينيسيس", "سانج يونج", "مرسيدس", "بي إم دبليو", "أودي", "فولكس فاجن", "بورش", "مازيراتي", "لامبورجيني", "بنتلي", "رولز رويس", "رنج روفر", "لاند روفر", "جاكوار", "ميني", "فولفو", "هوندا", "مازدا", "ميتسوبيشي", "سوزوكي", "إيسوزو", "بيجو", "رينو", "فيات", "سكودا", "جيلي", "شانجان", "جي إيه سي", "إم جي", "شيري", "هافال", "بي واي دي", "جيتور", "جريت وول", "تانك", "جاك", "هونشي", "ماكسوس", "بايك" ];
 
 function carMakesChipsInnerHtml(query, selected) {
     const q = normalizeArabicSearch((query || "").trim());
@@ -15848,25 +15867,34 @@ const SALES_KPI_BUSINESS_END_HOUR = 18;
 
 function stepTimingAverages(periodKey, customMonth) {
     if (!quoteReadyFirstByOrderId) return null;
-    const toQuote = [], toSupply = [], total = [];
+    const toQuote = [], toSupply = [], total = [], toCustomer = [], customerToSupply = [];
+    const bizMinutes = (fromMs, toMs) => businessMinutesBetween(fromMs, toMs, SALES_KPI_BUSINESS_START_HOUR, SALES_KPI_BUSINESS_END_HOUR);
     (appData.orders || []).forEach(o => {
-        if (!o.supplied || !o.suppliedAt || !o.createdAt) return;
+        if (!o.createdAt) return;
         if (!dateMatchesPeriod(periodDateOf(o.createdAt), periodKey, customMonth)) return;
         const createdMs = new Date(o.createdAt).getTime();
+        const quoteReadyIso = quoteReadyFirstByOrderId.get(o.id);
+        const quoteMs = quoteReadyIso ? new Date(quoteReadyIso).getTime() : NaN;
+        const approvedMs = o.quoteApprovedAt ? new Date(o.quoteApprovedAt).getTime() : NaN;
+        if (!isNaN(quoteMs) && !isNaN(approvedMs) && approvedMs > quoteMs) toCustomer.push(bizMinutes(quoteMs, approvedMs));
+        if (!o.supplied || !o.suppliedAt) return;
         const suppliedMs = new Date(o.suppliedAt).getTime();
         if (isNaN(createdMs) || isNaN(suppliedMs) || suppliedMs <= createdMs) return;
-        total.push(businessMinutesBetween(createdMs, suppliedMs, SALES_KPI_BUSINESS_START_HOUR, SALES_KPI_BUSINESS_END_HOUR));
-        const quoteReadyIso = quoteReadyFirstByOrderId.get(o.id);
-        if (quoteReadyIso) {
-            const quoteMs = new Date(quoteReadyIso).getTime();
-            if (!isNaN(quoteMs) && quoteMs > createdMs) toQuote.push(businessMinutesBetween(createdMs, quoteMs, SALES_KPI_BUSINESS_START_HOUR, SALES_KPI_BUSINESS_END_HOUR));
-            if (!isNaN(quoteMs) && suppliedMs > quoteMs) toSupply.push(businessMinutesBetween(quoteMs, suppliedMs, SALES_KPI_BUSINESS_START_HOUR, SALES_KPI_BUSINESS_END_HOUR));
+        total.push(bizMinutes(createdMs, suppliedMs));
+        if (!isNaN(quoteMs)) {
+            if (quoteMs > createdMs) toQuote.push(bizMinutes(createdMs, quoteMs));
+            if (suppliedMs > quoteMs) toSupply.push(bizMinutes(quoteMs, suppliedMs));
         }
+        if (!isNaN(approvedMs) && suppliedMs > approvedMs) customerToSupply.push(bizMinutes(approvedMs, suppliedMs));
     });
     const avgMinutes = arr => arr.length ? Math.round(arr.reduce((s, v) => s + v, 0) / arr.length) : null;
     return {
         toQuote: avgMinutes(toQuote),
         toQuoteCount: toQuote.length,
+        toCustomer: avgMinutes(toCustomer),
+        toCustomerCount: toCustomer.length,
+        customerToSupply: avgMinutes(customerToSupply),
+        customerToSupplyCount: customerToSupply.length,
         toSupply: avgMinutes(toSupply),
         toSupplyCount: toSupply.length,
         total: avgMinutes(total),
@@ -15911,8 +15939,8 @@ function salesPerformanceSectionHtml() {
         return '<button type="button" class="chip' + (salesKpiPeriod === p.id ? " chip-active" : "") + '" data-sales-kpi-period="' + p.id + '">' + label + "</button>";
     }).join("") + (salesKpiPeriod === "customMonth" ? '<input type="month" id="sales-kpi-month-input" class="extra-indicators-month-input" value="' + escapeHtml(salesKpiCustomMonth || "") + '">' : "") + "</div>";
     const successBlock = '<div class="stat-chart-block">' + '<div class="stat-chart-title">✅ نجاح الطلبات</div>' + periodChips + '<div class="treasury-summary">' + '<div class="treasury-summary-row"><span>طلبات ناجحة (مؤكدة)</span><span class="num text-green">' + success.successful + " من " + success.total + "</span></div>" + '<div class="treasury-summary-row net"><span>نسبة النجاح</span><span class="num">' + success.rate + "%</span></div>" + "</div>" + "</div>";
-    const timingRows = timing ? '<div class="treasury-summary-row"><span>الطلب ← التسعير</span><span class="num">' + (timing.toQuoteCount ? arabicDurationLabelFromMinutes(timing.toQuote) : "—") + "</span></div>" + '<div class="treasury-summary-row"><span>التسعير ← التوريد</span><span class="num">' + (timing.toSupplyCount ? arabicDurationLabelFromMinutes(timing.toSupply) : "—") + "</span></div>" + '<div class="treasury-summary-row net"><span>الإجمالي (الطلب ← الإغلاق/التوريد)</span><span class="num">' + (timing.totalCount ? arabicDurationLabelFromMinutes(timing.total) : "—") + "</span></div>" : '<div class="expense-empty-hint">جارِ تحميل بيانات الاستجابة...</div>';
-    const timingBlock = '<div class="stat-chart-block">' + '<div class="stat-chart-title">⏱ زمن الاستجابة (الطلب ← التسعير ← التوريد)</div>' + '<div class="treasury-summary">' + timingRows + "</div>" + "</div>";
+    const timingRows = timing ? '<div class="treasury-summary-row"><span>الطلب ← التسعير</span><span class="num">' + (timing.toQuoteCount ? arabicDurationLabelFromMinutes(timing.toQuote) : "—") + "</span></div>" + '<div class="treasury-summary-row"><span>التسعير ← التسعير للزبون</span><span class="num">' + (timing.toCustomerCount ? arabicDurationLabelFromMinutes(timing.toCustomer) : "—") + "</span></div>" + '<div class="treasury-summary-row"><span>التسعير للزبون ← التوريد</span><span class="num">' + (timing.customerToSupplyCount ? arabicDurationLabelFromMinutes(timing.customerToSupply) : "—") + "</span></div>" + '<div class="treasury-summary-row"><span>التسعير ← التوريد</span><span class="num">' + (timing.toSupplyCount ? arabicDurationLabelFromMinutes(timing.toSupply) : "—") + "</span></div>" + '<div class="treasury-summary-row net"><span>الإجمالي (الطلب ← الإغلاق/التوريد)</span><span class="num">' + (timing.totalCount ? arabicDurationLabelFromMinutes(timing.total) : "—") + "</span></div>" : '<div class="expense-empty-hint">جارِ تحميل بيانات الاستجابة...</div>';
+    const timingBlock = '<div class="stat-chart-block">' + '<div class="stat-chart-title">⏱ زمن الاستجابة (الطلب ← التسعير ← التسعير للزبون ← التوريد)</div>' + '<div class="treasury-summary">' + timingRows + "</div>" + (timing ? '<div class="expense-empty-hint">«التسعير للزبون» = لحظة ✅ اعتماد التسعيرة، ومسجّلة للطلبيات المعتمدة من 30 سبتمبر 2026 فقط — الأقدم ما لها توقيت، فيظهر «—» لحد ما تتجمع بيانات.</div>' : "") + "</div>";
     const loyaltyBlock = '<div class="stat-chart-block">' + '<div class="stat-chart-title">🔁 ولاء العملاء</div>' + '<div class="treasury-summary">' + '<div class="treasury-summary-row"><span>عادوا وطلبوا أكثر من مرة (آخر 30 يوم)</span><span class="num">' + returning.returning + " من " + returning.total + " (" + returning.rate + "%)</span></div>" + '<div class="treasury-summary-row"><span>عملاء جدد (آخر 60 يوم)</span><span class="num text-green">' + newCustomers + "</span></div>" + "</div>" + "</div>";
     const growthGrowthSpan = v => '<span class="' + (v == null ? "" : v >= 0 ? "text-green" : "text-rust") + '">(' + fmtPercentSigned(v) + ")</span>";
     const growthRows = growth.map(g => "<div>" + '<div class="treasury-summary-row"><span>' + escapeHtml(arabicMonthLabel(g.key)) + '</span><span class="num">مبيعات ' + fmtMoney(g.sales) + " " + growthGrowthSpan(g.salesGrowth) + " · أرباح " + fmtMoney(g.profit) + " " + growthGrowthSpan(g.profitGrowth) + "</span></div>" + '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل: مبيعات <span class="num">' + fmtMoney(g.salesPaid) + "</span> " + growthGrowthSpan(g.salesPaidGrowth) + ' · أرباح <span class="num">' + fmtMoney(g.profitPaid) + "</span> " + growthGrowthSpan(g.profitPaidGrowth) + "</div>" + "</div>").join("");
