@@ -562,6 +562,17 @@
   /* نافذة اختيار السيارة (بأول كل طلبية) + ملخص السيارة جوا نافذتي الطلبية/التسعير */
   .car-gate-chips{max-height:132px;overflow-y:auto;padding:2px;}
   .car-gate-results{padding:2px;}
+  .car-vin-card{margin-top:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;}
+  .car-vin-img{text-align:center;margin-bottom:8px;}
+  .car-vin-img img{max-width:100%;max-height:150px;border-radius:8px;object-fit:cover;display:block;margin:0 auto 4px;}
+  .car-vin-img small{display:block;color:var(--text-dim);font-size:11px;}
+  .car-vin-head{font-size:13.5px;font-weight:700;direction:rtl;overflow-wrap:anywhere;}
+  .car-vin-details{margin-top:6px;}
+  .car-vin-details summary{cursor:pointer;color:var(--green);font-size:12.5px;font-weight:700;}
+  .car-vin-rows{margin-top:6px;display:grid;grid-template-columns:1fr;gap:3px;}
+  .car-vin-row{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;border-bottom:1px dashed var(--border);padding:3px 0;}
+  .car-vin-row span{color:var(--text-dim);flex-shrink:0;}
+  .car-vin-row b{text-align:left;overflow-wrap:anywhere;font-weight:600;}
   .chip small{margin-inline-start:6px;opacity:.7;font-size:10.5px;font-weight:600;}
   .car-gate-missing{outline:1px solid var(--rust-line);outline-offset:4px;border-radius:8px;}
   .car-gate-missing>.field-label{color:var(--rust);}
@@ -3305,6 +3316,8 @@ function carVinEngineLabel(res, make) {
     if ([ "دودج", "رام", "جيب", "كرايسلر" ].indexOf(make) !== -1 && cyl === 8 && [ "5.7", "6.1", "6.2", "6.4" ].indexOf(dispTxt) !== -1) parts.push("هيمي");
     if (dispTxt) parts.push(dispTxt + "L");
     if (cyl >= 6 && (/v-?shaped/i.test(config) || cyl >= 8)) parts.push("V" + cyl); else if (!dispTxt && cyl > 0) parts.push(cyl + " سلندر");
+    const engCode = String(res.EngineModel == null ? "" : res.EngineModel).trim();
+    if (/^[A-Za-z0-9][A-Za-z0-9-]{1,11}$/.test(engCode)) parts.push(engCode);
     if (/^yes/i.test(String(res.Turbo == null ? "" : res.Turbo).trim())) parts.push("تيربو");
     if (/diesel/i.test(fuel)) parts.push("ديزل");
     if (/hev|hybrid/i.test(elec)) parts.push("هايبرد");
@@ -3427,6 +3440,231 @@ function carGateDropTrimOnModelSwitch(st) {
         st.levelSrc = "";
     }
     return true;
+}
+
+const CAR_IMAGE_API = "https://commons.wikimedia.org/w/api.php";
+
+function carVinFuelLabel(v) {
+    const s = String(v == null ? "" : v);
+    if (/flexible/i.test(s)) return "مرن (بنزين / إيثانول)";
+    if (/ethanol|e85/i.test(s)) return "إيثانول E85";
+    if (/diesel/i.test(s)) return "ديزل";
+    if (/electric/i.test(s)) return "كهرباء";
+    if (/natural gas|cng/i.test(s)) return "غاز طبيعي";
+    if (/propane|lpg|liquefied/i.test(s)) return "غاز البترول";
+    if (/gasoline|petrol/i.test(s)) return "بنزين";
+    return s;
+}
+
+function carVinDriveText(v) {
+    const d = String(v == null ? "" : v);
+    if (/awd|all-wheel/i.test(d)) return "AWD (دفع رباعي دائم)";
+    if (/4wd|4x4|4-wheel/i.test(d)) return "4x4 (دفع رباعي)";
+    if (/fwd|front/i.test(d)) return "دفع أمامي (FWD)";
+    if (/rwd|rear/i.test(d)) return "دفع خلفي (RWD)";
+    if (/4x2/i.test(d)) return "4x2 (دفع على محور واحد)";
+    return d;
+}
+
+function carVinTransText(v) {
+    const s = String(v == null ? "" : v);
+    if (/manual/i.test(s)) return "يدوي";
+    if (/cvt|continuously/i.test(s)) return "CVT";
+    if (/dual|dct/i.test(s)) return "DCT (ثنائي القابض)";
+    if (/auto/i.test(s)) return "أوتوماتيك";
+    return s;
+}
+
+function carVinBodyClassText(v) {
+    const s = String(v == null ? "" : v);
+    if (/pickup/i.test(s)) return "بيك أب";
+    if (/minivan/i.test(s)) return "ميني فان";
+    if (/\bvan\b/i.test(s)) return "فان";
+    if (/sedan|saloon/i.test(s)) return "سيدان";
+    if (/coupe/i.test(s)) return "كوبيه";
+    if (/convertible|cabriolet|roadster/i.test(s)) return "مكشوفة";
+    if (/hatchback|liftback/i.test(s)) return "هاتشباك";
+    if (/wagon/i.test(s)) return "ستيشن";
+    if (/crossover|cuv/i.test(s)) return "كروس أوفر";
+    if (/sport utility|suv|multi-?purpose/i.test(s)) return "SUV";
+    return s;
+}
+
+function carVinSpecRows(res) {
+    if (!res || typeof res !== "object") return [];
+    const g = k => {
+        const s = String(res[k] == null ? "" : res[k]).trim();
+        return !s || /^not applicable$/i.test(s) ? "" : s;
+    };
+    const rows = [];
+    const add = (k, v) => {
+        if (v) rows.push({
+            k: k,
+            v: String(v)
+        });
+    };
+    add("الطراز", [ g("Make"), g("Model"), g("ModelYear") ].filter(Boolean).join(" "));
+    add("الفئة / السلسلة", [ g("Trim"), g("Series"), g("Series2") ].filter(Boolean).join(" · "));
+    add("كود المحرك", g("EngineModel"));
+    const disp = carVinNumber(g("DisplacementL"));
+    add("سعة المحرك", disp > 0 && disp < 20 ? disp.toFixed(1) + " لتر" : "");
+    const cyl = Math.round(carVinNumber(g("EngineCylinders")));
+    const config = g("EngineConfiguration");
+    add("الأسطوانات", cyl ? /v-?shaped/i.test(config) || !config && cyl >= 8 ? "V" + cyl : /in-?line/i.test(config) ? "I" + cyl : /opposed|boxer|flat/i.test(config) ? "H" + cyl : cyl + " أسطوانات" : "");
+    const hp = Math.round(carVinNumber(g("EngineHP")));
+    add("القوة", hp ? hp + " حصان" : "");
+    add("الوقود", carVinFuelLabel(g("FuelTypePrimary")));
+    add("وقود ثانٍ", carVinFuelLabel(g("FuelTypeSecondary")));
+    add("الحقن", g("FuelInjectionType").replace(/[(][^)]*[)]/g, "").replace(/\s+/g, " ").trim());
+    add("شاحن توربو", /^yes/i.test(g("Turbo")) ? "نعم" : "");
+    add("معلومات المحرك الإضافية", g("OtherEngineInfo"));
+    add("ناقل الحركة", [ carVinTransText(g("TransmissionStyle")), g("TransmissionSpeeds") ? g("TransmissionSpeeds") + " سرعات" : "" ].filter(Boolean).join(" · "));
+    add("الدفع", carVinDriveText(g("DriveType")));
+    add("الهيكل", carVinBodyClassText(g("BodyClass")));
+    add("الكبينة", carVinBodyLabel({
+        BodyCabType: g("BodyCabType")
+    }));
+    add("الأبواب", g("Doors"));
+    add("الصندوق", g("BedType"));
+    add("الوزن الإجمالي (GVWR)", g("GVWR"));
+    add("بلد التصنيع", [ g("PlantCountry"), g("PlantCity") ].filter(Boolean).join(" · "));
+    return rows;
+}
+
+function carVinHeadline(res, make) {
+    if (!res || typeof res !== "object") return "";
+    const hp = Math.round(carVinNumber(res.EngineHP));
+    return [ carVinEngineLabel(res, make), hp ? hp + " حصان" : "", carVinDriveLabel(res), carVinBodyLabel(res) ].filter(Boolean).join(" · ");
+}
+
+function carVinImageQuery(res, info) {
+    if (!res || typeof res !== "object") return null;
+    const make = carCleanText(res.Make, 30);
+    const model = carCleanText(res.Model, 40);
+    if (!make) return null;
+    const nice = s => /^[A-Z]{2,4}$/.test(s) ? s : s.toLowerCase().replace(/(^|[ -])([a-z])/g, (m, a, b) => a + b.toUpperCase());
+    const year = info && info.year || carNormalizeYear(res.ModelYear) || null;
+    const sk = carVinKey(res.Series);
+    const series = /^[0-9]{2,4}[a-z]{0,2}$/.test(sk) ? carCleanText(res.Series, 12) : "";
+    const modelKeys = [ carVinKey(model) ];
+    if (sk && !/^[0-9]{2,4}[a-z]{0,2}$/.test(sk) && modelKeys.indexOf(sk) === -1) modelKeys.push(sk);
+    const base = [ nice(make), model, series ].filter(Boolean).join(" ");
+    const soft = [];
+    const trimWord = carCleanText(res.Trim, 20).toLowerCase();
+    if (/^[a-z0-9]{2,8}$/.test(trimWord)) soft.push(trimWord);
+    const num = /^[a-z]{2,4}([0-9]{2,3})[a-z]?$/.exec(sk);
+    if (num && soft.indexOf(num[1]) === -1) soft.push(num[1]);
+    return {
+        query: [ year, base ].filter(Boolean).join(" "),
+        queryNoYear: base,
+        year: year,
+        makeKeys: [ carVinKey(make) ].filter(Boolean),
+        modelKeys: modelKeys.filter(Boolean),
+        avoid: carVinKey(model) === "landcruiser" ? [ "prado" ] : [],
+        soft: soft
+    };
+}
+
+function carPickCommonsImage(pages, q) {
+    if (!Array.isArray(pages) || !q) return null;
+    const bad = [ "engine", "interior", "dashboard", "rally", "racing", "race", "concept", "logo", "emblem", "badge", "wheel", "wheels", "seat", "seats", "cockpit", "trunk", "console", "steering", "headlight", "taillight", "grille", "mirror", "detail", "details", "museum", "toy", "diecast", "police", "taxi", "ambulance", "wreck", "crash", "burnout", "drift" ];
+    const yearRe = q.year ? new RegExp("(^|[^0-9-])" + q.year + "([^0-9-]|$)") : null;
+    let best = null;
+    pages.forEach(p => {
+        const info = p && Array.isArray(p.imageinfo) ? p.imageinfo[0] : null;
+        if (!info) return;
+        if (!/^image[/](jpeg|png|webp)$/i.test(String(info.mime || ""))) return;
+        if (!(Number(info.width) >= 500)) return;
+        const title = String(p.title || "").replace(/^File:/i, "");
+        const lower = title.toLowerCase();
+        const key = carVinKey(title);
+        const words = lower.split(/[^a-z0-9]+/);
+        if (bad.some(w => words.indexOf(w) !== -1)) return;
+        if ((q.avoid || []).some(w => key.indexOf(w) !== -1)) return;
+        if (!q.modelKeys.some(k => k && key.indexOf(k) !== -1)) return;
+        const yearMatch = !!(yearRe && yearRe.test(lower));
+        let score = 1;
+        if (yearMatch) score += 4;
+        if (yearMatch && lower.indexOf(String(q.year)) === 0) score += 1;
+        score += Math.min(2, (q.soft || []).filter(w => words.indexOf(w) !== -1).length);
+        if (q.makeKeys.some(k => k && key.indexOf(k) !== -1)) score += 2;
+        if (Number(info.width) > Number(info.height)) score += 1;
+        const url = String(info.thumburl || info.url || "");
+        if (!/^https:[/][/](upload|thumb)[.]wikimedia[.]org[/]/.test(url)) return;
+        const idx = Number(p.index) || 0;
+        if (!best || score > best.score || score === best.score && idx < best.idx) {
+            const page = String(info.descriptionurl || "");
+            best = {
+                score: score,
+                idx: idx,
+                url: url,
+                page: /^https:[/][/]commons[.]wikimedia[.]org[/]/.test(page) ? page : "",
+                title: title,
+                yearMatch: yearMatch
+            };
+        }
+    });
+    return best && best.score >= 2 ? {
+        url: best.url,
+        page: best.page,
+        title: best.title,
+        yearMatch: best.yearMatch
+    } : null;
+}
+
+async function carFetchCommonsImage(q) {
+    if (!q) return null;
+    const cache = carFetchCommonsImage.cache || (carFetchCommonsImage.cache = {});
+    if (Object.prototype.hasOwnProperty.call(cache, q.query)) return cache[q.query];
+    const run = async text => {
+        const ctrl = typeof AbortController === "function" ? new AbortController : null;
+        const timer = ctrl ? setTimeout(() => ctrl.abort(), 8e3) : null;
+        try {
+            const r = await fetch(CAR_IMAGE_API + "?action=query&format=json&origin=*&generator=search&gsrnamespace=6&gsrlimit=12&prop=imageinfo&iiprop=url%7Cmime%7Csize&iiurlwidth=480&gsrsearch=" + encodeURIComponent(text), ctrl ? {
+                signal: ctrl.signal
+            } : undefined);
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            const j = await r.json();
+            const pages = Object.keys(j && j.query && j.query.pages || {}).map(k => j.query.pages[k]).sort((a, b) => (a.index || 0) - (b.index || 0));
+            return carPickCommonsImage(pages, q);
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+    };
+    let pick = null;
+    try {
+        pick = await run(q.query);
+        if (!pick && q.year) pick = await run(q.queryNoYear);
+    } catch (e) {
+        return null;
+    }
+    cache[q.query] = pick;
+    return pick;
+}
+
+function carVinCardHtml(spec, open) {
+    if (!spec) return "";
+    const rows = (spec.rows || []).map(r => '<div class="car-vin-row"><span>' + escapeHtml(r.k) + "</span><b>" + escapeHtml(r.v) + "</b></div>").join("");
+    let img = "";
+    if (spec.image && /^https:/.test(spec.image.url || "")) {
+        const pic = '<img src="' + escapeHtml(spec.image.url) + '" alt="صورة توضيحية للسيارة" referrerpolicy="no-referrer">';
+        img = '<div class="car-vin-img">' + (spec.image.page ? '<a href="' + escapeHtml(spec.image.page) + '" target="_blank" rel="noopener noreferrer">' + pic + "</a>" : pic) + "<small>" + (spec.image.yearMatch ? "صورة توضيحية لنفس الموديل" : "صورة توضيحية — ممكن يختلف الجيل") + " · ويكيميديا كومنز</small></div>";
+    } else if (spec.imageLoading) {
+        img = '<div class="car-vin-img"><small>جاري البحث عن صورة…</small></div>';
+    }
+    const head = spec.headline ? '<div class="car-vin-head">⚙️ ' + escapeHtml(spec.headline) + "</div>" : "";
+    const details = rows ? '<details class="car-vin-details"' + (open ? " open" : "") + '><summary>كل مواصفات الشاص</summary><div class="car-vin-rows">' + rows + "</div></details>" : "";
+    if (!img && !head && !details) return "";
+    return '<div class="car-vin-card">' + img + head + details + "</div>";
+}
+
+function carBindVinCard(el) {
+    if (!el) return;
+    const img = el.querySelector("img");
+    if (img) img.addEventListener("error", () => {
+        const w = img.closest(".car-vin-img");
+        if (w) w.remove();
+    });
 }
 
 function carGateEditSig(st) {
@@ -3737,7 +3975,7 @@ function carGateApplyYear(st) {
 
 function carGateHtml(st, opts) {
     opts = opts || {};
-    return '<div class="modal-backdrop" data-close-confirm data-car-gate>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">' + escapeHtml(opts.title || "🚗 السيارة") + "</div>" + '<p class="modal-sub">' + escapeHtml(opts.sub || "حدد الماركة والموديل وسنة الصنع والفئة") + "</p>" + '<div class="field" id="car-gate-vin-field" style="margin-top:14px;"><span class="field-label">رقم الشاص VIN (اختياري) — الصقه وتتعبّى السيارة تلقائيًا</span>' + '<input type="text" id="car-gate-vin" dir="ltr" style="text-align:right;" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" placeholder="الصق رقم الشاص هون" value="' + escapeHtml(st.vin || "") + '">' + '<div id="car-gate-vin-status" style="margin-top:6px;">' + carGateVinHintHtml(st) + "</div>" + "</div>" + '<div class="field" id="car-gate-make-field"><span class="field-label">السيارة (ماركة أو موديل)</span>' + '<div class="car-makes-picker">' + '<input type="text" class="search-input" id="car-gate-make-search" placeholder="🔍 اكتب أول حرف: تويوتا، كامري، BMW…" autocomplete="off">' + '<div class="filter-chips car-gate-results" id="car-gate-make-chips">' + carGateMakeChipsHtml("", st) + "</div>" + "</div>" + '<input type="text" id="car-gate-make-other" placeholder="اكتب اسم الماركة" autocomplete="off" value="' + escapeHtml(st.makeOtherText || "") + '" style="margin-top:8px;"' + (st.makeOther ? "" : " hidden") + ">" + "</div>" + '<div class="field" id="car-gate-model-field"><span class="field-label">الموديل</span>' + '<input type="text" id="car-gate-model" placeholder="مثال: كامري" autocomplete="off" value="' + escapeHtml(st.model || "") + '">' + '<div class="filter-chips car-gate-chips" id="car-gate-model-chips" style="margin-top:8px;">' + carGateModelChipsHtml(st) + "</div>" + "</div>" + '<div class="field" id="car-gate-year-field"><span class="field-label">سنة الصنع</span>' + '<select id="car-gate-year">' + carYearOptionsHtml(st.year) + "</select>" + "</div>" + '<div class="field" id="car-gate-trim-field"><span class="field-label">الفئة</span>' + '<div class="filter-chips" id="car-gate-trim-chips">' + carGateTrimChipsHtml(st) + "</div>" + '<div id="car-gate-trim-hint" style="margin-top:6px;">' + carGateTrimHintHtml(st) + "</div>" + '<input type="text" id="car-gate-trim" placeholder="أو اكتب الفئة (مثال: SE, GXR, لوميير)" autocomplete="off" value="' + escapeHtml(st.trim || "") + '" style="margin-top:8px;"' + (st.trimUnknown ? " disabled" : "") + ">" + "</div>" + '<div class="field" id="car-gate-level-field"><span class="field-label">المستوى</span>' + '<div class="filter-chips" id="car-gate-level-chips">' + carGateLevelChipsHtml(st) + "</div>" + '<div class="add-part-hint" id="car-gate-level-hint" style="margin-top:6px;">' + carGateLevelHintHtml(st) + "</div>" + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="car-gate-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-primary" id="car-gate-ok-btn">' + escapeHtml(opts.confirmLabel || "متابعة") + "</button>" + "</div>" + "</div>" + "</div>";
+    return '<div class="modal-backdrop" data-close-confirm data-car-gate>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">' + escapeHtml(opts.title || "🚗 السيارة") + "</div>" + '<p class="modal-sub">' + escapeHtml(opts.sub || "حدد الماركة والموديل وسنة الصنع والفئة") + "</p>" + '<div class="field" id="car-gate-vin-field" style="margin-top:14px;"><span class="field-label">رقم الشاص VIN (اختياري) — الصقه وتتعبّى السيارة تلقائيًا</span>' + '<input type="text" id="car-gate-vin" dir="ltr" style="text-align:right;" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" placeholder="الصق رقم الشاص هون" value="' + escapeHtml(st.vin || "") + '">' + '<div id="car-gate-vin-status" style="margin-top:6px;">' + carGateVinHintHtml(st) + "</div>" + '<div id="car-gate-vin-card"></div>' + "</div>" + '<div class="field" id="car-gate-make-field"><span class="field-label">السيارة (ماركة أو موديل)</span>' + '<div class="car-makes-picker">' + '<input type="text" class="search-input" id="car-gate-make-search" placeholder="🔍 اكتب أول حرف: تويوتا، كامري، BMW…" autocomplete="off">' + '<div class="filter-chips car-gate-results" id="car-gate-make-chips">' + carGateMakeChipsHtml("", st) + "</div>" + "</div>" + '<input type="text" id="car-gate-make-other" placeholder="اكتب اسم الماركة" autocomplete="off" value="' + escapeHtml(st.makeOtherText || "") + '" style="margin-top:8px;"' + (st.makeOther ? "" : " hidden") + ">" + "</div>" + '<div class="field" id="car-gate-model-field"><span class="field-label">الموديل</span>' + '<input type="text" id="car-gate-model" placeholder="مثال: كامري" autocomplete="off" value="' + escapeHtml(st.model || "") + '">' + '<div class="filter-chips car-gate-chips" id="car-gate-model-chips" style="margin-top:8px;">' + carGateModelChipsHtml(st) + "</div>" + "</div>" + '<div class="field" id="car-gate-year-field"><span class="field-label">سنة الصنع</span>' + '<select id="car-gate-year">' + carYearOptionsHtml(st.year) + "</select>" + "</div>" + '<div class="field" id="car-gate-trim-field"><span class="field-label">الفئة</span>' + '<div class="filter-chips" id="car-gate-trim-chips">' + carGateTrimChipsHtml(st) + "</div>" + '<div id="car-gate-trim-hint" style="margin-top:6px;">' + carGateTrimHintHtml(st) + "</div>" + '<input type="text" id="car-gate-trim" placeholder="أو اكتب الفئة (مثال: SE, GXR, لوميير)" autocomplete="off" value="' + escapeHtml(st.trim || "") + '" style="margin-top:8px;"' + (st.trimUnknown ? " disabled" : "") + ">" + "</div>" + '<div class="field" id="car-gate-level-field"><span class="field-label">المستوى</span>' + '<div class="filter-chips" id="car-gate-level-chips">' + carGateLevelChipsHtml(st) + "</div>" + '<div class="add-part-hint" id="car-gate-level-hint" style="margin-top:6px;">' + carGateLevelHintHtml(st) + "</div>" + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="car-gate-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-primary" id="car-gate-ok-btn">' + escapeHtml(opts.confirmLabel || "متابعة") + "</button>" + "</div>" + "</div>" + "</div>";
 }
 
 let carGateEscHandler = null;
@@ -3804,6 +4042,26 @@ function openCarGate(opts) {
     const redrawVin = () => {
         vinStatus.innerHTML = carGateVinHintHtml(st);
     };
+    const vinCard = q("#car-gate-vin-card");
+    const redrawVinCard = () => {
+        vinCard.innerHTML = carVinCardHtml(st.vinSpec);
+        carBindVinCard(vinCard);
+    };
+    const showVinCard = (res, info, mine) => {
+        st.vinSpec = {
+            rows: carVinSpecRows(res),
+            headline: carVinHeadline(res, info.known ? info.make : ""),
+            image: null,
+            imageLoading: true
+        };
+        redrawVinCard();
+        carFetchCommonsImage(carVinImageQuery(res, info)).catch(() => null).then(pick => {
+            if (mine !== vinToken || !st.vinSpec || !document.querySelector("#confirm-root [data-car-gate]")) return;
+            st.vinSpec.image = pick;
+            st.vinSpec.imageLoading = false;
+            redrawVinCard();
+        });
+    };
     const syncFieldsFromState = () => {
         makeSearch.value = "";
         makeOtherInput.hidden = !st.makeOther;
@@ -3823,13 +4081,15 @@ function openCarGate(opts) {
         st.vinNote = "جاري قراءة الشاص…";
         st.vinTone = "info";
         redrawVin();
-        let info = null, failed = false;
+        let info = null, failed = false, res = null;
         try {
-            info = carFromVinDecode(await carDecodeVin(v), v);
+            res = await carDecodeVin(v);
+            info = carFromVinDecode(res, v);
         } catch (e) {
             failed = true;
         }
         if (mine !== vinToken || st.vin !== v || !document.querySelector("#confirm-root [data-car-gate]")) return;
+        if (info) showVinCard(res, info, mine);
         if (info && carGateEditSig(st) !== sig0) {
             const got = [ info.known ? info.make : info.makeOtherText, info.model, info.year ].filter(Boolean).join(" ");
             st.vinNote = "الشاص بيقول: " + got + " — اختيارك انحفظ، راجعه";
@@ -3882,6 +4142,8 @@ function openCarGate(opts) {
     vinInput.addEventListener("input", () => {
         st.vin = normalizeVin(vinInput.value);
         vinToken++;
+        st.vinSpec = null;
+        redrawVinCard();
         if (vinLooksValid(st.vin)) runVinDecode(); else {
             st.vinNote = "";
             st.vinTone = "";
@@ -4093,12 +4355,90 @@ function startNewWithCar(kind) {
     });
 }
 
+let vinSpecEscHandler = null;
+
+function closeVinSpecDialog() {
+    if (vinSpecEscHandler) {
+        document.removeEventListener("keydown", vinSpecEscHandler, true);
+        vinSpecEscHandler = null;
+    }
+    const root = document.getElementById("confirm-root");
+    if (root && root.querySelector("[data-vin-spec]")) {
+        root.innerHTML = "";
+        root.classList.remove("modal-open");
+    }
+}
+
+function vinSpecDialogHtml(vin, bodyHtml) {
+    return '<div class="modal-backdrop" data-close-confirm data-vin-spec>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">🔍 مواصفات الشاص</div>' + '<p class="modal-sub" dir="ltr" style="text-align:right;">' + escapeHtml(vin) + "</p>" + '<div id="vin-spec-body" style="margin-top:12px;">' + bodyHtml + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="vin-spec-close-btn">إغلاق</button>' + "</div>" + "</div>" + "</div>";
+}
+
+async function openVinSpecDialog(vin) {
+    const root = document.getElementById("confirm-root");
+    if (!root) return;
+    const v = normalizeVin(vin);
+    if (!vinLooksValid(v)) {
+        showToast("رقم الشاص غير مكتمل (17 خانة)", "error");
+        return;
+    }
+    if (root.querySelector("[data-vin-spec]")) return;
+    if (root.classList.contains("modal-open") && root.firstElementChild) return;
+    root.innerHTML = vinSpecDialogHtml(v, '<div class="add-part-hint">جاري قراءة الشاص…</div>');
+    root.classList.add("modal-open");
+    const alive = () => !!root.querySelector("[data-vin-spec]");
+    const body = () => root.querySelector("#vin-spec-body");
+    root.querySelector("[data-close-confirm]").addEventListener("click", e => {
+        if (e.target.hasAttribute("data-close-confirm")) closeVinSpecDialog();
+    });
+    root.querySelector("#vin-spec-close-btn").addEventListener("click", closeVinSpecDialog);
+    vinSpecEscHandler = function(e) {
+        if (e.key !== "Escape") return;
+        if (!alive()) {
+            closeVinSpecDialog();
+            return;
+        }
+        e.stopPropagation();
+        closeVinSpecDialog();
+    };
+    document.addEventListener("keydown", vinSpecEscHandler, true);
+    let res = null;
+    try {
+        res = await carDecodeVin(v);
+    } catch (e) {
+        res = null;
+    }
+    if (!alive()) return;
+    const rows = res ? carVinSpecRows(res) : [];
+    if (!rows.length) {
+        body().innerHTML = '<div class="add-part-hint"><span class="text-amber">' + (res ? "ما لقيت مواصفات لهالشاص (غالبًا مو بقاعدة NHTSA الأمريكية)" : "تعذر الاتصال بخدمة قراءة الشاص") + "</span></div>";
+        return;
+    }
+    const info = carFromVinDecode(res, v);
+    const spec = {
+        rows: rows,
+        headline: carVinHeadline(res, info && info.known ? info.make : ""),
+        image: null,
+        imageLoading: true
+    };
+    const draw = () => {
+        if (!alive()) return;
+        body().innerHTML = carVinCardHtml(spec, true);
+        carBindVinCard(body());
+    };
+    draw();
+    const pick = await carFetchCommonsImage(carVinImageQuery(res, info)).catch(() => null);
+    spec.image = pick;
+    spec.imageLoading = false;
+    draw();
+}
+
 function carFieldHtml(d, mode, prefix) {
     const ro = mode === "readonly";
     const label = carLabelText(d && d.car);
     const missing = !label;
+    const specBtn = vinLooksValid(normalizeVin(d && d.vin)) ? '<button type="button" class="icon-btn" id="' + prefix + '-car-specs-btn" aria-label="مواصفات الشاص" title="مواصفات الشاص (المحرك، ناقل الحركة، صورة)">🔍</button>' : "";
     const btn = ro ? "" : '<button type="button" class="icon-btn" id="' + prefix + '-car-change-btn" aria-label="' + (missing ? "اختيار السيارة" : "تغيير السيارة") + '">' + (missing ? "اختر" : "✏️") + "</button>";
-    return '<div class="field" id="' + prefix + '-car-field">' + '<span class="field-label">السيارة</span>' + '<div class="phone-field-row">' + '<div class="car-summary' + (missing ? " car-summary-empty" : "") + '" id="' + prefix + '-car-summary">' + (missing ? ro ? "ما انحددت سيارة" : "لم تُحدَّد السيارة" : "🚗 " + escapeHtml(label)) + "</div>" + btn + "</div>" + "</div>";
+    return '<div class="field" id="' + prefix + '-car-field">' + '<span class="field-label">السيارة</span>' + '<div class="phone-field-row">' + '<div class="car-summary' + (missing ? " car-summary-empty" : "") + '" id="' + prefix + '-car-summary">' + (missing ? ro ? "ما انحددت سيارة" : "لم تُحدَّد السيارة" : "🚗 " + escapeHtml(label)) + "</div>" + specBtn + btn + "</div>" + "</div>";
 }
 
 function carDraftGetter(prefix) {
@@ -4113,9 +4453,14 @@ function refreshCarField(prefix, d) {
 }
 
 function bindCarField(prefix) {
+    const getDraft = carDraftGetter(prefix);
+    const specBtn = document.getElementById(prefix + "-car-specs-btn");
+    if (specBtn) specBtn.addEventListener("click", () => {
+        const d = getDraft();
+        if (d) openVinSpecDialog(d.vin);
+    });
     const btn = document.getElementById(prefix + "-car-change-btn");
     if (!btn) return;
-    const getDraft = carDraftGetter(prefix);
     btn.addEventListener("click", () => {
         const d = getDraft();
         if (!d) return;
