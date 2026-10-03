@@ -1987,7 +1987,7 @@ function orderRowToObject(row) {
 function orderObjectToRow(order) {
     const extra = {};
     Object.keys(order || {}).forEach(k => {
-        if (!ORDER_PROMOTED_KEYS.includes(k)) extra[k] = order[k];
+        if (!ORDER_PROMOTED_KEYS.includes(k) && k !== "pendingReturnToQuote") extra[k] = order[k];
     });
     return {
         id: order.id,
@@ -8368,7 +8368,10 @@ function closeQuoteModal() {
     const root = document.getElementById("modal-root");
     root.innerHTML = "";
     root.classList.remove("modal-open");
-    if (quoteDraft) mediaDiscardStaged(quoteDraft.id);
+    if (quoteDraft) {
+        mediaDiscardStaged(quoteDraft.id);
+        delete quoteDraft.pendingReturnToQuote;
+    }
     closeMediaOverlays();
     quoteDraft = null;
     document.removeEventListener("keydown", quoteEscListener);
@@ -8592,7 +8595,7 @@ async function saveQuoteDraft(markSent) {
         quoteDraft.quoteReady = false;
         if (approvalUntrackedAdded) quoteDraft.quoteApprovalUntracked = true;
     }
-    delete quoteDraft.pendingReturnToQuote;
+    if (markSent) delete quoteDraft.pendingReturnToQuote;
     const quoteWasNew = !!quoteDraft.isNew;
     const draftId = quoteDraft.id;
     const savingDraft = quoteDraft;
@@ -8611,7 +8614,7 @@ async function saveQuoteDraft(markSent) {
     if (markSent || quoteWasNew) {
         const orderRef = "#" + savingDraft.orderNumber + (orderDisplayLabel(savingDraft) ? " — " + orderDisplayLabel(savingDraft) : "");
         try {
-            await sb.from("activity_events").insert({
+            const {error: notifyErr} = await sb.from("activity_events").insert({
                 kind: "order_needs_pricing",
                 order_id: savingDraft.id,
                 order_ref: orderRef,
@@ -8619,8 +8622,10 @@ async function saveQuoteDraft(markSent) {
                 audience_role: "scrapyard",
                 message: "طلبية جديدة تحتاج تسعير: " + orderRef
             });
+            if (notifyErr) throw notifyErr;
         } catch (e) {
             console.error("logOrderNeedsPricing:", e);
+            showToast('انحفظت الطلبية بس تعذّر إرسال إشعار التسعير للمشتريات — أعد الضغط على "حفظ و اعادة طلب"', "error");
         }
     }
     if (!quoteModalStillOpen(draftId)) return true;
