@@ -561,6 +561,7 @@
   .car-makes-chips{max-height:160px;overflow-y:auto;padding:2px;}
   /* نافذة اختيار السيارة (بأول كل طلبية) + ملخص السيارة جوا نافذتي الطلبية/التسعير */
   .car-gate-chips{max-height:132px;overflow-y:auto;padding:2px;}
+  .car-gate-results{padding:2px;}
   .chip small{margin-inline-start:6px;opacity:.7;font-size:10.5px;font-weight:600;}
   .car-gate-missing{outline:1px solid var(--rust-line);outline-offset:4px;border-radius:8px;}
   .car-gate-missing>.field-label{color:var(--rust);}
@@ -3124,7 +3125,11 @@ function carParseTrimToken(tok) {
 
 function carCatalogModels(make) {
     const list = typeof CAR_CATALOG === "object" && CAR_CATALOG && Array.isArray(CAR_CATALOG[make]) ? CAR_CATALOG[make] : [];
-    return list.map(entry => {
+    if (!list.length) return [];
+    const cache = carCatalogModels.cache || (carCatalogModels.cache = new WeakMap);
+    const hit = cache.get(list);
+    if (hit) return hit;
+    const parsed = list.map(entry => {
         const parts = String(entry).split(":");
         const head = parts[0].split("|").map(x => x.trim());
         const info = (parts[1] || "").split(",").map(x => x.trim()).filter(Boolean).map(carParseTrimToken).filter(t => t.name);
@@ -3139,6 +3144,8 @@ function carCatalogModels(make) {
             trimInfo: info
         };
     });
+    cache.set(list, parsed);
+    return parsed;
 }
 
 function carFindCatalogModel(make, model) {
@@ -3521,20 +3528,74 @@ async function carDecodeVin(vin) {
     }
 }
 
+function carGateMatchRank(tokens, q, names) {
+    const ns = names.map(n => normalizeArabicSearch(String(n || ""))).filter(Boolean);
+    if (ns.some(n => n.indexOf(q) === 0)) return 0;
+    if (tokens.every(t => ns.some(n => n.split(" ").some(w => w.indexOf(t) === 0)))) return 1;
+    if (tokens.every(t => ns.some(n => n.indexOf(t) !== -1))) return 2;
+    return 9;
+}
+
 function carGateMakeChipsHtml(query, st) {
     const q = normalizeArabicSearch((query || "").trim());
-    const aliases = carMakeAliasPairs();
-    const list = carMakesOrdered().filter(m => !q || normalizeArabicSearch(m).includes(q) || aliases.some(p => p[1] === m && normalizeArabicSearch(p[0]).includes(q)));
-    return list.map(m => '<button type="button" class="chip' + (!st.makeOther && st.make === m ? " chip-active" : "") + '" data-car-gate-make="' + escapeHtml(m) + '">' + escapeHtml(m) + "</button>").join("") + '<button type="button" class="chip' + (st.makeOther ? " chip-active" : "") + '" data-car-gate-make-other="1">أخرى…</button>';
+    const chip = (attrs, label, active) => '<button type="button" class="chip' + (active ? " chip-active" : "") + '" ' + attrs + ">" + escapeHtml(label) + "</button>";
+    const other = chip('data-car-gate-make-other="1"', "أخرى…", !!st.makeOther);
+    if (!q) {
+        if (st.makeOther) return other;
+        if (st.make) return chip('data-car-gate-make="' + escapeHtml(st.make) + '"', st.make, true);
+        return '<div class="add-part-hint">اكتب أول حرف من اسم السيارة (ماركة أو موديل) وتطلع المطابقات</div>';
+    }
+    const tokens = q.split(" ").filter(Boolean);
+    const byMake = {};
+    carMakeAliasPairs().forEach(p => {
+        (byMake[p[1]] = byMake[p[1]] || []).push(p[0]);
+    });
+    const makes = [], combos = [];
+    carMakesOrdered().forEach((m, i) => {
+        const mNames = [ m ].concat(byMake[m] || []);
+        const r = carGateMatchRank(tokens, q, mNames);
+        if (r < 9) makes.push({
+            m: m,
+            r: r,
+            i: i
+        });
+        carCatalogModels(m).forEach((mod, j) => {
+            const modelNames = [ mod.name ].concat(mod.aliases).map(n => normalizeArabicSearch(n));
+            if (!tokens.some(t => modelNames.some(n => n.indexOf(t) !== -1))) return;
+            const rr = carGateMatchRank(tokens, q, mNames.concat([ mod.name ], mod.aliases));
+            if (rr < 9) combos.push({
+                m: m,
+                name: mod.name,
+                r: rr,
+                i: i,
+                j: j
+            });
+        });
+    });
+    makes.sort((a, b) => a.r - b.r || a.i - b.i);
+    combos.sort((a, b) => a.r - b.r || a.i - b.i || a.j - b.j);
+    const shownMakes = makes.slice(0, 8), shownCombos = combos.slice(0, 10);
+    const curModel = normalizeArabicSearch(String(st.model || "").trim());
+    let html = shownMakes.map(x => chip('data-car-gate-make="' + escapeHtml(x.m) + '"', x.m, !st.makeOther && st.make === x.m)).join("") + shownCombos.map(x => chip('data-car-gate-pick-make="' + escapeHtml(x.m) + '" data-car-gate-pick-model="' + escapeHtml(x.name) + '"', x.m + " " + x.name, !st.makeOther && st.make === x.m && curModel === normalizeArabicSearch(x.name))).join("");
+    if (!shownMakes.length && !shownCombos.length) html = '<div class="add-part-hint">ما في سيارة بهالاسم بالقائمة — اضغط "أخرى…" واكتب الماركة</div>'; else if (makes.length > shownMakes.length || combos.length > shownCombos.length) html += '<div class="add-part-hint">اكتب حرفًا زيادة لتضييق النتائج</div>';
+    return html + other;
 }
 
 function carGateModelChipsHtml(st) {
     const make = st.makeOther ? "" : st.make;
-    if (!make) return '<div class="add-part-hint">اختر الماركة لتظهر موديلاتها، أو اكتب الموديل مباشرة</div>';
+    if (!make) return '<div class="add-part-hint">اختر السيارة من البحث فوق، أو اكتب الموديل مباشرة</div>';
+    const all = carCatalogModels(make);
+    if (!all.length) return '<div class="add-part-hint">اكتب اسم الموديل</div>';
     const q = normalizeArabicSearch((st.model || "").trim());
-    const list = carCatalogModels(make).filter(m => !q || normalizeArabicSearch(m.name).includes(q) || m.aliases.some(a => normalizeArabicSearch(a).includes(q)));
+    if (!q) return '<div class="add-part-hint">اكتب أول حرف من الموديل وتطلع الموديلات المطابقة</div>';
+    const tokens = q.split(" ").filter(Boolean);
+    const list = all.map((m, i) => ({
+        m: m,
+        i: i,
+        r: carGateMatchRank(tokens, q, [ m.name ].concat(m.aliases))
+    })).filter(x => x.r < 9).sort((a, b) => a.r - b.r || a.i - b.i).slice(0, 12);
     if (!list.length) return '<div class="add-part-hint">اكتب اسم الموديل</div>';
-    return list.map(m => '<button type="button" class="chip' + (q && (normalizeArabicSearch(m.name) === q || m.aliases.some(a => normalizeArabicSearch(a) === q)) ? " chip-active" : "") + '" data-car-gate-model="' + escapeHtml(m.name) + '">' + escapeHtml(m.name) + "</button>").join("");
+    return list.map(x => '<button type="button" class="chip' + (normalizeArabicSearch(x.m.name) === q || x.m.aliases.some(a => normalizeArabicSearch(a) === q) ? " chip-active" : "") + '" data-car-gate-model="' + escapeHtml(x.m.name) + '">' + escapeHtml(x.m.name) + "</button>").join("");
 }
 
 function carGateTrimChipsHtml(st) {
@@ -3676,7 +3737,7 @@ function carGateApplyYear(st) {
 
 function carGateHtml(st, opts) {
     opts = opts || {};
-    return '<div class="modal-backdrop" data-close-confirm data-car-gate>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">' + escapeHtml(opts.title || "🚗 السيارة") + "</div>" + '<p class="modal-sub">' + escapeHtml(opts.sub || "حدد الماركة والموديل وسنة الصنع والفئة") + "</p>" + '<div class="field" id="car-gate-vin-field" style="margin-top:14px;"><span class="field-label">رقم الشاص VIN (اختياري) — الصقه وتتعبّى السيارة تلقائيًا</span>' + '<input type="text" id="car-gate-vin" dir="ltr" style="text-align:right;" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" placeholder="الصق رقم الشاص هون" value="' + escapeHtml(st.vin || "") + '">' + '<div id="car-gate-vin-status" style="margin-top:6px;">' + carGateVinHintHtml(st) + "</div>" + "</div>" + '<div class="field" id="car-gate-make-field"><span class="field-label">الماركة</span>' + '<div class="car-makes-picker">' + '<input type="text" class="search-input" id="car-gate-make-search" placeholder="🔍 ابحث عن الماركة..." autocomplete="off">' + '<div class="filter-chips car-makes-chips" id="car-gate-make-chips">' + carGateMakeChipsHtml("", st) + "</div>" + "</div>" + '<input type="text" id="car-gate-make-other" placeholder="اكتب اسم الماركة" autocomplete="off" value="' + escapeHtml(st.makeOtherText || "") + '" style="margin-top:8px;"' + (st.makeOther ? "" : " hidden") + ">" + "</div>" + '<div class="field" id="car-gate-model-field"><span class="field-label">الموديل</span>' + '<input type="text" id="car-gate-model" placeholder="مثال: كامري" autocomplete="off" value="' + escapeHtml(st.model || "") + '">' + '<div class="filter-chips car-gate-chips" id="car-gate-model-chips" style="margin-top:8px;">' + carGateModelChipsHtml(st) + "</div>" + "</div>" + '<div class="field" id="car-gate-year-field"><span class="field-label">سنة الصنع</span>' + '<select id="car-gate-year">' + carYearOptionsHtml(st.year) + "</select>" + "</div>" + '<div class="field" id="car-gate-trim-field"><span class="field-label">الفئة</span>' + '<div class="filter-chips" id="car-gate-trim-chips">' + carGateTrimChipsHtml(st) + "</div>" + '<div id="car-gate-trim-hint" style="margin-top:6px;">' + carGateTrimHintHtml(st) + "</div>" + '<input type="text" id="car-gate-trim" placeholder="أو اكتب الفئة (مثال: SE, GXR, لوميير)" autocomplete="off" value="' + escapeHtml(st.trim || "") + '" style="margin-top:8px;"' + (st.trimUnknown ? " disabled" : "") + ">" + "</div>" + '<div class="field" id="car-gate-level-field"><span class="field-label">المستوى</span>' + '<div class="filter-chips" id="car-gate-level-chips">' + carGateLevelChipsHtml(st) + "</div>" + '<div class="add-part-hint" id="car-gate-level-hint" style="margin-top:6px;">' + carGateLevelHintHtml(st) + "</div>" + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="car-gate-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-primary" id="car-gate-ok-btn">' + escapeHtml(opts.confirmLabel || "متابعة") + "</button>" + "</div>" + "</div>" + "</div>";
+    return '<div class="modal-backdrop" data-close-confirm data-car-gate>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">' + escapeHtml(opts.title || "🚗 السيارة") + "</div>" + '<p class="modal-sub">' + escapeHtml(opts.sub || "حدد الماركة والموديل وسنة الصنع والفئة") + "</p>" + '<div class="field" id="car-gate-vin-field" style="margin-top:14px;"><span class="field-label">رقم الشاص VIN (اختياري) — الصقه وتتعبّى السيارة تلقائيًا</span>' + '<input type="text" id="car-gate-vin" dir="ltr" style="text-align:right;" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" placeholder="الصق رقم الشاص هون" value="' + escapeHtml(st.vin || "") + '">' + '<div id="car-gate-vin-status" style="margin-top:6px;">' + carGateVinHintHtml(st) + "</div>" + "</div>" + '<div class="field" id="car-gate-make-field"><span class="field-label">السيارة (ماركة أو موديل)</span>' + '<div class="car-makes-picker">' + '<input type="text" class="search-input" id="car-gate-make-search" placeholder="🔍 اكتب أول حرف: تويوتا، كامري، BMW…" autocomplete="off">' + '<div class="filter-chips car-gate-results" id="car-gate-make-chips">' + carGateMakeChipsHtml("", st) + "</div>" + "</div>" + '<input type="text" id="car-gate-make-other" placeholder="اكتب اسم الماركة" autocomplete="off" value="' + escapeHtml(st.makeOtherText || "") + '" style="margin-top:8px;"' + (st.makeOther ? "" : " hidden") + ">" + "</div>" + '<div class="field" id="car-gate-model-field"><span class="field-label">الموديل</span>' + '<input type="text" id="car-gate-model" placeholder="مثال: كامري" autocomplete="off" value="' + escapeHtml(st.model || "") + '">' + '<div class="filter-chips car-gate-chips" id="car-gate-model-chips" style="margin-top:8px;">' + carGateModelChipsHtml(st) + "</div>" + "</div>" + '<div class="field" id="car-gate-year-field"><span class="field-label">سنة الصنع</span>' + '<select id="car-gate-year">' + carYearOptionsHtml(st.year) + "</select>" + "</div>" + '<div class="field" id="car-gate-trim-field"><span class="field-label">الفئة</span>' + '<div class="filter-chips" id="car-gate-trim-chips">' + carGateTrimChipsHtml(st) + "</div>" + '<div id="car-gate-trim-hint" style="margin-top:6px;">' + carGateTrimHintHtml(st) + "</div>" + '<input type="text" id="car-gate-trim" placeholder="أو اكتب الفئة (مثال: SE, GXR, لوميير)" autocomplete="off" value="' + escapeHtml(st.trim || "") + '" style="margin-top:8px;"' + (st.trimUnknown ? " disabled" : "") + ">" + "</div>" + '<div class="field" id="car-gate-level-field"><span class="field-label">المستوى</span>' + '<div class="filter-chips" id="car-gate-level-chips">' + carGateLevelChipsHtml(st) + "</div>" + '<div class="add-part-hint" id="car-gate-level-hint" style="margin-top:6px;">' + carGateLevelHintHtml(st) + "</div>" + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="car-gate-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-primary" id="car-gate-ok-btn">' + escapeHtml(opts.confirmLabel || "متابعة") + "</button>" + "</div>" + "</div>" + "</div>";
 }
 
 let carGateEscHandler = null;
@@ -3744,6 +3805,7 @@ function openCarGate(opts) {
         vinStatus.innerHTML = carGateVinHintHtml(st);
     };
     const syncFieldsFromState = () => {
+        makeSearch.value = "";
         makeOtherInput.hidden = !st.makeOther;
         makeOtherInput.value = st.makeOtherText || "";
         modelInput.value = st.model || "";
@@ -3837,6 +3899,12 @@ function openCarGate(opts) {
         }
     });
     makeSearch.addEventListener("input", redrawMakes);
+    makeSearch.addEventListener("keydown", e => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        const first = makeChips.querySelector("[data-car-gate-pick-make], [data-car-gate-make]");
+        if (first) first.click();
+    });
     makeChips.addEventListener("click", e => {
         const btn = e.target.closest("button");
         if (!btn) return;
@@ -3852,13 +3920,31 @@ function openCarGate(opts) {
             modelInput.value = "";
             trimInput.value = "";
         };
+        const pickMake = btn.getAttribute("data-car-gate-pick-make");
         if (btn.hasAttribute("data-car-gate-make-other")) {
             if (st.makeOther) return;
             if (prevMake) resetModelAndTrim();
             st.makeOther = true;
             st.make = "";
+            st.makeOtherText = carCleanText(makeSearch.value, 30);
+            makeSearch.value = "";
             makeOtherInput.hidden = false;
+            makeOtherInput.value = st.makeOtherText;
             makeOtherInput.focus();
+        } else if (pickMake) {
+            if (prevMake && prevMake !== pickMake) resetModelAndTrim();
+            st.make = pickMake;
+            st.makeOther = false;
+            makeOtherInput.hidden = true;
+            const oldTrim = st.trim;
+            st.model = btn.getAttribute("data-car-gate-pick-model") || "";
+            st.trimNote = "";
+            modelInput.value = st.model;
+            if (carGateDropTrimOnModelSwitch(st)) {
+                st.trimNote = "الفئة " + oldTrim + " كانت للموديل السابق — اختر الفئة";
+                trimInput.value = "";
+            }
+            makeSearch.value = "";
         } else {
             const make = btn.getAttribute("data-car-gate-make");
             if (!make) return;
@@ -3866,6 +3952,8 @@ function openCarGate(opts) {
             st.make = make;
             st.makeOther = false;
             makeOtherInput.hidden = true;
+            makeSearch.value = "";
+            modelInput.focus();
         }
         redrawMakes();
         redrawModels();
