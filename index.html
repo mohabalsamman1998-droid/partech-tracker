@@ -559,6 +559,12 @@
   .car-makes-picker{display:flex;flex-direction:column;gap:8px;}
   .car-makes-picker .search-input{min-width:0;width:100%;}
   .car-makes-chips{max-height:160px;overflow-y:auto;padding:2px;}
+  /* نافذة اختيار السيارة (بأول كل طلبية) + ملخص السيارة جوا نافذتي الطلبية/التسعير */
+  .car-gate-chips{max-height:132px;overflow-y:auto;padding:2px;}
+  .car-gate-missing{outline:1px solid var(--rust-line);outline-offset:4px;border-radius:8px;}
+  .car-gate-missing>.field-label{color:var(--rust);}
+  .car-summary{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;font-size:14px;font-weight:700;font-family:'Cairo',sans-serif;min-width:0;overflow-wrap:anywhere;}
+  .car-summary-empty{background:var(--amber-dim);border:1px dashed var(--amber-line);color:var(--amber);}
 
   /* table */
   .table-container{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
@@ -1596,6 +1602,8 @@ let draftOpenedAtUpdatedAt = null;
 
 let draftVinAtOpen = "";
 
+let draftCarAtOpen = "null";
+
 let modalCloseCallback = null;
 
 function uid(prefix) {
@@ -2330,7 +2338,7 @@ function orderMatchesFilterAndSearch(order, filter, search, customerIndex) {
         const words = normalizeArabicSearch(search.trim()).split(/\s+/).filter(Boolean);
         if (words.length) {
             const customer = order.customerId ? customerIndex ? customerIndex.get(order.customerId) : (appData.customers || []).find(c => c.id === order.customerId) : null;
-            const haystack = normalizeArabicSearch([ order.orderNumber || "", order.orderLabel || "", order.vin || "", order.customerPhone || "", customer && customer.name || "", ...(order.parts || []).map(p => p.description || "") ].join(" "));
+            const haystack = normalizeArabicSearch([ order.orderNumber || "", order.orderLabel || "", orderCarLabel(order), order.vin || "", order.customerPhone || "", customer && customer.name || "", ...(order.parts || []).map(p => p.description || "") ].join(" "));
             if (!words.every(w => haystack.includes(w))) return false;
         }
     }
@@ -2375,7 +2383,7 @@ function rowHtml(order, precomputedTotals, markArchived) {
     const highlightClass = order.confirmed ? order.supplied ? "row-supplied" : "row-not-supplied" : "row-unconfirmed";
     const pendingCount = orderPendingProposalsCount(order.id);
     const archivedTag = markArchived && order.archived ? '<span class="stamp stamp-amber" style="margin-inline-start:8px;vertical-align:middle;">🗄️ مؤرشفة</span>' : "";
-    return '<tr class="' + highlightClass + '">' + '<td class="confirm-cell">' + (order.confirmed ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="' + escapeHtml(order.id) + '">✓ مؤكدة</button>' : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="' + escapeHtml(order.id) + '">تأكيد</button>') + "</td>" + '<td class="num cell-order">' + escapeHtml(order.orderNumber) + (order.orderLabel ? '<span class="order-label-tag">' + escapeHtml(order.orderLabel) + "</span>" : "") + archivedTag + (pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">' + pendingCount + "</span>" : "") + "</td>" + "<td>" + ((order.customerPhone || "").trim() ? '<button type="button" class="icon-btn" data-contact-open="' + escapeHtml(order.id) + '" aria-label="تواصل">📞</button>' : '<span class="muted">—</span>') + "</td>" + '<td class="num">' + (t.hasChargeable ? '<span class="' + profitColorClass(t) + '">' + fmtMoney(t.sellTotal) + "</span>" : '<span class="muted">' + (t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد") + "</span>") + "</td>" + "<td>" + (hasElevatedAccess() && (scrapyardCostSettled(order, t) || order.supplied) && t.costToScrapyard > 0 ? stampBadge(scrapyardCostSettled(order, t), "مسدد" + (order.paidToOmar ? " لعمر" : order.paidToAmer ? " لعامر" : order.paidToSupplier ? " مباشرة" : "") + " " + fmtMoney(t.costToScrapyard), "غير مسدد " + fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>') + "</td>" + "<td>" + (hasElevatedAccess() && (newPartsCostSettled(order, t) || order.supplied) && t.costToSupplier > 0 ? stampBadge(newPartsCostSettled(order, t), "مسدد" + (orderIsMixedPartType(t) ? order.paidToAmerNew ? " (عامر)" : order.paidToOmarNew ? " (عمر)" : "" : order.paidToAmer ? " (عامر)" : order.paidToOmar ? " (عمر)" : "") + " " + fmtMoney(t.costToSupplier), "غير مسدد " + fmtMoney(t.costToSupplier)) : '<span class="muted">—</span>') + "</td>" + "<td>" + (order.confirmed ? customerPaymentCellHtml(t, true) : '<span class="muted">—</span>') + "</td>" + '<td class="row-actions">' + '<button class="icon-btn" data-open="' + escapeHtml(order.id) + '">فتح</button>' + (order.archived && !order.confirmed ? '<button class="icon-btn" data-unsuccessful-reason="' + escapeHtml(order.id) + '" title="سبب عدم النجاح">📋' + (order.unsuccessfulReason ? " " + unsuccessfulReasonLabel(order.unsuccessfulReason) : " سبب الفشل") + "</button>" : "") + (order.archived ? '<button class="icon-btn" data-restore="' + escapeHtml(order.id) + '">↩️ استعادة</button>' : '<button class="icon-btn" data-archive="' + escapeHtml(order.id) + '">🗄️ أرشفة</button>') + "</td>" + "</tr>";
+    return '<tr class="' + highlightClass + '">' + '<td class="confirm-cell">' + (order.confirmed ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="' + escapeHtml(order.id) + '">✓ مؤكدة</button>' : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="' + escapeHtml(order.id) + '">تأكيد</button>') + "</td>" + '<td class="num cell-order">' + escapeHtml(order.orderNumber) + (orderDisplayLabel(order) ? '<span class="order-label-tag">' + escapeHtml(orderDisplayLabel(order)) + "</span>" : "") + archivedTag + (pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">' + pendingCount + "</span>" : "") + "</td>" + "<td>" + ((order.customerPhone || "").trim() ? '<button type="button" class="icon-btn" data-contact-open="' + escapeHtml(order.id) + '" aria-label="تواصل">📞</button>' : '<span class="muted">—</span>') + "</td>" + '<td class="num">' + (t.hasChargeable ? '<span class="' + profitColorClass(t) + '">' + fmtMoney(t.sellTotal) + "</span>" : '<span class="muted">' + (t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد") + "</span>") + "</td>" + "<td>" + (hasElevatedAccess() && (scrapyardCostSettled(order, t) || order.supplied) && t.costToScrapyard > 0 ? stampBadge(scrapyardCostSettled(order, t), "مسدد" + (order.paidToOmar ? " لعمر" : order.paidToAmer ? " لعامر" : order.paidToSupplier ? " مباشرة" : "") + " " + fmtMoney(t.costToScrapyard), "غير مسدد " + fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>') + "</td>" + "<td>" + (hasElevatedAccess() && (newPartsCostSettled(order, t) || order.supplied) && t.costToSupplier > 0 ? stampBadge(newPartsCostSettled(order, t), "مسدد" + (orderIsMixedPartType(t) ? order.paidToAmerNew ? " (عامر)" : order.paidToOmarNew ? " (عمر)" : "" : order.paidToAmer ? " (عامر)" : order.paidToOmar ? " (عمر)" : "") + " " + fmtMoney(t.costToSupplier), "غير مسدد " + fmtMoney(t.costToSupplier)) : '<span class="muted">—</span>') + "</td>" + "<td>" + (order.confirmed ? customerPaymentCellHtml(t, true) : '<span class="muted">—</span>') + "</td>" + '<td class="row-actions">' + '<button class="icon-btn" data-open="' + escapeHtml(order.id) + '">فتح</button>' + (order.archived && !order.confirmed ? '<button class="icon-btn" data-unsuccessful-reason="' + escapeHtml(order.id) + '" title="سبب عدم النجاح">📋' + (order.unsuccessfulReason ? " " + unsuccessfulReasonLabel(order.unsuccessfulReason) : " سبب الفشل") + "</button>" : "") + (order.archived ? '<button class="icon-btn" data-restore="' + escapeHtml(order.id) + '">↩️ استعادة</button>' : '<button class="icon-btn" data-archive="' + escapeHtml(order.id) + '">🗄️ أرشفة</button>') + "</td>" + "</tr>";
 }
 
 function cardHtml(order, precomputedTotals, markArchived) {
@@ -2383,7 +2391,7 @@ function cardHtml(order, precomputedTotals, markArchived) {
     const highlightClass = order.confirmed ? order.supplied ? "card-supplied" : "card-not-supplied" : "card-unconfirmed";
     const pendingCount = orderPendingProposalsCount(order.id);
     const archivedTag = markArchived && order.archived ? '<span class="stamp stamp-amber" style="margin-inline-start:8px;vertical-align:middle;">🗄️ مؤرشفة</span>' : "";
-    return '<div class="order-card ' + highlightClass + '">' + '<div class="order-card-head">' + '<span class="num cell-order">' + escapeHtml(order.orderNumber) + (order.orderLabel ? ' <span class="order-label-tag">' + escapeHtml(order.orderLabel) + "</span>" : "") + archivedTag + (pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">' + pendingCount + "</span>" : "") + "</span>" + '<div class="order-card-head-actions">' + (order.confirmed ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="' + escapeHtml(order.id) + '">✓ مؤكدة</button>' : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="' + escapeHtml(order.id) + '">تأكيد</button>') + ((order.customerPhone || "").trim() ? '<button type="button" class="icon-btn" data-contact-open="' + escapeHtml(order.id) + '" aria-label="تواصل">📞</button>' : "") + "</div>" + "</div>" + '<div class="order-card-row"><span>إجمالي البيع</span><span class="num ' + (t.hasChargeable ? profitColorClass(t) : "") + '">' + (t.hasChargeable ? fmtMoney(t.sellTotal) : t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد") + "</span></div>" + '<div class="order-card-badges">' + (hasElevatedAccess() && (scrapyardCostSettled(order, t) || order.supplied) && t.costToScrapyard > 0 ? stampBadge(scrapyardCostSettled(order, t), "مسدد للتشليح" + (order.paidToOmar ? " (عمر)" : order.paidToAmer ? " (عامر)" : order.paidToSupplier ? " (مباشرة)" : "") + " " + fmtMoney(t.costToScrapyard), "غير مسدد للتشليح " + fmtMoney(t.costToScrapyard)) : "") + (hasElevatedAccess() && (newPartsCostSettled(order, t) || order.supplied) && t.costToSupplier > 0 ? stampBadge(newPartsCostSettled(order, t), "مسدد للمورد" + (orderIsMixedPartType(t) ? order.paidToAmerNew ? " (عامر)" : order.paidToOmarNew ? " (عمر)" : "" : order.paidToAmer ? " (عامر)" : order.paidToOmar ? " (عمر)" : "") + " " + fmtMoney(t.costToSupplier), "غير مسدد للمورد " + fmtMoney(t.costToSupplier)) : "") + (!t.fullyPriced && !t.allPartsReturned && !t.noActiveParts ? '<span class="stamp stamp-amber">بانتظار التسعير</span>' : order.confirmed ? customerPaymentCellHtml(t, false) : "") + "</div>" + '<div class="order-card-actions">' + '<button class="icon-btn" data-open="' + escapeHtml(order.id) + '">فتح</button>' + (order.archived && !order.confirmed ? '<button class="icon-btn" data-unsuccessful-reason="' + escapeHtml(order.id) + '" title="سبب عدم النجاح">📋' + (order.unsuccessfulReason ? " " + unsuccessfulReasonLabel(order.unsuccessfulReason) : " سبب الفشل") + "</button>" : "") + (order.archived ? '<button class="icon-btn" data-restore="' + escapeHtml(order.id) + '">↩️ استعادة</button>' : '<button class="icon-btn" data-archive="' + escapeHtml(order.id) + '">🗄️ أرشفة</button>') + "</div>" + "</div>";
+    return '<div class="order-card ' + highlightClass + '">' + '<div class="order-card-head">' + '<span class="num cell-order">' + escapeHtml(order.orderNumber) + (orderDisplayLabel(order) ? ' <span class="order-label-tag">' + escapeHtml(orderDisplayLabel(order)) + "</span>" : "") + archivedTag + (pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">' + pendingCount + "</span>" : "") + "</span>" + '<div class="order-card-head-actions">' + (order.confirmed ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="' + escapeHtml(order.id) + '">✓ مؤكدة</button>' : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="' + escapeHtml(order.id) + '">تأكيد</button>') + ((order.customerPhone || "").trim() ? '<button type="button" class="icon-btn" data-contact-open="' + escapeHtml(order.id) + '" aria-label="تواصل">📞</button>' : "") + "</div>" + "</div>" + '<div class="order-card-row"><span>إجمالي البيع</span><span class="num ' + (t.hasChargeable ? profitColorClass(t) : "") + '">' + (t.hasChargeable ? fmtMoney(t.sellTotal) : t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد") + "</span></div>" + '<div class="order-card-badges">' + (hasElevatedAccess() && (scrapyardCostSettled(order, t) || order.supplied) && t.costToScrapyard > 0 ? stampBadge(scrapyardCostSettled(order, t), "مسدد للتشليح" + (order.paidToOmar ? " (عمر)" : order.paidToAmer ? " (عامر)" : order.paidToSupplier ? " (مباشرة)" : "") + " " + fmtMoney(t.costToScrapyard), "غير مسدد للتشليح " + fmtMoney(t.costToScrapyard)) : "") + (hasElevatedAccess() && (newPartsCostSettled(order, t) || order.supplied) && t.costToSupplier > 0 ? stampBadge(newPartsCostSettled(order, t), "مسدد للمورد" + (orderIsMixedPartType(t) ? order.paidToAmerNew ? " (عامر)" : order.paidToOmarNew ? " (عمر)" : "" : order.paidToAmer ? " (عامر)" : order.paidToOmar ? " (عمر)" : "") + " " + fmtMoney(t.costToSupplier), "غير مسدد للمورد " + fmtMoney(t.costToSupplier)) : "") + (!t.fullyPriced && !t.allPartsReturned && !t.noActiveParts ? '<span class="stamp stamp-amber">بانتظار التسعير</span>' : order.confirmed ? customerPaymentCellHtml(t, false) : "") + "</div>" + '<div class="order-card-actions">' + '<button class="icon-btn" data-open="' + escapeHtml(order.id) + '">فتح</button>' + (order.archived && !order.confirmed ? '<button class="icon-btn" data-unsuccessful-reason="' + escapeHtml(order.id) + '" title="سبب عدم النجاح">📋' + (order.unsuccessfulReason ? " " + unsuccessfulReasonLabel(order.unsuccessfulReason) : " سبب الفشل") + "</button>" : "") + (order.archived ? '<button class="icon-btn" data-restore="' + escapeHtml(order.id) + '">↩️ استعادة</button>' : '<button class="icon-btn" data-archive="' + escapeHtml(order.id) + '">🗄️ أرشفة</button>') + "</div>" + "</div>";
 }
 
 function orderNumberSortKey(order) {
@@ -3023,11 +3031,441 @@ function bindVinCopyButtons(root) {
     }));
 }
 
-function modalHtml(d) {
-    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلبية جديدة" : "تعديل الطلبية") + '</div><div class="modal-sub">البيانات تُحفظ تلقائيًا عند الضغط على حفظ</div></div>' + '<div style="display:flex;gap:8px;align-items:flex-start;">' + '<span id="modal-edit-toggle-wrap">' + editModeToggleButtonHtml(d) + "</span>" + '<button class="icon-btn" id="modal-close-btn" aria-label="إغلاق">✕</button>' + "</div></div>" + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + '<label class="field"><span class="field-label">رقم الطلب (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + '<div class="field">' + '<span class="field-label">العميل (اختياري)</span>' + '<div class="phone-field-row">' + '<div id="order-customer-select" style="flex:1;">' + orderCustomerFieldHtml(d) + "</div>" + '<button type="button" class="icon-btn" id="order-add-customer-btn" aria-label="عميل جديد">➕</button>' + "</div>" + "</div>" + '<div class="field">' + '<div class="field-label-row">' + '<span class="field-label">الطلبية</span>' + '<button type="button" id="btn-toggle-part-selection" class="chip' + (d.partsSelectionEnabled ? " chip-active" : "") + '">🎯 تحديد القطع' + (d.partsSelectionEnabled ? " (مفعّل)" : "") + "</button>" + '<button type="button" id="order-add-supplier-btn" class="chip">➕ مورد جديد</button>' + "</div>" + '<input type="text" id="order-label-input" placeholder="مثال: اسم الزبون / نوع السيارة / أي وصف مختصر" value="' + escapeHtml(d.orderLabel || "") + '">' + "</div>" + vinFieldHtml(d, "edit", "order") + mediaOrderBlockHtml(d.id, "order", currentUserRole === "full") + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span>' + orderMultiSourceHintHtml(d) + "</div>" + '<div id="parts-list" class="parts-list">' + d.parts.map(partRowHtml).join("") + "</div>" + '<div id="part-type-gate-wrap">' + partAddControlsHtml() + "</div>" + feeFieldRowHtml(d) + "</div>" + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">قسم المبيعات — التسعير والتحصيل</span></div>' + '<div class="totals-row">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="total-cost-display">0 ر.س</span></div>' + '<div class="total-box"><span>مستحق من الزبون</span><span class="num text-green" id="total-sell-display">0 ر.س</span></div>' + '<div class="total-box"><span>الربح</span><span class="num" id="total-profit-display">0 ر.س</span><span class="total-box-sub" id="total-profit-sub"></span></div>' + "</div>" + (hasElevatedAccess() ? '<div id="cost-split-row-wrap">' + costSplitButtonsHtml(d, orderTotals(d)) + "</div>" : "") + '<div class="payments-block">' + '<div id="payments-list" class="payments-list">' + paymentsListInnerHtml() + "</div>" + '<button type="button" id="add-payment-btn" class="btn btn-ghost btn-sm">+ إضافة دفعة</button>' + '<div class="payment-summary-row">' + '<span>إجمالي المدفوع<span class="num" id="total-paid-display">0 ر.س</span></span>' + '<span><span id="customer-remaining-label">المتبقي عليه</span><span class="num payment-remaining-display" id="customer-remaining-display">0 ر.س</span></span>' + "</div>" + '<div id="customer-refund-status-wrap">' + orderCustomerRefundStatusHtml(d) + "</div>" + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + '<div id="order-action-buttons-wrap">' + orderActionButtonsHtml(d) + "</div>" + '<div class="parts-clipboard-mini">' + '<button type="button" class="btn-clip-mini" id="copy-parts-btn">📋 نسخ</button>' + '<button type="button" class="btn-clip-mini" id="paste-parts-btn">📥 لصق</button>' + "</div>" + "</div>" + (!d.isNew ? '<div class="modal-footer-docs"><button type="button" class="btn btn-ghost btn-sm" id="modal-quote-btn">🧾 عرض سعر</button><button type="button" class="btn btn-ghost btn-sm" id="modal-invoice-btn">🧾 فاتورة</button></div>' : "<span></span>") + '<div class="modal-footer-actions">' + '<button type="button" class="btn btn-ghost" id="modal-cancel-btn">إلغاء</button>' + (!d.isNew ? '<button type="button" class="btn btn-ghost" id="modal-return-to-quote-btn">إرجاع للتسعير</button>' : "") + '<button type="button" class="btn ' + (d.supplied ? "btn-supplied-on" : "btn-ghost") + '" id="modal-supplied-btn"' + (!d.confirmed ? ' disabled title="لازم تأكيد الطلبية أولًا"' : "") + ">" + (d.supplied ? "✅ تم التوريد" : "🚚 تم التوريد") + "</button>" + '<button type="button" class="btn btn-primary" id="modal-save-btn">حفظ الطلبية</button>' + "</div>" + "</div>" + "</div>" + "</div>";
+function carCleanText(s, max) {
+    return String(s == null ? "" : s).replace(/[\u0660-\u0669]/g, d => String(d.charCodeAt(0) - 1632)).replace(/[\u06F0-\u06F9]/g, d => String(d.charCodeAt(0) - 1776)).replace(/[\u061C\u200B-\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/g, "").replace(/\s+/g, " ").trim().slice(0, max || 40);
 }
 
-function openModal(mode, orderId) {
+function carNormalizeYear(raw, nowYear) {
+    const s = String(raw == null ? "" : raw).replace(/[\u0660-\u0669]/g, d => String(d.charCodeAt(0) - 1632)).replace(/[\u06F0-\u06F9]/g, d => String(d.charCodeAt(0) - 1776)).replace(/\s/g, "");
+    if (!/^[0-9]{4}$/.test(s)) return null;
+    const y = Number(s);
+    const maxY = (Number(nowYear) || (new Date).getFullYear()) + 1;
+    return y >= 1950 && y <= maxY ? y : null;
+}
+
+function normalizeCar(raw, nowYear) {
+    if (!raw || typeof raw !== "object") return null;
+    const make = carCleanText(raw.make, 30);
+    const model = carCleanText(raw.model, 40);
+    const year = carNormalizeYear(raw.year, nowYear);
+    const trim = carCleanText(raw.trim, 40);
+    if (!make && !model && !year && !trim) return null;
+    return {
+        make: make,
+        model: model,
+        year: year,
+        trim: trim
+    };
+}
+
+function carIsComplete(car) {
+    const c = normalizeCar(car);
+    return !!(c && c.make && c.model && c.year);
+}
+
+function carLabelText(car) {
+    if (!car || typeof car !== "object") return "";
+    const core = [ car.make, car.model, car.year ].map(x => carCleanText(x, 40)).filter(Boolean).join(" ");
+    const t = carCleanText(car.trim, 40);
+    return core && t ? core + " · " + t : core || t;
+}
+
+function orderCarLabel(o) {
+    return carLabelText(o && o.car);
+}
+
+function orderDisplayLabel(o) {
+    const car = orderCarLabel(o);
+    const label = String(o && o.orderLabel || "").trim();
+    if (car && label && label.indexOf(car) !== -1) return label;
+    return [ car, label ].filter(Boolean).join(" — ");
+}
+
+function carCatalogModels(make) {
+    const list = typeof CAR_CATALOG === "object" && CAR_CATALOG && Array.isArray(CAR_CATALOG[make]) ? CAR_CATALOG[make] : [];
+    return list.map(entry => {
+        const parts = String(entry).split(":");
+        return {
+            name: parts[0].trim(),
+            trims: (parts[1] || "").split(",").map(x => x.trim()).filter(Boolean)
+        };
+    });
+}
+
+function carFindCatalogModel(make, model) {
+    const nm = normalizeArabicSearch(String(model || "").trim());
+    if (!nm) return null;
+    return carCatalogModels(make).find(m => normalizeArabicSearch(m.name) === nm) || null;
+}
+
+function carTrimChoices(make, model) {
+    const found = carFindCatalogModel(make, model);
+    const specific = found ? found.trims : [];
+    const generic = [ "ستاندر", "نص فل", "فل" ];
+    return specific.concat(generic.filter(g => specific.indexOf(g) === -1));
+}
+
+function carMakesOrdered() {
+    const top = [ "تويوتا", "هيونداي", "فورد", "هوندا", "مرسيدس", "لكزس", "كيا", "شفروليه", "مازدا", "نيسان" ];
+    return top.filter(m => CAR_MAKES.indexOf(m) !== -1).concat(CAR_MAKES.filter(m => top.indexOf(m) === -1));
+}
+
+function carMakeAliasPairs() {
+    return [ [ "toyota", "تويوتا" ], [ "lexus", "لكزس" ], [ "ford", "فورد" ], [ "chevrolet", "شفروليه" ], [ "شيفروليه", "شفروليه" ], [ "شيفرولية", "شفروليه" ], [ "شيفرولت", "شفروليه" ], [ "gmc", "جي إم سي" ], [ "جمس", "جي إم سي" ], [ "جيمس", "جي إم سي" ], [ "جي ام سي", "جي إم سي" ], [ "cadillac", "كاديلاك" ], [ "dodge", "دودج" ], [ "jeep", "جيب" ], [ "ram", "رام" ], [ "nissan", "نيسان" ], [ "infiniti", "إنفينيتي" ], [ "hyundai", "هيونداي" ], [ "هونداي", "هيونداي" ], [ "هيوندا", "هيونداي" ], [ "kia", "كيا" ], [ "genesis", "جينيسيس" ], [ "mercedes", "مرسيدس" ], [ "benz", "مرسيدس" ], [ "بنز", "مرسيدس" ], [ "مرسيدس بنز", "مرسيدس" ], [ "bmw", "بي إم دبليو" ], [ "بي ام دبليو", "بي إم دبليو" ], [ "بي ام", "بي إم دبليو" ], [ "audi", "أودي" ], [ "volkswagen", "فولكس فاجن" ], [ "vw", "فولكس فاجن" ], [ "فولكس واجن", "فولكس فاجن" ], [ "فولكسفاجن", "فولكس فاجن" ], [ "porsche", "بورش" ], [ "range rover", "رنج روفر" ], [ "رانج روفر", "رنج روفر" ], [ "رينج روفر", "رنج روفر" ], [ "land rover", "لاند روفر" ], [ "jaguar", "جاكوار" ], [ "mini", "ميني" ], [ "volvo", "فولفو" ], [ "honda", "هوندا" ], [ "mazda", "مازدا" ], [ "mitsubishi", "ميتسوبيشي" ], [ "متسوبيشي", "ميتسوبيشي" ], [ "suzuki", "سوزوكي" ], [ "isuzu", "إيسوزو" ], [ "peugeot", "بيجو" ], [ "renault", "رينو" ], [ "fiat", "فيات" ], [ "skoda", "سكودا" ], [ "geely", "جيلي" ], [ "changan", "شانجان" ], [ "gac", "جي إيه سي" ], [ "جي اي سي", "جي إيه سي" ], [ "mg", "إم جي" ], [ "ام جي", "إم جي" ], [ "chery", "شيري" ], [ "haval", "هافال" ], [ "byd", "بي واي دي" ], [ "jetour", "جيتور" ], [ "great wall", "جريت وول" ], [ "tank", "تانك" ], [ "jac", "جاك" ], [ "maxus", "ماكسوس" ], [ "baic", "بايك" ] ];
+}
+
+function carCanonMake(raw) {
+    const t = carCleanText(raw, 30);
+    const n = normalizeArabicSearch(t);
+    if (!n) return t;
+    const direct = CAR_MAKES.find(m => normalizeArabicSearch(m) === n);
+    if (direct) return direct;
+    const alias = carMakeAliasPairs().find(p => normalizeArabicSearch(p[0]) === n);
+    return alias ? alias[1] : t;
+}
+
+function carCanonModel(make, raw) {
+    const t = carCleanText(raw, 40);
+    const found = carFindCatalogModel(make, t);
+    return found ? found.name : t;
+}
+
+function carCanonTrim(make, model, raw) {
+    const t = carCleanText(raw, 40);
+    const n = normalizeArabicSearch(t);
+    if (!n) return t;
+    const hit = carTrimChoices(make, model).find(x => normalizeArabicSearch(x) === n);
+    return hit || t;
+}
+
+function carGateMakeChipsHtml(query, st) {
+    const q = normalizeArabicSearch((query || "").trim());
+    const aliases = carMakeAliasPairs();
+    const list = carMakesOrdered().filter(m => !q || normalizeArabicSearch(m).includes(q) || aliases.some(p => p[1] === m && normalizeArabicSearch(p[0]).includes(q)));
+    return list.map(m => '<button type="button" class="chip' + (!st.makeOther && st.make === m ? " chip-active" : "") + '" data-car-gate-make="' + escapeHtml(m) + '">' + escapeHtml(m) + "</button>").join("") + '<button type="button" class="chip' + (st.makeOther ? " chip-active" : "") + '" data-car-gate-make-other="1">أخرى…</button>';
+}
+
+function carGateModelChipsHtml(st) {
+    const make = st.makeOther ? "" : st.make;
+    if (!make) return '<div class="add-part-hint">اختر الماركة لتظهر موديلاتها، أو اكتب الموديل مباشرة</div>';
+    const q = normalizeArabicSearch((st.model || "").trim());
+    const list = carCatalogModels(make).filter(m => !q || normalizeArabicSearch(m.name).includes(q));
+    if (!list.length) return '<div class="add-part-hint">اكتب اسم الموديل</div>';
+    return list.map(m => '<button type="button" class="chip' + (q && normalizeArabicSearch(m.name) === q ? " chip-active" : "") + '" data-car-gate-model="' + escapeHtml(m.name) + '">' + escapeHtml(m.name) + "</button>").join("");
+}
+
+function carGateTrimChipsHtml(st) {
+    const make = st.makeOther ? "" : st.make;
+    const cur = normalizeArabicSearch(String(st.trim || "").trim());
+    return carTrimChoices(make, st.model).map(t => '<button type="button" class="chip' + (!st.trimUnknown && cur && normalizeArabicSearch(t) === cur ? " chip-active" : "") + '" data-car-gate-trim="' + escapeHtml(t) + '">' + escapeHtml(t) + "</button>").join("") + '<button type="button" class="chip' + (st.trimUnknown ? " chip-active" : "") + '" data-car-gate-trim-unknown="1">غير معروفة</button>';
+}
+
+function carYearOptionsHtml(selected, nowYear) {
+    const top = (Number(nowYear) || (new Date).getFullYear()) + 1;
+    let html = '<option value="">— اختر السنة —</option>';
+    for (let y = top; y >= 1950; y--) {
+        html += '<option value="' + y + '"' + (Number(selected) === y ? " selected" : "") + ">" + y + "</option>";
+    }
+    return html;
+}
+
+function carGateInitialState(car) {
+    const c = normalizeCar(car) || {};
+    const make = c.make || "";
+    const inList = !!make && CAR_MAKES.indexOf(make) !== -1;
+    return {
+        make: inList ? make : "",
+        makeOther: !!make && !inList,
+        makeOtherText: make && !inList ? make : "",
+        model: c.model || "",
+        year: c.year || null,
+        trim: c.trim || "",
+        trimUnknown: !!(c.make && !c.trim)
+    };
+}
+
+function carFromGateState(st) {
+    const make = carCanonMake(st.makeOther ? st.makeOtherText : st.make);
+    const model = carCanonModel(make, st.model);
+    return normalizeCar({
+        make: make,
+        model: model,
+        year: st.year,
+        trim: st.trimUnknown ? "" : carCanonTrim(make, model, st.trim)
+    });
+}
+
+function carGateMissing(st) {
+    const make = st.makeOther ? carCleanText(st.makeOtherText, 30) : st.make;
+    if (!make) return "make";
+    if (!carCleanText(st.model, 40)) return "model";
+    if (!carNormalizeYear(st.year)) return "year";
+    if (!st.trimUnknown && !carCleanText(st.trim, 40)) return "trim";
+    return "";
+}
+
+function carGateHtml(st, opts) {
+    opts = opts || {};
+    return '<div class="modal-backdrop" data-close-confirm data-car-gate>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">' + escapeHtml(opts.title || "🚗 السيارة") + "</div>" + '<p class="modal-sub">' + escapeHtml(opts.sub || "حدد الماركة والموديل وسنة الصنع والفئة") + "</p>" + '<div class="field" id="car-gate-make-field" style="margin-top:14px;"><span class="field-label">الماركة</span>' + '<div class="car-makes-picker">' + '<input type="text" class="search-input" id="car-gate-make-search" placeholder="🔍 ابحث عن الماركة..." autocomplete="off">' + '<div class="filter-chips car-makes-chips" id="car-gate-make-chips">' + carGateMakeChipsHtml("", st) + "</div>" + "</div>" + '<input type="text" id="car-gate-make-other" placeholder="اكتب اسم الماركة" autocomplete="off" value="' + escapeHtml(st.makeOtherText || "") + '" style="margin-top:8px;"' + (st.makeOther ? "" : " hidden") + ">" + "</div>" + '<div class="field" id="car-gate-model-field"><span class="field-label">الموديل</span>' + '<input type="text" id="car-gate-model" placeholder="مثال: كامري" autocomplete="off" value="' + escapeHtml(st.model || "") + '">' + '<div class="filter-chips car-gate-chips" id="car-gate-model-chips" style="margin-top:8px;">' + carGateModelChipsHtml(st) + "</div>" + "</div>" + '<div class="field" id="car-gate-year-field"><span class="field-label">سنة الصنع</span>' + '<select id="car-gate-year">' + carYearOptionsHtml(st.year) + "</select>" + "</div>" + '<div class="field" id="car-gate-trim-field"><span class="field-label">الفئة</span>' + '<div class="filter-chips" id="car-gate-trim-chips">' + carGateTrimChipsHtml(st) + "</div>" + '<input type="text" id="car-gate-trim" placeholder="أو اكتب الفئة (مثال: SE, GXR, لوميير)" autocomplete="off" value="' + escapeHtml(st.trim || "") + '" style="margin-top:8px;"' + (st.trimUnknown ? " disabled" : "") + ">" + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="car-gate-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-primary" id="car-gate-ok-btn">' + escapeHtml(opts.confirmLabel || "متابعة") + "</button>" + "</div>" + "</div>" + "</div>";
+}
+
+let carGateEscHandler = null;
+
+function closeCarGate() {
+    if (carGateEscHandler) {
+        document.removeEventListener("keydown", carGateEscHandler, true);
+        carGateEscHandler = null;
+    }
+    const root = document.getElementById("confirm-root");
+    if (root && root.querySelector("[data-car-gate]")) {
+        root.innerHTML = "";
+        root.classList.remove("modal-open");
+    }
+}
+
+function openCarGate(opts) {
+    opts = opts || {};
+    const root = document.getElementById("confirm-root");
+    if (!root) return;
+    if (root.querySelector("[data-car-gate]")) return;
+    if (root.classList.contains("modal-open") && root.firstElementChild) return;
+    closeCarGate();
+    const st = carGateInitialState(opts.car);
+    root.innerHTML = carGateHtml(st, opts);
+    root.classList.add("modal-open");
+    const q = sel => root.querySelector(sel);
+    const makeSearch = q("#car-gate-make-search");
+    const makeChips = q("#car-gate-make-chips");
+    const makeOtherInput = q("#car-gate-make-other");
+    const modelInput = q("#car-gate-model");
+    const modelChips = q("#car-gate-model-chips");
+    const yearSel = q("#car-gate-year");
+    const trimInput = q("#car-gate-trim");
+    const trimChips = q("#car-gate-trim-chips");
+    const redrawMakes = () => {
+        makeChips.innerHTML = carGateMakeChipsHtml(makeSearch.value, st);
+    };
+    const redrawModels = () => {
+        modelChips.innerHTML = carGateModelChipsHtml(st);
+    };
+    const redrawTrims = () => {
+        trimChips.innerHTML = carGateTrimChipsHtml(st);
+        trimInput.disabled = !!st.trimUnknown;
+    };
+    const clearMissing = () => {
+        root.querySelectorAll(".car-gate-missing").forEach(el => el.classList.remove("car-gate-missing"));
+    };
+    const cancel = () => {
+        closeCarGate();
+        if (typeof opts.onCancel === "function") opts.onCancel();
+    };
+    root.querySelector("[data-close-confirm]").addEventListener("click", e => {
+        if (e.target.hasAttribute("data-close-confirm")) cancel();
+    });
+    q("#car-gate-cancel-btn").addEventListener("click", cancel);
+    carGateEscHandler = function(e) {
+        if (e.key !== "Escape") return;
+        if (!document.querySelector("#confirm-root [data-car-gate]")) {
+            closeCarGate();
+            return;
+        }
+        e.stopPropagation();
+        cancel();
+    };
+    document.addEventListener("keydown", carGateEscHandler, true);
+    const card = q(".modal-card");
+    card.addEventListener("input", clearMissing);
+    card.addEventListener("click", e => {
+        if (!e.target.closest("#car-gate-ok-btn")) clearMissing();
+    });
+    makeSearch.addEventListener("input", redrawMakes);
+    makeChips.addEventListener("click", e => {
+        const btn = e.target.closest("button");
+        if (!btn) return;
+        const prevMake = st.makeOther ? carCleanText(st.makeOtherText, 30) : st.make;
+        const resetModelAndTrim = () => {
+            st.model = "";
+            st.trim = "";
+            st.trimUnknown = false;
+            modelInput.value = "";
+            trimInput.value = "";
+        };
+        if (btn.hasAttribute("data-car-gate-make-other")) {
+            if (st.makeOther) return;
+            if (prevMake) resetModelAndTrim();
+            st.makeOther = true;
+            st.make = "";
+            makeOtherInput.hidden = false;
+            makeOtherInput.focus();
+        } else {
+            const make = btn.getAttribute("data-car-gate-make");
+            if (!make) return;
+            if (prevMake && prevMake !== make) resetModelAndTrim();
+            st.make = make;
+            st.makeOther = false;
+            makeOtherInput.hidden = true;
+        }
+        redrawMakes();
+        redrawModels();
+        redrawTrims();
+    });
+    makeOtherInput.addEventListener("input", () => {
+        st.makeOtherText = makeOtherInput.value;
+    });
+    modelInput.addEventListener("input", () => {
+        st.model = modelInput.value;
+        redrawModels();
+        redrawTrims();
+    });
+    modelChips.addEventListener("click", e => {
+        const btn = e.target.closest("button");
+        const name = btn && btn.getAttribute("data-car-gate-model");
+        if (!name) return;
+        st.model = name;
+        modelInput.value = name;
+        redrawModels();
+        redrawTrims();
+    });
+    yearSel.addEventListener("change", () => {
+        st.year = Number(yearSel.value) || null;
+    });
+    trimChips.addEventListener("click", e => {
+        const btn = e.target.closest("button");
+        if (!btn) return;
+        if (btn.hasAttribute("data-car-gate-trim-unknown")) {
+            st.trimUnknown = !st.trimUnknown;
+            if (st.trimUnknown) {
+                st.trim = "";
+                trimInput.value = "";
+            }
+        } else {
+            const t = btn.getAttribute("data-car-gate-trim");
+            if (!t) return;
+            st.trim = t;
+            st.trimUnknown = false;
+            trimInput.value = t;
+        }
+        redrawTrims();
+    });
+    trimInput.addEventListener("input", () => {
+        st.trim = trimInput.value;
+        st.trimUnknown = false;
+        redrawTrims();
+    });
+    q("#car-gate-ok-btn").addEventListener("click", () => {
+        const miss = carGateMissing(st);
+        if (miss) {
+            const msgs = {
+                make: "اختر الماركة",
+                model: "اكتب أو اختر الموديل",
+                year: "اختر سنة الصنع",
+                trim: 'اختر الفئة، أو "غير معروفة" لو الزبون ما يعرفها'
+            };
+            clearMissing();
+            const fieldEl = q("#car-gate-" + miss + "-field");
+            if (fieldEl) {
+                fieldEl.classList.add("car-gate-missing");
+                fieldEl.scrollIntoView({
+                    block: "nearest"
+                });
+            }
+            showToast(msgs[miss], "error");
+            return;
+        }
+        const car = carFromGateState(st);
+        closeCarGate();
+        if (typeof opts.onChosen === "function") opts.onChosen(car);
+    });
+}
+
+function startNewWithCar(kind) {
+    openCarGate({
+        title: "🚗 السيارة",
+        sub: kind === "quote" ? "قبل ما تبدأ طلب التسعير، حدد السيارة" : "قبل ما تبدأ الطلبية، حدد السيارة",
+        confirmLabel: "متابعة",
+        onChosen: car => {
+            if (kind === "quote") openQuoteModal("create", null, undefined, {
+                car: car
+            }); else openModal("create", null, {
+                car: car
+            });
+        }
+    });
+}
+
+function carFieldHtml(d, mode, prefix) {
+    const ro = mode === "readonly";
+    const label = carLabelText(d && d.car);
+    const missing = !label;
+    const btn = ro ? "" : '<button type="button" class="icon-btn" id="' + prefix + '-car-change-btn" aria-label="' + (missing ? "اختيار السيارة" : "تغيير السيارة") + '">' + (missing ? "اختر" : "✏️") + "</button>";
+    return '<div class="field" id="' + prefix + '-car-field">' + '<span class="field-label">السيارة</span>' + '<div class="phone-field-row">' + '<div class="car-summary' + (missing ? " car-summary-empty" : "") + '" id="' + prefix + '-car-summary">' + (missing ? ro ? "ما انحددت سيارة" : "لم تُحدَّد السيارة" : "🚗 " + escapeHtml(label)) + "</div>" + btn + "</div>" + "</div>";
+}
+
+function carDraftGetter(prefix) {
+    return prefix === "quote" ? () => quoteDraft : () => draft;
+}
+
+function refreshCarField(prefix, d) {
+    const field = document.getElementById(prefix + "-car-field");
+    if (!field || !d) return;
+    field.outerHTML = carFieldHtml(d, "edit", prefix);
+    bindCarField(prefix);
+}
+
+function bindCarField(prefix) {
+    const btn = document.getElementById(prefix + "-car-change-btn");
+    if (!btn) return;
+    const getDraft = carDraftGetter(prefix);
+    btn.addEventListener("click", () => {
+        const d = getDraft();
+        if (!d) return;
+        const openedFor = d.id;
+        openCarGate({
+            title: d.car ? "🚗 تغيير السيارة" : "🚗 اختيار السيارة",
+            confirmLabel: "حفظ السيارة",
+            car: d.car,
+            onChosen: car => {
+                const cur = getDraft();
+                if (!cur || cur.id !== openedFor) return;
+                cur.car = car;
+                refreshCarField(prefix, cur);
+            }
+        });
+    });
+}
+
+function carApplyForSave(d, prefix) {
+    const c = normalizeCar(d && d.car);
+    if (d && d.isNew && !carIsComplete(c)) {
+        showToast("حدد السيارة (الماركة والموديل وسنة الصنع) قبل الحفظ", "error");
+        const btn = document.getElementById(prefix + "-car-change-btn");
+        if (btn) btn.focus();
+        return false;
+    }
+    if (c) d.car = c; else if (d) delete d.car;
+    return true;
+}
+
+function syncDraftCarFromOrder(order) {
+    if (!draft || !order || draft.id !== order.id) return;
+    let base = null;
+    try {
+        base = JSON.parse(draftCarAtOpen);
+    } catch (e) {
+        base = null;
+    }
+    const key = c => JSON.stringify(normalizeCar(c) || null);
+    if (key(draft.car) !== key(base)) return;
+    if (order.car) draft.car = JSON.parse(JSON.stringify(order.car)); else delete draft.car;
+    draftCarAtOpen = JSON.stringify(draft.car || null);
+    refreshCarField("order", draft);
+}
+
+function modalHtml(d) {
+    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلبية جديدة" : "تعديل الطلبية") + '</div><div class="modal-sub">البيانات تُحفظ تلقائيًا عند الضغط على حفظ</div></div>' + '<div style="display:flex;gap:8px;align-items:flex-start;">' + '<span id="modal-edit-toggle-wrap">' + editModeToggleButtonHtml(d) + "</span>" + '<button class="icon-btn" id="modal-close-btn" aria-label="إغلاق">✕</button>' + "</div></div>" + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + '<label class="field"><span class="field-label">رقم الطلب (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + '<div class="field">' + '<span class="field-label">العميل (اختياري)</span>' + '<div class="phone-field-row">' + '<div id="order-customer-select" style="flex:1;">' + orderCustomerFieldHtml(d) + "</div>" + '<button type="button" class="icon-btn" id="order-add-customer-btn" aria-label="عميل جديد">➕</button>' + "</div>" + "</div>" + carFieldHtml(d, "edit", "order") + '<div class="field">' + '<div class="field-label-row">' + '<span class="field-label">الطلبية</span>' + '<button type="button" id="btn-toggle-part-selection" class="chip' + (d.partsSelectionEnabled ? " chip-active" : "") + '">🎯 تحديد القطع' + (d.partsSelectionEnabled ? " (مفعّل)" : "") + "</button>" + '<button type="button" id="order-add-supplier-btn" class="chip">➕ مورد جديد</button>' + "</div>" + '<input type="text" id="order-label-input" placeholder="مثال: اسم الزبون / أي وصف مختصر" value="' + escapeHtml(d.orderLabel || "") + '">' + "</div>" + vinFieldHtml(d, "edit", "order") + mediaOrderBlockHtml(d.id, "order", currentUserRole === "full") + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span>' + orderMultiSourceHintHtml(d) + "</div>" + '<div id="parts-list" class="parts-list">' + d.parts.map(partRowHtml).join("") + "</div>" + '<div id="part-type-gate-wrap">' + partAddControlsHtml() + "</div>" + feeFieldRowHtml(d) + "</div>" + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">قسم المبيعات — التسعير والتحصيل</span></div>' + '<div class="totals-row">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="total-cost-display">0 ر.س</span></div>' + '<div class="total-box"><span>مستحق من الزبون</span><span class="num text-green" id="total-sell-display">0 ر.س</span></div>' + '<div class="total-box"><span>الربح</span><span class="num" id="total-profit-display">0 ر.س</span><span class="total-box-sub" id="total-profit-sub"></span></div>' + "</div>" + (hasElevatedAccess() ? '<div id="cost-split-row-wrap">' + costSplitButtonsHtml(d, orderTotals(d)) + "</div>" : "") + '<div class="payments-block">' + '<div id="payments-list" class="payments-list">' + paymentsListInnerHtml() + "</div>" + '<button type="button" id="add-payment-btn" class="btn btn-ghost btn-sm">+ إضافة دفعة</button>' + '<div class="payment-summary-row">' + '<span>إجمالي المدفوع<span class="num" id="total-paid-display">0 ر.س</span></span>' + '<span><span id="customer-remaining-label">المتبقي عليه</span><span class="num payment-remaining-display" id="customer-remaining-display">0 ر.س</span></span>' + "</div>" + '<div id="customer-refund-status-wrap">' + orderCustomerRefundStatusHtml(d) + "</div>" + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + '<div id="order-action-buttons-wrap">' + orderActionButtonsHtml(d) + "</div>" + '<div class="parts-clipboard-mini">' + '<button type="button" class="btn-clip-mini" id="copy-parts-btn">📋 نسخ</button>' + '<button type="button" class="btn-clip-mini" id="paste-parts-btn">📥 لصق</button>' + "</div>" + "</div>" + (!d.isNew ? '<div class="modal-footer-docs"><button type="button" class="btn btn-ghost btn-sm" id="modal-quote-btn">🧾 عرض سعر</button><button type="button" class="btn btn-ghost btn-sm" id="modal-invoice-btn">🧾 فاتورة</button></div>' : "<span></span>") + '<div class="modal-footer-actions">' + '<button type="button" class="btn btn-ghost" id="modal-cancel-btn">إلغاء</button>' + (!d.isNew ? '<button type="button" class="btn btn-ghost" id="modal-return-to-quote-btn">إرجاع للتسعير</button>' : "") + '<button type="button" class="btn ' + (d.supplied ? "btn-supplied-on" : "btn-ghost") + '" id="modal-supplied-btn"' + (!d.confirmed ? ' disabled title="لازم تأكيد الطلبية أولًا"' : "") + ">" + (d.supplied ? "✅ تم التوريد" : "🚚 تم التوريد") + "</button>" + '<button type="button" class="btn btn-primary" id="modal-save-btn">حفظ الطلبية</button>' + "</div>" + "</div>" + "</div>" + "</div>";
+}
+
+function openModal(mode, orderId, opts) {
     selectedPartType = null;
     editingPayments = {};
     pendingScrapyardCancellations = new Set;
@@ -3064,6 +3502,7 @@ function openModal(mode, orderId) {
             updatedAt: (new Date).toISOString(),
             isNew: true
         };
+        if (opts && opts.car) draft.car = normalizeCar(opts.car);
     } else {
         const found = appData.orders.find(o => o.id === orderId);
         if (!found) {
@@ -3076,6 +3515,7 @@ function openModal(mode, orderId) {
     }
     draftOpenedAtUpdatedAt = draft.updatedAt || null;
     draftVinAtOpen = draft.vin || "";
+    draftCarAtOpen = JSON.stringify(draft.car || null);
     if (draft.isNew) {
         persistedPartIds.delete(draft.id);
         mediaIndexInitEmpty(draft.id);
@@ -3354,6 +3794,7 @@ function attachModalHandlers() {
     root.querySelector("#order-label-input").addEventListener("input", e => {
         draft.orderLabel = e.target.value;
     });
+    bindCarField("order");
     bindVinInput("order", () => draft);
     bindOrderCustomerSelectEvents();
     root.querySelector("#order-add-customer-btn").addEventListener("click", () => orderQuickAddCustomer());
@@ -4160,6 +4601,7 @@ async function onSaveOrder() {
         return false;
     }
     if (!vinApplyForSave(draft, "order")) return false;
+    if (!carApplyForSave(draft, "order")) return false;
     if (mediaStagedOnBlankParts(draft.id, draft.parts)) return false;
     const cleanedParts = draft.parts.filter(p => p.description && p.description.trim()).map(p => Object.assign({}, p, {
         id: p.id,
@@ -4210,6 +4652,7 @@ async function onSaveOrder() {
     const partProposalPurgesSnapshot = new Set(pendingPartProposalPurges);
     const mediaSnap = mediaTakeStagedSnapshot(draftId);
     const savedVin = savingOrder.vin || "";
+    const savedCar = JSON.stringify(savingOrder.car || null);
     const saved = await persistOrder(savingOrder, orderWasNew);
     if (!saved) {
         mediaRestoreStagedSnapshot(mediaSnap);
@@ -4241,6 +4684,7 @@ async function onSaveOrder() {
     if (!orderModalStillOpen(draftId)) return true;
     draftOpenedAtUpdatedAt = draft.updatedAt;
     draftVinAtOpen = savedVin;
+    draftCarAtOpen = savedCar;
     editingPayments = {};
     pendingScrapyardCancellations.clear();
     pendingEditProposalsCancellation = false;
@@ -6733,7 +7177,7 @@ function quoteRowHtml(o, idx, total) {
     const rowState = quoteRowColorState(o);
     const priorityControls = canReorderQuotePriority() ? '<div class="quote-priority-controls">' + '<button type="button" class="quote-priority-btn" data-priority-move="up"' + (idx === 0 ? " disabled" : "") + ' title="رفع الأولوية">▲</button>' + '<button type="button" class="quote-priority-btn" data-priority-move="down"' + (idx === total - 1 ? " disabled" : "") + ' title="خفض الأولوية">▼</button>' + "</div>" : "";
     const priceSelfBtn = currentUserRole === "full" && currentUserIsElevated ? '<button type="button" class="icon-btn" data-quote-price-self="' + escapeHtml(o.id) + '" title="سعّر هذه الطلبية بنفسك" aria-label="سعّر بنفسك">💰</button>' : "";
-    return '<div class="task-item-row quote-row' + (rowState ? " quote-row-" + rowState : "") + '" data-quote-id="' + escapeHtml(o.id) + '">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(o.orderLabel || "—") + "</span>" + (elapsed ? '<span class="quote-row-elapsed' + (badgeSeverity ? " quote-row-elapsed-" + badgeSeverity : "") + '" data-created-at="' + escapeHtml(o.createdAt) + '">⏱ ' + escapeHtml(elapsed) + "</span>" : "") + priceSelfBtn + priorityControls + "</div>";
+    return '<div class="task-item-row quote-row' + (rowState ? " quote-row-" + rowState : "") + '" data-quote-id="' + escapeHtml(o.id) + '">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(orderDisplayLabel(o) || "—") + "</span>" + (elapsed ? '<span class="quote-row-elapsed' + (badgeSeverity ? " quote-row-elapsed-" + badgeSeverity : "") + '" data-created-at="' + escapeHtml(o.createdAt) + '">⏱ ' + escapeHtml(elapsed) + "</span>" : "") + priceSelfBtn + priorityControls + "</div>";
 }
 
 function quotesListHtml() {
@@ -6882,13 +7326,13 @@ function approvedQuotesMatchingList() {
     const words = normalizeArabicSearch(approvedQuotesSearchQuery.trim()).split(/\s+/).filter(Boolean);
     if (!words.length) return rows;
     return rows.filter(o => {
-        const haystack = normalizeArabicSearch([ o.orderNumber || "", o.orderLabel || "", o.vin || "", ...(o.parts || []).map(p => p.description || "") ].join(" "));
+        const haystack = normalizeArabicSearch([ o.orderNumber || "", o.orderLabel || "", orderCarLabel(o), o.vin || "", ...(o.parts || []).map(p => p.description || "") ].join(" "));
         return words.every(w => haystack.includes(w));
     });
 }
 
 function approvedQuoteRowHtml(o) {
-    return '<div class="task-item-row quote-row quote-row-ready" data-approved-quote-id="' + escapeHtml(o.id) + '">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(o.orderLabel || "—") + "</span>" + "</div>";
+    return '<div class="task-item-row quote-row quote-row-ready" data-approved-quote-id="' + escapeHtml(o.id) + '">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(orderDisplayLabel(o) || "—") + "</span>" + "</div>";
 }
 
 function approvedQuotesListHtml() {
@@ -6920,7 +7364,7 @@ function openApprovedQuoteViewModal(orderId) {
     }
     const root = document.getElementById("modal-root");
     mediaSeedPersisted(order.id, order.parts);
-    root.innerHTML = '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">✅ ' + escapeHtml(order.orderNumber) + '</div><div class="modal-sub">' + escapeHtml(order.orderLabel || "تسعيرة معتمدة") + "</div></div>" + '<button type="button" class="icon-btn" id="approved-quote-close-btn" aria-label="إغلاق">✕</button></div>' + (order.vin ? '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:-6px 0 10px;min-width:0;">' + '<span class="num" dir="ltr" style="flex:1;min-width:0;overflow-wrap:anywhere;text-align:right;font-size:13px;">VIN: ' + escapeHtml(order.vin) + "</span>" + '<button type="button" class="icon-btn" data-vin-copy="' + escapeHtml(order.vin) + '" aria-label="نسخ رقم الهيكل">📋</button>' + "</div>" : "") + mediaOrderBlockHtml(order.id, "approved", false) + (order.parts || []).map(p => approvedQuotePartRowHtml(p, order.id)).join("") + "</div>" + "</div>";
+    root.innerHTML = '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">✅ ' + escapeHtml(order.orderNumber) + '</div><div class="modal-sub">' + escapeHtml(orderDisplayLabel(order) || "تسعيرة معتمدة") + "</div></div>" + '<button type="button" class="icon-btn" id="approved-quote-close-btn" aria-label="إغلاق">✕</button></div>' + (order.vin ? '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:-6px 0 10px;min-width:0;">' + '<span class="num" dir="ltr" style="flex:1;min-width:0;overflow-wrap:anywhere;text-align:right;font-size:13px;">VIN: ' + escapeHtml(order.vin) + "</span>" + '<button type="button" class="icon-btn" data-vin-copy="' + escapeHtml(order.vin) + '" aria-label="نسخ رقم الهيكل">📋</button>' + "</div>" : "") + mediaOrderBlockHtml(order.id, "approved", false) + (order.parts || []).map(p => approvedQuotePartRowHtml(p, order.id)).join("") + "</div>" + "</div>";
     root.classList.add("modal-open");
     ensureOrderMediaLoaded(order.id, true);
     const close = () => {
@@ -7212,17 +7656,18 @@ function quoteModalHtml(d) {
         label: c.name || c.phone || "عميل",
         sublabel: c.phone
     })), d.customerId, "— بدون عميل محدد —") + "</div>" + '<button type="button" class="icon-btn" id="quote-add-customer-btn" aria-label="عميل جديد">➕</button>' + "</div>" + "</div>";
-    const labelFieldHtml = '<div class="field"><span class="field-label">الطلبية</span><input type="text" id="quote-label-input" placeholder="مثال: اسم الزبون / نوع السيارة / أي وصف مختصر" value="' + escapeHtml(d.orderLabel || "") + '"></div>';
+    const labelFieldHtml = '<div class="field"><span class="field-label">الطلبية</span><input type="text" id="quote-label-input" placeholder="مثال: اسم الزبون / أي وصف مختصر" value="' + escapeHtml(d.orderLabel || "") + '"></div>';
     const partsControlsHtml = '<div id="quote-part-type-gate-wrap">' + quotePartAddControlsHtml() + "</div>" + (isPurchasing ? '<button type="button" class="btn btn-accent-ghost btn-sm" id="quote-supplier-search-btn" style="width:100%;margin-top:10px;">🔍 بحث عن مورد</button>' : "");
     const footerUtilityHtml = !isPurchasing && !d.isNew ? '<button type="button" class="btn btn-sm btn-danger-ghost" id="quote-delete-btn">🗑️ حذف طلب التسعير</button>' : "";
     const footerActionsHtml = isPurchasing ? '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-ghost" id="quote-save-btn">حفظ</button>' + '<button type="button" class="btn btn-primary" id="quote-save-send-btn">حفظ و إرسال</button>' : '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-ghost" id="quote-save-btn">💾 حفظ</button>' + '<button type="button" class="btn btn-ghost" id="quote-send-btn">حفظ و اعادة طلب</button>' + '<button type="button" class="btn btn-primary" id="quote-approve-btn">✅ اعتماد</button>';
-    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلب تسعير جديد" : "تعديل طلب التسعير") + '</div><div class="modal-sub">البيانات تُحفظ عند الضغط على حفظ</div></div>' + '<button class="icon-btn" id="quote-modal-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + '<label class="field"><span class="field-label">رقم التسعيرة (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + customerFieldHtml + labelFieldHtml + vinFieldHtml(d, isPurchasing ? "readonly" : "edit", "quote") + mediaOrderBlockHtml(d.id, "quote", !isPurchasing) + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span>' + (isPurchasing ? '<button type="button" class="btn btn-ghost btn-sm" id="quote-add-supplier-btn">➕ مورد جديد</button>' : orderMultiSourceHintHtml(d)) + "</div>" + '<div id="quote-parts-list" class="parts-list">' + d.parts.map((p, i) => quotePartRowHtml(p, i)).join("") + "</div>" + partsControlsHtml + "</div>" + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">ملخص التكلفة</span></div>' + '<div class="totals-row" style="grid-template-columns:1fr;">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="quote-total-cost-display">0 ر.س</span></div>' + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + footerUtilityHtml + "</div>" + "<span></span>" + '<div class="modal-footer-actions">' + footerActionsHtml + "</div>" + "</div>" + "</div>" + "</div>";
+    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلب تسعير جديد" : "تعديل طلب التسعير") + '</div><div class="modal-sub">البيانات تُحفظ عند الضغط على حفظ</div></div>' + '<button class="icon-btn" id="quote-modal-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + '<label class="field"><span class="field-label">رقم التسعيرة (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + customerFieldHtml + carFieldHtml(d, isPurchasing ? "readonly" : "edit", "quote") + labelFieldHtml + vinFieldHtml(d, isPurchasing ? "readonly" : "edit", "quote") + mediaOrderBlockHtml(d.id, "quote", !isPurchasing) + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span>' + (isPurchasing ? '<button type="button" class="btn btn-ghost btn-sm" id="quote-add-supplier-btn">➕ مورد جديد</button>' : orderMultiSourceHintHtml(d)) + "</div>" + '<div id="quote-parts-list" class="parts-list">' + d.parts.map((p, i) => quotePartRowHtml(p, i)).join("") + "</div>" + partsControlsHtml + "</div>" + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">ملخص التكلفة</span></div>' + '<div class="totals-row" style="grid-template-columns:1fr;">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="quote-total-cost-display">0 ر.س</span></div>' + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + footerUtilityHtml + "</div>" + "<span></span>" + '<div class="modal-footer-actions">' + footerActionsHtml + "</div>" + "</div>" + "</div>" + "</div>";
 }
 
 function quoteContentSnapshot(d) {
     return JSON.stringify({
         orderLabel: (d.orderLabel || "").trim(),
         vin: normalizeVin(d.vin),
+        car: carLabelText(d.car),
         customerId: d.customerId || null,
         parts: (d.parts || []).filter(p => p.description && p.description.trim()).map(p => ({
             description: (p.description || "").trim(),
@@ -7235,7 +7680,7 @@ function quoteContentSnapshot(d) {
     });
 }
 
-function openQuoteModal(mode, orderId, role) {
+function openQuoteModal(mode, orderId, role, opts) {
     quoteModalRole = role === "purchasing" ? "purchasing" : "sales";
     selectedQuotePartType = null;
     if (mode === "create") {
@@ -7269,6 +7714,7 @@ function openQuoteModal(mode, orderId, role) {
             quoteReady: false,
             isNew: true
         };
+        if (opts && opts.car) quoteDraft.car = normalizeCar(opts.car);
     } else {
         const found = appData.orders.find(o => o.id === orderId);
         if (!found) {
@@ -7327,6 +7773,7 @@ function attachQuoteModalHandlers() {
     root.querySelector("#quote-label-input").addEventListener("input", e => {
         quoteDraft.orderLabel = e.target.value;
     });
+    bindCarField("quote");
     bindVinInput("quote", () => quoteDraft);
     bindVinCopyButtons(root);
     if (!isPurchasing) {
@@ -7372,7 +7819,7 @@ function attachQuoteModalHandlers() {
             addSupplierBtn.addEventListener("click", () => openQuickAddSupplierModal());
         }
         const supplierSearchBtn = root.querySelector("#quote-supplier-search-btn");
-        if (supplierSearchBtn) supplierSearchBtn.addEventListener("click", () => openSupplierSearchModal());
+        if (supplierSearchBtn) supplierSearchBtn.addEventListener("click", () => openSupplierSearchModal(quoteDraft && quoteDraft.car ? quoteDraft.car.make : null));
         return;
     }
     bindBusyButton(root.querySelector("#quote-save-btn"), onSaveQuote);
@@ -7501,6 +7948,7 @@ async function saveQuoteDraft(markSent) {
         return false;
     }
     if (!vinApplyForSave(quoteDraft, "quote")) return false;
+    if (!carApplyForSave(quoteDraft, "quote")) return false;
     if (mediaStagedOnBlankParts(quoteDraft.id, quoteDraft.parts)) return false;
     const cleanedParts = cleanedQuoteParts();
     if (cleanedParts.length === 0) {
@@ -7537,7 +7985,7 @@ async function saveQuoteDraft(markSent) {
     }
     mediaAfterSaveSuccess(draftId, mediaSnap, cleanedParts);
     if (markSent || quoteWasNew) {
-        const orderRef = "#" + savingDraft.orderNumber + (savingDraft.orderLabel ? " — " + savingDraft.orderLabel : "");
+        const orderRef = "#" + savingDraft.orderNumber + (orderDisplayLabel(savingDraft) ? " — " + orderDisplayLabel(savingDraft) : "");
         try {
             await sb.from("activity_events").insert({
                 kind: "order_needs_pricing",
@@ -7594,6 +8042,7 @@ async function onApproveQuote() {
         return;
     }
     if (!vinApplyForSave(quoteDraft, "quote")) return;
+    if (!carApplyForSave(quoteDraft, "quote")) return;
     if (mediaStagedOnBlankParts(quoteDraft.id, quoteDraft.parts)) return;
     const cleanedParts = cleanedQuoteParts();
     if (cleanedParts.length === 0) {
@@ -8015,8 +8464,8 @@ function renderSupplierSearchModal() {
     bindSupplierSearchModalEvents();
 }
 
-function openSupplierSearchModal() {
-    supplierSearchSelectedMake = null;
+function openSupplierSearchModal(presetMake) {
+    supplierSearchSelectedMake = presetMake && CAR_MAKES.indexOf(presetMake) !== -1 ? presetMake : null;
     renderSupplierSearchModal();
 }
 
@@ -8372,7 +8821,7 @@ function openUnsuccessfulReasonPicker(orderId) {
         const order = appData.orders.find(o => o.id === orderId);
         if (!order) return;
         if (selectedReason === null) selectedReason = order.unsuccessfulReason || "";
-        root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">سبب عدم نجاح الطلبية</div>' + '<p class="modal-sub">' + escapeHtml(order.orderNumber) + (order.orderLabel ? " — " + escapeHtml(order.orderLabel) : "") + "</p>" + '<div class="unsuccessful-reason-chips">' + UNSUCCESSFUL_REASONS.map(r => '<button type="button" class="chip' + (selectedReason === r.id ? " chip-active" : "") + '" data-reason="' + r.id + '">' + r.label + "</button>").join("") + "</div>" + (selectedReason ? '<label class="field" style="margin-top:12px;"><span class="field-label">تفاصيل إضافية (اختياري)</span>' + '<input type="text" id="unsuccessful-reason-details-input" value="' + escapeHtml(order.unsuccessfulReason === selectedReason ? order.unsuccessfulReasonDetails || "" : "") + '" placeholder="اكتب التفاصيل...">' + "</label>" : "") + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;flex-wrap:wrap;">' + (order.unsuccessfulReason ? '<button type="button" class="btn btn-ghost" id="unsuccessful-reason-clear-btn">مسح السبب</button>' : "") + '<button type="button" class="btn btn-ghost" id="unsuccessful-reason-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-primary" id="unsuccessful-reason-save-btn"' + (selectedReason ? "" : " disabled") + ">حفظ</button>" + "</div>" + "</div>" + "</div>";
+        root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">سبب عدم نجاح الطلبية</div>' + '<p class="modal-sub">' + escapeHtml(order.orderNumber) + (orderDisplayLabel(order) ? " — " + escapeHtml(orderDisplayLabel(order)) : "") + "</p>" + '<div class="unsuccessful-reason-chips">' + UNSUCCESSFUL_REASONS.map(r => '<button type="button" class="chip' + (selectedReason === r.id ? " chip-active" : "") + '" data-reason="' + r.id + '">' + r.label + "</button>").join("") + "</div>" + (selectedReason ? '<label class="field" style="margin-top:12px;"><span class="field-label">تفاصيل إضافية (اختياري)</span>' + '<input type="text" id="unsuccessful-reason-details-input" value="' + escapeHtml(order.unsuccessfulReason === selectedReason ? order.unsuccessfulReasonDetails || "" : "") + '" placeholder="اكتب التفاصيل...">' + "</label>" : "") + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;flex-wrap:wrap;">' + (order.unsuccessfulReason ? '<button type="button" class="btn btn-ghost" id="unsuccessful-reason-clear-btn">مسح السبب</button>' : "") + '<button type="button" class="btn btn-ghost" id="unsuccessful-reason-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-primary" id="unsuccessful-reason-save-btn"' + (selectedReason ? "" : " disabled") + ">حفظ</button>" + "</div>" + "</div>" + "</div>";
         root.classList.add("modal-open");
         const close = () => {
             root.innerHTML = "";
@@ -8519,6 +8968,17 @@ function docSheetHtml(order, type, data) {
     return '<div class="doc-overlay">' + '<div class="doc-toolbar no-print">' + '<div class="doc-toolbar-title">' + (isInvoice ? "إصدار فاتورة" : "إصدار عرض سعر") + " — طلبية " + escapeHtml(order.orderNumber) + "</div>" + '<div class="doc-toolbar-actions">' + '<button type="button" class="btn btn-danger-ghost btn-sm" id="doc-close-btn">إغلاق</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="doc-save-btn">حفظ البيانات</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="doc-copy-btn">نسخ نص للواتساب</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="doc-share-btn">📤 مشاركة</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="doc-pdf-btn">📄 تحميل PDF</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="doc-history-btn">📜 السجل</button>' + '<button type="button" class="btn btn-primary btn-sm" id="doc-print-btn">طباعة</button>' + "</div>" + "</div>" + '<div class="doc-sheet" id="doc-sheet">' + '<div class="doc-header-band">' + '<div class="doc-brand-col">' + '<img class="doc-logo-img" src="' + PARTECH_LOGO_DATA_URI + '" alt="PARTECH">' + '<div class="doc-co-info">س.ت: 1009069725 &nbsp;·&nbsp; ج: 0581206709</div>' + "</div>" + '<div class="doc-identity-col">' + '<div class="doc-type-badge">' + titleAr + "</div>" + '<div class="doc-type-badge-en">' + titleEn + "</div>" + '<div class="doc-identity-row"><span class="doc-identity-label">رقم المستند</span><input type="text" id="doc-number-input" class="doc-identity-input" value="' + escapeHtml(data.number) + '" readonly></div>' + '<div class="doc-identity-row"><span class="doc-identity-label">التاريخ</span><input type="text" id="doc-date-input" class="doc-identity-input" value="' + escapeHtml(data.date) + '"></div>' + "</div>" + "</div>" + '<div class="doc-billto">' + '<span class="doc-billto-label">العميل</span>' + '<div id="doc-customer-input" class="doc-customer-name-input" contenteditable="true">' + escapeHtml(data.customerName) + "</div>" + '<div class="doc-meta-field field-cr doc-cr-line"><span>ر.ض العميل</span><input type="text" id="doc-cr-input" value="' + escapeHtml(data.customerCR) + '"></div>' + '<div class="doc-billto-extra">' + '<div class="doc-meta-field field-car"><span>السيارة</span><input type="text" id="doc-car-input" value="' + escapeHtml(data.carModel) + '" placeholder="موديل السيارة"></div>' + '<div class="doc-meta-field field-vin"><span>رقم الهيكل VIN</span><input type="text" id="doc-vin-input" value="' + escapeHtml(data.vin) + '" placeholder="رقم الهيكل"></div>' + "</div>" + (docVinMismatch(order, data) ? '<div class="doc-vat-toggle no-print" style="cursor:default;flex-wrap:wrap;color:#9C6A00;font-weight:700;">' + '<span>رقم الهيكل بالطلبية: <span dir="ltr" style="overflow-wrap:anywhere;">' + escapeHtml(order.vin) + "</span> —</span>" + '<button type="button" class="icon-btn" id="doc-vin-replace-btn" style="color:#171717;border-color:#BDBDBD;">استبدال؟</button>' + "</div>" : "") + "</div>" + '<table class="doc-table"><thead><tr><th>البيـان</th><th>العدد</th><th>السعر الإفرادي</th><th>السعر الإجمالي</th></tr></thead>' + "<tbody>" + (Array.isArray(data.partsSnapshot) ? partsTableRowsHtmlFromSnapshot(data.partsSnapshot) : partsTableRowsHtml(order)) + "</tbody></table>" + '<label class="doc-vat-toggle no-print"><input type="checkbox" id="doc-vat-toggle-input" ' + (showVat ? "checked" : "") + "><span>إظهار تفاصيل الضريبة المضافة</span></label>" + '<div class="doc-totals">' + (showVat ? '<div class="doc-totals-row"><span>قيمة الضريبة المضافة (15%)</span><span class="num">' + fmtNum(vatAmount) + " ريال</span></div>" : "") + (showVat ? '<div class="doc-totals-row"><span>مجموع سعر القطع شامل الضريبة</span><span class="num">' + fmtNum(subtotal) + " ريال</span></div>" : "") + (feeEnabled ? '<div class="doc-totals-row doc-totals-row-fee"><span>' + feeLabel + " (" + feePercent + '%)</span><span class="num">' + fmtNum(fee) + " ريال</span></div>" : "") + (t.serviceFeeEnabled && t.serviceFeeAmount > 0 ? '<div class="doc-totals-row doc-totals-row-fee"><span>رسوم خدمات (' + t.serviceFeePercent + '%)</span><span class="num">' + fmtNum(t.serviceFeeAmount) + " ريال</span></div>" : "") + (t.deliveryFeeEnabled && t.deliveryFeeAmount > 0 ? '<div class="doc-totals-row doc-totals-row-fee"><span>أجور التوصيل</span><span class="num">' + fmtNum(t.deliveryFeeAmount) + " ريال</span></div>" : "") + '<div class="doc-totals-row grand"><span>الإجمالي المستحق</span><span class="num" id="doc-grand-total">' + fmtNum(grand) + " ريال</span></div>" + "</div>" + '<div id="doc-footer-input" class="doc-footer-note-input" contenteditable="true">' + footerNoteLinesHtml(data.footerNote) + "</div>" + "</div>" + "</div>";
 }
 
+function docApplyCarPrefill(order, data) {
+    const carNow = orderCarLabel(order);
+    if (!carNow || !data) return data;
+    const curCar = String(data.carModel || "").trim();
+    if (!curCar || data.carAuto && curCar === data.carAuto) {
+        data.carModel = carNow;
+        data.carAuto = carNow;
+    }
+    return data;
+}
+
 function docVinMismatch(order, data) {
     const a = normalizeVin(order && order.vin), b = normalizeVin(data && data.vin);
     return !!(a && b && a !== b);
@@ -8545,6 +9005,7 @@ function openDocumentView(orderId, type) {
         showVat: false
     }, existing || {});
     if (!String(data.vin || "").trim() && order.vin) data.vin = order.vin;
+    docApplyCarPrefill(order, data);
     docState = {
         orderId: orderId,
         type: type,
@@ -10764,7 +11225,7 @@ function proceedEditProposalDecision(proposalId, accept, keepFee) {
             return c && (c.name || c.phone) || "عميل";
         }
         const o = appData.orders.find(o => o.id === pr.order_id);
-        return o ? "#" + o.orderNumber + (o.orderLabel ? " — " + o.orderLabel : "") : "طلبية #" + pr.order_id;
+        return o ? "#" + o.orderNumber + (orderDisplayLabel(o) ? " — " + orderDisplayLabel(o) : "") : "طلبية #" + pr.order_id;
     })();
     confirmAction({
         title: accept ? "قبول هذا الطلب؟" : "رفض هذا الطلب؟",
@@ -10871,6 +11332,7 @@ function proceedEditProposalDecision(proposalId, accept, keepFee) {
                         draft.returnKeptExcessAmount = order.returnKeptExcessAmount;
                         draft.updatedAt = order.updatedAt;
                         syncDraftVinFromOrder(order);
+                        syncDraftCarFromOrder(order);
                         draftOpenedAtUpdatedAt = order.updatedAt;
                         refreshPartsList();
                         refreshFeeFieldsBlock();
@@ -10931,6 +11393,7 @@ function proceedEditProposalDecision(proposalId, accept, keepFee) {
                                     draft.customerPayments = JSON.parse(JSON.stringify(freshOrder.customerPayments || []));
                                     draft.returnKeptExcessAmount = freshOrder.returnKeptExcessAmount;
                                     syncDraftVinFromOrder(freshOrder);
+                                    syncDraftCarFromOrder(freshOrder);
                                     draftOpenedAtUpdatedAt = freshOrder.updatedAt;
                                     refreshPartsList();
                                     refreshPaymentsList();
@@ -11290,7 +11753,7 @@ function editProposalReviewRowHtml(pr) {
         return '<div class="edit-proposal-review-row">' + '<div class="edit-proposal-review-head">' + '<span class="edit-proposal-review-order">👤 ' + escapeHtml(cust && (cust.name || cust.phone) || "عميل") + "</span>" + '<span class="edit-proposal-review-field">' + escapeHtml(editProposalKindLabel(pr)) + "</span>" + "</div>" + '<div class="edit-proposal-review-body">' + editProposalPendingHtml(pr) + "</div>" + '<div class="edit-proposal-review-meta">' + escapeHtml(displayNameForEmail(pr.submitted_by)) + "</div>" + "</div>";
     }
     const order = appData.orders.find(o => o.id === pr.order_id);
-    const orderLabel = order ? "#" + order.orderNumber + (order.orderLabel ? " — " + order.orderLabel : "") : "طلبية #" + pr.order_id;
+    const orderLabel = order ? "#" + order.orderNumber + (orderDisplayLabel(order) ? " — " + orderDisplayLabel(order) : "") : "طلبية #" + pr.order_id;
     let partLabel = "";
     if ((pr.kind === "part_field" || pr.kind === "part_exclude" || pr.kind === "part_delete" || pr.kind === "part_return" || pr.kind === "return_collect" || pr.kind === "customer_refund_confirm") && order) {
         const part = (order.parts || []).find(p => p.id === pr.part_id);
@@ -11463,7 +11926,7 @@ function accountsActivityForDate(isoDate) {
             if (!matchDmy(p.date)) return;
             const row = {
                 orderNumber: o.orderNumber,
-                orderLabel: o.orderLabel,
+                orderLabel: orderDisplayLabel(o),
                 amount: Number(p.amount) || 0,
                 method: p.method || ""
             };
@@ -11485,7 +11948,7 @@ function accountsActivityForDate(isoDate) {
             const amt = o.paidToSupplierAmountSnapshot != null ? Number(o.paidToSupplierAmountSnapshot) || 0 : baseFallback;
             supplierPayments.push({
                 orderNumber: o.orderNumber,
-                orderLabel: o.orderLabel,
+                orderLabel: orderDisplayLabel(o),
                 amount: amt,
                 kind: "مورد"
             });
@@ -11494,7 +11957,7 @@ function accountsActivityForDate(isoDate) {
             const amt = o.paidToAmerAmountSnapshot != null ? Number(o.paidToAmerAmountSnapshot) || 0 : baseFallback;
             supplierPayments.push({
                 orderNumber: o.orderNumber,
-                orderLabel: o.orderLabel,
+                orderLabel: orderDisplayLabel(o),
                 amount: amt,
                 kind: "تشليح (عامر)"
             });
@@ -11503,7 +11966,7 @@ function accountsActivityForDate(isoDate) {
             const amt = o.paidToOmarAmountSnapshot != null ? Number(o.paidToOmarAmountSnapshot) || 0 : baseFallback;
             supplierPayments.push({
                 orderNumber: o.orderNumber,
-                orderLabel: o.orderLabel,
+                orderLabel: orderDisplayLabel(o),
                 amount: amt,
                 kind: "تشليح (عمر)"
             });
@@ -11522,7 +11985,7 @@ function accountsActivityForDate(isoDate) {
             const amt = o.paidToSupplierNewAmountSnapshot != null ? Number(o.paidToSupplierNewAmountSnapshot) || 0 : orderTotals(o).costToSupplier;
             supplierPayments.push({
                 orderNumber: o.orderNumber,
-                orderLabel: o.orderLabel,
+                orderLabel: orderDisplayLabel(o),
                 amount: amt,
                 kind: "مورد (جديد)"
             });
@@ -11531,7 +11994,7 @@ function accountsActivityForDate(isoDate) {
             const amt = o.paidToAmerNewAmountSnapshot != null ? Number(o.paidToAmerNewAmountSnapshot) || 0 : orderTotals(o).costToSupplier;
             supplierPayments.push({
                 orderNumber: o.orderNumber,
-                orderLabel: o.orderLabel,
+                orderLabel: orderDisplayLabel(o),
                 amount: amt,
                 kind: "جديد (عامر)"
             });
@@ -11540,7 +12003,7 @@ function accountsActivityForDate(isoDate) {
             const amt = o.paidToOmarNewAmountSnapshot != null ? Number(o.paidToOmarNewAmountSnapshot) || 0 : orderTotals(o).costToSupplier;
             supplierPayments.push({
                 orderNumber: o.orderNumber,
-                orderLabel: o.orderLabel,
+                orderLabel: orderDisplayLabel(o),
                 amount: amt,
                 kind: "جديد (عمر)"
             });
@@ -11549,7 +12012,7 @@ function accountsActivityForDate(isoDate) {
             const agent = o.deliveryAgentId ? deliveryAgentById(o.deliveryAgentId) : null;
             deliveryPayments.push({
                 orderNumber: o.orderNumber,
-                orderLabel: o.orderLabel,
+                orderLabel: orderDisplayLabel(o),
                 amount: tBase.deliveryCost,
                 agentName: agent ? agent.name : DELIVERY_UNREGISTERED_LABEL
             });
@@ -12771,7 +13234,7 @@ function deliverySettlementOrderRowHtml(order, paid) {
     const dateLabel = order.suppliedAt ? fmtDateShort(order.suppliedAt) : "";
     const pending = pendingDeliverySettleProposal(order.id);
     const actionHtml = pending ? editProposalPendingHtml(pending) : paid ? '<button type="button" class="icon-btn" data-unsettle-delivery-order="' + escapeHtml(order.id) + '" title="تراجع عن تسديد أجرة التوصيل" aria-label="تراجع عن التسديد">↩️</button>' : '<input type="checkbox" class="delivery-settlement-order-check" data-order-id="' + escapeHtml(order.id) + '"' + (deliverySettlementCheckedIds.has(order.id) ? " checked" : "") + ">";
-    return '<div class="task-item-row activity-log-row" data-order-id="' + escapeHtml(order.id) + '">' + '<div class="supplier-row-main">' + actionHtml + '<span class="purchase-history-desc">' + escapeHtml(order.orderNumber) + (order.orderLabel ? " — " + escapeHtml(order.orderLabel) : "") + (customer ? " — " + escapeHtml(customer.name || customer.phone || "") : "") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(dateLabel) + "</span>" + '<span class="num">' + fmtMoney(t.deliveryCost) + "</span>" + "</div>" + "</div>";
+    return '<div class="task-item-row activity-log-row" data-order-id="' + escapeHtml(order.id) + '">' + '<div class="supplier-row-main">' + actionHtml + '<span class="purchase-history-desc">' + escapeHtml(order.orderNumber) + (orderDisplayLabel(order) ? " — " + escapeHtml(orderDisplayLabel(order)) : "") + (customer ? " — " + escapeHtml(customer.name || customer.phone || "") : "") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(dateLabel) + "</span>" + '<span class="num">' + fmtMoney(t.deliveryCost) + "</span>" + "</div>" + "</div>";
 }
 
 function deliverySettlementModalHtml(agentId) {
@@ -13102,6 +13565,11 @@ async function exportAllDataToExcel() {
             analysisRows.push({
                 "رقم الطلب": o.orderNumber,
                 "الطلبية/السيارة": o.orderLabel || "",
+                "السيارة": orderCarLabel(o),
+                "الماركة": o.car && o.car.make || "",
+                "الموديل": o.car && o.car.model || "",
+                "سنة الصنع": o.car && o.car.year || "",
+                "الفئة": o.car && o.car.trim || "",
                 "تاريخ الإنشاء": o.createdAt || "",
                 "تاريخ التوريد": o.suppliedAt || "",
                 "مؤكدة": o.confirmed ? "نعم" : "لا",
@@ -13130,6 +13598,7 @@ async function exportAllDataToExcel() {
         return {
             "رقم الطلب": o.orderNumber,
             "الطلبية": o.orderLabel || "",
+            "السيارة": orderCarLabel(o),
             "رقم الهيكل VIN": o.vin || "",
             "رقم جوال العميل": o.customerPhone || "",
             "مؤكدة": o.confirmed ? "نعم" : "لا",
@@ -13162,6 +13631,7 @@ async function exportAllDataToExcel() {
             partsRows.push({
                 "رقم الطلب": o.orderNumber,
                 "الطلبية": o.orderLabel || "",
+                "السيارة": orderCarLabel(o),
                 "وصف القطعة": p.description,
                 "مستعملة": p.used ? "نعم" : "لا",
                 "حالة القطعة": p.used ? partConditionMeta(p.condition) ? partConditionMeta(p.condition).label : "غير محددة" : "",
@@ -13440,7 +13910,7 @@ function bindToolbar() {
             document.getElementById("btn-toggle-orders-list").setAttribute("aria-expanded", "true");
         }
     });
-    document.getElementById("btn-new-order").addEventListener("click", () => openModal("create"));
+    document.getElementById("btn-new-order").addEventListener("click", () => startNewWithCar("order"));
     document.getElementById("btn-toggle-quotes-list").addEventListener("click", () => {
         const opening = document.getElementById("quotes-list-section").style.display === "none";
         closeOrdersAndQuotesSections();
@@ -13449,7 +13919,7 @@ function bindToolbar() {
             document.getElementById("btn-toggle-quotes-list").setAttribute("aria-expanded", "true");
         }
     });
-    document.getElementById("btn-new-quote").addEventListener("click", () => openQuoteModal("create"));
+    document.getElementById("btn-new-quote").addEventListener("click", () => startNewWithCar("quote"));
     document.getElementById("btn-open-treasury").addEventListener("click", openTreasuryView);
     document.getElementById("btn-open-tasks").addEventListener("click", () => {
         const view = document.getElementById("tasks-view");
@@ -14619,7 +15089,7 @@ function supplierPurchaseHistory(supplierId) {
                 map[o.id] = {
                     orderId: o.id,
                     orderNumber: o.orderNumber,
-                    orderLabel: o.orderLabel,
+                    orderLabel: orderDisplayLabel(o),
                     amount: 0,
                     count: 0,
                     date: o.suppliedAt || o.updatedAt || o.createdAt || ""
@@ -14652,7 +15122,7 @@ function supplierPricedHistory(supplierId) {
                 map[o.id] = {
                     orderId: o.id,
                     orderNumber: o.orderNumber,
-                    orderLabel: o.orderLabel,
+                    orderLabel: orderDisplayLabel(o),
                     amount: 0,
                     count: 0,
                     date: o.suppliedAt || o.updatedAt || o.createdAt || "",
@@ -14688,7 +15158,7 @@ function supplierReturnReceivables(supplierId) {
             rows.push({
                 orderId: o.id,
                 orderNumber: o.orderNumber,
-                orderLabel: o.orderLabel,
+                orderLabel: orderDisplayLabel(o),
                 partId: p.id,
                 description: p.description || "",
                 amount: round2((Number(p.qty) || 1) * (Number(p.costPrice) || 0)),
@@ -14866,6 +15336,63 @@ function confirmCollectScrapyardReturn(orderId, partId, supplierId) {
 let editingSuppliers = {};
 
 const CAR_MAKES = [ "تويوتا", "لكزس", "فورد", "شفروليه", "جي إم سي", "كاديلاك", "دودج", "كرايسلر", "جيب", "رام", "لوسيد", "نيسان", "إنفينيتي", "هيونداي", "كيا", "جينيسيس", "سانج يونج", "مرسيدس", "بي إم دبليو", "أودي", "فولكس فاجن", "بورش", "مازيراتي", "لامبورجيني", "بنتلي", "رولز رويس", "رنج روفر", "لاند روفر", "جاكوار", "ميني", "فولفو", "هوندا", "مازدا", "ميتسوبيشي", "سوزوكي", "إيسوزو", "بيجو", "رينو", "فيات", "سكودا", "جيلي", "شانجان", "جي إيه سي", "إم جي", "شيري", "هافال", "بي واي دي", "جيتور", "جريت وول", "تانك", "جاك", "هونشي", "ماكسوس", "بايك" ];
+
+const CAR_CATALOG = {
+    "تويوتا": [ "كامري:GL,GLX,LE,GLE,GLEX,SE,Grande", "كورولا:XLi,GLi", "لاند كروزر:GX,GXR,EXR,VX,VXR,VXS,GR Sport", "هايلوكس:DLX,GL,GLX,SGLX,SR5,Adventure,GR Sport", "يارس:E,SE", "برادو:EXR,GXR,VXR,TX,TXL,VX,Adventure", "افالون:XLE,Limited", "هايس", "فورشنر:EXR,GXR,VXR", "راف فور:EX,EXR,GXR,VXR,Adventure", "راش", "اوربان كروزر", "فيلوز", "كورولا كروس", "سيكويا:SR5,Limited,Platinum,Capstone", "رايز", "افانزا", "كراون", "انوفا", "كوستر", "اف جي كروزر", "فينزا", "هايلاندر", "سيينا", "تندرا", "بريفيا", "اوريون", "C-HR", "4Runner", "لايت ايس", "سوبرا", "86" ],
+    "لكزس": [ "ES:Elegant,Excellence,F Sport,Platinum,Prestige", "LX:Black Edition,Signature,Platinum", "LS", "RX:Elegant,Excellence,F Sport", "GX", "NX:Elegant,Excellence,F Sport", "IS:Elegant,Excellence,Elite,F Sport", "GS:F Sport", "UX", "RC:F Sport", "LC", "LM" ],
+    "فورد": [ "تورس:SE,SEL,Limited,SHO", "اكسبدشن:XLT,Limited,Platinum,Timberline", "اكسبلورر:XLT,Limited,Sport,ST", "ايدج:SE,SEL,Limited,Titanium,Sport,ST,Ambiente,Trend", "F150:XL,XLT,FX4,Lariat,Platinum,Raptor,Tremor", "اسكورت", "تيريتوري:Ambiente,Trend,Titanium", "فيوجن:SE,SEL,Titanium,Sport", "رينجر:XL,XLT,Wildtrak,Raptor", "فوكس:Ambiente,Trend,Titanium", "فليكس:SE,SEL,Limited", "اسكيب:SE,SEL,Titanium", "موستنق:EcoBoost,GT", "برونكو:Big Bend,Outer Banks,Badlands,Wildtrak", "مونديو", "ايفرست:XLS,XLT,Limited", "كراون فكتوريا", "فيستا", "ايكوسبورت", "فيجو", "ترانزيت", "F350", "برونكو سبورت" ],
+    "شفروليه": [ "ماليبو:LS,LT,LTZ,Premier", "تاهو:LS,LT,LTZ,Z71,Premier", "كابتيفا:LS,LT,LTZ,Premier", "ترافرس:LS,LT,LTZ,Premier", "امبالا:LS,LT,LTZ,Premier", "كابرس", "سلفرادو:WT,LT,LTZ,RST,Trail Boss", "سوبربان:LS,LT,LTZ,Premier", "بليزر:LT,RS,Premier", "سبارك:LS,LT", "لومينا", "كروز:LS,LT,LTZ,Premier", "ايكوينوكس:LS,LT,LTZ,Premier", "تراكس:LS,LT,LTZ,Premier", "كمارو:LT,RS,SS,ZL1", "ترايل بليزر:LS,LT,Activ,RS", "كورفيت:Stingray,Z06", "افيو:LS,LT", "اوبترا", "ابيكا", "افالانش", "كولورادو", "جروف:LT,Premier" ],
+    "جي إم سي": [ "يوكن:SLE,SLT,Denali,AT4", "سييرا:SLE,SLT,Denali,AT4,Elevation", "اكاديا:SLE,SLT,Denali,AT4", "تيرين:SLE,SLT,Denali", "انفوي", "سافانا", "كانيون" ],
+    "كاديلاك": [ "XT6:Luxury,Premium Luxury,Sport", "XTS", "SRX", "CT5:Luxury,Sport", "اسكاليد:Luxury,Premium Luxury,Sport,Platinum", "CTS", "XT5:Luxury,Premium Luxury,Sport", "ATS", "XT4:Luxury,Sport", "CT4:Luxury,Sport" ],
+    "دودج": [ "تشارجر:SE,SXT,R/T,GT,Scat Pack,SRT8,SRT Hellcat", "تشالنجر:SXT,R/T,GT,Scat Pack,SRT8,SRT Hellcat", "دورانجو:SXT,GT,R/T,Citadel,Limited,SRT", "رام", "نيون", "جورني:SE,SXT,R/T,GT", "كارافان", "افينجر:SE,SXT,R/T", "كاليبر", "نيترو", "ماجنم" ],
+    "كرايسلر": [ "300C", "فوياجر", "سيبرنج", "اسبن", "بي تي كروزر", "تاون اند كنتري", "كروسفاير", "باسيفيكا", "200" ],
+    "جيب": [ "شيروكي:Sport,Latitude,Limited,Trailhawk", "جراند شيروكي:Laredo,Limited,Overland,Summit,Trailhawk,Altitude,SRT,Trackhawk", "رانجلر:Sport,Sahara,Rubicon", "كومباس:Sport,Latitude,Limited,Trailhawk", "رينيجيد:Sport,Latitude,Limited,Trailhawk", "جلادياتور:Sport,Sand Runner,Overland,Rubicon", "باتريوت", "ليبرتي", "كوماندر", "واجونير" ],
+    "رام": [ "1500:Tradesman,Big Horn,Laramie,Rebel,Limited,Tungsten,RHO,TRX", "2500:Tradesman,Power Wagon" ],
+    "لوسيد": [ "اير:Pure,Touring,Grand Touring,Sapphire" ],
+    "نيسان": [ "باترول:XE,SE,LE,SE Platinum,LE Platinum,SE Titanium,LE Titanium,Nismo", "صني:S,SV,SL", "كيكس:S,SV,SL", "اكستريل:S,SV,SL", "سنترا:S,SV", "التيما:S,SV,SL", "باثفايندر:S,SV,SL,Platinum", "مكسيما:S,SV,SR", "ارمادا", "نافارا", "ددسن", "اكستيرا", "سفاري", "اورفان", "جوك", "تيدا", "مورانو", "GT-R" ],
+    "إنفينيتي": [ "QX80", "QX60", "QX70", "Q50", "QX50", "QX55", "Q70", "Q60", "QX56", "FX" ],
+    "هيونداي": [ "النترا:GL,GLS,Smart,Comfort,Premium", "سوناتا:GL,GLS,Smart,Smart Plus", "ازيرا", "اكسنت:GL,Smart,Smart Plus", "سنتافي:GL,GLS,Smart", "توسان:GL,Smart,Comfort,Premium", "كريتا", "كونا", "باليسيد", "فيلوستر", "H1", "فينيو", "i10", "ستاريا", "ايونيك 5", "جينيسيس", "جينيسيس كوبيه", "فيراكروز", "جيتز", "ماتريكس" ],
+    "كيا": [ "اوبتيما", "كادينزا", "بيجاس", "سيراتو", "سبورتاج", "ريو", "سورينتو", "K5", "K3:LX,EX,GT-Line", "سيلتوس", "سونيت", "كارينز", "K8", "كرنفال", "K4", "بيكانتو", "تيلورايد", "سول", "ستينجر", "K900", "موهافي", "EV6", "EV9" ],
+    "جينيسيس": [ "G80", "GV80", "G70", "GV70", "G90", "GV60" ],
+    "سانج يونج": [ "ريكستون", "كوراندو", "تيفولي", "اكتيون", "كايرون", "موسو", "توريس" ],
+    "مرسيدس": [ "سي كلاس:Avantgarde,AMG Line", "اس كلاس:AMG Line", "اي كلاس:Avantgarde,Exclusive,AMG Line", "GLE:AMG Line", "GLC:AMG Line", "CLA:AMG Line", "جي كلاس", "ML", "SLK", "GLS:AMG Line", "A كلاس:AMG Line", "CLS:AMG Line", "GLA:AMG Line", "B كلاس", "V كلاس", "GL", "GLK", "SL", "GLB:AMG Line", "AMG GT", "مايباخ", "فيتو", "سبرنتر", "فيانو", "SLC", "CLK", "EQE", "EQS", "EQA", "EQB" ],
+    "بي إم دبليو": [ "الفئة الخامسة:M Sport,Luxury Line,Business", "الفئة السابعة:M Sport,Individual", "الفئة الثالثة:M Sport,Luxury Line", "X5:xLine,M Sport", "X6:M Sport", "X3:xLine,M Sport", "X1:xLine,M Sport", "X4:M Sport", "X2:M Sport", "X7:M Sport", "الفئة الرابعة:M Sport", "الفئة الثانية", "الفئة الاولى", "الفئة السادسة", "الفئة الثامنة", "Z4", "M5", "M3", "M4", "i8", "iX", "i4", "i5", "i7" ],
+    "أودي": [ "A6:S line", "A8", "A4:S line", "Q7:S line", "Q5:S line", "Q8:S line", "A5:S line", "Q3:S line", "A3:S line", "A7:S line", "TT", "R8", "e-tron" ],
+    "فولكس فاجن": [ "تيجوان:S,SE,SEL,Sport,Trendline,Life,Elegance,R-Line", "طوارق", "باسات:S,SE,SEL,Sport", "جولف:GTI,R", "جيتا:Trendline,Comfortline,Highline", "تيرامونت:Trendline,Comfortline,Highline,R-Line", "تي روك:Life,Style,R-Line", "ارتيون:Elegance,R-Line", "بولو", "بيتل", "CC", "سيروكو", "فايتون" ],
+    "بورش": [ "كاين:S,GTS,Turbo,Turbo S", "ماكان:S,GTS,Turbo", "باناميرا:4,4S,GTS,Turbo", "911:Carrera,Carrera S,Turbo,GT3", "بوكستر:S,GTS", "كايمن:S,GTS", "تايكان:4S,Turbo,Turbo S,GTS" ],
+    "مازيراتي": [ "غيبلي:S,GranSport,GranLusso,GT,Modena,Trofeo", "ليفانتي:S,GranSport,GranLusso,GT,Modena,Trofeo", "كواتروبورتي:S,GranSport,GranLusso,Trofeo", "جريكالي:GT,Modena,Trofeo", "جران توريزمو:Modena,Trofeo", "جران كابريو:Modena,Trofeo", "MC20" ],
+    "لامبورجيني": [ "اوروس:S,Performante", "هوراكان:EVO,Performante,STO,Tecnica", "افينتادور:S,SVJ", "جالاردو", "مورسيلاجو", "ريفولتو" ],
+    "بنتلي": [ "كونتيننتال:Speed,Azure,Mulliner", "بنتايجا:Speed,Azure,Mulliner,S", "فلاينج سبير:Speed,Azure,Mulliner", "مولسان", "ارناج" ],
+    "رولز رويس": [ "قوست:Black Badge", "رايث:Black Badge", "كولينان:Black Badge", "فانتوم", "داون:Black Badge", "سبيكتر" ],
+    "رنج روفر": [ "فوج:HSE,SE,Vogue SE,Autobiography,SV", "سبورت:SE,HSE,HSE Dynamic,Autobiography,SVR", "ايفوك:Pure,Prestige,Dynamic,SE,HSE", "فيلار:S,SE,HSE,R-Dynamic" ],
+    "لاند روفر": [ "ديفندر:S,SE,HSE,X-Dynamic,X,V8", "ديسكفري:S,SE,HSE,HSE Luxury", "ديسكفري سبورت:S,SE,HSE", "فريلاندر" ],
+    "جاكوار": [ "F-Pace:Prestige,R-Sport,Portfolio,S,SVR", "XF:Premium Luxury,Portfolio,R-Sport,S", "XJ:Premium Luxury,Portfolio,Supercharged,Autobiography", "XE", "E-Pace:S,SE,HSE,R-Dynamic", "F-Type", "I-Pace", "XK" ],
+    "ميني": [ "كوبر:Cooper S,John Cooper Works", "كونتري مان:Cooper,Cooper S,John Cooper Works", "كلوب مان:Cooper,Cooper S,John Cooper Works", "باسمان" ],
+    "فولفو": [ "XC90:Momentum,Inscription,R-Design", "XC60:Momentum,Inscription,R-Design", "S90:Momentum,Inscription,R-Design", "S60:Momentum,Inscription,R-Design", "XC40:Momentum,Inscription,R-Design", "S80", "V40", "EX30" ],
+    "هوندا": [ "اكورد:LX,EX,EX-L,Sport", "سيفيك:DX,LX,LX Sport", "سيتي:DX", "CR-V", "اوديسي", "بايلوت:Touring", "HR-V:LX", "ZR-V:LX,EX" ],
+    "مازدا": [ "CX-9:GS,GT,Signature", "3", "6", "CX-5:GT,Signature", "CX-30", "CX-3", "2", "CX-7", "CX-60", "CX-90", "BT-50", "MX-5", "RX-8", "626", "323" ],
+    "ميتسوبيشي": [ "باجيرو:GLX,GLS", "L200:GLX,GLS", "لانسر:GLX,GLS", "اوتلاندير:GLX,GLS", "اتراج:GLX", "ASX:GLX,GLS", "مونتيرو سبورت:GLX,GLS", "اكسباندر", "اكليبس كروس:GLS", "ميراج", "جالنت", "كانتر" ],
+    "سوزوكي": [ "ديزاير:GL,GLX", "بالينو:GL,GLX", "فرونكس:GL,GLX", "سويفت:GL,GLX", "ارتيجا:GL,GLX", "جيمني:GLX", "جراند فيتارا:GL,GLX", "فيتارا", "سيليريو:GL,GLX", "سياز:GL,GLX", "كاري" ],
+    "إيسوزو": [ "ديماكس", "MU-X", "NPR", "NQR" ],
+    "بيجو": [ "3008:Active,Allure,GT Line,GT", "5008:Allure,GT", "508:Active,Allure,GT Line", "2008:Style,Allure,GT", "408:Allure,GT", "301", "208", "308", "لاندتريك" ],
+    "رينو": [ "كوليوس", "تاليسمان", "داستر", "ميجان", "سيمبول", "سافران", "اركانا", "فلوانس", "كابتشر", "كليو", "ماستر" ],
+    "فيات": [ "دوبلو", "500", "تيبو", "بونتو", "لينيا", "500X", "دوكاتو" ],
+    "سكودا": [ "اوكتافيا:Ambition,Style,RS", "سوبيرب:Ambition,Style,Laurin & Klement", "كودياك:Ambition,Style,Sportline,Laurin & Klement", "كاروك:Ambition,Style", "كوشاق", "فابيا", "رابيد" ],
+    "جيلي": [ "كولراي", "توجيلا", "مونجارو", "اوكافانجو", "بينراي", "ازكارا", "GS", "امجراند", "ستارراي", "سيتي راي" ],
+    "شانجان": [ "السفن", "CS95", "ايدو بلس", "CS35 Plus", "UNI-K", "UNI-T", "UNI-V", "CS85", "CS75 Plus", "CS35", "CS75", "هنتر", "ايدو", "UNI-S" ],
+    "جي إيه سي": [ "GS8", "GS4", "امباو", "GS3", "GA4", "GA8", "امكو", "امزوم", "M8", "GN8", "GA6", "GS5" ],
+    "إم جي": [ "GT", "5", "ZS", "3", "6", "RX5", "7", "HS", "ون", "RX8", "4", "T60" ],
+    "شيري": [ "تيجو 4 برو", "اريزو 6", "تيجو 2 برو", "اريزو 3", "تيجو 8 برو", "تيجو 7 برو", "اريزو 5", "تيجو 2", "تيجو 7", "تيجو 8", "تيجو 3", "تيجو 5", "اريزو 6 برو", "تيجو 9", "اريزو 8" ],
+    "هافال": [ "H6", "جوليان", "H9", "H2", "دارجو", "H6 GT", "H7" ],
+    "بي واي دي": [ "اتو 3", "تشين بلس", "سونج بلس", "هان", "سيل", "تانج", "F3", "سيل 7", "اتو 8" ],
+    "جيتور": [ "T2", "X70", "داشينج", "X90", "X70 Plus", "X90 Plus", "T1", "X50" ],
+    "جريت وول": [ "وينجل 7", "وينجل 5", "باور" ],
+    "تانك": [ "300", "500" ],
+    "جاك": [ "JS3", "JS4", "J7", "T8", "JS6" ],
+    "هونشي": [ "H9", "H5", "HS5", "HS7", "E-HS9" ],
+    "ماكسوس": [ "D60", "T60", "D90", "G10", "V80", "V90", "G50" ],
+    "بايك": [ "X35", "X55", "X7", "BJ40", "D50", "BJ60", "BJ80" ]
+};
 
 function carMakesChipsInnerHtml(query, selected) {
     const q = normalizeArabicSearch((query || "").trim());
@@ -15314,7 +15841,7 @@ function customerRefundsPending(customerId) {
             rows.push({
                 orderId: o.id,
                 orderNumber: o.orderNumber,
-                orderLabel: o.orderLabel,
+                orderLabel: orderDisplayLabel(o),
                 partId: p.id,
                 description: p.description || "",
                 amount: round2(Number(adjustment.amount) || 0)
@@ -15398,7 +15925,7 @@ function customerOrderHistory(customerId) {
         const row = {
             orderId: o.id,
             orderNumber: o.orderNumber,
-            orderLabel: o.orderLabel,
+            orderLabel: orderDisplayLabel(o),
             total: t.hasChargeable ? t.sellTotal : 0,
             remaining: t.hasChargeable ? t.customerRemaining : 0,
             hasChargeable: t.hasChargeable,
@@ -15424,7 +15951,7 @@ function customerPendingOrders(customerId) {
         rows.push({
             orderId: o.id,
             orderNumber: o.orderNumber,
-            orderLabel: o.orderLabel,
+            orderLabel: orderDisplayLabel(o),
             confirmed: !!o.confirmed,
             archived: !!o.archived,
             date: o.updatedAt || o.createdAt || ""
@@ -16976,7 +17503,7 @@ function ownerScrapyardPartsFromAppData(kind) {
                 list.push({
                     order_id: o.id,
                     order_number: o.orderNumber,
-                    order_label: o.orderLabel,
+                    order_label: orderDisplayLabel(o),
                     supplied_at: o.suppliedAt || null,
                     part_id: p.id,
                     description: p.description,
@@ -17009,7 +17536,7 @@ function ownerScrapyardReturnReceivablesFromAppData(kind) {
             list.push({
                 order_id: o.id,
                 order_number: o.orderNumber,
-                order_label: o.orderLabel,
+                order_label: orderDisplayLabel(o),
                 part_id: p.id,
                 description: p.description,
                 qty: p.qty,
