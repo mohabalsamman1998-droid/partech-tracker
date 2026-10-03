@@ -561,6 +561,7 @@
   .car-makes-chips{max-height:160px;overflow-y:auto;padding:2px;}
   /* نافذة اختيار السيارة (بأول كل طلبية) + ملخص السيارة جوا نافذتي الطلبية/التسعير */
   .car-gate-chips{max-height:132px;overflow-y:auto;padding:2px;}
+  .chip small{margin-inline-start:6px;opacity:.7;font-size:10.5px;font-weight:600;}
   .car-gate-missing{outline:1px solid var(--rust-line);outline-offset:4px;border-radius:8px;}
   .car-gate-missing>.field-label{color:var(--rust);}
   .car-summary{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;font-size:14px;font-weight:700;font-family:'Cairo',sans-serif;min-width:0;overflow-wrap:anywhere;}
@@ -3049,13 +3050,16 @@ function normalizeCar(raw, nowYear) {
     const model = carCleanText(raw.model, 40);
     const year = carNormalizeYear(raw.year, nowYear);
     const trim = carCleanText(raw.trim, 40);
-    if (!make && !model && !year && !trim) return null;
-    return {
+    const level = carCleanLevel(raw.level);
+    if (!make && !model && !year && !trim && !level) return null;
+    const out = {
         make: make,
         model: model,
         year: year,
         trim: trim
     };
+    if (level) out.level = level;
+    return out;
 }
 
 function carIsComplete(car) {
@@ -3067,7 +3071,10 @@ function carLabelText(car) {
     if (!car || typeof car !== "object") return "";
     const core = [ car.make, car.model, car.year ].map(x => carCleanText(x, 40)).filter(Boolean).join(" ");
     const t = carCleanText(car.trim, 40);
-    return core && t ? core + " · " + t : core || t;
+    const lv = carCleanLevel(car.level);
+    let tail = t;
+    if (lv && normalizeArabicSearch(lv) !== normalizeArabicSearch(t)) tail = t ? t + " (" + lv + ")" : lv;
+    return core && tail ? core + " · " + tail : core || tail;
 }
 
 function orderCarLabel(o) {
@@ -3081,13 +3088,55 @@ function orderDisplayLabel(o) {
     return [ car, label ].filter(Boolean).join(" — ");
 }
 
+function carLevelLabels() {
+    return [ "ستاندر", "نص فل", "فل" ];
+}
+
+function carCleanLevel(raw) {
+    const n = normalizeArabicSearch(carCleanText(raw, 20));
+    if (!n) return "";
+    const aliases = [ [ "ستاندر", "ستاندر" ], [ "ستاندرد", "ستاندر" ], [ "استاندر", "ستاندر" ], [ "استاندرد", "ستاندر" ], [ "standard", "ستاندر" ], [ "ستاندارد", "ستاندر" ], [ "استاندارد", "ستاندر" ], [ "نص فل", "نص فل" ], [ "نصف فل", "نص فل" ], [ "نص فول", "نص فل" ], [ "نصف فول", "نص فل" ], [ "نص", "نص فل" ], [ "mid", "نص فل" ], [ "فل", "فل" ], [ "فول", "فل" ], [ "فل كامل", "فل" ], [ "فول كامل", "فل" ], [ "full", "فل" ] ];
+    const hit = aliases.find(p => normalizeArabicSearch(p[0]) === n);
+    return hit ? hit[1] : "";
+}
+
+function carParseTrimToken(tok) {
+    const parts = String(tok).split("@");
+    const yr = (parts[1] || "").trim();
+    let from = null, to = null;
+    const m = yr.match(/^([0-9]{4})?-([0-9]{4})?$/);
+    if (m) {
+        from = m[1] ? Number(m[1]) : null;
+        to = m[2] ? Number(m[2]) : null;
+    } else if (/^[0-9]{4}$/.test(yr)) {
+        from = Number(yr);
+        to = from;
+    }
+    const code = (parts[2] || "").trim();
+    const level = code === "s" ? "ستاندر" : code === "m" ? "نص فل" : code === "f" ? "فل" : "";
+    return {
+        name: parts[0].trim(),
+        from: from,
+        to: to,
+        level: level
+    };
+}
+
 function carCatalogModels(make) {
     const list = typeof CAR_CATALOG === "object" && CAR_CATALOG && Array.isArray(CAR_CATALOG[make]) ? CAR_CATALOG[make] : [];
     return list.map(entry => {
         const parts = String(entry).split(":");
+        const head = parts[0].split("|").map(x => x.trim());
+        const info = (parts[1] || "").split(",").map(x => x.trim()).filter(Boolean).map(carParseTrimToken).filter(t => t.name);
+        const names = [];
+        info.forEach(t => {
+            if (names.indexOf(t.name) === -1) names.push(t.name);
+        });
         return {
-            name: parts[0].trim(),
-            trims: (parts[1] || "").split(",").map(x => x.trim()).filter(Boolean)
+            name: head[0],
+            aliases: head.slice(1).filter(Boolean),
+            trims: names,
+            trimInfo: info
         };
     });
 }
@@ -3095,14 +3144,53 @@ function carCatalogModels(make) {
 function carFindCatalogModel(make, model) {
     const nm = normalizeArabicSearch(String(model || "").trim());
     if (!nm) return null;
-    return carCatalogModels(make).find(m => normalizeArabicSearch(m.name) === nm) || null;
+    return carCatalogModels(make).find(m => normalizeArabicSearch(m.name) === nm) || carFindModelByVinText(make, model);
 }
 
-function carTrimChoices(make, model) {
+function carTrimInfoForYear(make, model, year) {
     const found = carFindCatalogModel(make, model);
-    const specific = found ? found.trims : [];
-    const generic = [ "ستاندر", "نص فل", "فل" ];
-    return specific.concat(generic.filter(g => specific.indexOf(g) === -1));
+    if (!found) return [];
+    const y = carNormalizeYear(year);
+    return found.trimInfo.filter(t => !y || (t.from == null || y >= t.from) && (t.to == null || y <= t.to));
+}
+
+function carTrimChoices(make, model, year) {
+    const names = [];
+    carTrimInfoForYear(make, model, year).forEach(t => {
+        if (names.indexOf(t.name) === -1) names.push(t.name);
+    });
+    return names;
+}
+
+function carTrimLevel(make, model, year, trim) {
+    const n = normalizeArabicSearch(carCleanText(trim, 40));
+    if (!n) return "";
+    const found = carFindCatalogModel(make, model);
+    if (found) {
+        const here = carTrimInfoForYear(make, model, year).filter(t => normalizeArabicSearch(t.name) === n);
+        const pickHere = here.find(t => t.level);
+        if (pickHere) return pickHere.level;
+        if (!here.length) {
+            const pickAny = found.trimInfo.find(t => normalizeArabicSearch(t.name) === n && t.level);
+            if (pickAny) return pickAny.level;
+        }
+    }
+    return carCleanLevel(trim) || carLevelFromText(trim);
+}
+
+function carIsCatalogTrim(make, model, trim) {
+    const n = normalizeArabicSearch(carCleanText(trim, 40));
+    const found = n ? carFindCatalogModel(make, model) : null;
+    return !!found && found.trimInfo.some(t => normalizeArabicSearch(t.name) === n);
+}
+
+function carLevelFromText(text) {
+    const n = " " + normalizeArabicSearch(carCleanText(text, 60)).replace(/[^\p{L}\p{N}]+/gu, " ").trim() + " ";
+    if (/ (بدون|مو|without|not|non) /.test(n)) return "";
+    if (/ ((نص|نصف) (فل|فول|full)|(semi|half|mid) (full|option)) /.test(n)) return "نص فل";
+    if (/ (ستاندر|ستاندرد|ستاندارد|استاندر|استاندرد|استاندارد|standard) /.test(n)) return "ستاندر";
+    if (/ (فل|فول|full) /.test(n)) return "فل";
+    return "";
 }
 
 function carMakesOrdered() {
@@ -3111,7 +3199,7 @@ function carMakesOrdered() {
 }
 
 function carMakeAliasPairs() {
-    return [ [ "toyota", "تويوتا" ], [ "lexus", "لكزس" ], [ "ford", "فورد" ], [ "chevrolet", "شفروليه" ], [ "شيفروليه", "شفروليه" ], [ "شيفرولية", "شفروليه" ], [ "شيفرولت", "شفروليه" ], [ "gmc", "جي إم سي" ], [ "جمس", "جي إم سي" ], [ "جيمس", "جي إم سي" ], [ "جي ام سي", "جي إم سي" ], [ "cadillac", "كاديلاك" ], [ "dodge", "دودج" ], [ "jeep", "جيب" ], [ "ram", "رام" ], [ "nissan", "نيسان" ], [ "infiniti", "إنفينيتي" ], [ "hyundai", "هيونداي" ], [ "هونداي", "هيونداي" ], [ "هيوندا", "هيونداي" ], [ "kia", "كيا" ], [ "genesis", "جينيسيس" ], [ "mercedes", "مرسيدس" ], [ "benz", "مرسيدس" ], [ "بنز", "مرسيدس" ], [ "مرسيدس بنز", "مرسيدس" ], [ "bmw", "بي إم دبليو" ], [ "بي ام دبليو", "بي إم دبليو" ], [ "بي ام", "بي إم دبليو" ], [ "audi", "أودي" ], [ "volkswagen", "فولكس فاجن" ], [ "vw", "فولكس فاجن" ], [ "فولكس واجن", "فولكس فاجن" ], [ "فولكسفاجن", "فولكس فاجن" ], [ "porsche", "بورش" ], [ "range rover", "رنج روفر" ], [ "رانج روفر", "رنج روفر" ], [ "رينج روفر", "رنج روفر" ], [ "land rover", "لاند روفر" ], [ "jaguar", "جاكوار" ], [ "mini", "ميني" ], [ "volvo", "فولفو" ], [ "honda", "هوندا" ], [ "mazda", "مازدا" ], [ "mitsubishi", "ميتسوبيشي" ], [ "متسوبيشي", "ميتسوبيشي" ], [ "suzuki", "سوزوكي" ], [ "isuzu", "إيسوزو" ], [ "peugeot", "بيجو" ], [ "renault", "رينو" ], [ "fiat", "فيات" ], [ "skoda", "سكودا" ], [ "geely", "جيلي" ], [ "changan", "شانجان" ], [ "gac", "جي إيه سي" ], [ "جي اي سي", "جي إيه سي" ], [ "mg", "إم جي" ], [ "ام جي", "إم جي" ], [ "chery", "شيري" ], [ "haval", "هافال" ], [ "byd", "بي واي دي" ], [ "jetour", "جيتور" ], [ "great wall", "جريت وول" ], [ "tank", "تانك" ], [ "jac", "جاك" ], [ "maxus", "ماكسوس" ], [ "baic", "بايك" ] ];
+    return [ [ "toyota", "تويوتا" ], [ "lexus", "لكزس" ], [ "ford", "فورد" ], [ "chevrolet", "شفروليه" ], [ "شيفروليه", "شفروليه" ], [ "شيفرولية", "شفروليه" ], [ "شيفرولت", "شفروليه" ], [ "gmc", "جي إم سي" ], [ "جمس", "جي إم سي" ], [ "جيمس", "جي إم سي" ], [ "جي ام سي", "جي إم سي" ], [ "cadillac", "كاديلاك" ], [ "dodge", "دودج" ], [ "jeep", "جيب" ], [ "ram", "رام" ], [ "nissan", "نيسان" ], [ "infiniti", "إنفينيتي" ], [ "hyundai", "هيونداي" ], [ "هونداي", "هيونداي" ], [ "هيوندا", "هيونداي" ], [ "kia", "كيا" ], [ "genesis", "جينيسيس" ], [ "mercedes", "مرسيدس" ], [ "benz", "مرسيدس" ], [ "بنز", "مرسيدس" ], [ "مرسيدس بنز", "مرسيدس" ], [ "bmw", "بي إم دبليو" ], [ "بي ام دبليو", "بي إم دبليو" ], [ "بي ام", "بي إم دبليو" ], [ "audi", "أودي" ], [ "volkswagen", "فولكس فاجن" ], [ "vw", "فولكس فاجن" ], [ "فولكس واجن", "فولكس فاجن" ], [ "فولكسفاجن", "فولكس فاجن" ], [ "porsche", "بورش" ], [ "range rover", "رنج روفر" ], [ "رانج روفر", "رنج روفر" ], [ "رينج روفر", "رنج روفر" ], [ "land rover", "لاند روفر" ], [ "jaguar", "جاكوار" ], [ "mini", "ميني" ], [ "volvo", "فولفو" ], [ "honda", "هوندا" ], [ "mazda", "مازدا" ], [ "mitsubishi", "ميتسوبيشي" ], [ "متسوبيشي", "ميتسوبيشي" ], [ "suzuki", "سوزوكي" ], [ "isuzu", "إيسوزو" ], [ "peugeot", "بيجو" ], [ "renault", "رينو" ], [ "fiat", "فيات" ], [ "skoda", "سكودا" ], [ "geely", "جيلي" ], [ "changan", "شانجان" ], [ "gac", "جي إيه سي" ], [ "جي اي سي", "جي إيه سي" ], [ "mg", "إم جي" ], [ "ام جي", "إم جي" ], [ "chery", "شيري" ], [ "haval", "هافال" ], [ "byd", "بي واي دي" ], [ "jetour", "جيتور" ], [ "great wall", "جريت وول" ], [ "tank", "تانك" ], [ "jac", "جاك" ], [ "maxus", "ماكسوس" ], [ "baic", "بايك" ], [ "mercedes-benz", "مرسيدس" ], [ "rolls-royce", "رولز رويس" ], [ "ssangyong", "سانج يونج" ], [ "chrysler", "كرايسلر" ], [ "lamborghini", "لامبورجيني" ], [ "bentley", "بنتلي" ], [ "maserati", "مازيراتي" ], [ "lucid", "لوسيد" ], [ "mitsubishi fuso", "ميتسوبيشي" ], [ "fuso", "ميتسوبيشي" ] ];
 }
 
 function carCanonMake(raw) {
@@ -3135,7 +3223,158 @@ function carCanonTrim(make, model, raw) {
     const n = normalizeArabicSearch(t);
     if (!n) return t;
     const hit = carTrimChoices(make, model).find(x => normalizeArabicSearch(x) === n);
-    return hit || t;
+    if (hit) return hit;
+    return carCleanLevel(t) || t;
+}
+
+const CAR_VIN_DECODE_URL = "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/";
+
+function carVinKey(s) {
+    return normalizeArabicSearch(carCleanText(s, 60)).replace(/[ ._-]+/g, "");
+}
+
+function carFindModelByVinText(make, text) {
+    const key = carVinKey(text);
+    if (!key) return null;
+    return carCatalogModels(make).find(m => carVinKey(m.name) === key || m.aliases.some(a => carVinKey(a) === key)) || null;
+}
+
+function vinModelYearGuess(vin, nowYear) {
+    const v = normalizeVin(vin);
+    if (v.length !== 17) return null;
+    const letters = "ABCDEFGHJKLMNPRSTVWXY";
+    const c = v.charAt(9);
+    const li = letters.indexOf(c);
+    let base = null;
+    if (li >= 0) base = 2010 + li; else if (c >= "1" && c <= "9") base = 2e3 + Number(c);
+    if (base == null) return null;
+    const maxY = (Number(nowYear) || (new Date).getFullYear()) + 1;
+    while (base > maxY) base -= 30;
+    return carNormalizeYear(base, nowYear);
+}
+
+function carFromVinDecode(res, vin, nowYear) {
+    if (!res || typeof res !== "object") return null;
+    let makeText = carCleanText(res.Make, 30);
+    const modelText = carCleanText(res.Model, 40);
+    if (!makeText) return null;
+    if (carVinKey(makeText) === "landrover" && carVinKey(modelText).indexOf("rangerover") === 0) makeText = "Range Rover";
+    const make = carCanonMake(makeText);
+    const known = CAR_MAKES.indexOf(make) !== -1;
+    const found = known ? carFindModelByVinText(make, modelText) || carFindModelByVinText(make, res.Series) : null;
+    const yearApi = carNormalizeYear(res.ModelYear, nowYear);
+    const year = yearApi || vinModelYearGuess(vin, nowYear);
+    let trim = "";
+    if (found) {
+        const trimRaw = carCleanText(res.Trim, 80);
+        const wk = carVinKey(trimRaw);
+        const whole = wk ? found.trimInfo.find(t => carVinKey(t.name) === wk) : null;
+        const keys = whole ? [ wk ] : trimRaw.split("/").map(x => carVinKey(x)).filter(Boolean);
+        const hits = [];
+        found.trimInfo.forEach(t => {
+            if (keys.indexOf(carVinKey(t.name)) !== -1 && hits.indexOf(t.name) === -1) hits.push(t.name);
+        });
+        if (hits.length === 1) trim = hits[0];
+    }
+    const shown = makeText.toLowerCase().replace(/(^|[ -])([a-z])/g, (m, a, b) => a + b.toUpperCase());
+    return {
+        known: known,
+        make: known ? make : "",
+        makeOtherText: known ? "" : shown,
+        model: found ? found.name : known ? "" : modelText,
+        rawModel: modelText,
+        modelMatched: !!found,
+        year: year,
+        yearSource: yearApi ? "service" : year ? "guess" : "",
+        trim: trim
+    };
+}
+
+function carGateEditSig(st) {
+    return [ st.make, st.makeOther ? 1 : 0, st.makeOtherText, st.model, st.year, st.trim, st.trimUnknown ? 1 : 0, st.level ].join("|");
+}
+
+function carGateApplyVinInfo(st, info) {
+    if (!info) return false;
+    const prevMake = st.makeOther ? carCleanText(st.makeOtherText, 30) : st.make;
+    const newMake = info.known ? info.make : info.makeOtherText;
+    if (prevMake && prevMake !== newMake) {
+        st.model = "";
+        st.trim = "";
+        st.trimUnknown = false;
+        st.level = "";
+        st.levelSrc = "";
+    }
+    st.makeOther = !info.known;
+    st.make = info.known ? info.make : "";
+    st.makeOtherText = info.known ? "" : info.makeOtherText;
+    if (info.model) {
+        const prevKey = carVinKey(st.model);
+        const prevHit = prevKey ? carFindModelByVinText(st.make, st.model) : null;
+        const sameModel = !prevKey || prevKey === carVinKey(info.model) || !!prevHit && prevHit.name === info.model;
+        if (!sameModel) {
+            st.trim = "";
+            st.trimUnknown = false;
+        }
+        st.model = info.model;
+    }
+    if (info.year) st.year = info.year;
+    st.trimNote = "";
+    if (info.trim) {
+        st.trim = info.trim;
+        st.trimUnknown = false;
+    }
+    carGateApplyYear(st);
+    carGateApplyAutoLevel(st);
+    return true;
+}
+
+function carGateVinNote(info, failed, yearGuess) {
+    if (!info) {
+        const base = failed ? "تعذر الاتصال بخدمة قراءة الشاص" : "ما قدرت أقرأ تفاصيل هالشاص";
+        return {
+            tone: "warn",
+            text: base + (yearGuess ? " — سنة الصنع من الشاص " + yearGuess + " (تخمين، تأكد منها)" : "") + " — اختر السيارة يدويًا"
+        };
+    }
+    const got = [ info.known ? info.make : info.makeOtherText, info.model, info.year ].filter(Boolean).join(" ");
+    let text = "تعبّت من الشاص: " + got;
+    if (!info.modelMatched && info.known && info.rawModel) text += ' — الموديل بالشاص "' + info.rawModel + '" مو بالقائمة، اختره أو اكتبه';
+    if (info.yearSource === "guess") text += " — السنة تخمين من الشاص، تأكد منها";
+    text += " — راجع واختر الفئة";
+    return {
+        tone: info.modelMatched || !info.known ? "ok" : "warn",
+        text: text
+    };
+}
+
+function carGateVinHintHtml(st) {
+    if (!st.vinNote) return "";
+    const cls = st.vinTone === "ok" ? "text-green" : st.vinTone === "warn" ? "text-amber" : "";
+    return '<div class="add-part-hint"><span class="' + cls + '">' + escapeHtml(st.vinNote) + "</span></div>";
+}
+
+function carGateVinProblem(st) {
+    const v = normalizeVin(st.vin);
+    if (!v) return "";
+    if (!vinCharsetOk(v) || !vinHasLetter(v)) return "رقم الشاص: حروف إنجليزية وأرقام فقط (ولازم فيه حروف)";
+    return "";
+}
+
+async function carDecodeVin(vin) {
+    const v = normalizeVin(vin);
+    const ctrl = typeof AbortController === "function" ? new AbortController : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), 8e3) : null;
+    try {
+        const r = await fetch(CAR_VIN_DECODE_URL + encodeURIComponent(v) + "?format=json", ctrl ? {
+            signal: ctrl.signal
+        } : undefined);
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const j = await r.json();
+        return j && Array.isArray(j.Results) && j.Results[0] || null;
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
 }
 
 function carGateMakeChipsHtml(query, st) {
@@ -3149,15 +3388,46 @@ function carGateModelChipsHtml(st) {
     const make = st.makeOther ? "" : st.make;
     if (!make) return '<div class="add-part-hint">اختر الماركة لتظهر موديلاتها، أو اكتب الموديل مباشرة</div>';
     const q = normalizeArabicSearch((st.model || "").trim());
-    const list = carCatalogModels(make).filter(m => !q || normalizeArabicSearch(m.name).includes(q));
+    const list = carCatalogModels(make).filter(m => !q || normalizeArabicSearch(m.name).includes(q) || m.aliases.some(a => normalizeArabicSearch(a).includes(q)));
     if (!list.length) return '<div class="add-part-hint">اكتب اسم الموديل</div>';
-    return list.map(m => '<button type="button" class="chip' + (q && normalizeArabicSearch(m.name) === q ? " chip-active" : "") + '" data-car-gate-model="' + escapeHtml(m.name) + '">' + escapeHtml(m.name) + "</button>").join("");
+    return list.map(m => '<button type="button" class="chip' + (q && (normalizeArabicSearch(m.name) === q || m.aliases.some(a => normalizeArabicSearch(a) === q)) ? " chip-active" : "") + '" data-car-gate-model="' + escapeHtml(m.name) + '">' + escapeHtml(m.name) + "</button>").join("");
 }
 
 function carGateTrimChipsHtml(st) {
     const make = st.makeOther ? "" : st.make;
     const cur = normalizeArabicSearch(String(st.trim || "").trim());
-    return carTrimChoices(make, st.model).map(t => '<button type="button" class="chip' + (!st.trimUnknown && cur && normalizeArabicSearch(t) === cur ? " chip-active" : "") + '" data-car-gate-trim="' + escapeHtml(t) + '">' + escapeHtml(t) + "</button>").join("") + '<button type="button" class="chip' + (st.trimUnknown ? " chip-active" : "") + '" data-car-gate-trim-unknown="1">غير معروفة</button>';
+    const seen = {};
+    const infos = carTrimInfoForYear(make, st.model, st.year).filter(t => {
+        const k = normalizeArabicSearch(t.name);
+        if (seen[k]) return false;
+        seen[k] = 1;
+        return true;
+    });
+    return infos.map(t => '<button type="button" class="chip' + (!st.trimUnknown && cur && normalizeArabicSearch(t.name) === cur ? " chip-active" : "") + '" data-car-gate-trim="' + escapeHtml(t.name) + '">' + escapeHtml(t.name) + (t.level ? "<small>" + escapeHtml(t.level) + "</small>" : "") + "</button>").join("") + '<button type="button" class="chip' + (st.trimUnknown ? " chip-active" : "") + '" data-car-gate-trim-unknown="1">غير معروفة</button>';
+}
+
+function carGateTrimHintHtml(st) {
+    const make = st.makeOther ? "" : st.make;
+    const found = carFindCatalogModel(make, st.model);
+    const y = carNormalizeYear(st.year);
+    let msg = "";
+    if (found && found.trimInfo.length) {
+        if (!y) msg = "اختر سنة الصنع لتظهر الفئات المتوفرة بها"; else if (!carTrimInfoForYear(make, st.model, y).length) msg = "ما في فئات مسجّلة لموديل " + y + " — اكتب الفئة أو اختر غير معروفة"; else msg = "الفئات المتوفرة لموديل " + y;
+    }
+    const note = st.trimNote ? '<span class="text-rust">' + escapeHtml(st.trimNote) + "</span>" : "";
+    const body = [ note, escapeHtml(msg) ].filter(Boolean).join(" — ");
+    return body ? '<div class="add-part-hint">' + body + "</div>" : "";
+}
+
+function carGateLevelChipsHtml(st) {
+    const cur = carCleanLevel(st.level);
+    return carLevelLabels().map(l => '<button type="button" class="chip' + (cur === l ? " chip-active" : "") + '" data-car-gate-level="' + escapeHtml(l) + '">' + escapeHtml(l) + "</button>").join("");
+}
+
+function carGateLevelHintHtml(st) {
+    const cur = carCleanLevel(st.level);
+    if (!cur) return "يتحدد تلقائيًا من الفئة والسنة، أو اخترُه لو الفئة مجهولة";
+    return st.levelSrc === "auto" ? "تلقائي من الفئة والسنة" : "اخترته بنفسك";
 }
 
 function carYearOptionsHtml(selected, nowYear) {
@@ -3169,29 +3439,51 @@ function carYearOptionsHtml(selected, nowYear) {
     return html;
 }
 
-function carGateInitialState(car) {
+function carGateInitialState(car, vin) {
     const c = normalizeCar(car) || {};
     const make = c.make || "";
     const inList = !!make && CAR_MAKES.indexOf(make) !== -1;
+    let trim = c.trim || "";
+    let level = c.level || "";
+    if (!level && carCleanLevel(trim) && !carIsCatalogTrim(make, c.model || "", trim)) {
+        level = carCleanLevel(trim);
+        trim = "";
+    }
+    const derived = trim ? carTrimLevel(make, c.model || "", c.year, trim) : "";
     return {
         make: inList ? make : "",
         makeOther: !!make && !inList,
         makeOtherText: make && !inList ? make : "",
         model: c.model || "",
         year: c.year || null,
-        trim: c.trim || "",
-        trimUnknown: !!(c.make && !c.trim)
+        trim: trim,
+        trimUnknown: !!(c.make && !trim),
+        level: level,
+        levelSrc: level ? level === derived ? "auto" : "manual" : "",
+        trimNote: "",
+        vin: normalizeVin(vin),
+        vinNote: "",
+        vinTone: ""
     };
 }
 
 function carFromGateState(st) {
     const make = carCanonMake(st.makeOther ? st.makeOtherText : st.make);
     const model = carCanonModel(make, st.model);
+    let trim = st.trimUnknown ? "" : carCanonTrim(make, model, st.trim);
+    let level = carCleanLevel(st.level);
+    const trimAsLevel = carIsCatalogTrim(make, model, trim) ? "" : carCleanLevel(trim);
+    if (trimAsLevel) {
+        if (!level) level = trimAsLevel;
+        trim = "";
+    }
+    if (!level && trim) level = carTrimLevel(make, model, st.year, trim);
     return normalizeCar({
         make: make,
         model: model,
         year: st.year,
-        trim: st.trimUnknown ? "" : carCanonTrim(make, model, st.trim)
+        trim: trim,
+        level: level
     });
 }
 
@@ -3200,13 +3492,45 @@ function carGateMissing(st) {
     if (!make) return "make";
     if (!carCleanText(st.model, 40)) return "model";
     if (!carNormalizeYear(st.year)) return "year";
-    if (!st.trimUnknown && !carCleanText(st.trim, 40)) return "trim";
+    if (!st.trimUnknown && !carCleanText(st.trim, 40) && !carCleanLevel(st.level)) return "trim";
     return "";
+}
+
+function carGateApplyAutoLevel(st) {
+    const make = st.makeOther ? carCanonMake(st.makeOtherText) : st.make;
+    const trim = st.trimUnknown ? "" : carCleanText(st.trim, 40);
+    const lv = trim ? carTrimLevel(make, st.model, st.year, trim) : "";
+    if (lv) {
+        st.level = lv;
+        st.levelSrc = "auto";
+    } else if (st.levelSrc === "auto") {
+        st.level = "";
+        st.levelSrc = "";
+    }
+    return st;
+}
+
+function carGateApplyYear(st) {
+    st.trimNote = "";
+    const make = st.makeOther ? "" : st.make;
+    const y = carNormalizeYear(st.year);
+    const trim = carCleanText(st.trim, 40);
+    if (y && trim && !st.trimUnknown) {
+        const found = carFindCatalogModel(make, st.model);
+        const n = normalizeArabicSearch(trim);
+        const known = !!found && found.trimInfo.some(t => normalizeArabicSearch(t.name) === n);
+        const inYear = carTrimInfoForYear(make, st.model, y).some(t => normalizeArabicSearch(t.name) === n);
+        if (known && !inYear) {
+            st.trimNote = "الفئة " + trim + " ما كانت متوفرة بموديل " + y + " — اختر غيرها";
+            st.trim = "";
+        }
+    }
+    return st;
 }
 
 function carGateHtml(st, opts) {
     opts = opts || {};
-    return '<div class="modal-backdrop" data-close-confirm data-car-gate>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">' + escapeHtml(opts.title || "🚗 السيارة") + "</div>" + '<p class="modal-sub">' + escapeHtml(opts.sub || "حدد الماركة والموديل وسنة الصنع والفئة") + "</p>" + '<div class="field" id="car-gate-make-field" style="margin-top:14px;"><span class="field-label">الماركة</span>' + '<div class="car-makes-picker">' + '<input type="text" class="search-input" id="car-gate-make-search" placeholder="🔍 ابحث عن الماركة..." autocomplete="off">' + '<div class="filter-chips car-makes-chips" id="car-gate-make-chips">' + carGateMakeChipsHtml("", st) + "</div>" + "</div>" + '<input type="text" id="car-gate-make-other" placeholder="اكتب اسم الماركة" autocomplete="off" value="' + escapeHtml(st.makeOtherText || "") + '" style="margin-top:8px;"' + (st.makeOther ? "" : " hidden") + ">" + "</div>" + '<div class="field" id="car-gate-model-field"><span class="field-label">الموديل</span>' + '<input type="text" id="car-gate-model" placeholder="مثال: كامري" autocomplete="off" value="' + escapeHtml(st.model || "") + '">' + '<div class="filter-chips car-gate-chips" id="car-gate-model-chips" style="margin-top:8px;">' + carGateModelChipsHtml(st) + "</div>" + "</div>" + '<div class="field" id="car-gate-year-field"><span class="field-label">سنة الصنع</span>' + '<select id="car-gate-year">' + carYearOptionsHtml(st.year) + "</select>" + "</div>" + '<div class="field" id="car-gate-trim-field"><span class="field-label">الفئة</span>' + '<div class="filter-chips" id="car-gate-trim-chips">' + carGateTrimChipsHtml(st) + "</div>" + '<input type="text" id="car-gate-trim" placeholder="أو اكتب الفئة (مثال: SE, GXR, لوميير)" autocomplete="off" value="' + escapeHtml(st.trim || "") + '" style="margin-top:8px;"' + (st.trimUnknown ? " disabled" : "") + ">" + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="car-gate-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-primary" id="car-gate-ok-btn">' + escapeHtml(opts.confirmLabel || "متابعة") + "</button>" + "</div>" + "</div>" + "</div>";
+    return '<div class="modal-backdrop" data-close-confirm data-car-gate>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">' + escapeHtml(opts.title || "🚗 السيارة") + "</div>" + '<p class="modal-sub">' + escapeHtml(opts.sub || "حدد الماركة والموديل وسنة الصنع والفئة") + "</p>" + '<div class="field" id="car-gate-vin-field" style="margin-top:14px;"><span class="field-label">رقم الشاص VIN (اختياري) — الصقه وتتعبّى السيارة تلقائيًا</span>' + '<input type="text" id="car-gate-vin" dir="ltr" style="text-align:right;" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" placeholder="الصق رقم الشاص هون" value="' + escapeHtml(st.vin || "") + '">' + '<div id="car-gate-vin-status" style="margin-top:6px;">' + carGateVinHintHtml(st) + "</div>" + "</div>" + '<div class="field" id="car-gate-make-field"><span class="field-label">الماركة</span>' + '<div class="car-makes-picker">' + '<input type="text" class="search-input" id="car-gate-make-search" placeholder="🔍 ابحث عن الماركة..." autocomplete="off">' + '<div class="filter-chips car-makes-chips" id="car-gate-make-chips">' + carGateMakeChipsHtml("", st) + "</div>" + "</div>" + '<input type="text" id="car-gate-make-other" placeholder="اكتب اسم الماركة" autocomplete="off" value="' + escapeHtml(st.makeOtherText || "") + '" style="margin-top:8px;"' + (st.makeOther ? "" : " hidden") + ">" + "</div>" + '<div class="field" id="car-gate-model-field"><span class="field-label">الموديل</span>' + '<input type="text" id="car-gate-model" placeholder="مثال: كامري" autocomplete="off" value="' + escapeHtml(st.model || "") + '">' + '<div class="filter-chips car-gate-chips" id="car-gate-model-chips" style="margin-top:8px;">' + carGateModelChipsHtml(st) + "</div>" + "</div>" + '<div class="field" id="car-gate-year-field"><span class="field-label">سنة الصنع</span>' + '<select id="car-gate-year">' + carYearOptionsHtml(st.year) + "</select>" + "</div>" + '<div class="field" id="car-gate-trim-field"><span class="field-label">الفئة</span>' + '<div class="filter-chips" id="car-gate-trim-chips">' + carGateTrimChipsHtml(st) + "</div>" + '<div id="car-gate-trim-hint" style="margin-top:6px;">' + carGateTrimHintHtml(st) + "</div>" + '<input type="text" id="car-gate-trim" placeholder="أو اكتب الفئة (مثال: SE, GXR, لوميير)" autocomplete="off" value="' + escapeHtml(st.trim || "") + '" style="margin-top:8px;"' + (st.trimUnknown ? " disabled" : "") + ">" + "</div>" + '<div class="field" id="car-gate-level-field"><span class="field-label">المستوى</span>' + '<div class="filter-chips" id="car-gate-level-chips">' + carGateLevelChipsHtml(st) + "</div>" + '<div class="add-part-hint" id="car-gate-level-hint" style="margin-top:6px;">' + carGateLevelHintHtml(st) + "</div>" + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="car-gate-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-primary" id="car-gate-ok-btn">' + escapeHtml(opts.confirmLabel || "متابعة") + "</button>" + "</div>" + "</div>" + "</div>";
 }
 
 let carGateEscHandler = null;
@@ -3230,7 +3554,8 @@ function openCarGate(opts) {
     if (root.querySelector("[data-car-gate]")) return;
     if (root.classList.contains("modal-open") && root.firstElementChild) return;
     closeCarGate();
-    const st = carGateInitialState(opts.car);
+    const st = carGateInitialState(opts.car, opts.vin);
+    if (!st.level) carGateApplyAutoLevel(st);
     root.innerHTML = carGateHtml(st, opts);
     root.classList.add("modal-open");
     const q = sel => root.querySelector(sel);
@@ -3242,18 +3567,86 @@ function openCarGate(opts) {
     const yearSel = q("#car-gate-year");
     const trimInput = q("#car-gate-trim");
     const trimChips = q("#car-gate-trim-chips");
+    const trimHint = q("#car-gate-trim-hint");
+    const levelChips = q("#car-gate-level-chips");
+    const levelHint = q("#car-gate-level-hint");
+    const vinInput = q("#car-gate-vin");
+    const vinStatus = q("#car-gate-vin-status");
+    const levelKeyNow = () => normalizeArabicSearch((st.makeOther ? st.makeOtherText : st.make) + "|" + st.model + "|" + st.trim);
+    let manualLevelFor = st.levelSrc === "manual" ? levelKeyNow() : "";
     const redrawMakes = () => {
         makeChips.innerHTML = carGateMakeChipsHtml(makeSearch.value, st);
     };
     const redrawModels = () => {
         modelChips.innerHTML = carGateModelChipsHtml(st);
     };
+    const redrawLevel = () => {
+        levelChips.innerHTML = carGateLevelChipsHtml(st);
+        levelHint.innerHTML = carGateLevelHintHtml(st);
+    };
     const redrawTrims = () => {
+        if (!(st.levelSrc === "manual" && manualLevelFor && manualLevelFor === levelKeyNow())) carGateApplyAutoLevel(st);
         trimChips.innerHTML = carGateTrimChipsHtml(st);
+        trimHint.innerHTML = carGateTrimHintHtml(st);
         trimInput.disabled = !!st.trimUnknown;
+        redrawLevel();
     };
     const clearMissing = () => {
         root.querySelectorAll(".car-gate-missing").forEach(el => el.classList.remove("car-gate-missing"));
+    };
+    const redrawVin = () => {
+        vinStatus.innerHTML = carGateVinHintHtml(st);
+    };
+    const syncFieldsFromState = () => {
+        makeOtherInput.hidden = !st.makeOther;
+        makeOtherInput.value = st.makeOtherText || "";
+        modelInput.value = st.model || "";
+        trimInput.value = st.trim || "";
+        yearSel.value = st.year ? String(st.year) : "";
+        redrawMakes();
+        redrawModels();
+        redrawTrims();
+    };
+    let vinToken = 0;
+    const runVinDecode = async () => {
+        const v = st.vin;
+        const mine = ++vinToken;
+        const sig0 = carGateEditSig(st);
+        st.vinNote = "جاري قراءة الشاص…";
+        st.vinTone = "info";
+        redrawVin();
+        let info = null, failed = false;
+        try {
+            info = carFromVinDecode(await carDecodeVin(v), v);
+        } catch (e) {
+            failed = true;
+        }
+        if (mine !== vinToken || st.vin !== v || !document.querySelector("#confirm-root [data-car-gate]")) return;
+        if (info && carGateEditSig(st) !== sig0) {
+            const got = [ info.known ? info.make : info.makeOtherText, info.model, info.year ].filter(Boolean).join(" ");
+            st.vinNote = "الشاص بيقول: " + got + " — اختيارك انحفظ، راجعه";
+            st.vinTone = "warn";
+            redrawVin();
+            return;
+        }
+        if (info) {
+            carGateApplyVinInfo(st, info);
+            const note = carGateVinNote(info, false, null);
+            st.vinNote = note.text;
+            st.vinTone = note.tone;
+            syncFieldsFromState();
+        } else {
+            const guess = vinModelYearGuess(v);
+            if (guess && !st.year) {
+                st.year = guess;
+                carGateApplyYear(st);
+                syncFieldsFromState();
+            }
+            const note = carGateVinNote(null, failed, guess);
+            st.vinNote = note.text;
+            st.vinTone = note.tone;
+        }
+        redrawVin();
     };
     const cancel = () => {
         closeCarGate();
@@ -3278,6 +3671,25 @@ function openCarGate(opts) {
     card.addEventListener("click", e => {
         if (!e.target.closest("#car-gate-ok-btn")) clearMissing();
     });
+    vinInput.addEventListener("input", () => {
+        st.vin = normalizeVin(vinInput.value);
+        vinToken++;
+        if (vinLooksValid(st.vin)) runVinDecode(); else {
+            st.vinNote = "";
+            st.vinTone = "";
+            redrawVin();
+        }
+    });
+    vinInput.addEventListener("blur", () => {
+        const n = normalizeVin(vinInput.value);
+        if (vinCharsetOk(n) && vinInput.value !== n) vinInput.value = n;
+        if (n && !vinLooksValid(n) && !st.vinNote) {
+            const badChars = n.length === 17 && /^[A-Z0-9]+$/.test(n) && /[IOQ]/.test(n);
+            st.vinNote = badChars ? "الشاص فيه حرف I أو O أو Q وهالحروف ما بتنستخدم برقم الشاص — غالبًا 1 أو 0 مكتوب غلط، صحّحه أو اختر السيارة يدويًا" : "رقم الشاص الكامل 17 خانة بيتقرأ تلقائيًا — غيره اختر السيارة يدويًا";
+            st.vinTone = "info";
+            redrawVin();
+        }
+    });
     makeSearch.addEventListener("input", redrawMakes);
     makeChips.addEventListener("click", e => {
         const btn = e.target.closest("button");
@@ -3287,6 +3699,9 @@ function openCarGate(opts) {
             st.model = "";
             st.trim = "";
             st.trimUnknown = false;
+            st.level = "";
+            st.levelSrc = "";
+            st.trimNote = "";
             modelInput.value = "";
             trimInput.value = "";
         };
@@ -3314,6 +3729,7 @@ function openCarGate(opts) {
     });
     modelInput.addEventListener("input", () => {
         st.model = modelInput.value;
+        st.trimNote = "";
         redrawModels();
         redrawTrims();
     });
@@ -3322,16 +3738,21 @@ function openCarGate(opts) {
         const name = btn && btn.getAttribute("data-car-gate-model");
         if (!name) return;
         st.model = name;
+        st.trimNote = "";
         modelInput.value = name;
         redrawModels();
         redrawTrims();
     });
     yearSel.addEventListener("change", () => {
         st.year = Number(yearSel.value) || null;
+        carGateApplyYear(st);
+        trimInput.value = st.trim;
+        redrawTrims();
     });
     trimChips.addEventListener("click", e => {
         const btn = e.target.closest("button");
         if (!btn) return;
+        st.trimNote = "";
         if (btn.hasAttribute("data-car-gate-trim-unknown")) {
             st.trimUnknown = !st.trimUnknown;
             if (st.trimUnknown) {
@@ -3350,16 +3771,46 @@ function openCarGate(opts) {
     trimInput.addEventListener("input", () => {
         st.trim = trimInput.value;
         st.trimUnknown = false;
+        st.trimNote = "";
         redrawTrims();
     });
+    levelChips.addEventListener("click", e => {
+        const btn = e.target.closest("button");
+        const lv = btn && btn.getAttribute("data-car-gate-level");
+        if (!lv) return;
+        if (carCleanLevel(st.level) === lv) {
+            manualLevelFor = "";
+            st.level = "";
+            st.levelSrc = "";
+            carGateApplyAutoLevel(st);
+        } else {
+            st.level = lv;
+            st.levelSrc = "manual";
+            manualLevelFor = levelKeyNow();
+        }
+        redrawLevel();
+    });
     q("#car-gate-ok-btn").addEventListener("click", () => {
+        const vinProblem = carGateVinProblem(st);
+        if (vinProblem) {
+            clearMissing();
+            const vinField = q("#car-gate-vin-field");
+            if (vinField) {
+                vinField.classList.add("car-gate-missing");
+                vinField.scrollIntoView({
+                    block: "nearest"
+                });
+            }
+            showToast(vinProblem, "error");
+            return;
+        }
         const miss = carGateMissing(st);
         if (miss) {
             const msgs = {
                 make: "اختر الماركة",
                 model: "اكتب أو اختر الموديل",
                 year: "اختر سنة الصنع",
-                trim: 'اختر الفئة، أو "غير معروفة" لو الزبون ما يعرفها'
+                trim: 'اختر الفئة أو المستوى، أو "غير معروفة" لو الزبون ما يعرفها'
             };
             clearMissing();
             const fieldEl = q("#car-gate-" + miss + "-field");
@@ -3374,7 +3825,7 @@ function openCarGate(opts) {
         }
         const car = carFromGateState(st);
         closeCarGate();
-        if (typeof opts.onChosen === "function") opts.onChosen(car);
+        if (typeof opts.onChosen === "function") opts.onChosen(car, normalizeVin(st.vin));
     });
 }
 
@@ -3383,11 +3834,13 @@ function startNewWithCar(kind) {
         title: "🚗 السيارة",
         sub: kind === "quote" ? "قبل ما تبدأ طلب التسعير، حدد السيارة" : "قبل ما تبدأ الطلبية، حدد السيارة",
         confirmLabel: "متابعة",
-        onChosen: car => {
+        onChosen: (car, vin) => {
             if (kind === "quote") openQuoteModal("create", null, undefined, {
-                car: car
+                car: car,
+                vin: vin
             }); else openModal("create", null, {
-                car: car
+                car: car,
+                vin: vin
             });
         }
     });
@@ -3420,14 +3873,24 @@ function bindCarField(prefix) {
         const d = getDraft();
         if (!d) return;
         const openedFor = d.id;
+        const openedVin = normalizeVin(d.vin);
         openCarGate({
             title: d.car ? "🚗 تغيير السيارة" : "🚗 اختيار السيارة",
             confirmLabel: "حفظ السيارة",
             car: d.car,
-            onChosen: car => {
+            vin: d.vin,
+            onChosen: (car, vin) => {
                 const cur = getDraft();
                 if (!cur || cur.id !== openedFor) return;
                 cur.car = car;
+                if (vin !== openedVin) {
+                    if (vin) cur.vin = vin; else delete cur.vin;
+                    const vinInput = document.getElementById(prefix + "-vin-input");
+                    if (vinInput) {
+                        vinInput.value = vin;
+                        refreshVinHint(prefix, vin);
+                    }
+                }
                 refreshCarField(prefix, cur);
             }
         });
@@ -3503,6 +3966,7 @@ function openModal(mode, orderId, opts) {
             isNew: true
         };
         if (opts && opts.car) draft.car = normalizeCar(opts.car);
+        if (opts && opts.vin) draft.vin = normalizeVin(opts.vin);
     } else {
         const found = appData.orders.find(o => o.id === orderId);
         if (!found) {
@@ -7715,6 +8179,7 @@ function openQuoteModal(mode, orderId, role, opts) {
             isNew: true
         };
         if (opts && opts.car) quoteDraft.car = normalizeCar(opts.car);
+        if (opts && opts.vin) quoteDraft.vin = normalizeVin(opts.vin);
     } else {
         const found = appData.orders.find(o => o.id === orderId);
         if (!found) {
@@ -13570,6 +14035,7 @@ async function exportAllDataToExcel() {
                 "الموديل": o.car && o.car.model || "",
                 "سنة الصنع": o.car && o.car.year || "",
                 "الفئة": o.car && o.car.trim || "",
+                "المستوى": o.car && (o.car.level || carCleanLevel(o.car.trim)) || "",
                 "تاريخ الإنشاء": o.createdAt || "",
                 "تاريخ التوريد": o.suppliedAt || "",
                 "مؤكدة": o.confirmed ? "نعم" : "لا",
@@ -15338,60 +15804,60 @@ let editingSuppliers = {};
 const CAR_MAKES = [ "تويوتا", "لكزس", "فورد", "شفروليه", "جي إم سي", "كاديلاك", "دودج", "كرايسلر", "جيب", "رام", "لوسيد", "نيسان", "إنفينيتي", "هيونداي", "كيا", "جينيسيس", "سانج يونج", "مرسيدس", "بي إم دبليو", "أودي", "فولكس فاجن", "بورش", "مازيراتي", "لامبورجيني", "بنتلي", "رولز رويس", "رنج روفر", "لاند روفر", "جاكوار", "ميني", "فولفو", "هوندا", "مازدا", "ميتسوبيشي", "سوزوكي", "إيسوزو", "بيجو", "رينو", "فيات", "سكودا", "جيلي", "شانجان", "جي إيه سي", "إم جي", "شيري", "هافال", "بي واي دي", "جيتور", "جريت وول", "تانك", "جاك", "هونشي", "ماكسوس", "بايك" ];
 
 const CAR_CATALOG = {
-    "تويوتا": [ "كامري:GL,GLX,LE,GLE,GLEX,SE,Grande", "كورولا:XLi,GLi", "لاند كروزر:GX,GXR,EXR,VX,VXR,VXS,GR Sport", "هايلوكس:DLX,GL,GLX,SGLX,SR5,Adventure,GR Sport", "يارس:E,SE", "برادو:EXR,GXR,VXR,TX,TXL,VX,Adventure", "افالون:XLE,Limited", "هايس", "فورشنر:EXR,GXR,VXR", "راف فور:EX,EXR,GXR,VXR,Adventure", "راش", "اوربان كروزر", "فيلوز", "كورولا كروس", "سيكويا:SR5,Limited,Platinum,Capstone", "رايز", "افانزا", "كراون", "انوفا", "كوستر", "اف جي كروزر", "فينزا", "هايلاندر", "سيينا", "تندرا", "بريفيا", "اوريون", "C-HR", "4Runner", "لايت ايس", "سوبرا", "86" ],
-    "لكزس": [ "ES:Elegant,Excellence,F Sport,Platinum,Prestige", "LX:Black Edition,Signature,Platinum", "LS", "RX:Elegant,Excellence,F Sport", "GX", "NX:Elegant,Excellence,F Sport", "IS:Elegant,Excellence,Elite,F Sport", "GS:F Sport", "UX", "RC:F Sport", "LC", "LM" ],
-    "فورد": [ "تورس:SE,SEL,Limited,SHO", "اكسبدشن:XLT,Limited,Platinum,Timberline", "اكسبلورر:XLT,Limited,Sport,ST", "ايدج:SE,SEL,Limited,Titanium,Sport,ST,Ambiente,Trend", "F150:XL,XLT,FX4,Lariat,Platinum,Raptor,Tremor", "اسكورت", "تيريتوري:Ambiente,Trend,Titanium", "فيوجن:SE,SEL,Titanium,Sport", "رينجر:XL,XLT,Wildtrak,Raptor", "فوكس:Ambiente,Trend,Titanium", "فليكس:SE,SEL,Limited", "اسكيب:SE,SEL,Titanium", "موستنق:EcoBoost,GT", "برونكو:Big Bend,Outer Banks,Badlands,Wildtrak", "مونديو", "ايفرست:XLS,XLT,Limited", "كراون فكتوريا", "فيستا", "ايكوسبورت", "فيجو", "ترانزيت", "F350", "برونكو سبورت" ],
-    "شفروليه": [ "ماليبو:LS,LT,LTZ,Premier", "تاهو:LS,LT,LTZ,Z71,Premier", "كابتيفا:LS,LT,LTZ,Premier", "ترافرس:LS,LT,LTZ,Premier", "امبالا:LS,LT,LTZ,Premier", "كابرس", "سلفرادو:WT,LT,LTZ,RST,Trail Boss", "سوبربان:LS,LT,LTZ,Premier", "بليزر:LT,RS,Premier", "سبارك:LS,LT", "لومينا", "كروز:LS,LT,LTZ,Premier", "ايكوينوكس:LS,LT,LTZ,Premier", "تراكس:LS,LT,LTZ,Premier", "كمارو:LT,RS,SS,ZL1", "ترايل بليزر:LS,LT,Activ,RS", "كورفيت:Stingray,Z06", "افيو:LS,LT", "اوبترا", "ابيكا", "افالانش", "كولورادو", "جروف:LT,Premier" ],
-    "جي إم سي": [ "يوكن:SLE,SLT,Denali,AT4", "سييرا:SLE,SLT,Denali,AT4,Elevation", "اكاديا:SLE,SLT,Denali,AT4", "تيرين:SLE,SLT,Denali", "انفوي", "سافانا", "كانيون" ],
-    "كاديلاك": [ "XT6:Luxury,Premium Luxury,Sport", "XTS", "SRX", "CT5:Luxury,Sport", "اسكاليد:Luxury,Premium Luxury,Sport,Platinum", "CTS", "XT5:Luxury,Premium Luxury,Sport", "ATS", "XT4:Luxury,Sport", "CT4:Luxury,Sport" ],
-    "دودج": [ "تشارجر:SE,SXT,R/T,GT,Scat Pack,SRT8,SRT Hellcat", "تشالنجر:SXT,R/T,GT,Scat Pack,SRT8,SRT Hellcat", "دورانجو:SXT,GT,R/T,Citadel,Limited,SRT", "رام", "نيون", "جورني:SE,SXT,R/T,GT", "كارافان", "افينجر:SE,SXT,R/T", "كاليبر", "نيترو", "ماجنم" ],
-    "كرايسلر": [ "300C", "فوياجر", "سيبرنج", "اسبن", "بي تي كروزر", "تاون اند كنتري", "كروسفاير", "باسيفيكا", "200" ],
-    "جيب": [ "شيروكي:Sport,Latitude,Limited,Trailhawk", "جراند شيروكي:Laredo,Limited,Overland,Summit,Trailhawk,Altitude,SRT,Trackhawk", "رانجلر:Sport,Sahara,Rubicon", "كومباس:Sport,Latitude,Limited,Trailhawk", "رينيجيد:Sport,Latitude,Limited,Trailhawk", "جلادياتور:Sport,Sand Runner,Overland,Rubicon", "باتريوت", "ليبرتي", "كوماندر", "واجونير" ],
-    "رام": [ "1500:Tradesman,Big Horn,Laramie,Rebel,Limited,Tungsten,RHO,TRX", "2500:Tradesman,Power Wagon" ],
-    "لوسيد": [ "اير:Pure,Touring,Grand Touring,Sapphire" ],
-    "نيسان": [ "باترول:XE,SE,LE,SE Platinum,LE Platinum,SE Titanium,LE Titanium,Nismo", "صني:S,SV,SL", "كيكس:S,SV,SL", "اكستريل:S,SV,SL", "سنترا:S,SV", "التيما:S,SV,SL", "باثفايندر:S,SV,SL,Platinum", "مكسيما:S,SV,SR", "ارمادا", "نافارا", "ددسن", "اكستيرا", "سفاري", "اورفان", "جوك", "تيدا", "مورانو", "GT-R" ],
-    "إنفينيتي": [ "QX80", "QX60", "QX70", "Q50", "QX50", "QX55", "Q70", "Q60", "QX56", "FX" ],
-    "هيونداي": [ "النترا:GL,GLS,Smart,Comfort,Premium", "سوناتا:GL,GLS,Smart,Smart Plus", "ازيرا", "اكسنت:GL,Smart,Smart Plus", "سنتافي:GL,GLS,Smart", "توسان:GL,Smart,Comfort,Premium", "كريتا", "كونا", "باليسيد", "فيلوستر", "H1", "فينيو", "i10", "ستاريا", "ايونيك 5", "جينيسيس", "جينيسيس كوبيه", "فيراكروز", "جيتز", "ماتريكس" ],
-    "كيا": [ "اوبتيما", "كادينزا", "بيجاس", "سيراتو", "سبورتاج", "ريو", "سورينتو", "K5", "K3:LX,EX,GT-Line", "سيلتوس", "سونيت", "كارينز", "K8", "كرنفال", "K4", "بيكانتو", "تيلورايد", "سول", "ستينجر", "K900", "موهافي", "EV6", "EV9" ],
-    "جينيسيس": [ "G80", "GV80", "G70", "GV70", "G90", "GV60" ],
-    "سانج يونج": [ "ريكستون", "كوراندو", "تيفولي", "اكتيون", "كايرون", "موسو", "توريس" ],
-    "مرسيدس": [ "سي كلاس:Avantgarde,AMG Line", "اس كلاس:AMG Line", "اي كلاس:Avantgarde,Exclusive,AMG Line", "GLE:AMG Line", "GLC:AMG Line", "CLA:AMG Line", "جي كلاس", "ML", "SLK", "GLS:AMG Line", "A كلاس:AMG Line", "CLS:AMG Line", "GLA:AMG Line", "B كلاس", "V كلاس", "GL", "GLK", "SL", "GLB:AMG Line", "AMG GT", "مايباخ", "فيتو", "سبرنتر", "فيانو", "SLC", "CLK", "EQE", "EQS", "EQA", "EQB" ],
-    "بي إم دبليو": [ "الفئة الخامسة:M Sport,Luxury Line,Business", "الفئة السابعة:M Sport,Individual", "الفئة الثالثة:M Sport,Luxury Line", "X5:xLine,M Sport", "X6:M Sport", "X3:xLine,M Sport", "X1:xLine,M Sport", "X4:M Sport", "X2:M Sport", "X7:M Sport", "الفئة الرابعة:M Sport", "الفئة الثانية", "الفئة الاولى", "الفئة السادسة", "الفئة الثامنة", "Z4", "M5", "M3", "M4", "i8", "iX", "i4", "i5", "i7" ],
-    "أودي": [ "A6:S line", "A8", "A4:S line", "Q7:S line", "Q5:S line", "Q8:S line", "A5:S line", "Q3:S line", "A3:S line", "A7:S line", "TT", "R8", "e-tron" ],
-    "فولكس فاجن": [ "تيجوان:S,SE,SEL,Sport,Trendline,Life,Elegance,R-Line", "طوارق", "باسات:S,SE,SEL,Sport", "جولف:GTI,R", "جيتا:Trendline,Comfortline,Highline", "تيرامونت:Trendline,Comfortline,Highline,R-Line", "تي روك:Life,Style,R-Line", "ارتيون:Elegance,R-Line", "بولو", "بيتل", "CC", "سيروكو", "فايتون" ],
-    "بورش": [ "كاين:S,GTS,Turbo,Turbo S", "ماكان:S,GTS,Turbo", "باناميرا:4,4S,GTS,Turbo", "911:Carrera,Carrera S,Turbo,GT3", "بوكستر:S,GTS", "كايمن:S,GTS", "تايكان:4S,Turbo,Turbo S,GTS" ],
-    "مازيراتي": [ "غيبلي:S,GranSport,GranLusso,GT,Modena,Trofeo", "ليفانتي:S,GranSport,GranLusso,GT,Modena,Trofeo", "كواتروبورتي:S,GranSport,GranLusso,Trofeo", "جريكالي:GT,Modena,Trofeo", "جران توريزمو:Modena,Trofeo", "جران كابريو:Modena,Trofeo", "MC20" ],
-    "لامبورجيني": [ "اوروس:S,Performante", "هوراكان:EVO,Performante,STO,Tecnica", "افينتادور:S,SVJ", "جالاردو", "مورسيلاجو", "ريفولتو" ],
-    "بنتلي": [ "كونتيننتال:Speed,Azure,Mulliner", "بنتايجا:Speed,Azure,Mulliner,S", "فلاينج سبير:Speed,Azure,Mulliner", "مولسان", "ارناج" ],
-    "رولز رويس": [ "قوست:Black Badge", "رايث:Black Badge", "كولينان:Black Badge", "فانتوم", "داون:Black Badge", "سبيكتر" ],
-    "رنج روفر": [ "فوج:HSE,SE,Vogue SE,Autobiography,SV", "سبورت:SE,HSE,HSE Dynamic,Autobiography,SVR", "ايفوك:Pure,Prestige,Dynamic,SE,HSE", "فيلار:S,SE,HSE,R-Dynamic" ],
-    "لاند روفر": [ "ديفندر:S,SE,HSE,X-Dynamic,X,V8", "ديسكفري:S,SE,HSE,HSE Luxury", "ديسكفري سبورت:S,SE,HSE", "فريلاندر" ],
-    "جاكوار": [ "F-Pace:Prestige,R-Sport,Portfolio,S,SVR", "XF:Premium Luxury,Portfolio,R-Sport,S", "XJ:Premium Luxury,Portfolio,Supercharged,Autobiography", "XE", "E-Pace:S,SE,HSE,R-Dynamic", "F-Type", "I-Pace", "XK" ],
-    "ميني": [ "كوبر:Cooper S,John Cooper Works", "كونتري مان:Cooper,Cooper S,John Cooper Works", "كلوب مان:Cooper,Cooper S,John Cooper Works", "باسمان" ],
-    "فولفو": [ "XC90:Momentum,Inscription,R-Design", "XC60:Momentum,Inscription,R-Design", "S90:Momentum,Inscription,R-Design", "S60:Momentum,Inscription,R-Design", "XC40:Momentum,Inscription,R-Design", "S80", "V40", "EX30" ],
-    "هوندا": [ "اكورد:LX,EX,EX-L,Sport", "سيفيك:DX,LX,LX Sport", "سيتي:DX", "CR-V", "اوديسي", "بايلوت:Touring", "HR-V:LX", "ZR-V:LX,EX" ],
-    "مازدا": [ "CX-9:GS,GT,Signature", "3", "6", "CX-5:GT,Signature", "CX-30", "CX-3", "2", "CX-7", "CX-60", "CX-90", "BT-50", "MX-5", "RX-8", "626", "323" ],
-    "ميتسوبيشي": [ "باجيرو:GLX,GLS", "L200:GLX,GLS", "لانسر:GLX,GLS", "اوتلاندير:GLX,GLS", "اتراج:GLX", "ASX:GLX,GLS", "مونتيرو سبورت:GLX,GLS", "اكسباندر", "اكليبس كروس:GLS", "ميراج", "جالنت", "كانتر" ],
-    "سوزوكي": [ "ديزاير:GL,GLX", "بالينو:GL,GLX", "فرونكس:GL,GLX", "سويفت:GL,GLX", "ارتيجا:GL,GLX", "جيمني:GLX", "جراند فيتارا:GL,GLX", "فيتارا", "سيليريو:GL,GLX", "سياز:GL,GLX", "كاري" ],
-    "إيسوزو": [ "ديماكس", "MU-X", "NPR", "NQR" ],
-    "بيجو": [ "3008:Active,Allure,GT Line,GT", "5008:Allure,GT", "508:Active,Allure,GT Line", "2008:Style,Allure,GT", "408:Allure,GT", "301", "208", "308", "لاندتريك" ],
-    "رينو": [ "كوليوس", "تاليسمان", "داستر", "ميجان", "سيمبول", "سافران", "اركانا", "فلوانس", "كابتشر", "كليو", "ماستر" ],
-    "فيات": [ "دوبلو", "500", "تيبو", "بونتو", "لينيا", "500X", "دوكاتو" ],
-    "سكودا": [ "اوكتافيا:Ambition,Style,RS", "سوبيرب:Ambition,Style,Laurin & Klement", "كودياك:Ambition,Style,Sportline,Laurin & Klement", "كاروك:Ambition,Style", "كوشاق", "فابيا", "رابيد" ],
-    "جيلي": [ "كولراي", "توجيلا", "مونجارو", "اوكافانجو", "بينراي", "ازكارا", "GS", "امجراند", "ستارراي", "سيتي راي" ],
-    "شانجان": [ "السفن", "CS95", "ايدو بلس", "CS35 Plus", "UNI-K", "UNI-T", "UNI-V", "CS85", "CS75 Plus", "CS35", "CS75", "هنتر", "ايدو", "UNI-S" ],
-    "جي إيه سي": [ "GS8", "GS4", "امباو", "GS3", "GA4", "GA8", "امكو", "امزوم", "M8", "GN8", "GA6", "GS5" ],
-    "إم جي": [ "GT", "5", "ZS", "3", "6", "RX5", "7", "HS", "ون", "RX8", "4", "T60" ],
-    "شيري": [ "تيجو 4 برو", "اريزو 6", "تيجو 2 برو", "اريزو 3", "تيجو 8 برو", "تيجو 7 برو", "اريزو 5", "تيجو 2", "تيجو 7", "تيجو 8", "تيجو 3", "تيجو 5", "اريزو 6 برو", "تيجو 9", "اريزو 8" ],
-    "هافال": [ "H6", "جوليان", "H9", "H2", "دارجو", "H6 GT", "H7" ],
-    "بي واي دي": [ "اتو 3", "تشين بلس", "سونج بلس", "هان", "سيل", "تانج", "F3", "سيل 7", "اتو 8" ],
-    "جيتور": [ "T2", "X70", "داشينج", "X90", "X70 Plus", "X90 Plus", "T1", "X50" ],
-    "جريت وول": [ "وينجل 7", "وينجل 5", "باور" ],
-    "تانك": [ "300", "500" ],
+    "تويوتا": [ "كامري|Camry:GL@-2020@s,GLX@-2017@m,SE@-2015@f,XSE@2016@f,LE@2018-2024@s,GLE@2018-2025@m,SE@2018-2025@m,GLEX@2022-2024@m,Grande@2018-@f,Lumiere@2019-@f,LE@2025-@m,E@2025-@s", "كورولا|Corolla:XLi@@s,XLi Executive@@m,GLi@2020-@f,GLi,Limited@2018-2019@f", "لاند كروزر|Land Cruiser:GX@@s,EXR,GXR@@m,VX@2022-@m,VX,VXR@@f,VXS,GR Sport@2022-@f", "هايلوكس|Hilux|Pick-Up:DLX,GL@@s,GLX@@m,SGLX@2016-2021@f,SGLX@2022-@m,SR5,Adventure,GR Sport@2022-@f", "يارس|Yaris:E,SE,STD@2018-2022@s,Y@2018-2022@m,Y@2023-@s,Y Plus@2019-2020@m,Y Plus@2021-2022@f,Y Plus@2023-@m,YX@2018-2020@f,YX@2023-@f", "برادو|Land Cruiser Prado|Prado|Land Cruiser 250:EXR,GXR,VXR,TX@@s,TXL@@m,VX@-2024@f,Adventure@2024-@f,VXL@2025-@f", "افالون|Avalon:XLE@@s,Limited@-2018@f,Touring@2019-@m,Limited@2022-@m,Premium@2019-@f", "هايس|Hiace", "فورشنر|Fortuner:EXR,GXR,VXR,GX@2016-@s,VX@2016-@f", "راف فور|RAV4|RAV4 Prime (PHEV):EX@@s,EXR,GXR,VXR,Adventure,LE@2019-@s,XLE@2019-2022@f,XLE@2023-@m,Limited@2023-@f,XSE@2026-@f", "راش|Rush:STD@2018-@s,EX@2024-@m,GX@2020-@f", "اوربان كروزر|Urban Cruiser:GL@2023-@s,GLX@2023-@f", "فيلوز|Veloz", "كورولا كروس|Corolla Cross:LE@2022-@s,XLE@2022-@m,Limited@2022-@f", "سيكويا|Sequoia:SR5@@s,Limited,Platinum,Capstone", "رايز|Raize:XLE@2022-@s,Limited@2022-@f", "افانزا|Avanza", "كراون|Crown:Premium@2023-2025@s,Premium@2026-@m,Prestige@2026-@s,XLE@2024-@m,Majesta@2023-@f,Platinum@2024-@f", "انوفا|Innova:GL@2024-@s,GL HEV@2025-@m,VIP HEV@2024-@f", "كوستر|Coaster", "اف جي كروزر|FJ Cruiser", "فينزا|Venza", "هايلاندر|Highlander:LE@2020-@s,GLE@2020-@m,Limited@2020-@f", "سيينا|Sienna", "تندرا|Tundra", "بريفيا|Previa", "اوريون", "C-HR", "4Runner", "لايت ايس|LiteAce|TownAce", "سوبرا|Supra|GR Supra", "86|GR86|GT86" ],
+    "لكزس": [ "ES:Elegant@2019-@s,Excellence@2021-@m,Elite@2021-@m,Executive@2021-@f,F Sport@2019-@f,Exclusive@-2018@m,Exclusive@2019-2021@f,Premier@-2018@s,Premier@2019@m,Prestige@-2018@m,Platinum", "LX:Premier@-2018@s,Prestige@-2018@f,Platinum@-2018@f,Sport@2019-2020@m,Sport@2021@s,Signature@2019-2021@f,Black Edition@2019-2021@f,Excellence@2022-@s,Elite@2022-@m,F Sport@2022-@f,VIP@2022-@f,Signature@2025-@m", "LS:Elegant@2019-@s,Excellence@2021-@m,Elite@2021-@f,Prestige@2019-2020@f", "RX:Elegant@2019-@s,Excellence@2019-@m,Elite@2023-@m,F Sport@-2018@m,F Sport@2019-2022@f,F Sport,Prestige@-2018@m", "GX:Premier@-2018@s,Prestige@-2018@m,Platinum@-2018@f,Excellence@2019-2020@s,Elegant Plus@2021-@s,Sport@2019-@f", "NX:Elegant@2019-@s,Excellence@2019-@m,F Sport@-2018@m,F Sport@2019-2021@f,F Sport@2022-@m,Platinum@-2018@m,Premier@-2018@s", "IS:Elegant@2019-@s,Excellence@2021-@m,Elite@2021-@m,F Sport,F Sport@2021-@f", "GS:F Sport", "UX", "RC:Elegant@2019-@s,F Sport,F Sport@2019-2022@f,F Sport", "LC", "LM" ],
+    "فورد": [ "تورس|Taurus:SE,SEL,Limited,SHO@2010-2019@f,Ambiente@2020-@s,Trend@2020-@m,Titanium@2020-2022@m,Titanium@2023-@f,Titanium Plus@2020-2022@f", "اكسبدشن|Expedition|Expedition EL|Expedition MAX:XLT@@s,Limited,Limited@2018-@m,Platinum@2018-@f,Timberline@2022-@m", "اكسبلورر|Explorer|Explorer Sport:XLT@-2012@s,XLT@2013-@m,Limited@-2012@f,Limited@2013-@m,Sport,ST@2020-@f", "ايدج|Edge:SE,SEL,Limited,Titanium,Titanium@2020-2021@f,Titanium@2022-@m,Sport@-2019@f,ST,Ambiente@2020-@s,Trend@2020-@m", "F150:XL@@s,XLT@@m,FX4,Lariat@@m,Platinum,Raptor@2010-2014@f,Raptor@2017-@f,Tremor", "اسكورت|Escort:Ambiente@2019-@s,Trend@2019-@m,Titanium@2019-@f", "تيريتوري|Territory:Ambiente@2023-@s,Trend@2023-@m,Titanium@2023-@f", "فيوجن|Fusion:SE,SEL,Titanium,Sport", "رينجر|Ranger:XL@@s,XLT@@m,Wildtrak@-2022@f,Wildtrak@2023-@m,Raptor@2023-@f", "فوكس|Focus:Ambiente@-2018@s,Trend@-2018@m,Titanium@-2018@f", "فليكس|Flex:SE,SEL,Limited", "اسكيب|Escape|Kuga:SE@2013-2020@m,SEL,Titanium@2013-@f", "موستنق|Mustang:EcoBoost@2015-@s,GT@@m,GT Premium@2011-@f", "برونكو|Bronco:Big Bend@2021-@s,Outer Banks@2021-@m,Wildtrak@2021-@m,Badlands@2021-2022@f,Badlands@2023-@m,Raptor@2023-@f", "مونديو|Mondeo", "ايفرست|Everest|Endeavour:XLS@2023-@s,XLT@2023-@m,Limited@2023-@f", "كراون فكتوريا|Crown Victoria", "فيستا|Fiesta", "ايكوسبورت|Ecosport", "فيجو|Figo", "ترانزيت|Transit", "F350", "برونكو سبورت|Bronco Sport" ],
+    "شفروليه": [ "ماليبو|Malibu|Malibu Limited|Malibu Classic:LS@@s,LT@@m,LTZ@-2018@f,Premier", "تاهو|Tahoe:LS@@s,LT@@m,LTZ@-2020@f,Z71@-2014@m,Z71@2021-@m,Premier@2021-@f", "كابتيفا|Captiva|Captiva Sport:LS@@s,LT@@m,LTZ@-2019@f,Premier@2019-@f", "ترافرس|Traverse|Traverse Limited:LS@2009-2023@s,LT@2009-2023@m,LT,LTZ@2009-2017@f,Premier@2018-2022@m,Premier@2023@f,RS@2022-2023@m,High Country@2018-2022@f", "امبالا|Impala|Impala Limited:LS@-2020@s,LT@-2020@m,LTZ@-2016@f,Premier", "كابرس|Caprice|Caprice Police Vehicle", "سلفرادو|Silverado|Silverado LD|Silverado HD|Silverado LTD:WT@2019-@s,LT@-2018@s,LT@2019-@m,LTZ@-2013@f,LTZ,RST@2019-@m,Trail Boss@2019-@m,High Country@2014-@f", "سوبربان|Suburban|Suburban HD:LS@@s,LT@@m,LTZ@-2020@f,Premier@2021-@f", "بليزر|Blazer|S-10 Blazer:LT@2019-@s,RS,Premier", "سبارك|Spark:LS@@s,LT@@f", "لومينا|Lumina", "كروز|Cruze|Cruze Limited:LS@@s,LT,LTZ,Premier", "ايكوينوكس|Equinox:LS@@s,LT@@m,LTZ,Premier@2018-@f", "تراكس|Trax:LS,LT@2014-@s,LTZ@2014-2016@f,Premier@2017-@f", "كمارو|Camaro:LT@2010-2012@m,LT@2013-2023@s,RS,SS@2010-2011@f,SS@2012-2015@m,SS@2016@f,SS@2017-2023@m,ZL1@2012-2015@f,ZL1@2017-2023@f", "ترايل بليزر|Trailblazer:LS@-2009@s,LS,LT@-2009@f,LT@2013-2017@s,LT,LTZ@2013-2017@f,Activ,RS", "كورفيت|Corvette:Stingray@2014-@s,Z06@-2007@f,Z06@2008-2013@m,Z06@2015-2019@f,Z06", "افيو|Aveo|Kalos:LS@@s,LT@@f", "اوبترا|Optra|Lacetti", "ابيكا|Epica", "افالانش|Avalanche", "كولورادو|Colorado", "جروف|Groove:LT@2022-@s,Premier@2022-@f" ],
+    "جي إم سي": [ "يوكن|Yukon|Yukon XL:SLE@@s,SLT@@m,AT4@2021-@m,Denali@@f", "سييرا|Sierra|Sierra HD|Sierra Limited:SLE@@s,SLT@@m,Elevation@2019-@m,AT4@2019-@m,Denali@@f", "اكاديا|Acadia:SLE@@s,SLT@@m,AT4@2020-@m,Denali@@f", "تيرين|Terrain:SLE@@s,SLT@@m,AT4@2022-@m,Denali@2013-@f", "انفوي|Envoy", "سافانا|Savana", "كانيون|Canyon" ],
+    "كاديلاك": [ "XT6:Luxury@2020-@s,Premium Luxury@2020-@m,Sport@2020-@f", "XTS:Luxury@2013-2019@s,V-Sport@2013-2019@f", "SRX:Luxury@-2016@s,Premium@-2009@m,Premium@2010-2016@f", "CT5:Luxury@2020-@s,Premium Luxury@2020-@m,Sport,Sport@2022-@m,V@2022-@f", "اسكاليد|Escalade|Escalade ESV:Luxury@@s,Premium Luxury,Premium Luxury@2015-@m,Sport@2021-@m,Platinum@2015-@f", "CTS:Luxury@2014-2019@s,Premium Luxury@2014-2019@m,V Sport@2014-2019@f", "XT5:Luxury@2017-2019@m,Luxury@2020-@s,Premium Luxury@2017-@m,Platinum@2017-2019@f,Sport@2020-@f", "ATS:Luxury@2013-2019@s,Premium@2013-2018@f", "XT4:Luxury@2019-@s,Premium Luxury@2019-@m,Sport@2019-@f", "CT4:Luxury@2020-@s,Premium Luxury@2020-@m,Sport,Sport@2022-@m,V@2022-@f" ],
+    "دودج": [ "تشارجر|Charger:SE@-2010@s,SE@2015-2018@s,SXT@-2010@m,SXT@2011-2014@s,SXT@2015-2018@m,SXT@2019-@s,R/T@@m,GT@2017-@m,Scat Pack@2015-@m,SRT8@-2014@f,SRT Hellcat@2015-@f", "تشالنجر|Challenger:SXT@2011-@s,R/T@@m,GT@2017-@m,Scat Pack@2015-@m,SRT8@2008-2014@f,SRT Hellcat@2015-@f", "دورانجو|Durango:SXT@-2023@s,GT@2017-@m,R/T@2011-@m,Citadel@2011-2022@m,Limited@-2022@m,SRT@2018-@f", "رام|Ram", "نيون|Neon", "جورني|Journey:SE,SXT,R/T,GT", "كارافان|Caravan|Grand Caravan|Caravan/Grand Caravan", "افينجر|Avenger:SE@2008-2014@s,SXT,R/T", "كاليبر|Caliber", "نيترو|Nitro", "ماجنم|Magnum" ],
+    "كرايسلر": [ "300C|300:Limited@@s,S@2011-@m,Luxury@2021-@f", "فوياجر|Voyager|Grand Voyager", "سيبرنج|Sebring", "اسبن|Aspen", "بي تي كروزر|PT Cruiser", "تاون اند كنتري|Town and Country|Town & Country", "كروسفاير|Crossfire", "باسيفيكا|Pacifica", "200" ],
+    "جيب": [ "شيروكي|Cherokee:Sport@@s,Latitude,Longitude@2019-2022@m,Limited@@m,Trailhawk@2014-@f", "جراند شيروكي|Grand Cherokee|Grand Cherokee L:Laredo@-2021@s,Laredo@2025-@s,Limited@@m,Overland@@m,Summit@2012-@f,Trailhawk@2013-@m,Altitude,Altitude@2022-2024@s,SRT,Trackhawk", "رانجلر|Wrangler|Wrangler JK:Sport@@s,Sahara@@m,Rubicon@@f", "كومباس|Compass:Sport,Latitude,Longitude@2018-2022@s,Limited,Trailhawk", "رينيجيد|Renegade:Sport,Latitude,Limited,Trailhawk", "جلادياتور|Gladiator:Sport@2020-@s,Overland@2020-@m,Rubicon@2020-@f,Sand Runner", "باتريوت|Patriot", "ليبرتي|Liberty", "كوماندر|Commander", "واجونير|Wagoneer|Wagoneer L" ],
+    "رام": [ "1500|Ram 1500:Tradesman,Big Horn@2019-@s,Laramie@@m,Rebel@2019-@m,Limited@2019-@m,Tungsten,RHO,TRX@2021-@f", "2500|Ram 2500:Tradesman,Power Wagon@2020-" ],
+    "لوسيد": [ "اير|Air:Pure@2023-@s,Touring@2022-@m,Grand Touring@2022-@m,Sapphire@2023-@f" ],
+    "نيسان": [ "باترول|Patrol:XE@@s,SE@@m,LE@@m,SE Platinum@-2023@m,LE Platinum@-2023@f,SE Titanium@2022-@m,LE Titanium@2018-@m,Nismo@2018-@f,Platinum City@2025-@f,Pro-4X@2025-@m", "صني|Sunny|Versa:S@@s,SV@@m,SL@@f", "كيكس|Kicks:S@2018-@s,SV@2018-@m,SL@2018-@f", "اكستريل|X-Trail|Rogue:S@@s,SV@@m,SL@@f", "سنترا|Sentra:S@-2018@s,S@2019-,SV@-2018@m", "التيما|Altima:S@@s,SV@@m,SL@@f,Sport@2021-@m", "باثفايندر|Pathfinder:S@@s,SV@@m,SL,SL@2019-@f,Platinum", "مكسيما|Maxima:S@@s,SV@@m,SR@@f", "ارمادا|Armada", "نافارا|Navara|NP300|Frontier", "ددسن", "اكستيرا|Xterra", "سفاري", "اورفان|Urvan|NV350 Urvan|NV350|NV350 Caravan", "جوك|Juke", "تيدا|Tiida", "مورانو|Murano", "GT-R" ],
+    "إنفينيتي": [ "QX80:Luxe@2019-@s,Sensory@2022-@m,Limited Edition@2020-2021@f,Black Edition@2023-2024@f,Autograph@2025-@f", "QX60|JX35:Premium@-2018@s,Comfort@-2018@m,Luxury@-2018@f,Luxe@2019-2021,Luxe@2022-@s,Sensory@2022-@m,Autograph@2022-@f", "QX70", "Q50:Premium@-2018@s,Luxe@2019-@s,Sport@@m,Sensory@2021-@m,Red Sport 400@2016-@f", "QX50|EX35:Luxe@2019-@s,Autograph@2019-@f,Sensory@2021-@m", "QX55:Luxe@2022-@s,Essential@2022-@m,Sensory@2022-@f", "Q70|Q70L|M37|M56|M35h", "Q60", "QX56", "FX|FX35|FX37|FX45|FX50" ],
+    "هيونداي": [ "النترا|Elantra|Elantra GT|Elantra N:GL@-2021@s,GLS@-2021,Smart@2021-@s,Comfort@2021-@m,Premium@2021-@f,Mid@2022-2023@m", "سوناتا|Sonata:GL@-2021@s,GL@2026-@m,GLS,GLS@2015-2019@m,GLS@2020-2021,GLS@2026-@m,Turbo Sport@2015-2019@f,Smart@2020-2023@s,Smart@2024-@m,Smart Plus@2021-2023@m,Comfort@2020-@m,Premium@2020-@f,Mid@2022-2023@m,L@2026-@s,LTD@2026-@f", "ازيرا|Azera|Grandeur:Smart@2020-2023@s,Smart Plus@2020-2023@m,Mid@2020-2023@m,Premium@2020-2023@f,Classic@2024-@s,Exclusive@2024-@m,Premium@2024-@m,Calligraphy@2024-@f,GL@2026-@s,GLS@2026-@m,LTD@2026-@m", "اكسنت|Accent:GL@-2022@s,GL@2026-@m,GLS@2026-@m,L@2026-@s,LTD@2026-@f,Smart@2021-@s,Smart Plus@2021-2024@m,Comfort@2021-2023@f,Comfort@2024-@m,Premium@2024-@f,Mid@2022-2023@f", "سنتافي|Santa Fe|Santa Fe Sport|Santa Fe XL:GL,GL@2026-@s,GLS,GLS,GLS@2026-@m,Smart@2021-@s,Smart Plus@2021-2024@m,Comfort@2020-@m,Mid@2022-2024@m,Premium@2020-2023@f,Premium@2024-@m,Calligraphy@2024-@f", "توسان|Tucson|ix35:GL@-2021@s,GL@2026-@s,Smart@2020-@s,Comfort@2020-@m,Premium@2020-2021@f,Premium@2022-2023@m,Premium@2024-@f,Ultimate@2022-2023@f", "كريتا|Creta|ix25:Smart@2020-@s,Comfort@2020-2023@m,Comfort@2024-@f,Premium@2020-2023@f,Mid@2022@m,GL@2026-@s,GLS@2026-@f", "كونا|Kona|Kona N:Smart@2020-@s,Comfort@2020-@m,Premium@2020-2021@f,Premium@2022-2023@m,Premium@2024-@f,Ultimate@2022-2023@f,L@2026-@s,GL@2026-@m,GLS@2026-@f", "باليسيد|Palisade:Smart@2021-2023@s,Comfort@2020-2022@m,Comfort@2023-@s,Premium@2020-2022@f,Calligraphy@2023-@f,Mid@2020-@m,GL@2026-@s,GLS@2026-@m", "فيلوستر|Veloster|Veloster N", "H1|Starex|Grand Starex", "فينيو|Venue", "i10|Grand i10", "ستاريا|Staria:Smart@2023-@s,Luxury@2022-@f,GL@2026-@s", "ايونيك 5|Ioniq 5|Ioniq 5 N", "جينيسيس|Genesis", "جينيسيس كوبيه|Genesis Coupe", "فيراكروز|Veracruz|ix55", "جيتز|Getz", "ماتريكس|Matrix|Lavita" ],
+    "كيا": [ "اوبتيما|Optima|Magentis", "كادينزا|Cadenza|K7", "بيجاس|Pegas|Soluto:LX@2020-@s,EX@2020-@f", "سيراتو|Cerato|Forte|Forte Koup|Spectra:L@2022-2023@s,LX@@m,EX@@m,SX@-2023@f", "سبورتاج|Sportage:LX@2022-@s,EX@2022-@m,SX@2022-@f", "ريو|Rio:LX@2020-2023@s,EX@2020-2023@f", "سورينتو|Sorento:LX@2021-@s,EX@2021-@f", "K5:LX@2021-@s,EX@2021-2023@f,EX@2024-@m,SX@2024-@f", "K3:LX@2020-@s,EX@2020-@m,GT-Line@2020-@f", "سيلتوس|Seltos:LX@2020-@s,EX@2020-2023@f,EX@2024-@m,SX@2024-@f", "سونيت|Sonet:LX@2021-@s,EX@2021-@f", "كارينز|Carens|Rondo:LX@2023-@s,EX@2023@m,EX@2024-@f,SX@2023@f", "K8:LX@2022-@s,EX@2022-@f", "كرنفال|Carnival|Sedona|Grand Carnival:LX@2021-@s,EX@2021-@f", "K4", "بيكانتو|Picanto|Morning", "تيلورايد|Telluride:LX@2020-@s,EX@2020-@m,SX@2020-@f", "سول|Soul", "ستينجر|Stinger", "K900|K9|Quoris", "موهافي|Mohave|Borrego", "EV6", "EV9" ],
+    "جينيسيس": [ "G80:Premier@2017-2021@s,Premium@2017-2021@m,Platinum@2017-@m,Prestige@2021-@s,Royal@2017-2022@f,Royal@2023-@m,Sport@2023-@f", "GV80:Prestige@2023-@s,Premium@2021-2022@s,Premium@2023-@m,Royal@2021-@f", "G70:Prestige@2018-@s,Platinum@2018-@m,Royal@2019-2021@f,Sport@2022-@f", "GV70:Prestige@2023-@s,Prestige Plus@2022@s,Prestige Plus@2023-@m,Premium@2022-@m,Platinum Sport@2023-@m,Royal@2022-@f", "G90:Prestige@2023-@s,Platinum@2023-@m,Royal@2023-@f", "GV60" ],
+    "سانج يونج": [ "ريكستون:Comfort@2022-@s,Luxury@2022-@m,Limited@2022-@f", "كوراندو:Comfort@2023-@s,Smart@2023-@m,Luxury@2023-@m,Limited@2023-@f", "تيفولي", "اكتيون", "كايرون", "موسو", "توريس:Smart@2023-@s,Luxury@2023-@m,Premium@2023-@m,Limited@2023-@f" ],
+    "مرسيدس": [ "سي كلاس|C-Class:Avantgarde,AMG Line", "اس كلاس|S-Class:AMG Line", "اي كلاس|E-Class:Avantgarde,Exclusive,AMG Line", "GLE|GLE-Class:AMG Line", "GLC|GLC-Class:AMG Line,Premium@2020-2023@m,Premium Plus@2020-2023@f", "CLA|CLA-Class:AMG Line", "جي كلاس|G-Class", "ML|ML-Class|M-Class", "SLK|SLK-Class", "GLS|GLS-Class:AMG Line", "A كلاس|A-Class:AMG Line", "CLS|CLS-Class:AMG Line", "GLA|GLA-Class:AMG Line", "B كلاس|B-Class", "V كلاس", "GL|GL-Class", "GLK|GLK-Class", "SL|SL-Class", "GLB|GLB-Class:AMG Line,Premium@2020-2023@m", "AMG GT|Mercedes-AMG GT", "مايباخ", "فيتو|Vito|Metris", "سبرنتر|Sprinter|eSprinter", "فيانو", "SLC|SLC-Class", "CLK|CLK-Class", "EQE|EQE-Class Sedan|EQE-Class SUV|EQE-Class|EQE SUV|EQE Sedan", "EQS|EQS-Class Sedan|EQS-Class SUV|EQS-Class|EQS SUV|EQS Sedan", "EQA", "EQB|EQB-Class" ],
+    "بي إم دبليو": [ "الفئة الخامسة|5-Series:M Sport,Luxury Line,Business", "الفئة السابعة|7-Series:M Sport,Individual", "الفئة الثالثة|3-Series:M Sport,Luxury Line", "X5:xLine,M Sport", "X6:M Sport", "X3:xLine,M Sport", "X1:xLine,M Sport", "X4:M Sport", "X2:M Sport", "X7:M Sport", "الفئة الرابعة|4-Series:M Sport", "الفئة الثانية|2-Series|M2", "الفئة الاولى|1-Series|1M", "الفئة السادسة|6-Series|M6", "الفئة الثامنة|8-Series|M8", "Z4", "M5", "M3", "M4", "i8", "iX", "i4", "i5", "i7" ],
+    "أودي": [ "A6|A6 allroad|allroad|S6|RS 6|RS 6 Avant:S line", "A8|A8 L|S8|A8 e|A8 L e", "A4|A4 allroad|S4|RS 4:S line,S line@2020-@f", "Q7|SQ7:S line@-2015@f,S line", "Q5|SQ5|Q5 e:S line", "Q8|SQ8|RS Q8:S line", "A5|S5|RS 5:S line", "Q3:S line@2012-@f", "A3|S3|RS 3:S line", "A7|S7|RS 7|A7 e:S line", "TT|TTS|TT RS", "R8", "e-tron|e-tron Sportback|Q8 e-tron" ],
+    "فولكس فاجن": [ "تيجوان|Tiguan|Tiguan Limited:S@-2020@s,SE@-2020@m,SEL@-2020@m,Sport@2017-2020@f,R-Line@2012-2016@f,R-Line@2021-@f,Trendline@2021-2022@s,Life@2021-2022@m,Life@2023-@s,Elegance", "طوارق|Touareg", "باسات|Passat:S@2012-2019@s,SE@2012-2019@m,SEL@2012-2019@m,Sport,Trendline@2020-@s,Highline@2020-@f", "جولف|Golf|Golf GTI|GTI|Golf R|Golf SportWagen:GTI@@m,R@2011-@f", "جيتا|Jetta|Jetta SportWagen|Jetta Wagon|Jetta GLI|GLI:S@-2019@s,SE@-2019@m,SEL@-2019@f,Trendline@2020-@s,Comfortline,Highline@2020-@f", "تيرامونت|Teramont|Atlas|Atlas Cross Sport:S@2018-2020@s,SEL@2018-2020@f,Trendline@2021-@s,Comfortline@2021-@m,Highline@2021@f,R-Line@2022-@f", "تي روك:Life@2021-@s,Style@2021-@m,R-Line@2021-@f", "ارتيون|Arteon:Elegance@2018-@s,R-Line@2018-@f", "بولو", "بيتل|Beetle|New Beetle", "CC|Passat CC", "سيروكو|Scirocco", "فايتون|Phaeton" ],
+    "بورش": [ "كاين|Cayenne:S@@m,GTS@-2017@m,GTS@2021-@m,Turbo@@f,Turbo S@2013-2017,Turbo S", "ماكان|Macan:S,S@2019-@m,GTS,Turbo@2015-@f", "باناميرا|Panamera:4@2010-@m,4S@2010-@m,GTS,GTS@2019-@m,Turbo@2010-@f", "911:Carrera@@s,Carrera S@@m,Turbo@@f,GT3", "بوكستر|Boxster|718 Boxster|718 Spyder:S,S@2015-2016@m,S,GTS@2015-2016@f,GTS", "كايمن|Cayman|718 Cayman:S,S@2015-2016@m,S,GTS@2015-2016@f,GTS", "تايكان|Taycan:4S@2020@s,4S@2021-@m,Turbo,Turbo S,GTS" ],
+    "مازيراتي": [ "غيبلي|Ghibli:S@2013-2017@f,S,GranSport,GranLusso,GT@2021-@s,Modena@2021-@m,Trofeo@2020-@f", "ليفانتي|Levante:S,GranSport,GranLusso,GT@2022-@s,Modena@2022-@m,Trofeo@2018-@f", "كواتروبورتي|Quattroporte:S,S@2013-2014@s,S@2015-2021@m,GranSport,GranLusso,Trofeo@2018-2023@f,GT@2022-2023@s,Modena@2022-2023@m", "جريكالي|Grecale:GT@2022-@s,Modena@2022-@m,Trofeo@2022-@f", "جران توريزمو|Granturismo:Modena,Trofeo", "جران كابريو|Grancabrio:Modena,Trofeo", "MC20" ],
+    "لامبورجيني": [ "اوروس|URUS:S@2023-2024@s,Performante@2022-@f", "هوراكان|Huracan|Huracán:EVO,Performante@2017-2019@f,STO@2021-2024@f,Tecnica", "افينتادور|Aventador:S@2016-2021@s,SVJ@2018-2021@f", "جالاردو|Gallardo", "مورسيلاجو|Murcielago|Murciélago", "ريفولتو|Revuelto" ],
+    "بنتلي": [ "كونتيننتال|Continental|Continental GT|Continental GTC:Speed@-2017,Speed,Azure@2022-,Mulliner", "بنتايجا|Bentayga:Speed@2019-,Azure@2022-,Mulliner,S@2021-", "فلاينج سبير|Flying Spur|Continental Flying Spur:Speed@-2019,Speed@2022-,Azure@2022-,Mulliner", "مولسان|Mulsanne", "ارناج|Arnage" ],
+    "رولز رويس": [ "قوست|Ghost:Black Badge@2016-", "رايث|Wraith:Black Badge@2016-2022", "كولينان|Cullinan:Black Badge@2019-", "فانتوم|Phantom", "داون|Dawn:Black Badge@2017-2023", "سبيكتر|Spectre" ],
+    "رنج روفر": [ "فوج|Range Rover|New Range Rover|Range Rover Vogue:HSE@-2021@s,HSE@2022-@m,SE@2022-@s,Vogue SE@-2021@m,Autobiography@@f,SV@2016-", "سبورت|Range Rover Sport:SE,SE@2023-2024@m,SE,HSE,HSE Dynamic,Autobiography@@f,SVR@2015-2022", "ايفوك|Range Rover Evoque|Evoque:Pure,Prestige,Dynamic,SE,HSE", "فيلار|Range Rover Velar|Velar:S@2018-@s,SE@2018-2024@m,HSE@2018-2024@f,R-Dynamic@2018-2024" ],
+    "لاند روفر": [ 'ديفندر|Defender|110" WB|90" WB:S@2020-@s,SE@2020-@m,HSE@2020-@m,X-Dynamic,X@2020-2025@f,V8@2022-', "ديسكفري|Discovery|LR3|LR4:S@2017-@s,SE@2017-@m,HSE@2017-@m,HSE Luxury@2017-@f,SE,HSE,HSE Luxury", "ديسكفري سبورت|Discovery Sport:S,SE,HSE", "فريلاندر|Freelander|Freelander 2|LR2" ],
+    "جاكوار": [ "F-Pace:Prestige,R-Sport,Portfolio,S@2016-@m,SVR@2019-@f", "XF:Premium Luxury,Portfolio,R-Sport,S", "XJ|XJ8|XJ6|XJR|XJ12:Premium Luxury,Portfolio,Supercharged,Autobiography", "XE", "E-Pace:S,SE,HSE,R-Dynamic", "F-Type", "I-Pace:S@2019-@s,SE@2019-@m,HSE@2019-@f", "XK|XK8" ],
+    "ميني": [ "كوبر|Cooper|Hardtop|Cooper Convertible|Cooper Coupe|Cooper Roadster:Cooper S@@m,John Cooper Works@@f", "كونتري مان|Countryman|Cooper Countryman:Cooper@@s,Cooper S,Cooper S@2024-@m,John Cooper Works,John Cooper Works@2024-@f", "كلوب مان|Clubman|Cooper Clubman:Cooper@@s,Cooper S,John Cooper Works", "باسمان|Paceman|Cooper Paceman" ],
+    "فولفو": [ "XC90:Momentum@2015-@s,R-Design@-2014@m,R-Design,Inscription", "XC60:Momentum@2014-2024@s,R-Design@-2024@m,Inscription@2014-2024@f", "S90:Momentum,R-Design,Inscription", "S60|S60CC:Momentum,Momentum@2022-2024@s,Inscription,Inscription@2022-2024@m,R-Design,R-Design@2022-2024@f", "XC40|EX40:Momentum,Inscription,R-Design", "S80", "V40", "EX30|EX30 CC" ],
+    "هوندا": [ "اكورد|Accord:LX@@s,LX Sport@2018-2022@m,EX@@m,EX-L@2019-2022@m,EX-L,Sport,Sport@2018-@f", "سيفيك|Civic|Civic Type R|Civic Si:DX@-2018@s,LX@-2018@m,LX Sport@2019-2021@s,LX@2022-@s,EX@-2018@m,RS@2016-2021@f,Sport@2022-@f,EXI@2022-@f", "سيتي|City:DX@-2021@s,DX@2024-@s,LX@-2018@m,LX Sport@2021-@m,EX@-2022@f,Sport@2023-@f", "CR-V:DX@2021-@s,LX@2024-@m,EX Plus@2018-2021@m,EX@2022-2024@m,Touring@-2024@f", "اوديسي|Odyssey:LX@@s,EX-L@@m,Touring@@f", "بايلوت|Pilot:LX@2022-2023@s,EX@-2021@s,EX@2024-@s,EX-L@@m,Sport@2024-@m,Touring@@f", "HR-V:DX@2021-@s,LX@-2020@s,LX@2021-@m,EX@@f", "ZR-V:LX@2023-@s,EX@2023-@f" ],
+    "مازدا": [ "CX-9:GS@@s,GT,LTD@2019-2021@m,Signature@2019-2021@f,Grade 3@2022-@s,Grade 1@2022-@m,High Plus@2022-@f", "3|Mazda3", "6|Mazda6:S@@s,R@-2020@f,R@2021-@m,Core@2021-@m,Ultra@2022-@f", "CX-5:GS@@s,GT@@m,GTX@2018-2021@f,Signature@2020-@f,Full Option@2019-@f,Ignite Edition@2023-@m", "CX-30:Core@2023-@s,Elite@2022-@f", "CX-3:GS@@s,GTX@@f", "2|Mazda2", "CX-7", "CX-60", "CX-90", "BT-50", "MX-5|MX-5 Miata|Miata", "RX-8", "626", "323" ],
+    "ميتسوبيشي": [ "باجيرو|Montero|Pajero:GLX@-2020@s,GLS@@f", "L200|Triton:GL@@s,GLX@-2021@m,GLX@2022-@f,GLS@-2021@f", "لانسر|Lancer|Lancer SportBack|Lancer Evolution:GLX,GLS", "اوتلاندير|Outlander:GLX@-2021@s,GLX,GLS@-2021@f", "اتراج|Attrage|Mirage G4:GLX", "ASX|Outlander Sport|RVR:GLX,GLX@2018-,GLS", "مونتيرو سبورت|Montero Sport|Pajero Sport:GLX@-2020@s,GLS@-2020@f,GLS@2021-", "اكسباندر|Xpander", "اكليبس كروس|Eclipse Cross:GLX@2018-@s,GLS@2018-@f", "ميراج|Mirage", "جالنت|Galant", "كانتر" ],
+    "سوزوكي": [ "ديزاير|Dzire|Swift Dzire:GL@@s,GLX@@f", "بالينو|Baleno:GL@@s,GLX@@f", "فرونكس|Fronx:GL,GLX", "سويفت|Swift:GL@@s,GLX@@f", "ارتيجا|Ertiga:GL@@s,GLX@@f", "جيمني|Jimny:GL@2021-@s,GLX,GLX@2021-@f", "جراند فيتارا|Grand Vitara:GL@2022-@s,GLX@2022-@f", "فيتارا|Vitara", "سيليريو|Celerio:GL,GLX", "سياز|Ciaz:GL@@s,GLX@@f", "كاري|Carry" ],
+    "إيسوزو": [ "ديماكس|D-Max", "MU-X", "NPR|NPR-HD|NPR/NPR-HD|NPR-XD", "NQR|NQR/NRR|NRR" ],
+    "بيجو": [ "3008:Active@@s,Allure@-2016@f,Allure@2017-@m,GT Line@2017-2022@f,GT@2023-@f", "5008:Active@2012-@s,Allure@2012-2021@m,Allure,GT Line@2012-@f,GT", "508:Active@2011-@s,Allure@2011-2014@f,Allure@2015-@m,GT Line@2015-2020@f,GT@2021-@f", "2008:Style,Allure@2014-2019@f,Allure@2022-@m,GT@2022-@f", "408:Allure,Allure@2024-@s,GT@2024-@f", "301", "208:Active@2013-@s,Allure@2013-2020@f,GT@2022-@f", "308:Active@2008-2018@s,Allure@2008-2018@m,GT Line@2008-2018@f,GT Line@2019-2021", "لاندتريك" ],
+    "رينو": [ "كوليوس:PE@@s,SE@-2024@m,LE@-2024@f,LE@2025-@m,LE Plus@2025-@f", "تاليسمان", "داستر:PE@@s,SE@@m,LE@@f", "ميجان:PE@-2021@s,SE@-2021@m,LE@-2021@m,LE+@-2021@f,Authentic@2022-@s,Techno@2022-@f", "سيمبول:PE@@s,LE@@f", "سافران", "اركانا", "فلوانس", "كابتشر", "كليو", "ماستر" ],
+    "فيات": [ "دوبلو", "500|500e:Lounge@2019-@m,Dolcevita@2020-@f", "تيبو", "بونتو", "لينيا", "500X", "دوكاتو|Ducato" ],
+    "سكودا": [ "اوكتافيا:Ambition,Ambition@2023-@s,Style,Style,Style@2026-@f,RS@-2025@f", "سوبيرب:Ambition,Style,Laurin & Klement", "كودياك:Ambition,Style,Style@2022-@m,Sportline@2022-@f,Laurin & Klement", "كاروك:Ambition@2023-@s,Style@2021-2022,Style@2023-@m,Sportline@2023-@f", "كوشاق", "فابيا", "رابيد" ],
+    "جيلي": [ "كولراي:GS@@s,GC@@m,GL@2024-@s,GK@2024-@m,GF@2023-@f,GF+@@f", "توجيلا:GL@@s,GF@-2023@f,GF@2024-@m,GF+@2024-@f", "مونجارو:GK@2023-@s,GF@2023-@m,GF+@2023-@f", "اوكافانجو:GC@2022-2023@s,GK@2022-2023@m,GK@2024-@s,GF@2022-@f", "بينراي:Basic@@s,Luxury@@f", "ازكارا:GL@-2021@s,GC@2022-@s,GL@2022-@m,GF@@f", "GS", "امجراند:GS@@s", "ستارراي:GL@2024-@s,GK@2024-@m,GF@2024-@m,GF+@2024-@f", "سيتي راي:GC@2025-@s,GK@2025-@m,GF+@2025-@f" ],
+    "شانجان": [ "السفن:Basic@@s,Advanced@@f", "CS95:Classic@@s,Platinum@@m,Royal@@f", "ايدو بلس:Trend@@s,Smart@@m,Limited@@f", "CS35 Plus:Trend@@s,Smart@@m,Limited@@f", "UNI-K:Elite", "UNI-T:Elite@@s,SVP@@f", "UNI-V:Limited@2023-2024,Limited@2025-@s,Sport@2025-@f,Elite@2025-@s", "CS85:Premium", "CS75 Plus:Smart@@s,Limited@-2023@f", "CS35", "CS75", "هنتر:Omega@2022-@s,Sigma@2022-@m,Delta@2022-@f", "ايدو:Trend@@s,Smart@@m,Limited@@f", "UNI-S:Elite" ],
+    "جي إيه سي": [ "GS8:GL@@s,GT@2024-@m,GX@2024-@f", "GS4:GS@@s,GB@2023-@m,GE@2023-@m,GL@2023-@f", "امباو:GE@2024-@s,GL@2024-@f", "GS3:GS@-2023@s,GE@-2023@f,GS@2024-", "GA4:1.5L@-2021@s,1.3T@-2021@f,GE@2023-", "GA8", "امكو:GL@2024-", "امزوم", "M8", "GN8", "GA6", "GS5:GE@@s,GL@@f" ],
+    "إم جي": [ "GT:STD@@s,COM@@m,LUX@@f", "5:STD@@s,COM@@m,LUX@@f", "ZS:STD@@s,COM@-2020@m,LUX@-2019@f,LUX@2020-@m,1.3T ZST@2020-2021@f,1.3T LUX@2022-@f", "3:Standard@@s,Comfort@@m,Luxury@@f", "6:STD@@s,COM@@m,LUX@@f", "RX5:STD@@s,COM@@m,DEL@2024-@m,LUX@2021-@f", "7:STD@2024-@s", "HS:Comfort@@s,Luxury@-2023@f,Luxury@2024-@m,PHEV COM@2024-@m,PHEV Luxury@2024-@f", "ون:STD@@s,Fashionable@-2023@m,LUX@-2023@f,COM@2024-@m,DEL@2024-@m,DEL (Sports Seat)@2024-@f", "RX8:STD@@s,Comfort@-2024@m,LUX@@m,Black Edition@@f", "4", "T60" ],
+    "شيري": [ "تيجو 4 برو:Comfort@@s,Luxury@2022-@m,Flagship@@f", "اريزو 6:Comfort@@s,Flagship@@f", "تيجو 2 برو:Comfort@-2024@s,Luxury@2023-2024@m,Trendy@2023-2024@f", "اريزو 3", "تيجو 8 برو", "تيجو 7 برو:Comfort@@s,Luxury@-2022@f,Luxury@2023-@m,Flagship@2023-@f", "اريزو 5:Basic@2023@s,Comfort@2023@m,Comfort@2024-@s,Luxury@@f", "تيجو 2:Basic@@s", "تيجو 7", "تيجو 8:Mid Option@@s,Full Option@@f", "تيجو 3", "تيجو 5", "اريزو 6 برو:Comfort@@s,Luxury@@m,Flagship@@f", "تيجو 9:Comfort@2025-@s,Luxury@2025-@m,Premium@2025-@f", "اريزو 8" ],
+    "هافال": [ "H6:Fashionable@2019-2021@s,Intelligent@2019-2021@m,Supreme@2019-2020@m,Supreme@2021@f,Supreme Panoramic@2019-2020@f,Basic@2022-2024@s,Active@2022-2024@m,Active@2025-@s,Active Plus@2023-@m,Premium@2022-@m,Premium (4WD)@2022-@f", "جوليان:Basic@2022-@s,Active@2022-2023@m,Active Plus@2023-@m,Premium@2022-@f", "H9:Comfort@-2022@s,Dignity@-2022@m,Dignity@2023-@s,Super Dignity@@f", "H2", "دارجو:Sport@@s,Adventure@@f", "H6 GT", "H7" ],
+    "بي واي دي": [ "اتو 3", "تشين بلس", "سونج بلس:Design (FWD)@2024-@s,Premium (AWD)@2024-@f", "هان", "سيل:Honor Elite@2024-", "تانج", "F3:GLI@-2018@s,GLXI@-2018@m,GSI@-2018@f,GLX-i@2019-2020@s,GS-i@2019-2020@f,Comfort@2021-@s,Luxury@2021-@f", "سيل 7", "اتو 8:Premium DM-i@2026-@s,Performance DM-p@2026-@f" ],
+    "جيتور": [ "T2:Comfort@2024-@s,Luxury@2024-@f", "X70:Comfort@@s,Luxury@@f", "داشينج:Comfort@@s,Luxury@@f", "X90:Standard@2022-@s,Luxury@2022-@f", "X70 Plus:Comfort@-2024@s,Luxury@-2024@f,Luxury@2025-", "X90 Plus:Comfort@-2024@s,1.6T Luxury@2025-@s,2.0T Luxury@@f", "T1:Comfort@2025-@s,Luxury@2025-@f", "X50" ],
+    "جريت وول": [ "وينجل 7", "وينجل 5", "باور:Elite@-2023@s,Pilot@-2023@m,Luxury@@m,Super Luxury@@f" ],
+    "تانك": [ "300:Challenger@@s,Conqueror@@f", "500:Business@@s,Business Urban@2024-@s,Elite@-2023@f,Elite@2024-@m,Rock Edition@2024-@f" ],
     "جاك": [ "JS3", "JS4", "J7", "T8", "JS6" ],
-    "هونشي": [ "H9", "H5", "HS5", "HS7", "E-HS9" ],
-    "ماكسوس": [ "D60", "T60", "D90", "G10", "V80", "V90", "G50" ],
-    "بايك": [ "X35", "X55", "X7", "BJ40", "D50", "BJ60", "BJ80" ]
+    "هونشي": [ "H9:Luxury@@s,Comfort@-2024@m,Executive@@f", "H5:Luxury@2024-@s,Flagship@@f", "HS5:Comfort@@s,Deluxe@@m", "HS7:Comfortable (AWD)@2024-@s,Luxury (AWD)@2024-@f", "E-HS9:Comfortable (7 Seats)@@s,Executive (6 Seats)@@m,Deluxe (6 Seats)@@f" ],
+    "ماكسوس": [ "D60:Elite@@s,Executive@@m,Executive Luxury@2023-@f", "T60", "D90:Elite (2WD)@@s,Executive (4WD)@2023-@m,Executive Luxury (4WD)@@f", "G10", "V80", "V90", "G50:Elite@@s,Executive@@m,Luxury@@f" ],
+    "بايك": [ "X35:Elite@@s,Luxury@@f", "X55", "X7:Elite@@s,Luxury@@m,Honor@@f", "BJ40", "D50", "BJ60", "BJ80" ]
 };
 
 function carMakesChipsInnerHtml(query, selected) {
