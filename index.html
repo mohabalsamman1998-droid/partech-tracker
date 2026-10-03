@@ -3033,7 +3033,7 @@ function bindVinCopyButtons(root) {
 }
 
 function carCleanText(s, max) {
-    return String(s == null ? "" : s).replace(/[\u0660-\u0669]/g, d => String(d.charCodeAt(0) - 1632)).replace(/[\u06F0-\u06F9]/g, d => String(d.charCodeAt(0) - 1776)).replace(/[\u061C\u200B-\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/g, "").replace(/\s+/g, " ").trim().slice(0, max || 40);
+    return String(s == null ? "" : s).replace(/[\u0660-\u0669]/g, d => String(d.charCodeAt(0) - 1632)).replace(/[\u06F0-\u06F9]/g, d => String(d.charCodeAt(0) - 1776)).replace(/[\u061C\u200B-\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/g, "").replace(/[\u0000-\u0008\u000E-\u001F\u007F]/g, "").replace(/\s+/g, " ").trim().slice(0, max || 40).replace(/[\uD800-\uDBFF]$/, "").trim();
 }
 
 function carNormalizeYear(raw, nowYear) {
@@ -3049,7 +3049,7 @@ function normalizeCar(raw, nowYear) {
     const make = carCleanText(raw.make, 30);
     const model = carCleanText(raw.model, 40);
     const year = carNormalizeYear(raw.year, nowYear);
-    const trim = carCleanText(raw.trim, 40);
+    const trim = carCleanText(raw.trim, 60);
     const level = carCleanLevel(raw.level);
     if (!make && !model && !year && !trim && !level) return null;
     const out = {
@@ -3070,7 +3070,7 @@ function carIsComplete(car) {
 function carLabelText(car) {
     if (!car || typeof car !== "object") return "";
     const core = [ car.make, car.model, car.year ].map(x => carCleanText(x, 40)).filter(Boolean).join(" ");
-    const t = carCleanText(car.trim, 40);
+    const t = carCleanText(car.trim, 60);
     const lv = carCleanLevel(car.level);
     let tail = t;
     if (lv && normalizeArabicSearch(lv) !== normalizeArabicSearch(t)) tail = t ? t + " (" + lv + ")" : lv;
@@ -3163,7 +3163,7 @@ function carTrimChoices(make, model, year) {
 }
 
 function carTrimLevel(make, model, year, trim) {
-    const n = normalizeArabicSearch(carCleanText(trim, 40));
+    const n = normalizeArabicSearch(carCleanText(trim, 60));
     if (!n) return "";
     const found = carFindCatalogModel(make, model);
     if (found) {
@@ -3179,17 +3179,25 @@ function carTrimLevel(make, model, year, trim) {
 }
 
 function carIsCatalogTrim(make, model, trim) {
-    const n = normalizeArabicSearch(carCleanText(trim, 40));
+    const n = normalizeArabicSearch(carCleanText(trim, 60));
     const found = n ? carFindCatalogModel(make, model) : null;
     return !!found && found.trimInfo.some(t => normalizeArabicSearch(t.name) === n);
 }
 
 function carLevelFromText(text) {
     const n = " " + normalizeArabicSearch(carCleanText(text, 60)).replace(/[^\p{L}\p{N}]+/gu, " ").trim() + " ";
-    if (/ (بدون|مو|without|not|non) /.test(n)) return "";
-    if (/ ((نص|نصف) (فل|فول|full)|(semi|half|mid) (full|option)) /.test(n)) return "نص فل";
-    if (/ (ستاندر|ستاندرد|ستاندارد|استاندر|استاندرد|استاندارد|standard) /.test(n)) return "ستاندر";
-    if (/ (فل|فول|full) /.test(n)) return "فل";
+    const neg = [ "بدون", "مو", "مب", "مش", "ما", "ماني", "ماهو", "مافي", "مافيه", "ليس", "غير", "لا", "بلا", "عدم", "without", "not", "non", "no" ];
+    const filler = [ "هو", "هي", "فيه", "فيها", "عنده", "عندها", "كان", "يكون" ];
+    const negatedAt = idx => {
+        const words = n.slice(0, idx).trim().split(" ").filter(Boolean);
+        while (words.length && filler.indexOf(words[words.length - 1]) !== -1) words.pop();
+        return words.length > 0 && neg.indexOf(words[words.length - 1]) !== -1;
+    };
+    const rules = [ [ / ((نص|نصف) (فل|فول|full)|(semi|half|mid) (full|option)) /, "نص فل" ], [ / (ستاندر|ستاندرد|ستاندارد|استاندر|استاندرد|استاندارد|standard) /, "ستاندر" ], [ / (فل|فول|full)(?! (size|sized|time|سايز)) /, "فل" ] ];
+    for (let i = 0; i < rules.length; i++) {
+        const m = rules[i][0].exec(n);
+        if (m) return negatedAt(m.index) ? "" : rules[i][1];
+    }
     return "";
 }
 
@@ -3219,7 +3227,7 @@ function carCanonModel(make, raw) {
 }
 
 function carCanonTrim(make, model, raw) {
-    const t = carCleanText(raw, 40);
+    const t = carCleanText(raw, 60);
     const n = normalizeArabicSearch(t);
     if (!n) return t;
     const hit = carTrimChoices(make, model).find(x => normalizeArabicSearch(x) === n);
@@ -3253,20 +3261,112 @@ function vinModelYearGuess(vin, nowYear) {
     return carNormalizeYear(base, nowYear);
 }
 
+function carFindModelByVinPrefix(make, text) {
+    const key = carVinKey(text);
+    if (key.length < 5) return null;
+    let best = null;
+    carCatalogModels(make).forEach(m => {
+        [ m.name ].concat(m.aliases).forEach(n => {
+            const k = carVinKey(n);
+            if (k.length >= 4 && k.length < key.length && key.indexOf(k) === 0 && /^[0-9]{2,4}$/.test(key.slice(k.length)) && (!best || k.length > best.len)) {
+                best = {
+                    model: m,
+                    rest: key.slice(k.length),
+                    len: k.length
+                };
+            }
+        });
+    });
+    return best;
+}
+
+function carVinNumber(x) {
+    const n = parseFloat(String(x == null ? "" : x));
+    return n > 0 ? n : 0;
+}
+
+function carVinEngineLabel(res, make) {
+    if (!res) return "";
+    const fuel = String(res.FuelTypePrimary == null ? "" : res.FuelTypePrimary);
+    const elec = String(res.ElectrificationLevel == null ? "" : res.ElectrificationLevel);
+    if (/BEV/i.test(elec) || /^electric$/i.test(fuel.trim())) return "كهربائية";
+    const disp = carVinNumber(res.DisplacementL);
+    const dispTxt = disp > 0 && disp < 20 ? disp.toFixed(1) : "";
+    const cyl = Math.round(carVinNumber(res.EngineCylinders));
+    const config = String(res.EngineConfiguration == null ? "" : res.EngineConfiguration);
+    const parts = [];
+    if ([ "دودج", "رام", "جيب", "كرايسلر" ].indexOf(make) !== -1 && cyl === 8 && [ "5.7", "6.1", "6.2", "6.4" ].indexOf(dispTxt) !== -1) parts.push("هيمي");
+    if (dispTxt) parts.push(dispTxt + "L");
+    if (cyl >= 6 && (/v-?shaped/i.test(config) || cyl >= 8)) parts.push("V" + cyl); else if (!dispTxt && cyl > 0) parts.push(cyl + " سلندر");
+    if (/^yes/i.test(String(res.Turbo == null ? "" : res.Turbo).trim())) parts.push("تيربو");
+    if (/diesel/i.test(fuel)) parts.push("ديزل");
+    if (/hev|hybrid/i.test(elec)) parts.push("هايبرد");
+    return parts.join(" ");
+}
+
+function carVinBodyLabel(res) {
+    if (!res) return "";
+    const cab = String(res.BodyCabType == null ? "" : res.BodyCabType);
+    if (/crew/i.test(cab)) return "غمارتين";
+    if (/extra|super|quad|double|king|extended/i.test(cab)) return "غمارة ونص";
+    if (/regular|standard|single/i.test(cab)) return "غمارة";
+    const body = String(res.BodyClass == null ? "" : res.BodyClass);
+    if (/coupe/i.test(body)) return "كوبيه";
+    if (/convertible|cabriolet|roadster/i.test(body)) return "مكشوفة";
+    if (/hatchback|liftback/i.test(body)) return "هاتشباك";
+    if (/wagon/i.test(body)) return "ستيشن";
+    if (/minivan/i.test(body)) return "ميني فان";
+    if (/van/i.test(body)) return "فان";
+    return "";
+}
+
+function carVinDriveLabel(res) {
+    if (!res) return "";
+    const d = String(res.DriveType == null ? "" : res.DriveType);
+    if (/awd|all-wheel/i.test(d)) return "AWD";
+    if (/4wd|4x4|4-wheel/i.test(d)) return "4x4";
+    const truck = /pickup|truck/i.test(String(res.BodyClass == null ? "" : res.BodyClass)) || /crew|extra|super|quad|double|king|extended|regular|standard|single/i.test(String(res.BodyCabType == null ? "" : res.BodyCabType));
+    if (/4x2/i.test(d) && truck) return "4x2";
+    return "";
+}
+
+function carVinSpecTokens(res, make, seriesText, shownKeys) {
+    const tokens = [];
+    const sk = carVinKey(seriesText);
+    if (/^[0-9]{2,4}[a-z]{0,2}$/.test(sk) && !shownKeys.some(k => k && k.indexOf(sk) !== -1)) tokens.push(carCleanText(seriesText, 30));
+    const manual = /manual/i.test(String(res && res.TransmissionStyle || ""));
+    [ carVinEngineLabel(res, make), carVinBodyLabel(res), carVinDriveLabel(res), manual ? "يدوي" : "" ].forEach(t => {
+        if (t) tokens.push(t);
+    });
+    return tokens;
+}
+
+function carVinJoinSpec(tokens) {
+    const list = tokens.filter(Boolean);
+    while (list.length > 1 && list.join(" ").length > 60) list.pop();
+    return list.join(" ");
+}
+
 function carFromVinDecode(res, vin, nowYear) {
     if (!res || typeof res !== "object") return null;
     let makeText = carCleanText(res.Make, 30);
     const modelText = carCleanText(res.Model, 40);
     if (!makeText) return null;
+    const errs = String(res.ErrorCode == null ? "" : res.ErrorCode).split(",").map(x => x.trim());
+    const noData = errs.indexOf("7") !== -1 || errs.indexOf("8") !== -1;
+    if (noData && !modelText) return null;
     if (carVinKey(makeText) === "landrover" && carVinKey(modelText).indexOf("rangerover") === 0) makeText = "Range Rover";
     const make = carCanonMake(makeText);
     const known = CAR_MAKES.indexOf(make) !== -1;
-    const found = known ? carFindModelByVinText(make, modelText) || carFindModelByVinText(make, res.Series) : null;
-    const yearApi = carNormalizeYear(res.ModelYear, nowYear);
+    const byModel = known ? carFindModelByVinText(make, modelText) : null;
+    const bySeries = known && !byModel ? carFindModelByVinText(make, res.Series) : null;
+    const byPrefix = known && !byModel && !bySeries ? carFindModelByVinPrefix(make, modelText) : null;
+    const found = byModel || bySeries || (byPrefix ? byPrefix.model : null);
+    const yearApi = noData ? null : carNormalizeYear(res.ModelYear, nowYear);
     const year = yearApi || vinModelYearGuess(vin, nowYear);
+    const trimRaw = carCleanText(res.Trim, 80);
     let trim = "";
     if (found) {
-        const trimRaw = carCleanText(res.Trim, 80);
         const wk = carVinKey(trimRaw);
         const whole = wk ? found.trimInfo.find(t => carVinKey(t.name) === wk) : null;
         const keys = whole ? [ wk ] : trimRaw.split("/").map(x => carVinKey(x)).filter(Boolean);
@@ -3276,18 +3376,50 @@ function carFromVinDecode(res, vin, nowYear) {
         });
         if (hits.length === 1) trim = hits[0];
     }
+    const shownKeys = (found ? [ found.name ].concat(found.aliases) : [ modelText ]).map(carVinKey);
+    const extra = carVinSpecTokens(res, make, carCleanText(res.Series, 30) || (byPrefix ? byPrefix.rest : ""), shownKeys);
+    const trimTxt = trim ? "" : carCleanText(trimRaw, 40);
+    const specText = carVinJoinSpec([ trimTxt ].concat(extra));
+    const catalogHasTrims = !!found && carTrimInfoForYear(make, found.name, year).length > 0;
     const shown = makeText.toLowerCase().replace(/(^|[ -])([a-z])/g, (m, a, b) => a + b.toUpperCase());
     return {
         known: known,
         make: known ? make : "",
         makeOtherText: known ? "" : shown,
-        model: found ? found.name : known ? "" : modelText,
+        model: found ? found.name : modelText,
         rawModel: modelText,
         modelMatched: !!found,
         year: year,
         yearSource: yearApi ? "service" : year ? "guess" : "",
-        trim: trim
+        trim: trim,
+        specExtra: carVinJoinSpec(extra),
+        specText: specText,
+        fillTrim: !trim && !!specText && (!!trimTxt || !catalogHasTrims)
     };
+}
+
+function carGateModelKey(st) {
+    const make = st.makeOther ? "" : st.make;
+    const found = make ? carFindCatalogModel(make, st.model) : null;
+    return found ? found.name : "";
+}
+
+function carGateDropTrimOnModelSwitch(st) {
+    const make = st.makeOther ? "" : st.make;
+    const next = carGateModelKey(st);
+    const trim = carCleanText(st.trim, 60);
+    if (!make || !next || !trim || st.trimUnknown) return false;
+    if (carIsCatalogTrim(make, next, trim)) return false;
+    const key = normalizeArabicSearch(trim);
+    const ofOtherModel = st.trimSrc === "vin" || carCatalogModels(make).some(m => m.name !== next && m.trimInfo.some(t => normalizeArabicSearch(t.name) === key));
+    if (!ofOtherModel) return false;
+    st.trim = "";
+    st.trimSrc = "";
+    if (st.levelSrc === "auto") {
+        st.level = "";
+        st.levelSrc = "";
+    }
+    return true;
 }
 
 function carGateEditSig(st) {
@@ -3301,6 +3433,7 @@ function carGateApplyVinInfo(st, info) {
     if (prevMake && prevMake !== newMake) {
         st.model = "";
         st.trim = "";
+        st.trimSrc = "";
         st.trimUnknown = false;
         st.level = "";
         st.levelSrc = "";
@@ -3314,6 +3447,7 @@ function carGateApplyVinInfo(st, info) {
         const sameModel = !prevKey || prevKey === carVinKey(info.model) || !!prevHit && prevHit.name === info.model;
         if (!sameModel) {
             st.trim = "";
+            st.trimSrc = "";
             st.trimUnknown = false;
         }
         st.model = info.model;
@@ -3323,6 +3457,14 @@ function carGateApplyVinInfo(st, info) {
     if (info.trim) {
         st.trim = info.trim;
         st.trimUnknown = false;
+        st.trimSrc = "vin";
+    } else if (info.fillTrim && (st.trimSrc === "vin" || !carCleanText(st.trim, 60))) {
+        st.trim = carCleanText(info.specText, 60);
+        st.trimUnknown = false;
+        st.trimSrc = "vin";
+    } else if (st.trimSrc === "vin") {
+        st.trim = "";
+        st.trimSrc = "";
     }
     carGateApplyYear(st);
     carGateApplyAutoLevel(st);
@@ -3339,9 +3481,11 @@ function carGateVinNote(info, failed, yearGuess) {
     }
     const got = [ info.known ? info.make : info.makeOtherText, info.model, info.year ].filter(Boolean).join(" ");
     let text = "تعبّت من الشاص: " + got;
-    if (!info.modelMatched && info.known && info.rawModel) text += ' — الموديل بالشاص "' + info.rawModel + '" مو بالقائمة، اختره أو اكتبه';
+    if (!info.modelMatched && info.known && info.rawModel) text += ' — الموديل بالشاص "' + info.rawModel + '" مو بالقائمة، انكتب كما هو (عدّله لو لازم)';
     if (info.yearSource === "guess") text += " — السنة تخمين من الشاص، تأكد منها";
-    text += " — راجع واختر الفئة";
+    const filled = !!info.trim || info.fillTrim && !!info.specText;
+    if (info.trim) text += " — الفئة: " + info.trim + (info.specExtra ? " · " + info.specExtra : ""); else if (info.fillTrim) text += " — الفئة: " + info.specText; else if (info.specExtra) text += " — مواصفات الشاص: " + info.specExtra;
+    text += filled ? " — راجع" : " — راجع واختر الفئة";
     return {
         tone: info.modelMatched || !info.known ? "ok" : "warn",
         text: text
@@ -3415,7 +3559,8 @@ function carGateTrimHintHtml(st) {
         if (!y) msg = "اختر سنة الصنع لتظهر الفئات المتوفرة بها"; else if (!carTrimInfoForYear(make, st.model, y).length) msg = "ما في فئات مسجّلة لموديل " + y + " — اكتب الفئة أو اختر غير معروفة"; else msg = "الفئات المتوفرة لموديل " + y;
     }
     const note = st.trimNote ? '<span class="text-rust">' + escapeHtml(st.trimNote) + "</span>" : "";
-    const body = [ note, escapeHtml(msg) ].filter(Boolean).join(" — ");
+    const fromVin = st.trimSrc === "vin" ? '<span class="text-green">الفئة من رقم الشاص — عدّلها أو اختر من القائمة</span>' : "";
+    const body = [ note, fromVin, escapeHtml(msg) ].filter(Boolean).join(" — ");
     return body ? '<div class="add-part-hint">' + body + "</div>" : "";
 }
 
@@ -3457,6 +3602,7 @@ function carGateInitialState(car, vin) {
         model: c.model || "",
         year: c.year || null,
         trim: trim,
+        trimSrc: "",
         trimUnknown: !!(c.make && !trim),
         level: level,
         levelSrc: level ? level === derived ? "auto" : "manual" : "",
@@ -3492,13 +3638,13 @@ function carGateMissing(st) {
     if (!make) return "make";
     if (!carCleanText(st.model, 40)) return "model";
     if (!carNormalizeYear(st.year)) return "year";
-    if (!st.trimUnknown && !carCleanText(st.trim, 40) && !carCleanLevel(st.level)) return "trim";
+    if (!st.trimUnknown && !carCleanText(st.trim, 60) && !carCleanLevel(st.level)) return "trim";
     return "";
 }
 
 function carGateApplyAutoLevel(st) {
     const make = st.makeOther ? carCanonMake(st.makeOtherText) : st.make;
-    const trim = st.trimUnknown ? "" : carCleanText(st.trim, 40);
+    const trim = st.trimUnknown ? "" : carCleanText(st.trim, 60);
     const lv = trim ? carTrimLevel(make, st.model, st.year, trim) : "";
     if (lv) {
         st.level = lv;
@@ -3514,8 +3660,8 @@ function carGateApplyYear(st) {
     st.trimNote = "";
     const make = st.makeOther ? "" : st.make;
     const y = carNormalizeYear(st.year);
-    const trim = carCleanText(st.trim, 40);
-    if (y && trim && !st.trimUnknown) {
+    const trim = carCleanText(st.trim, 60);
+    if (y && trim && !st.trimUnknown && st.trimSrc !== "vin") {
         const found = carFindCatalogModel(make, st.model);
         const n = normalizeArabicSearch(trim);
         const known = !!found && found.trimInfo.some(t => normalizeArabicSearch(t.name) === n);
@@ -3698,6 +3844,7 @@ function openCarGate(opts) {
         const resetModelAndTrim = () => {
             st.model = "";
             st.trim = "";
+            st.trimSrc = "";
             st.trimUnknown = false;
             st.level = "";
             st.levelSrc = "";
@@ -3728,8 +3875,13 @@ function openCarGate(opts) {
         st.makeOtherText = makeOtherInput.value;
     });
     modelInput.addEventListener("input", () => {
+        const oldTrim = st.trim;
         st.model = modelInput.value;
         st.trimNote = "";
+        if (carGateDropTrimOnModelSwitch(st)) {
+            st.trimNote = "الفئة " + oldTrim + " كانت للموديل السابق — اختر الفئة";
+            trimInput.value = "";
+        }
         redrawModels();
         redrawTrims();
     });
@@ -3737,9 +3889,14 @@ function openCarGate(opts) {
         const btn = e.target.closest("button");
         const name = btn && btn.getAttribute("data-car-gate-model");
         if (!name) return;
+        const oldTrim = st.trim;
         st.model = name;
         st.trimNote = "";
         modelInput.value = name;
+        if (carGateDropTrimOnModelSwitch(st)) {
+            st.trimNote = "الفئة " + oldTrim + " كانت للموديل السابق — اختر الفئة";
+            trimInput.value = "";
+        }
         redrawModels();
         redrawTrims();
     });
@@ -3753,6 +3910,7 @@ function openCarGate(opts) {
         const btn = e.target.closest("button");
         if (!btn) return;
         st.trimNote = "";
+        st.trimSrc = "";
         if (btn.hasAttribute("data-car-gate-trim-unknown")) {
             st.trimUnknown = !st.trimUnknown;
             if (st.trimUnknown) {
@@ -3770,6 +3928,7 @@ function openCarGate(opts) {
     });
     trimInput.addEventListener("input", () => {
         st.trim = trimInput.value;
+        st.trimSrc = "";
         st.trimUnknown = false;
         st.trimNote = "";
         redrawTrims();
@@ -14027,15 +14186,16 @@ async function exportAllDataToExcel() {
             const costTotal = countsCost ? round2(costPrice * qty) : null;
             const sellTotal = hasSell ? round2(sellPriceUnit * qty) : null;
             const profit = countsCost && hasSell ? round2(sellTotal - costTotal) : null;
+            const oc = normalizeCar(o.car) || {};
             analysisRows.push({
                 "رقم الطلب": o.orderNumber,
                 "الطلبية/السيارة": o.orderLabel || "",
                 "السيارة": orderCarLabel(o),
-                "الماركة": o.car && o.car.make || "",
-                "الموديل": o.car && o.car.model || "",
-                "سنة الصنع": o.car && o.car.year || "",
-                "الفئة": o.car && o.car.trim || "",
-                "المستوى": o.car && (o.car.level || carCleanLevel(o.car.trim)) || "",
+                "الماركة": oc.make || "",
+                "الموديل": oc.model || "",
+                "سنة الصنع": oc.year || "",
+                "الفئة": oc.trim || "",
+                "المستوى": oc.level || carCleanLevel(oc.trim) || "",
                 "تاريخ الإنشاء": o.createdAt || "",
                 "تاريخ التوريد": o.suppliedAt || "",
                 "مؤكدة": o.confirmed ? "نعم" : "لا",
