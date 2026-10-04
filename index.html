@@ -3367,6 +3367,27 @@ function carVinJoinSpec(tokens) {
     return list.join(" ");
 }
 
+function carVinLowConf(res, vin) {
+    if (!res || typeof res !== "object" || !carCleanText(res.Make, 30)) return false;
+    const v = normalizeVin(vin || res.VIN);
+    if (v.length !== 17 || "12345".indexOf(v.charAt(0)) !== -1) return false;
+    const errs = String(res.ErrorCode == null ? "" : res.ErrorCode).split(",").map(x => x.trim());
+    return [ "1", "11", "14", "400" ].some(e => errs.indexOf(e) !== -1);
+}
+
+function carVinSafeRes(res) {
+    const drop = [ "EngineModel", "DisplacementL", "DisplacementCC", "DisplacementCI", "EngineCylinders", "EngineConfiguration", "EngineHP", "EngineHP_to", "EngineKW", "FuelTypePrimary", "FuelTypeSecondary", "FuelInjectionType", "Turbo", "OtherEngineInfo", "TransmissionStyle", "TransmissionSpeeds", "DriveType", "ElectrificationLevel", "Series", "Series2" ];
+    const out = {};
+    Object.keys(res || {}).forEach(k => {
+        if (drop.indexOf(k) === -1) out[k] = res[k];
+    });
+    return out;
+}
+
+function carVinLowConfWarn() {
+    return "قراءة تقريبية (سيارة غير أمريكية): الموديل على مستوى العائلة، والمحرك وناقل الحركة والدفع مخفيّة لأنها غير مؤكدة";
+}
+
 function carFromVinDecode(res, vin, nowYear) {
     if (!res || typeof res !== "object") return null;
     let makeText = carCleanText(res.Make, 30);
@@ -3397,12 +3418,13 @@ function carFromVinDecode(res, vin, nowYear) {
         if (hits.length === 1) trim = hits[0];
     }
     const shownKeys = (found ? [ found.name ].concat(found.aliases) : [ modelText ]).map(carVinKey);
-    const extra = carVinSpecTokens(res, make, carCleanText(res.Series, 30) || (byPrefix ? byPrefix.rest : ""), shownKeys);
-    const trimTxt = trim ? "" : carCleanText(trimRaw, 40);
+    const lowConf = carVinLowConf(res, vin);
+    const extra = lowConf ? [] : carVinSpecTokens(res, make, carCleanText(res.Series, 30) || (byPrefix ? byPrefix.rest : ""), shownKeys);
+    const trimTxt = trim || lowConf ? "" : carCleanText(trimRaw, 40);
     const specText = carVinJoinSpec([ trimTxt ].concat(extra));
     const catalogHasTrims = !!found && carTrimInfoForYear(make, found.name, year).length > 0;
     const shown = makeText.toLowerCase().replace(/(^|[ -])([a-z])/g, (m, a, b) => a + b.toUpperCase());
-    return {
+    const out = {
         known: known,
         make: known ? make : "",
         makeOtherText: known ? "" : shown,
@@ -3416,6 +3438,8 @@ function carFromVinDecode(res, vin, nowYear) {
         specText: specText,
         fillTrim: !trim && !!specText && (!!trimTxt || !catalogHasTrims)
     };
+    if (lowConf) out.lowConf = true;
+    return out;
 }
 
 function carGateModelKey(st) {
@@ -3653,9 +3677,10 @@ function carVinCardHtml(spec, open) {
         img = '<div class="car-vin-img"><small>جاري البحث عن صورة…</small></div>';
     }
     const head = spec.headline ? '<div class="car-vin-head">⚙️ ' + escapeHtml(spec.headline) + "</div>" : "";
+    const warn = spec.warn ? '<div class="add-part-hint"><span class="text-amber">' + escapeHtml(spec.warn) + "</span></div>" : "";
     const details = rows ? '<details class="car-vin-details"' + (open ? " open" : "") + '><summary>كل مواصفات الشاص</summary><div class="car-vin-rows">' + rows + "</div></details>" : "";
     if (!img && !head && !details) return "";
-    return '<div class="car-vin-card">' + img + head + details + "</div>";
+    return '<div class="car-vin-card">' + img + head + warn + details + "</div>";
 }
 
 function carBindVinCard(el) {
@@ -3738,6 +3763,643 @@ const CAR_WMI = {
     "هافال|جريت وول|تانك": "LGW",
     "هونشي|مازدا": "LFB LFP",
     "هيونداي|كيا": "3KM 3KP 5XY 7YA XWE Z94"
+};
+
+const CAR_VDS = {
+    KL1: [ "4-9", {
+        AVEO: "SA69WJ SF08DJ SF48D9 SF48DJ SF48WJ SF697J SF69D9 SF69DJ SF69TJ SF69W9 SF69WJ TF4839 TF48F9 TF48X9 TF6939 TF69F9 TF69X9",
+        CAPTIVA: "CD2669 CD26GJ CD26RJ CF2649 CF2699 CF26FJ CF26UJ CG2669 CG2699 CG26FJ CG26RJ",
+        CRUZE: "JA68Y9 JA6959 JA69RJ JA69Y9 JF3559 JF35E9 JF35L9 JF35Y9 JF6859 JF68E9 JF68Y9 JF6959 JF69E9 JF69RJ JF69Y9",
+        EPICA: "LF69RJ",
+        KALOS: "SF48A1 SF48T1 SF6971 SF69A1",
+        LACETTI: "NF1961 NF196J NF197J NF4861 NF486J NF4871 NF487J",
+        MALIBU: "GA69U9 GF6919",
+        MATIZ: "4M11CD",
+        NUBIRA: "NF3531",
+        ORLANDO: "YA7559 YA75Y9 YF7559 YF7589 YF75Y9",
+        SPARK: "KF484J MF4819 MF48D9",
+        TRAX: "BF76E9 BF76L9 BG7689 BG76L9"
+    } ],
+    KLA: [ "4-7", {
+        KALOS: "SF48 SF69",
+        LACETTI: "NF48",
+        LANOS: "TF08 TF48 TF69",
+        MATIZ: "0M11 4M11",
+        NUBIRA: "JF35 JF48 JF69 NF19",
+        TACUMA: "UF75"
+    } ],
+    KLY: [ "4-5", {
+        MATIZ: "4A",
+        TICO: "3S"
+    } ],
+    KMF: [ "7-8", {
+        "H-1": "7H 7J 7K",
+        "H-100": "7A 7F",
+        H350: "7R"
+    } ],
+    KMH: [ "4-7", {
+        ACCENT: "CG51 CH31 CH51 CM31 VA31 VD21",
+        ATOS: "AB51 AC51 AG51 AH51",
+        COUPE: "HM61 HN61",
+        ELANTRA: "DG41 DH41 DM41 DM51 DN41 DN51",
+        GENESIS: "GN41",
+        GETZ: "BT31 BT51 BU31 BU51",
+        GRANDEUR: "FC41",
+        "H-1": "WH81 WK81",
+        I30: "DB51 DB81 DC51 DC81",
+        I40: "LB41 LB81 LC41 LC81 LD81 LE81",
+        IONIQ: "C651 C751 C851",
+        IX55: "NU81",
+        KONA: "HA81 HC81 K181 K281 K381 K581",
+        LANTRA: "JF31",
+        MATRIX: "PM81 PN81",
+        "SANTA FE": "S381 S481 S581 SB81 SC81 SG81 SH81 SN81 SR81 ST81 SU81 SW81 SX81",
+        SONATA: "EC41 EN41 ET41 EU41",
+        TERRACAN: "NM81",
+        TRAJET: "MH81",
+        TUCSON: "JM81 JN81",
+        VELOSTER: "TC61"
+    } ],
+    KMX: [ "7-8", {
+        GALLOPER: "1C"
+    } ],
+    KNA: [ "4-5", {
+        CARENS: "FG HG HH HT HU",
+        EV6: "C4 C5",
+        EV9: "AE",
+        MAGENTIS: "GE",
+        NIRO: "CB CC CR",
+        OPTIMA: "GN GT GU GW",
+        PICANTO: "B2 B3 BA BE BJ BX",
+        RIO: "DB DC DE DH DM DN",
+        SORENTO: "JC KU PH RH",
+        SOUL: "J2 J3 JG JN JP JT JX",
+        STINGER: "E5",
+        STONIC: "D6 DA"
+    } ],
+    KNE: [ "4-7", {
+        CARENS: "FC52 FG52",
+        CARNIVAL: "MB75 UP75",
+        CERATO: "FE22 FE24",
+        K2500: "SD01 SE01 SE06",
+        MAGENTIS: "GD22 GE22",
+        PICANTO: "BA24",
+        PREGIO: "TB24",
+        PRIDE: "DA23 DA24",
+        RETONA: "CE22",
+        RIO: "DC22 DC24 DE22 DE24",
+        SEPHIA: "FA22 FA24",
+        SHUMA: "FB24",
+        SORENTO: "JC52",
+        SPORTAGE: "JA55 JE55"
+    } ],
+    KPA: [ "4-5", {
+        ACTYON: "CA",
+        MUSSO: "VA X6"
+    } ],
+    KPT: [ "4-6", {
+        ACTYON: "C0B",
+        KORANDO: "60A A0B L2B",
+        KYRON: "S0A",
+        MUSSO: "E0B",
+        REXTON: "40B G0B G0C",
+        RODIUS: "N0B",
+        TIVOLI: "20A 20B 26A 26B"
+    } ],
+    MAL: [ "4-5", {
+        ATOS: "AB AC",
+        GETZ: "BT",
+        I10: "AM AN",
+        I20: "BA BB BC"
+    } ],
+    NLA: [ "4-5", {
+        CITY: "GE",
+        CIVIC: "ES FB FC FD"
+    } ],
+    NLH: [ "4-8", {
+        ACCENT: "CM41A CM41V CN41A CN41C CN41V",
+        BAYON: "BM81G BM81H BN81G BN81H",
+        I10: "A751A A751L A851A A851C A851L DM51A DM51C DN51A DP51F DR51D",
+        I20: "B251B B251P B351A B351B B351C BA51B BA51C BA51P BB51B BB51C BL51H BM51G BM51H BN51G BN51H BR51G",
+        MATRIX: "PM81C PM81U PN81C"
+    } ],
+    NLJ: [ "4-5", {
+        "H-1": "WV"
+    } ],
+    NMT: [ "6-8", {
+        AURIS: "56E 58E",
+        "C-HR": "3BX 3FX",
+        COROLLA: "20E 22E 28E 3BE 3JE",
+        VERSO: "15R 16R 26R"
+    } ],
+    SAD: [ "4-5", {
+        "E-PACE": "FA",
+        "F-PACE": "CA",
+        "I-PACE": "HA"
+    } ],
+    SAJ: [ "4-7", {
+        "F-TYPE": "AJ63 DA1B DA5B",
+        "S-TYPE": "AA02 AB01 AB02",
+        "X-TYPE": "AA51 AB51 AB52 AB53 AE54 AF51 AF52 AF56",
+        XE: "AA4B AB4B AB4D",
+        XF: "AA04 AA05 AA06 AA07 AJ05 BA2B BA4B BB2B BB4B",
+        XJ: "AA16 AA18 AA71 AA72 AJ12 JFAL JNAE JPAL NX27",
+        XK: "AA41 AA42 AA43 AA44 JGAE"
+    } ],
+    SAL: [ "4-5", {
+        DEFENDER: "EA LD",
+        DISCOVERY: "LA LJ LT RA",
+        FREELANDER: "FA FB LN",
+        "RANGE ROVER": "GA KA LM LP",
+        "RANGE ROVER EVOQUE": "ZA"
+    } ],
+    SB1: [ "7-8", {
+        AURIS: "6E JE",
+        AVENSIS: "5L 6L BN",
+        CARINA: "BK",
+        COROLLA: "0E 2E 8E AE BE CE EB"
+    } ],
+    SCA: [ "6-7", {
+        GHOST: "4S",
+        PHANTOM: "68"
+    } ],
+    SCB: [ "7-8", {
+        MULSANNE: "3Y"
+    } ],
+    SFA: [ "4-5", {
+        ESCORT: "VX"
+    } ],
+    SHH: [ "4-5", {
+        ACCORD: "CC CE CG",
+        CIVIC: "EP EU FK FN MA MB MC",
+        JAZZ: "GG"
+    } ],
+    SHS: [ "4-5", {
+        "CR-V": "RD RE"
+    } ],
+    SJA: [ "5-7", {
+        BENTAYGA: "B14"
+    } ],
+    SJN: [ "7-8", {
+        ALMERA: "N1",
+        JUKE: "F1",
+        LEAF: "ZE",
+        MICRA: "K1",
+        NOTE: "E1",
+        PRIMERA: "P1",
+        QASHQAI: "J1"
+    } ],
+    SUF: [ "4-5", {
+        126: "12"
+    } ],
+    TMA: [ "4-5", {
+        I30: "D2 D3 DB DC H1 H2 H3 H5 HC",
+        IX20: "PT PU",
+        IX35: "JU",
+        KONA: "K3",
+        TUCSON: "J2 J3 JA JB JC JD JE",
+        VENGA: "EG EH EK"
+    } ],
+    TMB: [ "4-8", {
+        CITIGO: "ZZZAA",
+        ELROQ: "NC7NY NC9NY NH9NY",
+        ENYAQ: "EC9NY GE9NY GF7NY GF9NY GH9NY GJ9NY JB7NY JC7NY JC9NY LE7NY LE9NY LF9NY LH9NY LJ9NY",
+        FABIA: "000PJ 1JB5J AA25J AA65J AC25J AC65J AD25J AE25J AE65J AF25J AF65J AH25J AH65J BA25J BA65J BC25J BC26Y BC46Y BC65J BD25J BD26Y BD46Y BD65J BE25J BE26Y BE46Y BE65J BF25J BF65J BG25J BG65J BH25J BH65J BS26Y BS46Y BX26Y BY26Y BZ26Y CA25J CB26Y CB46Y CC25J CC26Y CC46Y CC65J CD25J CD26Y CD46Y CD65J CF25J CF46Y CF65J CG25J CG65J CH25J CH65J CS26Y CS46Y CX46Y CY26Y CY46Y CZ46Y DB16Y DB26Y DB46Y DC16Y DC25J DC26Y DC45J DC46Y DC65J DD25J DD46Y DD65J DE25J DF16Y DF25J DF26Y DF46Y DF65J DG25J DG65J DH25J DH65J DW16Y DW46Y DX46Y DY16Y DY26Y DY46Y DZ16Y DZ46Y EA25J EA45J EA65J EA6NJ EB6NJ EC25J EC65J EE6PJ EH25J EH65J EJ25J EJ65J EJ6NJ EK25J EK6PJ EL25J EL65J EM25J EM65J EM6NJ EN25J EN65J EN6NJ EP25J EP65J EP6NJ EP6PJ EP9PJ ER6NJ ER6PJ ER9PJ ES25J ES65J ES6NJ ET6NJ FA25J FA65J FC25J FC65J FD25J FE25J FE65J FF25J FF65J FG25J FH25J FH65J GA25J GB46Y GC25J GC26Y GC46Y GC65J GD25J GD26Y GD46Y GD65J GE25J GE26Y GE46Y GE65J GF25J GF26Y GF46Y GF65J GG25J GG65J GH25J GH65J GJ26Y GK26Y GK46Y GS26Y GS46Y GX26Y GY26Y GZ26Y GZ46Y HB26Y HB46Y HC25J HC26Y HC46Y HC65J HD25J HD26Y HD46Y HD65J HE26Y HE65J HF25J HF26Y HF46Y HG25J HG65J HH25J HJ26Y HJ46Y HK26Y HK46Y HS26Y HS46Y HX26Y HX46Y HY26Y HY46Y HZ26Y HZ46Y JA25J JB16Y JB26Y JB46Y JB6NJ JC16Y JC25J JC26Y JC46Y JC65J JD25J JD26Y JD46Y JD65J JE25J JE26Y JE6NJ JF16Y JF25J JF26Y JF46Y JF65J JG25J JG65J JH25J JH26Y JH65J JJ16Y JJ25J JJ26Y JJ46Y JJ65J JJ6NJ JK16Y JK25J JK26Y JK46Y JK65J JL25J JL65J JM25J JM65J JM6NJ JN25J JN65J JN6NJ JP65J JP6NJ JR6NJ JS25J JS26Y JS46Y JS65J JT6NJ JW16Y JW46Y JX16Y JX26Y JX46Y JY16Y JY26Y JY46Y JZ16Y JZ26Y JZ46Y KC25J KD25J KD65J KG65J MB46Y MC26Y MC46Y MD26Y MD46Y ME26Y MF26Y MF46Y MJ26Y MK26Y MS26Y MS46Y MY26Y MZ26Y NB26Y NB46Y NC26Y NC46Y ND26Y ND46Y NE26Y NE46Y NF26Y NF46Y NH26Y NH46Y NJ26Y NJ46Y NK26Y NK46Y NS26Y NS46Y NW26Y NW46Y NY26Y NY46Y NZ26Y NZ46Y PA16Y PB16Y PB26Y PB46Y PC16Y PC26Y PC46Y PD26Y PD46Y PF16Y PF26Y PF46Y PH16Y PH26Y PH46Y PJ26Y PJ46Y PK26Y PK46Y PS26Y PS46Y PW16Y PW26Y PW46Y PY16Y PY26Y PY46Y PZ16Y PZ26Y PZ46Y TB86Y TF86Y TJ86Y TY86Y WU26Y WU46Y XAB5J XCB5J XDB5J XEB5J XFB5J XGB5J XHB5J YAB5J YCB5J YDB5J YEB5J YFB5J YGB5J YHB5J",
+        FAVORIT: "AEE20 AEG20 AEG30 AFA20 AFA30 CEE20 CEF30 CFF20 CFF30",
+        FELICIA: "EEF41 EEF61 EEF65 EEF67 EFF41 EFF45 EFF61 EFF65 EFF67 EGF61 EGF65 EHH61 EHH65",
+        KAMIQ: "GG9NW GH7NW GH9NW GK6NW GK9NW GP6NW GP7NW GP9NW GR6NW GR7NW GR9NW",
+        KAROQ: "JF7NU JF9NU JG7NU JG9NU JJ7NU JJ9NU JP7NU JP9NU JR7NU JR9NU LE7NU LE9NU LJ7NU LJ9NU LM7NU LM9NU LR7NU LR9NU",
+        KODIAQ: "JA7NS JA9NS JB7NS JB7PS JB9NS JC7NS JC9NS JJ7NS JJ7PS JJ9NS JJ9PS JW7PS JW9PS LC7NS LC9NS LD7NS LD9NS LE7NS LE9NS LG7PS LG9PS LJ7NS LJ9NS LK7NS LK9NS LM7NS LM9NS LN7NS LN7PS LN9NS LN9PS LU7NS LU9NS",
+        OCTAVIA: "1GBNE 1GCNE AA7NE AA9NE AB7NE AB9NE AC7NE AC9NE AD7NE AD9NE AE61Z AE7NE AE9NE AF7NE AG7NE AG7NX AG8NX AG9NE AG9NX AH7NX AH8NX AJ0NX AJ7NE AJ7NX AJ8NX AJ9NE AJ9NX AK61Z AK7NE AK8NX AK9NE AL21U AM7NE AM9NE AP21U AP41U AP7NE AP7NX AP8NX AP9NE AR0NX AR7NE AR7NX AR8NX AR9NE AR9NX AS7NE AS9NE AU0NX AU21U AU7NE AU8NX AU9NE AV0NX AV8NX AW0NX AW7NX AW8NX BA21Z BA61Z BB21Z BB61Z BD21Z BD61Z BE21U BE21Z BE41U BE61Z BG21U BG41U BJ61Z BK21U BK21Z BK41U BK61Z BL21U BL41U BM61Z BP21U BP41U BS21Z BS61Z BT21Z BT61Z BU21U BU41U BX21U BX41U CA21Z CA61Z CB21Z CB61Z CC21U CC41U CC61Z CD21Z CD61Z CD7NE CD9NE CE21U CE21Z CE41U CE61Z CG11U CG21U CG41U CG7NE CG9NE CJ11U CJ21Z CJ41U CJ61Z CJ7NE CJ7NX CJ9NE CK11U CK21U CK21Z CK41U CK61Z CK7NE CK8NX CK9NE CL21U CM21Z CM61Z CN11U CN41U CN61Z CP21U CP41U CS21Z CS61Z CS7NE CS8NX CS9NE CT21Z CT61Z CU21U CU41U CX11U CX21U CX41U CX61Z DA21Z DA41Z DA61Z DC11U DC21U DC41U DG11U DG21U DG41U DH11U DJ11U DJ21Z DJ41U DJ61Z DL21U DL41U DM21Z DM61Z DN11U DN21Z DN41U DP21U DP41U DS21U DS21Z DS41U DS61Z DT21Z DT61Z DX11U DX21U DX21Z DX41U DX41Z DX61Z EF21Z EF61Z EH21Z EH61Z ER21U ER41U FE61Z FK61Z FL21U FP21U FP41U FU21U GA21Z GA61Z GB21Z GB61Z GD21Z GD61Z GE21U GE21Z GE41U GE61Z GG21U GG41U GJ61Z GK21U GK21Z GK41U GK61Z GL21U GL41U GM61Z GP21U GP41U GS21Z GS61Z GT61Z GU21U GU41U GX21U GX41U HA21Z HA61Z HB21Z HB61Z HD21Z HD61Z HE21U HE21Z HE41U HE61Z HG11U HG21U HG41U HJ21Z HJ61Z HK11U HK21U HK21Z HK41U HK61Z HL21U HM21Z HM61Z HN61Z HP21U HP41U HS21Z HS61Z HT21Z HT61Z HU21U HU41U HX21U HX41U HX61Z JA21Z JA41Z JA61Z JA7NE JB7NE JB9NE JC11U JC41U JC6NE JC7NE JC9NE JD7NE JD9NE JE21U JE41U JE7NE JE9NE JF7NE JG0NX JG11U JG21U JG41U JG6NE JG7NE JG7NX JG8NX JG9NE JG9NX JH7NE JH7NX JH8NX JH9NE JJ0NX JJ11U JJ21Z JJ41U JJ61Z JJ6NE JJ7NE JJ7NX JJ8NX JJ9NE JJ9NX JK11U JK21U JK41U JK7NE JK8NX JK9NE JL21U JL41U JM21Z JM61Z JM7NE JM9NE JN11U JN21Z JN41U JP21U JP41U JP7NE JP7NX JP9NE JR0NX JR7NE JR7NX JR8NX JR9NE JR9NX JS21U JS21Z JS41U JS41Z JS61Z JS7NE JS9NE JT21Z JT61Z JU0NX JU7NE JU8NX JU9NE JV8NX JW0NX JW7NX JW8NX JX11U JX21U JX21Z JX41U JX41Z KD21Z KD61Z KE21U KE21Z KE41U KE61Z KG11U KG21U KG41U KK21Z KK61Z KL21U KL41U KS21U KS21Z KS41U KS61Z KT21Z KT61Z LD7NE LD9NE LG7NE LG9NE LJ0NX LJ7NE LJ7NX LJ8NX LJ9NE LK0NX LK7NE LK8NX LK9NE LS0NX LS7NE LS7NX LS8NX LS9NE LT8NX SL21U SL41U TEC1Z TSC1Z TTC1Z UF21Z UF61Z UH21Z UH61Z UR21U ZZZ1U",
+        RAPID: "AA6NH AB6NH AE6NH AF6NH AH6NH AJ6NH AL6NH AM6NH AN6NH AP6NH AR6NH AT6NH EA6NH EB6NH EE6NH EF6NH EH6NH EJ6NH EL6NH EM6NH EN6NH EP6NH ER6NH ET6NH",
+        ROOMSTER: "LB25J LB65J LC25J LC65J LD25J LE25J LF65J LG25J LH25J LH65J MB25J MB65J MC25J MC65J MD25J MD65J ME25J ME65J MF25J MF65J MG25J MG65J MH25J MH65J NC25J NC65J ND25J ND65J NF25J NF65J NG25J NG65J NH25J NH65J NJ25J NJ65J NK25J NK65J NL25J NL65J NM25J NM65J NN25J NN65J UCB5J UDB5J UDC5J UEC5J UFC5J UGC5J UHB5J VBB5J VCB5J VDB5J VEC5J VFC5J VGC5J VHB5J",
+        SCALA: "EG6NW EG7NW EG9NW EH6NW EK6NW EK7NW EK9NW EP6NW EP9NW ER6NW ER7NW ER9NW",
+        SUPERB: "1DC3T 1EC3T 1FC3T AA73T AA7NP AA93T AB73T AB7NP AB93T AB9NP AD73T AD7NP AD93T AD9NP AE73T AE93T AF73T AF93T AG63U AG7NP AG9NP AH0NZ AH73T AH7NP AH8NZ AH9NP AJ73T AJ7NP AJ93T AJ9NP AL63U AL7NP AL9NP AM7NP AM9NP AN0NZ AN7NP AN8NZ AN9NP AR63U AR7NP AR9NP AT63U AW7NP AW9NP BC63U BG23U BG63U BL23U BL63U BM63U BR63U BT23U BT63U BU23U BU63U BV23U BV63U CB73T CB93T CB9NP CC63U CC73T CC93T CE73T CE7NP CE93T CE9NP CF73T CF93T CG63U CH7NP CH9NP CJ7NP CJ9NP CL23U CL63U CM63U CP7NP CP9NP CR0NZ CR63U CR7NP CR8NZ CR9NP CS63U CT63U CU23U CU63U CV23U CV63U DC23U DC63U DE23U DE63U DL23U DL63U DM23U DM63U DR23U DR63U DS23U DS63U DU23U DU63U JA73T JA93T JB73T JB7NP JB93T JB9NP JC7NP JD73T JD7NP JD9NP JE63T JE73T JE93T JF63T JF73T JF93T JG7NP JG9NP JH0NZ JH73T JH7NP JH8NZ JH93T JH9NP JJ73T JJ7NP JJ93T JJ9NP JL7NP JL9NP JM7NP JM9NP JN0NZ JN7NP JN9NP JR7NP JR9NP JS7NP JW0NZ JW7NP JW9NP LB73T LB93T LC73T LC93T LE63T LE73T LE7NP LE93T LE9NP LF63T LF73T LF93T LH7NP LH9NP LJ7NP LJ9NP LP7NP LP9NP LR0NZ LR7NP LR8NZ LR9NP NE73T NF73T NJ73T RF73T",
+        YETI: "3DC5L JC45L JC55L JC65L JC75L JC95L JD75L JD95L JF45L JF55L JF65L JF75L JF95L JJ45L JJ65L JJ75L JJ95L JT45L JT65L JT75L JT95L LA75L LA95L LB45L LB75L LB95L LC45L LC55L LC65L LC75L LC85L LC95L LD45L LD65L LD75L LD95L LE75L LE95L MD75L NF45L NF75L NJ75L"
+    } ],
+    TRU: [ "7-8", {
+        A3: "8P",
+        TT: "8J 8N FV"
+    } ],
+    U5Y: [ "4-8", {
+        CEED: "FF231 FF232 FF234 FF241 FF242 FF244 FF521 FF522 FF524 FF525 H1511 H1512 H1513 H1515 H1519 H2511 H2512 H2513 H2514 H2515 H4811 H4812 H4813 H4814 H4815 H4819 H5813 H5814 H5815 H5819 H5F14 H7814 H7815 HA511 HB311 HB312 HB316 HB511 HB512 HB516 HB811 HB812 HB816 HC316 HC511 HC512 HC516 HC811 HC812 HC816 HE816 HM511 HM513 HM515 HM516 HM51B HM811 HM813 HM815 HM816 HM81B HN313 HN316 HN511 HN513 HN516 HN51A HN51B HN811 HN813 HN816 HN81A HN81B HP314 HP514",
+        IX35: "ZT81U ZT81V ZU81A ZU81B ZU81U ZU81V",
+        PROCEED: "H2G15",
+        SPORTAGE: "PB811 PB813 PB814 PB815 PB81B PC811 PC813 PC814 PC815 PG814 PG815 PG816 PH812 PH813 PH814 PH815 PH816 PK812 PK813 PK816 PU81B PV81A PV81B PV81G PX81A PX81B",
+        VENGA: "EG811 EG812 EG813 EH811 EH812 EH814",
+        XCEED: "H7F15 H7F17"
+    } ],
+    U6Y: [ "6-7", {
+        SPORTAGE: "55 81"
+    } ],
+    VF1: [ "4-6", {
+        ALASKAN: "CTN",
+        ARKANA: "RJL",
+        CAPTUR: "2R0 2R4 2R5 2RA 2RB 2RC 2RD 2RF R87 RJB",
+        CLIO: "357 557 5R0 5R2 5R4 5R5 5RA 5RB 5RF 5RR 5RS 7R0 7R2 7R5 7RA 7RB 7RF 7RJ 7RR 7RS B57 BB0 BB1 BB2 BB3 BB8 BBC BBR BR1 BR2 BR9 BRA BRC C57 CB0 CB1 CB2 CBR CR1 CR2 CRA CRC CRJ CRK KR1 KR2 KRC R98 RJA SB1 SB8 SRS",
+        DUSTER: "HJD HSR",
+        ESPACE: "JK0 JK1 JKF RFC",
+        EXPRESS: "RJK",
+        FLUENCE: "LZB LZL LZV",
+        KADJAR: "RFE",
+        KANGOO: "FC0 FC1 FCA FW0 FW1 FW5 KC0 KC1 KCA KCE KCR KCT KW0 KW2 KW3 KW4 KW5 KWX RFK WF0 WK0",
+        KOLEOS: "RZG VY0 VY4 VY5 VY6 VY7",
+        LAGUNA: "B56 BG0 BG1 BG4 BGC BGE BGR BT0 BT1 BT3 BTD BTE BTF DTB DTD K56 KG0 KG1 KG4 KGC KGE KGR KT0 KT1 KT2 KT3 KTB KTD KTE KTF",
+        LATITUDE: "LTF",
+        MASTER: "56A EDC FDA FDB FDC HDC JDA JDC JDE JDG JDN JDV MA0 MAA MAF MB0 MB1 MB2 MBH MBM MBP MBU ML0 MLJ RDA UDA UDC VB0 VBH VBU",
+        MEGANE: "BA0 BA1 BM0 BM1 BMR BMS BZ0 BZ1 BZA BZM CM0 CM1 CMR DA0 DA1 DZ0 DZ1 DZY EA0 EA1 EM0 EM1 EMR EMS EZ0 EZ1 KA0 KA1 KM0 KM1 KMK KMR KMS KZ0 KZ1 KZ3 KZ4 KZ5 KZ8 KZM KZN KZS KZY LA0 LM0 LM1 LMR LMS RFB",
+        MODUS: "JP0 JP1 JP3",
+        NEVADA: "K48",
+        SAFRANE: "B54",
+        SCENIC: "JA0 JA1 JAB JM0 JM1 JM4 JMG JMJ JMK JMM JMR JMS JMT JZ0 JZ1 JZ2 JZ3 JZ4 JZ8 JZM JZN JZS JZT RFA",
+        TALISMAN: "RFD",
+        THALIA: "LB0 LB2 LB8 LBN LBR LBV",
+        TRAFIC: "1FL 1JL 2FL 2JL 3FL 3JL 4FL 4JL FL0 FL9 FLA FLB FLF FLG JL0 JLA JLB JLC JLD JLE JLN JLP JLU JLY T3X TBX",
+        TWINGO: "AH0 AHB C06 CN0 CNA CND CNJ",
+        WIND: "EN0",
+        ZOE: "AG0 AGV"
+    } ],
+    VF3: [ "4-6", {
+        1007: "KM8 KMK KMN",
+        106: "1AC 1AH 1AK 1AV 1CC 1CH 1CK 1CN 1CV 1SV",
+        107: "PMC PN8 PNC",
+        108: "PAH PSC",
+        2008: "CU5 CU8 CU9 CUB CUH CUY",
+        205: "20A 20C 20D 741",
+        206: "2A8 2AH 2AK 2AN 2AR 2AW 2C8 2CH 2CK 2CN 2CR 2CW 2D9 2DN 2DR 2E8 2EH 2EK 2H9 2HK 2HN 2HR 2J9 2JN 2K9 2KK 2KN 2KR 2L8 2LH 2LK 2M8 2MH 2MK 2S8 2SH 2SW",
+        207: "WA5 WA8 WA9 WAK WAN WB5 WB9 WC5 WC8 WC9 WCK WCN WE5 WE8 WE9 WEK WU5 WU8 WU9",
+        208: "CA5 CA8 CAH CAZ CC5 CC8 CC9 CCB CCH CCY CCZ",
+        3008: "0U5 0U9 0UB 0UR HUR",
+        301: "DD9 DDB DDH DDN",
+        306: "7AD 7AK 7AL 7AR 7AW 7BD 7BK 7BL 7BR 7CK 7CL 7CR 7DL 7DN 7DR 7ED 7EK 7EL 7EN 7ER 7EW 7HR",
+        307: "3A8 3A9 3AN 3AR 3BN 3BR 3C8 3C9 3CK 3CN 3CR 3E8 3E9 3EK 3EN 3ER 3H9 3HN 3HR",
+        308: "4A5 4A9 4B5 4B9 4C5 4C8 4C9 4CR 4E5 4E8 4E9 4ER 4H5 4H9 4HR L35 L45 L9A LB9 LBB LBY LC9 LCB LCY LHA LHE LJA LJE LPH LRH",
+        309: "10A 3AB 3AD 3CD 3CH",
+        4007: "VU4 VV4",
+        4008: "BU6",
+        405: "15B 15E 4BD 4BL 4ED",
+        406: "8B4 8B6 8BB 8BD 8BL 8BP 8BR 8C4 8CR 8CX 8E6 8ED 8EL 8EX 8FL 8FR",
+        407: "6D3 6D4 6D6 6D9 6DR 6DX 6E3 6E4 6E6 6E9 6ER 6EU 6EX 6J3 6JR 6JU 6JX",
+        5008: "0A5 0A9 0AA 0AB 0AR 0E5 0E9 0EA 0EB 0ER",
+        505: "551",
+        508: "8D4 8D5 8D9 8DA 8DR 8E5 8E9 8EA 8EB 8UA 8UR",
+        607: "9D3 9D4 9DX 9U4 9UR 9UU",
+        806: "221 AFR",
+        807: "EB3 EB4 EBR",
+        BIPPER: "AA8 AAF AAK AJF",
+        BOXER: "231 232 233 YA1 YA2 YAA YAB YAS YAT YB1 YB2 YB3 YBA YBB YBC YBD YBS YBT YBU YC1 YC2 YC3 YCA YCB YCC YCD YCF YCP YCS YCT YCU YD2 YD3 YDB YDC YDD YDP YDT YDU ZAA ZAP ZAR ZBP ZBR ZCP ZCR",
+        EXPERT: "222 224 BAR BBR BBW BDR BER BSR BYR BZR BZW VAB VAY VBB VBY VEA VEE VFA VFE XA9 XAA XAR XBA XC9 XCA XCR XDA XDR XS9 XSA XSR XTA XTR XU9 XUA XUR XVA",
+        ION: "1NZ",
+        PARTNER: "5BD 5BK 5BR 5BW 5CR 5CW 5FK 5FL 5FN 5FR 5FW 7A5 7A9 7AB 7B5 7B9 7BB 7C9 7D9 7E9 7F9 7FB 7J5 7J9 7JB 7JN 7M9 7MB 7N9 7P9 7PN 7S9 7SB GB9 GBH GBK GBR GBW GC9 GCR GCW GJ9 GJK GJN GJR GJW",
+        RCZ: "4J5 4JR",
+        RIFTER: "ERH",
+        TRAVELLER: "VKE"
+    } ],
+    VNK: [ "7-8", {
+        YARIS: "23 33 63 83 B3 C3 D3"
+    } ],
+    VR3: [ "4-5", {
+        2008: "UD UK US",
+        208: "UB UH UP",
+        508: "FH FJ",
+        PARTNER: "EF EU",
+        RIFTER: "EB EC EH ER"
+    } ],
+    VSA: [ "4-7", {
+        "MB 100": "6313",
+        VITO: "6380 6381"
+    } ],
+    VWA: [ "7-8", {
+        ATLEON: "TK",
+        CABSTAR: "F2 TL",
+        TRADE: "55"
+    } ],
+    VXF: [ "6-7", {
+        SCUDO: "EH YH"
+    } ],
+    VYF: [ "6-7", {
+        DOBLO: "YH",
+        PANDA: "ZY"
+    } ],
+    W1K: [ "4-6", {
+        "A-CLASS": "177 3F5 3F8 3G4",
+        "AMG GT": "290",
+        "B-CLASS": "247",
+        "C-CLASS": "205 206 AF0 AF8 AH1",
+        "CLA-CLASS": "118 5J1 5J5 5J8 5M1 5M8",
+        "CLS-CLASS": "257",
+        "E-CLASS": "213 238 LF0 LF2 LF5 LH0",
+        EQC: "293 8P9",
+        EQS: "297 CG4",
+        "S-CLASS": "217 223 6G2 6G3 6G6 6G7 6G8",
+        "SL-CLASS": "232 VK5 VK8"
+    } ],
+    W1N: [ "4-7", {
+        EQA: "2437 9N0J",
+        EQB: "9M0J",
+        EQE: "GM1C",
+        "G-CLASS": "4632 4633 WC1A WH5A YC6A YC7G",
+        "GLA-CLASS": "2477 4N1A 4N1D 4N4H 4N8H",
+        "GLB-CLASS": "2476 4M1C 4M1D",
+        "GLC-CLASS": "0J1F 2533 2539 KJ0F KJ0K KJ5B KM0F KM0K KM5B",
+        "GLE-CLASS": "1671 1673 FB0G FB0K FB1H FB2D FB3D FB5K FB6B FB8K FD3D FD4G",
+        "GLS-CLASS": "1679 FF2D FF3D FF8K"
+    } ],
+    W1V: [ "6-8", {
+        CITAN: "083 560 570 ACZ BDZ ECZ",
+        SPRINTER: "013 062 713 715 723 763 764 765 772 773 BGZ BVZ CFZ DFZ FFZ",
+        "V-CLASS": "KEZ KTZ LEZ LTZ",
+        VITO: "760 BEZ FSZ GTZ",
+        "X-CLASS": "025"
+    } ],
+    WAU: [ "7-8", {
+        80: "81 8C",
+        A1: "8X GB",
+        A2: "8Z",
+        A3: "8L 8P 8V FF GY",
+        A4: "8D 8E 8H 8K F4",
+        A5: "8F 8T F5",
+        A6: "4B 4F",
+        A8: "4D 4E 4H F8",
+        "E-TRON": "GE",
+        Q2: "GA",
+        Q3: "8U F3",
+        Q5: "8R FY GU",
+        Q7: "4L 4M",
+        Q8: "F1"
+    } ],
+    WBA: [ "4-5", {
+        "1-SERIES": "1A 1B 1C 1D 1E 1R 1S 1T 1U 1V 2P 2R 7K 7L 7M 7N UB UC UD UE UF UG UH UK UL UM UR",
+        "2-SERIES": "1H 1J 1M 2A 2B 2C 2D 2E 2G 2J 2N 6S 6T 6V 6W 6X 6Y",
+        "3-SERIES": "38 3A 3B 3C 3D 3E 3G 3J 3K 3L 3X 3Y 3Z 48 5F 5R 5U 5V 5W 5X 6K 6L 6M 6N 8B 8C 8E 8F 8G 8H 8J 8K 8L 8T 8X 8Y AA AB AC AD AF AG AJ AK AL AM AN AP AR AS AT AU AV AW AX AY BA BB BD BE BF BG BH BJ BK BL BM BN BP BR BS BV BW BY CA CB CC CE CF CG CS DX DY ED EL EN EP ER EU EV EX EY EZ KE KG KH KK PF PH PK PM PN PP PR US UT UV UW UX UY VA VB VC VD VE VF VG VR VS VT VU VW WA WB WC WD WE WK WL WM WN",
+        "4-SERIES": "3N 3P 3R 3S 3U 3V 4B 4C 4E 4F 4G 4H 4J 4K 4L 4P 4T 4U 4V 4Y 4Z 8S",
+        "5-SERIES": "5A 5B 5C 5D 5E 5J 5K 5L 5N DB DD DE DF DG DH DK DL DM DN DP DR DS DT FR FU FV FW HA HB HC HD HG HJ HK JA JB JC JD JF JL JM JN JP JR JS JT MW MX MY NA NB NC ND NE NF NH NJ NK NL NM NN NP NR NS NU NV NW NX NY PV PX PY SN SP XA XB XC XG XH XL",
+        "6-SERIES": "6A 6D 6E EA EB EC EH EK JV JW JX JY LX YM YP",
+        "7-SERIES": "7B 7C 7D 7E 7F 7G 7H 7R 7S 7U 7V 7W GC GD GE GF GG GJ GL GM GN HL HM HN KB KC KM YB YC",
+        "8-SERIES": "BC EG FY GV GW",
+        X1: "HS HT HU JG JH JJ VL VM VN VP VY VZ",
+        X2: "YH YK YL YN",
+        X3: "15 25 35 85 PA PB PC PD PE TR TS TX TY UZ WX WY WZ",
+        X4: "4M UJ VJ XX",
+        X5: "CR CV FA FB FE FF JU KS KT LS TA TH ZV ZW",
+        X6: "CY FG FH GT KU KV TC",
+        X7: "CW TB",
+        Z3: "CH CJ CK CL CM CN",
+        Z4: "BT BU BZ DU HF LL LM"
+    } ],
+    WBS: [ "4-6", {
+        "1-SERIES": "UR9",
+        "8-SERIES": "EG9",
+        M2: "11D 1H9 1J5",
+        M3: "11G 21G 3C9 8M9 AK0 BG9 BL9 BR9 DX9 KG9 WD9 WL9",
+        M4: "31H 3S7 3U9 4Y9",
+        M5: "81C 81F DE9 FV9 HD9 JF0 NB9",
+        M8: "DZ0 GV0",
+        X3: "TS0",
+        X4: "UJ0",
+        X5: "GY0 JU0 KT6",
+        X6: "CY0 GZ0 KW8"
+    } ],
+    WBX: [ "7-8", {
+        X1: "C3",
+        X3: "34"
+    } ],
+    WBY: [ "5-7", {
+        i3: "P21 P61 Z41 Z61 Z81",
+        i4: "1AW",
+        i7: "1EJ",
+        iX: "1CF",
+        iX1: "1EF",
+        iX2: "1GM"
+    } ],
+    WDB: [ "4-6", {
+        190: "201",
+        "A-CLASS": "168",
+        "C-CLASS": "202 203",
+        "CL-CLASS": "215",
+        "CLK-CLASS": "208 209",
+        "E-CLASS": "124 210 211",
+        "G-CLASS": "460 461 463",
+        "S-CLASS": "140 220",
+        "SL-CLASS": "129 230 FA6 SK7",
+        "SLK-CLASS": "170 171",
+        SPRINTER: "903 904 906 907 910",
+        VANEO: "414"
+    } ],
+    WDC: [ "4-7", {
+        "GL-CLASS": "1648",
+        "GLA-CLASS": "1569",
+        "GLC-CLASS": "2533 2539",
+        "GLE-CLASS": "1671 2923",
+        "GLK-CLASS": "2049",
+        "GLS-CLASS": "1679",
+        "M-CLASS": "1631 1641",
+        "R-CLASS": "2510 2511"
+    } ],
+    WDD: [ "4-6", {
+        "A-CLASS": "168 169 176 177",
+        "AMG GT": "290",
+        "B-CLASS": "245 246 247",
+        "C-CLASS": "204 205 GF5 GF8",
+        "CL-CLASS": "216",
+        "CLA-CLASS": "117 118 SJ4",
+        "CLS-CLASS": "218 219 257",
+        "E-CLASS": "207 212 213 238",
+        "S-CLASS": "217 221 222 NG8 UG8",
+        "SL-CLASS": "231"
+    } ],
+    WDF: [ "4-8", {
+        CITAN: "41560 41570",
+        SPRINTER: "90661 90663",
+        "V-CLASS": "44781",
+        VIANO: "63971 63981",
+        VITO: "44760 44770 63809 63819 63960 63970",
+        "X-CLASS": "47021 47023 47025"
+    } ],
+    WF0: [ "4-9", {
+        "B-MAX": "KXXERJ",
+        "C-MAX": "EXXGCD HXXGCB HXXWPB JXXGCB JXXWPB MXXGCD VXXGCE WXXGCE",
+        COUGAR: "HT60T7 HT61L3 HT61L9",
+        ECOSPORT: "1XXERK",
+        ESCORT: "AXXBBA AXXGCA BXXGCA LXXGKA NXXBBA NXXGCA",
+        EXPLORER: "2K8GY2 2K8GY9",
+        FIESTA: "AXXBAJ AXXGAF AXXGAJ BXXBAJ BXXGAF BXXGAJ CXXGAJ CXXGAK DXXGAJ DXXGAK FXXGAH GXXGAJ HXXGAJ HXXWPJ JXXGAH JXXGAJ JXXWPJ",
+        FOCUS: "3XXGCD 4XXGCC 4XXWPD 5XXGCC 5XXGCD 5XXWPD 6XXGCC AXXGCD AXXWPD BXXGCD FXXWPD GXXGCD HXXWPD KXXGCB LXXGCB MXXGCB NXXGCD NXXGCH NXXWPD PXXGCD PXXGCH PXXWPD SXXGCD WXXGCD XXXLUD",
+        FUSION: "UXXCAJ UXXGAJ",
+        GALAXY: "GXXPSS GXXPSW KXXWPC MXXGBW",
+        KA: "BXXWPR LXXLUR UXXLTR",
+        KUGA: "AXXWPM FXXWPM RXXGCD",
+        MAVERICK: "CU93Z0 CU93Z2 CU93Z8 CU93Z9 CU93ZX DXXWGU",
+        MONDEO: "4XXGBB 5XXGBB DXXGBB DXXWPC EXXGBB EXXWPC FXXWPC GXXGBB NXXGBB WXXGBB",
+        PUMA: "2XXERK",
+        RANGER: "LM2E10 LM2E40 LMFE10 LMFE40 UM2E10 UMFE10 UMFE90",
+        "S-MAX": "JXXWPC SXXGBW",
+        "TOURNEO CONNECT": "EXXSK7 TXXWPG",
+        "TOURNEO CUSTOM": "3XXTTG XXXTA6 XXXTA9",
+        TRANSIT: "5XXBDF 5XXTTF AXXBDF AXXBDV AXXGBF AXXGBV AXXTTF AXXTTR BXXBDF BXXGBV CXXGBF CXXGBV CXXTTF CXXTTR DXXTTF DXXTTG EXXGBV EXXTTG EXXTTR FXXBDF FXXTTF FXXTTG FXXTTR GXXTTG GXXTTR HXXGBF HXXGBV HXXTTF HXXTTR KXXBDV KXXGBF KXXGBV KXXTTF KXXTTG KXXTTR LXXBDF LXXBDV LXXGBF LXXGBV LXXTTF NXXTTF PXXBDF PXXGBF PXXTTF RXXBDF RXXGBF RXXTTF SXXBDF SXXTTF TXXGBF VXXBDF VXXGBF VXXGBV VXXTTF VXXTTG XXXBDF XXXTTF XXXTTG ZXXBDF ZXXTTF",
+        "TRANSIT CONNECT": "4XXWPG 6XXWPG 7XXWPG",
+        "TRANSIT COURIER": "NXXTAC",
+        "TRANSIT CUSTOM": "MXXTTG RXXTA6"
+    } ],
+    WMW: [ "4-6", {
+        CLUBMAN: "JZ3 JZ9 LN3 LN7 LR9 XJ1 ZH7",
+        COUNTRYMAN: "51B YS3 YT9 YU5 YU7 YV9 YW1 YX1 ZD1 ZD5",
+        MINI: "11D 31D 41D 51D 61D 71D ME3 MF3 MF7 MF9 MG3 MR3 RA3 RB1 RC3 RD3 RE3 RF3 RH3 SR1 SR3 SU3 SV3 SW3 SW7 SY7 WG3 WJ3 WJ5 WJ9 XM5 XM7 XM9 XN7 XN9 XP1 XP3 XR1 XR3 XR5 XR9 XS5 XS7 XU7 XU9 XX9 ZP3 ZR3"
+    } ],
+    WMX: [ "4-6", {
+        "AMG GT": "190",
+        "SLS AMG": "197"
+    } ],
+    WP0: [ "7-8", {
+        911: "91 99 A9",
+        PANAMERA: "97",
+        TAYCAN: "Y1"
+    } ],
+    WP1: [ "7-8", {
+        CAYENNE: "92 9P 9Y A2",
+        MACAN: "95 A5 XA"
+    } ],
+    WUA: [ "7-8", {
+        A3: "8P 8V GY",
+        A4: "8E 8K F4",
+        A5: "8T F5",
+        A6: "4F",
+        A8: "4H",
+        Q3: "F3",
+        Q7: "4L",
+        Q8: "F1",
+        R8: "42 FX",
+        TT: "FV"
+    } ],
+    WV1: [ "4-8", {
+        AMAROK: "ZZZ2H",
+        CADDY: "ZZZ2K ZZZ9K ZZZSK",
+        CRAFTER: "ZZZ2E ZZZ2F ZZZSY",
+        LT: "ZZZ2D",
+        TRANSPORTER: "ZZZ70 ZZZ7H ZZZ7J"
+    } ],
+    WV2: [ "4-8", {
+        CADDY: "ZZZ2K ZZZ9K ZZZSK",
+        LT: "ZZZ21 ZZZ28 ZZZ29",
+        MULTIVAN: "ZZZST",
+        TARO: "ZZZ7A",
+        TRANSPORTER: "ZZZ24"
+    } ],
+    WVG: [ "7-8", {
+        "T-CROSS": "C1",
+        "T-ROC": "A1",
+        TAIGO: "CS",
+        TAYRON: "R4",
+        TIGUAN: "5N AX CT",
+        TOUAREG: "7L 7P BP CR",
+        TOURAN: "1T"
+    } ],
+    WVW: [ "7-8", {
+        ARTEON: "3H",
+        BEETLE: "9C",
+        CORRADO: "50",
+        EOS: "1F",
+        FOX: "5Z",
+        GOLF: "15 17 19 1E AJ CD",
+        "ID.3": "E1",
+        "ID.7": "ED",
+        LUPO: "6E 6X",
+        PASSAT: "31 32 33 3A 3B 3C CJ",
+        PHAETON: "3D",
+        POLO: "6K 6N 6R 80 9N AW",
+        SCIROCCO: "13 53",
+        SHARAN: "7M 7N",
+        TIGUAN: "5N",
+        "UP!": "AA"
+    } ],
+    XMC: [ "6-7", {
+        CARISMA: "DA",
+        COLT: "Z3",
+        "SPACE STAR": "DG"
+    } ],
+    XNC: [ "4-5", {
+        COLT: "BN"
+    } ],
+    YAR: [ "7-8", {
+        PROACE: "HH HK HS HV HX",
+        "PROACE CITY": "HP NP NS",
+        YARIS: "C3"
+    } ],
+    YBC: [ "4-5", {
+        SUPRA: "DB"
+    } ],
+    YV1: [ "4-6", {
+        740: "745",
+        850: "LS4 LS5",
+        940: "945",
+        C30: "MK0 MK2 MK3 MK4 MK7 MK8",
+        C40: "XKE",
+        C70: "MC3 MC5 MC6 MC7 MC8 NC5 NK4 NK5",
+        S40: "MS2 MS3 MS6 MS7 MS8 VS1 VS7",
+        S60: "FS3 FS4 FS5 FS7 FS8 FSA RS4 RS5 RS6 RS7 RS8",
+        S70: "LS6",
+        S80: "AS0 AS5 AS6 AS7 AS8 AS9 TS5 TS6 TS7 TS9",
+        S90: "PS1 PS6 PS7 PSA",
+        V40: "MV2 MV3 MV4 MV5 MV7 MV8 MVA MZ2 MZ3 MZ4 MZ5 MZ6 MZ7 MZ8 MZA VW1 VW2 VW7",
+        V50: "MW0 MW2 MW3 MW5 MW6 MW7 MW8",
+        V60: "FW3 FW4 FW5 FW7 FW8 FWA FZ4 FZA GWA GWB ZW2 ZW7 ZWA ZWB ZWH ZWK ZWL ZZ2 ZZA ZZK ZZL",
+        V70: "BW0 BW3 BW4 BW5 BW6 BW7 BW8 BW9 LW6 SW4 SW5 SW6 SW7 SW8",
+        V90: "PW1 PW2 PW6 PW7 PWA PWB PWH PWK PZ0 PZ1 PZ2 PZ6 PZA PZK PZL",
+        XC40: "XZ1 XZ7 XZA XZB XZE XZK XZL",
+        XC60: "DZ3 DZ5 DZ6 DZ7 DZ8 DZ9 DZA UZ0 UZ1 UZ2 UZ6 UZA UZB UZH UZK UZL UZM",
+        XC70: "BZ5 BZ6 BZ7 BZ8 BZ9 SZ7",
+        XC90: "CM5 CM7 CM8 CM9 CR7 CT3 CT7 CT8 CT9 CZ3 CZ5 CZ6 CZ7 CZ8 CZ9 LC0 LC2 LC6 LCA LCK LCL LF0 LF6 LFA LFB LFH LFK LFL"
+    } ],
+    YV4: [ "4-5", {
+        XC90: "CZ"
+    } ],
+    ZAM: [ "5-7", {
+        COUPE: "C38",
+        GHIBLI: "7RT S57 T57",
+        GRANCABRIO: "M45",
+        GRANTURISMO: "H45 L45",
+        QUATTROPORTE: "D39 R56"
+    } ],
+    ZFA: [ "4-6", {
+        126: "126",
+        127: "127",
+        500: "BF1 CF1 EFA",
+        "500L": "CF4",
+        "500X": "334",
+        600: "5FB",
+        BARCHETTA: "183",
+        BRAVO: "198",
+        CINQUECENTO: "170",
+        COUPE: "175",
+        CROMA: "194",
+        DOBLO: "223 263",
+        DUCATO: "230 244 250 280 290",
+        FULLBACK: "KVJ",
+        IDEA: "350",
+        LINEA: "323",
+        MAREA: "185",
+        MULTIPLA: "186",
+        PANDA: "141 169 BF5 BF6",
+        PUNTO: "176 188",
+        SCUDO: "270",
+        SEICENTO: "187",
+        STILO: "192",
+        TALENTO: "FFL FJL",
+        TEMPRA: "159",
+        TIPO: "160 356 CF7 CF9",
+        ULYSSE: "179",
+        UNO: "146"
+    } ],
+    ZHW: [ "6-8", {
+        AVENTADOR: "1ZD",
+        HURACAN: "1ZF"
+    } ],
+    ZN6: [ "5-7", {
+        LEVANTE: "U61"
+    } ],
+    ZPB: [ "4-5", {
+        URUS: "EA"
+    } ]
 };
 
 function carWmiMakes(vin) {
@@ -3897,6 +4559,78 @@ function carApplyLearned(info, learned, vin, nowYear) {
     return out;
 }
 
+function carVdsTitle(name) {
+    return String(name || "").split(" ").map(w => w.split("-").map(p => /^[A-Z]{4,}$/.test(p) ? p.charAt(0) + p.slice(1).toLowerCase() : p).join("-")).join(" ");
+}
+
+function carVdsLookup(vin) {
+    const v = normalizeVin(vin);
+    if (v.length !== 17) return "";
+    const wmi = v.slice(0, 3);
+    if (!Object.prototype.hasOwnProperty.call(CAR_VDS, wmi)) return "";
+    const e = CAR_VDS[wmi];
+    const rev = carVdsLookup.rev || (carVdsLookup.rev = {});
+    if (!rev[wmi]) {
+        const m = {};
+        Object.keys(e[1]).forEach(name => {
+            e[1][name].split(" ").forEach(k => {
+                if (k) m[k] = name;
+            });
+        });
+        rev[wmi] = m;
+    }
+    const r = e[0].split("-");
+    return rev[wmi][v.slice(Number(r[0]) - 1, Number(r[1]))] || "";
+}
+
+function carApplyVds(info, vin, nowYear) {
+    if (info && info.model) return info;
+    const name = carVdsLookup(vin);
+    if (!name) return info;
+    const makes = carWmiMakes(vin);
+    let make = info ? info.known ? info.make : info.makeOtherText : "";
+    if (make) {
+        if (makes.length && !makes.some(m => carVinKey(m) === carVinKey(make))) return info;
+    } else if (makes.length === 1) {
+        make = makes[0];
+    } else if (makes.length > 1) {
+        const t0 = carVdsTitle(name);
+        const hits = makes.filter(m => CAR_MAKES.indexOf(m) !== -1 && !!carFindModelByVinText(m, t0));
+        if (hits.length === 1) make = hits[0]; else if (/^range rover/i.test(name) && makes.indexOf("رنج روفر") !== -1) make = "رنج روفر"; else return info;
+    } else {
+        return info;
+    }
+    if (make === "لاند روفر" && /^range rover/i.test(name) && CAR_MAKES.indexOf("رنج روفر") !== -1) make = "رنج روفر";
+    const known = CAR_MAKES.indexOf(make) !== -1;
+    const title = carVdsTitle(name);
+    const found = known ? carFindModelByVinText(make, title) : null;
+    const base = info || {
+        fromWmi: true,
+        wmi: normalizeVin(vin).slice(0, 3),
+        country: carWmiCountry(vin),
+        makeCandidates: makes,
+        year: null,
+        yearSource: "",
+        specExtra: "",
+        specText: "",
+        fillTrim: false
+    };
+    const year = base.year || vinModelYearGuess(vin, nowYear);
+    return Object.assign({}, base, {
+        known: known,
+        make: known ? make : "",
+        makeOtherText: known ? "" : make,
+        model: found ? found.name : title,
+        rawModel: title,
+        modelMatched: !!found,
+        year: year,
+        yearSource: base.year ? base.yearSource : year ? "guess" : "",
+        trim: "",
+        fillTrim: false,
+        vds: true
+    });
+}
+
 function carGateEditSig(st) {
     return [ st.make, st.makeOther ? 1 : 0, st.makeOtherText, st.model, st.year, st.trim, st.trimUnknown ? 1 : 0, st.level ].join("|");
 }
@@ -3974,6 +4708,14 @@ function carGateVinNote(info, failed, yearGuess, nowYear) {
             text: lead + "من طلبياتكم السابقة بنفس طراز الشاص (أول 8 خانات): " + who + (info.learned.n > 1 ? " (" + info.learned.n + " طلبيات)" : "") + (info.country ? " · المنشأ " + info.country : "") + (info.yearSource === "guess" ? " · السنة تخمين، تأكد منها" : "") + " — راجع واختر الفئة"
         };
     }
+    if (info.vds) {
+        const who = [ info.known ? info.make : info.makeOtherText, info.model, info.year ].filter(Boolean).join(" ");
+        const lead = info.fromWmi ? (failed ? "تعذر الاتصال بخدمة قراءة الشاص" : "الشاص مو بقاعدة NHTSA") + " — " : "";
+        return {
+            tone: "ok",
+            text: lead + "الموديل تقدير من جدول طرازات الشاص (أوروبي/كوري): " + who + (info.country ? " · المنشأ " + info.country : "") + (info.yearSource === "guess" ? " · السنة تخمين، تأكد منها" : "") + " — راجع واختر الفئة"
+        };
+    }
     if (info.fromWmi) {
         const intro = failed ? "تعذر الاتصال بخدمة قراءة الشاص" : "الشاص مو بقاعدة NHTSA (غالبًا سيارة مو أمريكية)";
         const who = info.make ? "الماركة " + info.make : "الماركة محتملة: " + info.makeCandidates.join(" / ");
@@ -3988,6 +4730,7 @@ function carGateVinNote(info, failed, yearGuess, nowYear) {
     if (info.yearSource === "guess") text += " — السنة تخمين من الشاص، تأكد منها";
     if (info.year && info.year + 30 <= (Number(nowYear) || (new Date).getFullYear()) + 1) text += " — أو " + (info.year + 30) + " (حرف السنة بالشاص بيتكرر كل 30 سنة)";
     if (!info.model) text += " — الموديل ما انقرأ من الشاص، اختاره";
+    if (info.lowConf) text += " — قراءة تقريبية: الشاص مو أمريكي فالمحرك والمواصفات مخفية (غير مؤكدة)";
     const filled = !!info.trim || info.fillTrim && !!info.specText;
     if (info.trim) text += " — الفئة: " + info.trim + (info.learnedTrim ? " (من طلبية سابقة بنفس الشاص)" : "") + (info.specExtra ? " · " + info.specExtra : ""); else if (info.fillTrim) text += " — الفئة: " + info.specText; else if (info.specExtra) text += " — مواصفات الشاص: " + info.specExtra;
     text += filled ? " — راجع" : " — راجع واختر الفئة";
@@ -4308,9 +5051,11 @@ function openCarGate(opts) {
         carBindVinCard(vinCard);
     };
     const showVinCard = (res, info, mine) => {
+        const shown = info.lowConf ? carVinSafeRes(res) : res;
         st.vinSpec = {
-            rows: carVinSpecRows(res),
-            headline: carVinHeadline(res, info.known ? info.make : ""),
+            rows: carVinSpecRows(shown),
+            headline: carVinHeadline(shown, info.known ? info.make : ""),
+            warn: info.lowConf ? carVinLowConfWarn() : "",
             image: null,
             imageLoading: true
         };
@@ -4352,6 +5097,7 @@ function openCarGate(opts) {
         if (!info) info = carFromWmi(v);
         if (info && !info.fromWmi) showVinCard(res, info, mine);
         info = carApplyLearned(info, carLearnedForVin(v), v);
+        info = carApplyVds(info, v);
         if (info && carGateEditSig(st) !== sig0) {
             const got = [ info.known ? info.make : info.makeOtherText, info.model, info.year ].filter(Boolean).join(" ");
             st.vinNote = "الشاص بيقول: " + got + " — اختيارك انحفظ، راجعه";
@@ -4670,15 +5416,17 @@ async function openVinSpecDialog(vin) {
         res = null;
     }
     if (!alive()) return;
-    const rows = res ? carVinSpecRows(res) : [];
+    const info = res ? carFromVinDecode(res, v) : null;
+    const shown = info && info.lowConf ? carVinSafeRes(res) : res;
+    const rows = shown ? carVinSpecRows(shown) : [];
     if (!rows.length) {
         body().innerHTML = '<div class="add-part-hint"><span class="text-amber">' + (res ? "ما لقيت مواصفات لهالشاص (غالبًا مو بقاعدة NHTSA الأمريكية)" : "تعذر الاتصال بخدمة قراءة الشاص") + "</span></div>";
         return;
     }
-    const info = carFromVinDecode(res, v);
     const spec = {
         rows: rows,
-        headline: carVinHeadline(res, info && info.known ? info.make : ""),
+        headline: carVinHeadline(shown, info && info.known ? info.make : ""),
+        warn: info && info.lowConf ? carVinLowConfWarn() : "",
         image: null,
         imageLoading: true
     };
