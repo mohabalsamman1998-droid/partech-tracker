@@ -12,7 +12,7 @@
 // بياخذ دايمًا آخر نسخة منشورة، والكاش مجرد شبكة أمان لما الشبكة تفشل أو تتأخر. هذا مهم لأن
 // النشر متكرر والتحديث لازم يوصل بدون أي خطوة من المستخدم.
 
-// build-id: 2075f80434a4
+// build-id: a4f40d9a95eb
 const SHELL_CACHE = 'partech-shell-v1';
 const SHELL_URLS = [
   './',
@@ -50,8 +50,8 @@ function fetchWithTimeout(request, ms) {
   return new Promise((resolve, reject) => {
     const controller = new AbortController();
     const timer = setTimeout(() => { controller.abort(); reject(new Error('timeout')); }, ms);
-    // cache:'no-store' حتى ما ياخذ نسخة قديمة من كاش المتصفح نفسه بدل ما يسأل الخادم فعليًا
-    fetch(request, { signal: controller.signal, cache: 'no-store' })
+    // cache:'no-cache' = تحقّق دايمًا من الخادم (ETag/304) فما بياخذ نسخة قديمة من كاش المتصفح، وبدون ما يعيد تنزيل الملف كله لو ما تغيّر
+    fetch(request, { signal: controller.signal, cache: 'no-cache' })
       .then((res) => { clearTimeout(timer); resolve(res); })
       .catch((err) => { clearTimeout(timer); reject(err); });
   });
@@ -140,7 +140,7 @@ async function handleSameOriginGet(request) {
 }
 
 function revalidateInBackground(request, cache) {
-  fetch(request, { cache: 'no-store' })
+  fetch(request, { cache: 'no-cache' })
     .then((res) => {
       if (res && res.status === 200 && res.type === 'basic') cache.put(request, res.clone()).catch(() => {});
     })

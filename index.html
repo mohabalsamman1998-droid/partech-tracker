@@ -8,6 +8,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192-v2.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="icon" href="icon-192-v2.png">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="بارتك">
 <meta name="theme-color" content="#22D07A">
@@ -566,6 +568,8 @@
   .car-vin-img{text-align:center;margin-bottom:8px;}
   .car-vin-img img{max-width:100%;max-height:150px;border-radius:8px;object-fit:cover;display:block;margin:0 auto 4px;}
   .car-vin-img small{display:block;color:var(--text-dim);font-size:11px;}
+  .car-vin-img-loading{min-height:150px;display:flex;align-items:center;justify-content:center;}
+  #confirm-root .modal-card{overscroll-behavior:contain;}
   .car-vin-head{font-size:13.5px;font-weight:700;direction:rtl;overflow-wrap:anywhere;}
   .car-vin-details{margin-top:6px;}
   .car-vin-details summary{cursor:pointer;color:var(--green);font-size:12.5px;font-weight:700;}
@@ -3674,7 +3678,7 @@ function carVinCardHtml(spec, open) {
         const pic = '<img src="' + escapeHtml(spec.image.url) + '" alt="صورة توضيحية للسيارة" referrerpolicy="no-referrer">';
         img = '<div class="car-vin-img">' + (spec.image.page ? '<a href="' + escapeHtml(spec.image.page) + '" target="_blank" rel="noopener noreferrer">' + pic + "</a>" : pic) + "<small>" + (spec.image.yearMatch ? "صورة توضيحية لنفس الموديل" : "صورة توضيحية — ممكن يختلف الجيل") + " · ويكيميديا كومنز</small></div>";
     } else if (spec.imageLoading) {
-        img = '<div class="car-vin-img"><small>جاري البحث عن صورة…</small></div>';
+        img = '<div class="car-vin-img car-vin-img-loading"><small>جاري البحث عن صورة…</small></div>';
     }
     const head = spec.headline ? '<div class="car-vin-head">⚙️ ' + escapeHtml(spec.headline) + "</div>" : "";
     const warn = spec.warn ? '<div class="add-part-hint"><span class="text-amber">' + escapeHtml(spec.warn) + "</span></div>" : "";
@@ -4601,7 +4605,7 @@ function carVdsLoad() {
                 } : undefined);
                 if (!r || !r.ok) return null;
                 const j = await r.json();
-                if (j && j.v === 2 && j.w && Array.isArray(j.names)) {
+                if (j && j.v === 2 && j.w && typeof j.w === "object" && Array.isArray(j.names) && Array.isArray(j.trims) && Array.isArray(j.makes)) {
                     carVdsLoad.data = j;
                     return j;
                 }
@@ -4861,24 +4865,32 @@ function carApplyVds(info, vin, nowYear) {
         fillTrim: false,
         vds: true
     };
-    if (!full.name) {
-        const mkName = r => r.mk.known ? r.mk.make : r.mk.other;
-        const same = resolved.every(r => mkName(r) && carVinKey(mkName(r)) === carVinKey(mkName(resolved[0])));
+    const mkName = r => r.mk.known ? r.mk.make : r.mk.other;
+    const uniq = [], seenCand = {};
+    resolved.forEach(r => {
+        const k = carVinKey(mkName(r) + " " + r.model);
+        if (!seenCand[k]) {
+            seenCand[k] = 1;
+            uniq.push(r);
+        }
+    });
+    if (!full.name && uniq.length >= 2) {
+        const same = uniq.every(r => mkName(r) && carVinKey(mkName(r)) === carVinKey(mkName(uniq[0])));
         const out = Object.assign({}, base, common, {
             model: "",
             rawModel: "",
             modelMatched: false,
             trim: "",
-            vdsCandidates: resolved.map(r => ({
+            vdsCandidates: uniq.map(r => ({
                 make: mkName(r),
                 model: r.model,
                 known: !!r.mk.known
             }))
         });
         if (same) {
-            out.known = resolved[0].mk.known;
-            out.make = resolved[0].mk.known ? resolved[0].mk.make : "";
-            out.makeOtherText = resolved[0].mk.known ? "" : resolved[0].mk.other;
+            out.known = uniq[0].mk.known;
+            out.make = uniq[0].mk.known ? uniq[0].mk.make : "";
+            out.makeOtherText = uniq[0].mk.known ? "" : uniq[0].mk.other;
         } else if (base.fromWmi) {
             out.known = false;
             out.make = "";
@@ -4886,7 +4898,7 @@ function carApplyVds(info, vin, nowYear) {
         }
         return out;
     }
-    const r0 = resolved[0];
+    const r0 = uniq[0];
     const pick2 = carVdsTrimPick(r0.mk.make, r0.mk.known, r0.model, trimTitle);
     const trim2 = pick2.trim;
     const out = Object.assign({}, base, common, {
@@ -4901,6 +4913,35 @@ function carApplyVds(info, vin, nowYear) {
     if (trim2) out.vdsTrim = true;
     if (pick2.hint) out.vdsTrimHint = pick2.hint;
     return out;
+}
+
+function carGateClearVinFill(st) {
+    let changed = false;
+    if (st.vinFilled) {
+        st.make = "";
+        st.makeOther = false;
+        st.makeOtherText = "";
+        st.model = "";
+        st.trim = "";
+        st.trimSrc = "";
+        st.trimUnknown = false;
+        st.trimNote = "";
+        st.level = "";
+        st.levelSrc = "";
+        st.vinFilled = false;
+        changed = true;
+    }
+    if (st.yearVin) {
+        st.year = null;
+        st.yearVin = false;
+        changed = true;
+    }
+    if (st.vdsCandidates && st.vdsCandidates.length || st.vdsTrimHint) {
+        st.vdsCandidates = [];
+        st.vdsTrimHint = "";
+        changed = true;
+    }
+    return changed;
 }
 
 function carGateEditSig(st) {
@@ -4926,6 +4967,7 @@ function carGateApplyVinInfo(st, info) {
     if (info.fromWmi && !info.make && !info.makeOtherText) {
         if (info.year && !st.year) {
             st.year = info.year;
+            st.yearVin = true;
             carGateApplyYear(st);
             carGateApplyAutoLevel(st);
         }
@@ -4944,6 +4986,7 @@ function carGateApplyVinInfo(st, info) {
     st.makeOther = !info.known;
     st.make = info.known ? info.make : "";
     st.makeOtherText = info.known ? "" : info.makeOtherText;
+    st.vinFilled = true;
     if (info.model) {
         const prevKey = carVinKey(st.model);
         const prevHit = prevKey ? carFindModelByVinText(st.make, st.model) : null;
@@ -4956,7 +4999,10 @@ function carGateApplyVinInfo(st, info) {
         st.model = info.model;
         st.vinFilled = true;
     }
-    if (info.year && (!info.fromWmi || !st.year)) st.year = info.year;
+    if (info.year && (!info.fromWmi || !st.year)) {
+        st.year = info.year;
+        st.yearVin = true;
+    }
     st.trimNote = "";
     if (info.trim) {
         st.trim = info.trim;
@@ -5021,7 +5067,7 @@ function carGateVinNote(info, failed, yearGuess, nowYear) {
         const who = carVdsWho(info);
         const lead = info.fromWmi ? (failed ? "تعذر الاتصال بخدمة قراءة الشاص" : "الشاص مو بقاعدة NHTSA") + " — " : "";
         return {
-            tone: "ok",
+            tone: info.modelMatched || !info.known ? "ok" : "warn",
             text: lead + "الموديل تقدير من جدول طرازات الشاص (سجلات مركبات مفتوحة): " + who + (info.country ? " · المنشأ " + info.country : "") + (info.yearSource === "guess" ? " · السنة تخمين، تأكد منها" : "") + (info.vdsOverride ? " · (قراءة NHTSA التقريبية قالت " + info.nhtsaModel + " — الجدول أدق لسيارات غير أمريكية)" : "") + (!info.year ? " · سنة الصنع ما بتنقرأ من هالشاص (الخانة 10 مو حرف سنة) — اخترها" : "") + (info.vdsTrim && info.trim ? " · الفئة (تقدير): " + info.trim + " — راجع" : info.vdsTrimHint ? " · فئة محتملة (تقدير): " + info.vdsTrimHint + " — اضغط عليها بخانة الفئة أو اختر غيرها" : " — راجع واختر الفئة")
         };
     }
@@ -5295,7 +5341,7 @@ function carGateApplyYear(st) {
 
 function carGateHtml(st, opts) {
     opts = opts || {};
-    return '<div class="modal-backdrop" data-close-confirm data-car-gate>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">' + escapeHtml(opts.title || "🚗 السيارة") + "</div>" + '<p class="modal-sub">' + escapeHtml(opts.sub || "حدد الماركة والموديل وسنة الصنع والفئة") + "</p>" + '<div class="field" id="car-gate-vin-field" style="margin-top:14px;"><span class="field-label">رقم الشاص VIN (اختياري) — الصقه وتتعبّى السيارة تلقائيًا</span>' + '<input type="text" id="car-gate-vin" dir="ltr" style="text-align:right;" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" placeholder="الصق رقم الشاص هون" value="' + escapeHtml(st.vin || "") + '">' + '<div id="car-gate-vin-status" style="margin-top:6px;">' + carGateVinHintHtml(st) + "</div>" + '<div id="car-gate-vin-card"></div>' + "</div>" + '<div class="field" id="car-gate-make-field"><span class="field-label">السيارة (ماركة أو موديل)</span>' + '<div class="car-makes-picker">' + '<input type="text" class="search-input" id="car-gate-make-search" placeholder="🔍 اكتب أول حرف: تويوتا، كامري، BMW…" autocomplete="off">' + '<div class="filter-chips car-gate-results" id="car-gate-make-chips">' + carGateMakeChipsHtml("", st) + "</div>" + "</div>" + '<input type="text" id="car-gate-make-other" placeholder="اكتب اسم الماركة" autocomplete="off" value="' + escapeHtml(st.makeOtherText || "") + '" style="margin-top:8px;"' + (st.makeOther ? "" : " hidden") + ">" + "</div>" + '<div class="field" id="car-gate-model-field"><span class="field-label">الموديل</span>' + '<input type="text" id="car-gate-model" placeholder="مثال: كامري" autocomplete="off" value="' + escapeHtml(st.model || "") + '">' + '<div class="filter-chips car-gate-chips" id="car-gate-model-chips" style="margin-top:8px;">' + carGateModelChipsHtml(st) + "</div>" + "</div>" + '<div class="field" id="car-gate-year-field"><span class="field-label">سنة الصنع</span>' + '<select id="car-gate-year">' + carYearOptionsHtml(st.year) + "</select>" + "</div>" + '<div class="field" id="car-gate-trim-field"><span class="field-label">الفئة</span>' + '<div class="filter-chips" id="car-gate-trim-chips">' + carGateTrimChipsHtml(st) + "</div>" + '<div id="car-gate-trim-hint" style="margin-top:6px;">' + carGateTrimHintHtml(st) + "</div>" + '<input type="text" id="car-gate-trim" placeholder="أو اكتب الفئة (مثال: SE, GXR, لوميير)" autocomplete="off" value="' + escapeHtml(st.trim || "") + '" style="margin-top:8px;"' + (st.trimUnknown ? " disabled" : "") + ">" + "</div>" + '<div class="field" id="car-gate-level-field"><span class="field-label">المستوى</span>' + '<div class="filter-chips" id="car-gate-level-chips">' + carGateLevelChipsHtml(st) + "</div>" + '<div class="add-part-hint" id="car-gate-level-hint" style="margin-top:6px;">' + carGateLevelHintHtml(st) + "</div>" + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="car-gate-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-primary" id="car-gate-ok-btn">' + escapeHtml(opts.confirmLabel || "متابعة") + "</button>" + "</div>" + "</div>" + "</div>";
+    return '<div class="modal-backdrop" data-close-confirm data-car-gate>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true" aria-label="اختيار السيارة">' + '<div class="modal-title">' + escapeHtml(opts.title || "🚗 السيارة") + "</div>" + '<p class="modal-sub">' + escapeHtml(opts.sub || "حدد الماركة والموديل وسنة الصنع والفئة") + "</p>" + '<div class="field" id="car-gate-vin-field" style="margin-top:14px;"><span class="field-label">رقم الشاص VIN (اختياري) — الصقه وتتعبّى السيارة تلقائيًا</span>' + '<input type="text" id="car-gate-vin" dir="ltr" style="text-align:right;" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" placeholder="الصق رقم الشاص هون" value="' + escapeHtml(st.vin || "") + '">' + '<div id="car-gate-vin-status" style="margin-top:6px;">' + carGateVinHintHtml(st) + "</div>" + '<div id="car-gate-vin-card"></div>' + "</div>" + '<div class="field" id="car-gate-make-field"><span class="field-label">السيارة (ماركة أو موديل)</span>' + '<div class="car-makes-picker">' + '<input type="text" class="search-input" id="car-gate-make-search" placeholder="🔍 اكتب أول حرف: تويوتا، كامري، BMW…" autocomplete="off">' + '<div class="filter-chips car-gate-results" id="car-gate-make-chips">' + carGateMakeChipsHtml("", st) + "</div>" + "</div>" + '<input type="text" id="car-gate-make-other" placeholder="اكتب اسم الماركة" autocomplete="off" value="' + escapeHtml(st.makeOtherText || "") + '" style="margin-top:8px;"' + (st.makeOther ? "" : " hidden") + ">" + "</div>" + '<div class="field" id="car-gate-model-field"><span class="field-label">الموديل</span>' + '<input type="text" id="car-gate-model" placeholder="مثال: كامري" autocomplete="off" value="' + escapeHtml(st.model || "") + '">' + '<div class="filter-chips car-gate-chips" id="car-gate-model-chips" style="margin-top:8px;">' + carGateModelChipsHtml(st) + "</div>" + "</div>" + '<div class="field" id="car-gate-year-field"><span class="field-label">سنة الصنع</span>' + '<select id="car-gate-year" aria-label="سنة الصنع">' + carYearOptionsHtml(st.year) + "</select>" + "</div>" + '<div class="field" id="car-gate-trim-field"><span class="field-label">الفئة</span>' + '<div class="filter-chips" id="car-gate-trim-chips">' + carGateTrimChipsHtml(st) + "</div>" + '<div id="car-gate-trim-hint" style="margin-top:6px;">' + carGateTrimHintHtml(st) + "</div>" + '<input type="text" id="car-gate-trim" placeholder="أو اكتب الفئة (مثال: SE, GXR, لوميير)" autocomplete="off" value="' + escapeHtml(st.trim || "") + '" style="margin-top:8px;"' + (st.trimUnknown ? " disabled" : "") + ">" + "</div>" + '<div class="field" id="car-gate-level-field"><span class="field-label">المستوى</span>' + '<div class="filter-chips" id="car-gate-level-chips">' + carGateLevelChipsHtml(st) + "</div>" + '<div class="add-part-hint" id="car-gate-level-hint" style="margin-top:6px;">' + carGateLevelHintHtml(st) + "</div>" + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="car-gate-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-primary" id="car-gate-ok-btn">' + escapeHtml(opts.confirmLabel || "متابعة") + "</button>" + "</div>" + "</div>" + "</div>";
 }
 
 let carGateEscHandler = null;
@@ -5386,7 +5432,7 @@ function openCarGate(opts) {
         });
     };
     const syncFieldsFromState = () => {
-        makeSearch.value = "";
+        if (document.activeElement !== makeSearch) makeSearch.value = "";
         makeOtherInput.hidden = !st.makeOther;
         makeOtherInput.value = st.makeOtherText || "";
         modelInput.value = st.model || "";
@@ -5400,6 +5446,7 @@ function openCarGate(opts) {
     const runVinDecode = async () => {
         const v = st.vin;
         const mine = ++vinToken;
+        if (carGateClearVinFill(st)) syncFieldsFromState();
         const sig0 = carGateEditSig(st);
         st.vinNote = "جاري قراءة الشاص…";
         st.vinTone = "info";
@@ -5411,44 +5458,64 @@ function openCarGate(opts) {
         } catch (e) {
             failed = true;
         }
-        await carVdsLoad();
+        let vdsReady = true;
+        if (!carVdsLoad.data) vdsReady = await Promise.race([ carVdsLoad().then(d => !!d), new Promise(r => setTimeout(() => r(false), 1500)) ]);
         if (mine !== vinToken || st.vin !== v || !document.querySelector("#confirm-root [data-car-gate]")) return;
-        if (!info) info = carFromWmi(v);
-        if (info && !info.fromWmi) showVinCard(res, info, mine);
-        info = carApplyLearned(info, carLearnedForVin(v), v);
-        info = carApplyVds(info, v);
-        if (info && carGateEditSig(st) !== sig0) {
-            const got = [ info.known ? info.make : info.makeOtherText, info.model, info.year ].filter(Boolean).join(" ");
-            st.vinNote = "الشاص بيقول: " + got + " — اختيارك انحفظ، راجعه";
+        if (!vdsReady && !carVdsLoad.data) {
+            carVdsLoad().then(d => {
+                if (d && mine === vinToken && st.vin === v && document.querySelector("#confirm-root [data-car-gate]")) runVinDecode();
+            });
+        }
+        try {
+            if (!info) info = carFromWmi(v);
+            if (info && !info.fromWmi) showVinCard(res, info, mine);
+            info = carApplyLearned(info, carLearnedForVin(v), v);
+            info = carApplyVds(info, v);
+            if (info && info.vdsOverride && res) showVinCard(Object.assign({}, res, {
+                Model: info.rawModel || info.model
+            }), info, mine);
+            if (info && carGateEditSig(st) !== sig0) {
+                const got = [ info.known ? info.make : info.makeOtherText, info.model, info.year ].filter(Boolean).join(" ");
+                st.vinNote = "الشاص بيقول: " + got + " — اختيارك انحفظ، راجعه";
+                st.vinTone = "warn";
+                redrawVin();
+                return;
+            }
+            if (info) {
+                carGateApplyVinInfo(st, info);
+                const note = carGateVinNote(info, failed, null);
+                st.vinNote = note.text;
+                st.vinTone = note.tone;
+                syncFieldsFromState();
+            } else {
+                const guess = vinModelYearGuess(v);
+                if (guess && !st.year) {
+                    st.year = guess;
+                    st.yearVin = true;
+                    carGateApplyYear(st);
+                    syncFieldsFromState();
+                }
+                const note = carGateVinNote(null, failed, guess);
+                st.vinNote = note.text;
+                st.vinTone = note.tone;
+            }
+            redrawVin();
+        } catch (e) {
+            console.error("car gate: VIN decode", e);
+            st.vinNote = "تعذرت قراءة تفاصيل الشاص — اختر السيارة يدويًا";
             st.vinTone = "warn";
             redrawVin();
-            return;
         }
-        if (info) {
-            carGateApplyVinInfo(st, info);
-            const note = carGateVinNote(info, failed, null);
-            st.vinNote = note.text;
-            st.vinTone = note.tone;
-            syncFieldsFromState();
-        } else {
-            const guess = vinModelYearGuess(v);
-            if (guess && !st.year) {
-                st.year = guess;
-                carGateApplyYear(st);
-                syncFieldsFromState();
-            }
-            const note = carGateVinNote(null, failed, guess);
-            st.vinNote = note.text;
-            st.vinTone = note.tone;
-        }
-        redrawVin();
     };
     const cancel = () => {
         closeCarGate();
         if (typeof opts.onCancel === "function") opts.onCancel();
     };
     root.querySelector("[data-close-confirm]").addEventListener("click", e => {
-        if (e.target.hasAttribute("data-close-confirm")) cancel();
+        if (e.target.hasAttribute("data-close-confirm")) {
+            if (st.vin || st.make || st.makeOtherText || st.model || st.trim) return;
+            cancel();
+        }
     });
     q("#car-gate-cancel-btn").addEventListener("click", cancel);
     carGateEscHandler = function(e) {
@@ -5467,6 +5534,10 @@ function openCarGate(opts) {
         if (!e.target.closest("#car-gate-ok-btn")) clearMissing();
     });
     vinInput.addEventListener("input", () => {
+        {
+            const tok = String(vinInput.value || "").toUpperCase().match(/[A-HJ-NPR-Z0-9]{17}/);
+            if (tok && normalizeVin(vinInput.value).length > 17 && tok[0] !== vinInput.value) vinInput.value = tok[0];
+        }
         st.vin = normalizeVin(vinInput.value);
         vinToken++;
         st.vinSpec = null;
@@ -5627,6 +5698,7 @@ function openCarGate(opts) {
     });
     yearSel.addEventListener("change", () => {
         st.year = Number(yearSel.value) || null;
+        st.yearVin = false;
         carGateApplyYear(st);
         trimInput.value = st.trim;
         redrawTrims();
@@ -5766,7 +5838,8 @@ async function openVinSpecDialog(vin) {
     if (root.classList.contains("modal-open") && root.firstElementChild) return;
     root.innerHTML = vinSpecDialogHtml(v, '<div class="add-part-hint">جاري قراءة الشاص…</div>');
     root.classList.add("modal-open");
-    const alive = () => !!root.querySelector("[data-vin-spec]");
+    const specTok = openVinSpecDialog.tok = (openVinSpecDialog.tok || 0) + 1;
+    const alive = () => openVinSpecDialog.tok === specTok && !!root.querySelector("[data-vin-spec]");
     const body = () => root.querySelector("#vin-spec-body");
     root.querySelector("[data-close-confirm]").addEventListener("click", e => {
         if (e.target.hasAttribute("data-close-confirm")) closeVinSpecDialog();
@@ -16457,8 +16530,13 @@ if ("serviceWorker" in navigator) {
         }).catch(e => console.error("sw register:", e));
     });
     let swUpdateReloading = false;
+    let swHadController = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.addEventListener("controllerchange", () => {
         if (swUpdateReloading) return;
+        if (!swHadController) {
+            swHadController = true;
+            return;
+        }
         showAppUpdateBanner();
     });
 }
@@ -16473,11 +16551,14 @@ function showAppUpdateBanner() {
     if (document.getElementById("app-update-banner")) return;
     const el = document.createElement("div");
     el.id = "app-update-banner";
-    el.style.cssText = "position:fixed;left:12px;right:12px;bottom:12px;z-index:99999;background:#22D07A;color:#06170F;border-radius:12px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;box-shadow:0 4px 16px rgba(0,0,0,.3);font-family:inherit;font-size:14px;font-weight:700;";
-    el.innerHTML = '<span>🆕 في نسخة جديدة من التطبيق</span><button type="button" style="background:#06170F;color:#22D07A;border:0;border-radius:8px;padding:8px 14px;font-weight:800;font-size:13.5px;">تحديث الآن</button>';
-    el.querySelector("button").addEventListener("click", () => {
+    el.style.cssText = "position:fixed;left:12px;right:12px;bottom:12px;z-index:50;background:#22D07A;color:#06170F;border-radius:12px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;box-shadow:0 4px 16px rgba(0,0,0,.3);font-family:inherit;font-size:14px;font-weight:700;";
+    el.innerHTML = '<span>🆕 في نسخة جديدة من التطبيق</span><span style="display:flex;gap:6px;align-items:center;"><button type="button" data-update-now style="background:#06170F;color:#22D07A;border:0;border-radius:8px;padding:8px 14px;font-weight:800;font-size:13.5px;">تحديث الآن</button><button type="button" data-update-dismiss aria-label="إخفاء" style="background:transparent;color:#06170F;border:0;font-size:18px;font-weight:800;padding:4px 8px;">✕</button></span>';
+    el.querySelector("[data-update-now]").addEventListener("click", () => {
         swUpdateReloading = true;
         location.reload();
+    });
+    el.querySelector("[data-update-dismiss]").addEventListener("click", () => {
+        el.remove();
     });
     document.body.appendChild(el);
 }
