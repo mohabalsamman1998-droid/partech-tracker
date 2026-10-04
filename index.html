@@ -4560,7 +4560,12 @@ function carApplyLearned(info, learned, vin, nowYear) {
 }
 
 function carVdsTitle(name) {
-    return String(name || "").split(" ").map(w => w.split("-").map(p => /^[A-Z]{4,}$/.test(p) ? p.charAt(0) + p.slice(1).toLowerCase() : p).join("-")).join(" ");
+    const cap = t => t.charAt(0) + t.slice(1).toLowerCase();
+    return String(name || "").split(" ").map(w => w.split("-").map(p => {
+        const m = /^([A-Z]{4,})(\d{1,2})([A-Z]*)$/.exec(p);
+        if (m) return cap(m[1]) + " " + m[2] + (m[3] ? " " + (m[3].length >= 3 ? cap(m[3]) : m[3]) : "");
+        return /^[A-Z]{4,}$/.test(p) && !/^(PHEV|MHEV|EREV|BEV|HEV)$/.test(p) ? cap(p) : p;
+    }).join("-")).join(" ");
 }
 
 function carVdsLookup(vin) {
@@ -4583,27 +4588,261 @@ function carVdsLookup(vin) {
     return rev[wmi][v.slice(Number(r[0]) - 1, Number(r[1]))] || "";
 }
 
-function carApplyVds(info, vin, nowYear) {
-    if (info && info.model) return info;
-    const name = carVdsLookup(vin);
-    if (!name) return info;
-    const makes = carWmiMakes(vin);
-    let make = info ? info.known ? info.make : info.makeOtherText : "";
-    if (make) {
-        if (makes.length && !makes.some(m => carVinKey(m) === carVinKey(make))) return info;
-    } else if (makes.length === 1) {
-        make = makes[0];
-    } else if (makes.length > 1) {
-        const t0 = carVdsTitle(name);
-        const hits = makes.filter(m => CAR_MAKES.indexOf(m) !== -1 && !!carFindModelByVinText(m, t0));
-        if (hits.length === 1) make = hits[0]; else if (/^range rover/i.test(name) && makes.indexOf("رنج روفر") !== -1) make = "رنج روفر"; else return info;
-    } else {
-        return info;
+function carVdsLoad() {
+    if (carVdsLoad.p) return carVdsLoad.p;
+    const p = (async () => {
+        try {
+            if (typeof fetch !== "function") return null;
+            const ctrl = typeof AbortController === "function" ? new AbortController : null;
+            const timer = ctrl ? setTimeout(() => ctrl.abort(), 8e3) : null;
+            try {
+                const r = await fetch("vds.json", ctrl ? {
+                    signal: ctrl.signal
+                } : undefined);
+                if (!r || !r.ok) return null;
+                const j = await r.json();
+                if (j && j.v === 2 && j.w && Array.isArray(j.names)) {
+                    carVdsLoad.data = j;
+                    return j;
+                }
+            } finally {
+                if (timer) clearTimeout(timer);
+            }
+        } catch (e) {}
+        return null;
+    })();
+    carVdsLoad.p = p;
+    p.then(d => {
+        if (!d && carVdsLoad.p === p) carVdsLoad.p = null;
+    });
+    return p;
+}
+
+function carVdsKey(v, p) {
+    const m = /^(\d)-(\d)(?:\+(\d+))?$/.exec(String(p || ""));
+    if (!m) return "";
+    return v.slice(Number(m[1]) - 1, Number(m[2])) + (m[3] ? v.charAt(Number(m[3]) - 1) : "");
+}
+
+function carVdsLookupFull(vin) {
+    const v = normalizeVin(vin);
+    if (v.length !== 17) return null;
+    const d = carVdsLoad.data;
+    const wmi = v.slice(0, 3);
+    const has = (o, k) => !!o && Object.prototype.hasOwnProperty.call(o, k);
+    if (d && d.w && has(d.w, wmi)) {
+        const e = d.w[wmi];
+        const key = carVdsKey(v, e.p);
+        const out = {
+            name: "",
+            trim: "",
+            make: "",
+            wmiMake: e.mk || "",
+            alts: [],
+            src: "remote"
+        };
+        if (has(e.k, key)) {
+            const hit = e.k[key];
+            if (Array.isArray(hit) && hit.length >= 4) {
+                for (let i = 0; i + 1 < hit.length; i += 2) {
+                    const nm = d.names[hit[i]];
+                    if (nm) out.alts.push({
+                        name: nm,
+                        make: hit[i + 1] >= 0 ? d.makes[hit[i + 1]] || "" : ""
+                    });
+                }
+            } else {
+                const mi = Array.isArray(hit) ? hit[0] : hit;
+                out.name = d.names[mi] || "";
+                if (Array.isArray(hit) && hit[1] >= 0) out.make = d.makes[hit[1]] || "";
+            }
+        }
+        if (e.t && e.tp) {
+            const tk = carVdsKey(v, e.tp);
+            if (has(e.t, tk)) out.trim = d.trims && d.trims[e.t[tk]] || "";
+        }
+        if (!out.name && out.alts.length < 2) {
+            const emb = carVdsLookup(v);
+            if (emb) {
+                out.name = emb;
+                out.src = out.trim ? "remote+embedded" : "embedded";
+            }
+        }
+        if (out.name || out.alts.length >= 2 || out.trim) return out;
     }
-    if (make === "لاند روفر" && /^range rover/i.test(name) && CAR_MAKES.indexOf("رنج روفر") !== -1) make = "رنج روفر";
-    const known = CAR_MAKES.indexOf(make) !== -1;
-    const title = carVdsTitle(name);
-    const found = known ? carFindModelByVinText(make, title) : null;
+    const name = carVdsLookup(v);
+    return name ? {
+        name: name,
+        trim: "",
+        make: "",
+        wmiMake: "",
+        alts: [],
+        src: "embedded"
+    } : null;
+}
+
+function carVdsMake(text) {
+    const t = carCleanText(text, 30);
+    if (!t) return {
+        known: false,
+        make: "",
+        other: ""
+    };
+    const c = carCanonMake(t);
+    if (CAR_MAKES.indexOf(c) !== -1) return {
+        known: true,
+        make: c,
+        other: ""
+    };
+    return {
+        known: false,
+        make: "",
+        other: carVdsTitle(t)
+    };
+}
+
+function carVdsTrimPick(make, known, model, trimTitle) {
+    if (!trimTitle) return {
+        trim: "",
+        hint: ""
+    };
+    if (known) {
+        const canon = carCanonTrim(make, model, trimTitle);
+        if (carIsCatalogTrim(make, model, canon)) return {
+            trim: canon,
+            hint: ""
+        };
+    }
+    return {
+        trim: "",
+        hint: carCleanText(trimTitle, 60)
+    };
+}
+
+function carVdsFindModel(make, title) {
+    let t = String(title || "");
+    for (let i = 0; i < 3 && t; i++) {
+        const f = carFindModelByVinText(make, t);
+        if (f) return f;
+        const n = t.replace(/\s+(PHEV|HEV|MHEV|EV|HYBRID|PLUG-IN|DM-I|I-DM)$/i, "");
+        if (n === t) break;
+        t = n;
+    }
+    return null;
+}
+
+function carApplyVds(info, vin, nowYear) {
+    const full = carVdsLookupFull(vin);
+    if (!full) return info;
+    const trimTitle = full.trim ? carVdsTitle(full.trim) : "";
+    const makes = carWmiMakes(vin);
+    const imake = info ? info.known ? info.make : info.makeOtherText : "";
+    const authMake = info && !info.fromWmi ? imake : "";
+    if (info && info.model && info.lowConf && full.name) {
+        if (makes.length && imake && !makes.some(m => carVinKey(m) === carVinKey(imake))) return info;
+        const tt = carVdsTitle(full.name);
+        const ff = info.known ? carVdsFindModel(info.make, tt) : null;
+        const ik = carVinKey(info.model), tk = carVinKey(tt);
+        if (!(ik === tk || ik && tk && (ik.indexOf(tk) === 0 || tk.indexOf(ik) === 0) || !!ff && ff.name === info.model)) {
+            const mName = ff ? ff.name : tt;
+            const pickF = carVdsTrimPick(info.make, info.known, mName, trimTitle);
+            const ov = Object.assign({}, info, {
+                model: mName,
+                rawModel: tt,
+                modelMatched: !!ff,
+                trim: pickF.trim,
+                fillTrim: false,
+                vds: true,
+                vdsOverride: true,
+                nhtsaModel: info.model
+            });
+            if (pickF.trim) ov.vdsTrim = true;
+            if (pickF.hint) ov.vdsTrimHint = pickF.hint;
+            return ov;
+        }
+    }
+    if (info && info.model) {
+        if (info.trim || !trimTitle) return info;
+        if (makes.length && imake && !makes.some(m => carVinKey(m) === carVinKey(imake))) return info;
+        const names = full.name ? [ full.name ] : full.alts.map(a => a.name);
+        if (names.length) {
+            const same = names.some(n => {
+                const t1 = carVdsTitle(n);
+                const f1 = info.known ? carVdsFindModel(info.make, t1) : null;
+                return carVinKey(info.model) === carVinKey(t1) || !!f1 && f1.name === info.model;
+            });
+            if (!same) return info;
+        }
+        const pick1 = carVdsTrimPick(info.make, info.known, info.model, trimTitle);
+        return pick1.trim ? Object.assign({}, info, {
+            trim: pick1.trim,
+            fillTrim: false,
+            vdsTrim: true
+        }) : Object.assign({}, info, {
+            vdsTrimHint: pick1.hint
+        });
+    }
+    const cand = full.name ? [ {
+        name: full.name,
+        make: full.make
+    } ] : full.alts;
+    if (!cand.length) return info;
+    const resolved = [];
+    for (const c of cand) {
+        const tm = c.make || full.wmiMake;
+        let mk;
+        if (authMake) {
+            if (makes.length && !makes.some(m => carVinKey(m) === carVinKey(authMake))) return info;
+            const tmk = tm ? carVdsMake(tm) : null;
+            if (tmk && (tmk.known || tmk.other) && carVinKey(tmk.known ? tmk.make : tmk.other) !== carVinKey(authMake)) return info;
+            mk = {
+                known: !!info.known,
+                make: info.known ? info.make : "",
+                other: info.known ? "" : info.makeOtherText
+            };
+        } else if (makes.length === 1) {
+            const cur = {
+                known: CAR_MAKES.indexOf(makes[0]) !== -1,
+                make: makes[0],
+                other: ""
+            };
+            const tmk = c.make ? carVdsMake(c.make) : null;
+            mk = cur;
+            if (tmk && !tmk.known && tmk.other && carVinKey(tmk.other) !== carVinKey(makes[0])) mk = tmk; else if (tmk && tmk.known && tmk.make !== cur.make) {
+                const tt = carVdsTitle(c.name);
+                if (carVdsFindModel(tmk.make, tt) && !(cur.known && carVdsFindModel(cur.make, tt))) mk = tmk;
+            }
+        } else if (tm) {
+            mk = carVdsMake(tm);
+        } else if (makes.length > 1) {
+            const t0 = carVdsTitle(c.name);
+            const hits = makes.filter(m => CAR_MAKES.indexOf(m) !== -1 && !!carVdsFindModel(m, t0));
+            if (hits.length === 1) mk = {
+                known: true,
+                make: hits[0],
+                other: ""
+            }; else if (/^range rover/i.test(c.name) && makes.indexOf("رنج روفر") !== -1) mk = {
+                known: true,
+                make: "رنج روفر",
+                other: ""
+            }; else return info;
+        } else {
+            return info;
+        }
+        if (mk.known && mk.make === "لاند روفر" && /^range rover/i.test(c.name) && CAR_MAKES.indexOf("رنج روفر") !== -1) mk = {
+            known: true,
+            make: "رنج روفر",
+            other: ""
+        };
+        const title = carVdsTitle(c.name);
+        const found = mk.known ? carVdsFindModel(mk.make, title) : null;
+        resolved.push({
+            mk: mk,
+            title: title,
+            found: found,
+            model: found ? found.name : title
+        });
+    }
     const base = info || {
         fromWmi: true,
         wmi: normalizeVin(vin).slice(0, 3),
@@ -4616,19 +4855,52 @@ function carApplyVds(info, vin, nowYear) {
         fillTrim: false
     };
     const year = base.year || vinModelYearGuess(vin, nowYear);
-    return Object.assign({}, base, {
-        known: known,
-        make: known ? make : "",
-        makeOtherText: known ? "" : make,
-        model: found ? found.name : title,
-        rawModel: title,
-        modelMatched: !!found,
+    const common = {
         year: year,
         yearSource: base.year ? base.yearSource : year ? "guess" : "",
-        trim: "",
         fillTrim: false,
         vds: true
+    };
+    if (!full.name) {
+        const mkName = r => r.mk.known ? r.mk.make : r.mk.other;
+        const same = resolved.every(r => mkName(r) && carVinKey(mkName(r)) === carVinKey(mkName(resolved[0])));
+        const out = Object.assign({}, base, common, {
+            model: "",
+            rawModel: "",
+            modelMatched: false,
+            trim: "",
+            vdsCandidates: resolved.map(r => ({
+                make: mkName(r),
+                model: r.model,
+                known: !!r.mk.known
+            }))
+        });
+        if (same) {
+            out.known = resolved[0].mk.known;
+            out.make = resolved[0].mk.known ? resolved[0].mk.make : "";
+            out.makeOtherText = resolved[0].mk.known ? "" : resolved[0].mk.other;
+        } else if (base.fromWmi) {
+            out.known = false;
+            out.make = "";
+            out.makeOtherText = "";
+        }
+        return out;
+    }
+    const r0 = resolved[0];
+    const pick2 = carVdsTrimPick(r0.mk.make, r0.mk.known, r0.model, trimTitle);
+    const trim2 = pick2.trim;
+    const out = Object.assign({}, base, common, {
+        known: r0.mk.known,
+        make: r0.mk.known ? r0.mk.make : "",
+        makeOtherText: r0.mk.known ? "" : r0.mk.other,
+        model: r0.model,
+        rawModel: r0.title,
+        modelMatched: !!r0.found,
+        trim: trim2
     });
+    if (trim2) out.vdsTrim = true;
+    if (pick2.hint) out.vdsTrimHint = pick2.hint;
+    return out;
 }
 
 function carGateEditSig(st) {
@@ -4637,7 +4909,21 @@ function carGateEditSig(st) {
 
 function carGateApplyVinInfo(st, info) {
     if (!info) return false;
-    if (info.fromWmi && !info.make) {
+    st.vdsCandidates = info.vdsCandidates ? info.vdsCandidates.slice() : [];
+    if (st.vdsCandidates.length && st.vinFilled && !info.model) {
+        st.make = "";
+        st.makeOther = false;
+        st.makeOtherText = "";
+        st.model = "";
+        st.trim = "";
+        st.trimSrc = "";
+        st.trimUnknown = false;
+        st.level = "";
+        st.levelSrc = "";
+        st.vinFilled = false;
+    }
+    st.vdsTrimHint = info.vdsTrimHint || "";
+    if (info.fromWmi && !info.make && !info.makeOtherText) {
         if (info.year && !st.year) {
             st.year = info.year;
             carGateApplyYear(st);
@@ -4668,6 +4954,7 @@ function carGateApplyVinInfo(st, info) {
             st.trimUnknown = false;
         }
         st.model = info.model;
+        st.vinFilled = true;
     }
     if (info.year && (!info.fromWmi || !st.year)) st.year = info.year;
     st.trimNote = "";
@@ -4686,6 +4973,19 @@ function carGateApplyVinInfo(st, info) {
     carGateApplyYear(st);
     carGateApplyAutoLevel(st);
     return true;
+}
+
+function carVdsCandLabel(c) {
+    const make = c && c.make || "", model = c && c.model || "";
+    const skip = !!make && !!model && carVinKey(model).indexOf(carVinKey(make)) === 0;
+    return [ skip ? "" : make, model ].filter(Boolean).join(" ");
+}
+
+function carVdsWho(info) {
+    const make = info.known ? info.make : info.makeOtherText;
+    const model = info.model || "";
+    const skipMake = !!make && !!model && carVinKey(model).indexOf(carVinKey(make)) === 0;
+    return [ skipMake ? "" : make, model, info.year ].filter(Boolean).join(" ");
 }
 
 function carGateVinNote(info, failed, yearGuess, nowYear) {
@@ -4708,12 +5008,21 @@ function carGateVinNote(info, failed, yearGuess, nowYear) {
             text: lead + "من طلبياتكم السابقة بنفس طراز الشاص (أول 8 خانات): " + who + (info.learned.n > 1 ? " (" + info.learned.n + " طلبيات)" : "") + (info.country ? " · المنشأ " + info.country : "") + (info.yearSource === "guess" ? " · السنة تخمين، تأكد منها" : "") + " — راجع واختر الفئة"
         };
     }
+    if (info.vdsCandidates && info.vdsCandidates.length) {
+        const list = info.vdsCandidates.map(carVdsCandLabel).join(" أو ");
+        const lead = info.fromWmi ? (failed ? "تعذر الاتصال بخدمة قراءة الشاص" : "الشاص مو بقاعدة NHTSA") + " — " : "";
+        const mk = info.known ? info.make : info.makeOtherText;
+        return {
+            tone: "warn",
+            text: lead + (mk ? "الماركة " + mk + " · " : "") + "هالشاص بيخدم أكتر من موديل بنفس المنصة (سجلات مركبات مفتوحة): " + list + (info.year ? " · السنة " + info.year + (info.yearSource === "guess" ? " (تخمين)" : "") : "") + " — اختر الصح"
+        };
+    }
     if (info.vds) {
-        const who = [ info.known ? info.make : info.makeOtherText, info.model, info.year ].filter(Boolean).join(" ");
+        const who = carVdsWho(info);
         const lead = info.fromWmi ? (failed ? "تعذر الاتصال بخدمة قراءة الشاص" : "الشاص مو بقاعدة NHTSA") + " — " : "";
         return {
             tone: "ok",
-            text: lead + "الموديل تقدير من جدول طرازات الشاص (أوروبي/كوري): " + who + (info.country ? " · المنشأ " + info.country : "") + (info.yearSource === "guess" ? " · السنة تخمين، تأكد منها" : "") + " — راجع واختر الفئة"
+            text: lead + "الموديل تقدير من جدول طرازات الشاص (سجلات مركبات مفتوحة): " + who + (info.country ? " · المنشأ " + info.country : "") + (info.yearSource === "guess" ? " · السنة تخمين، تأكد منها" : "") + (info.vdsOverride ? " · (قراءة NHTSA التقريبية قالت " + info.nhtsaModel + " — الجدول أدق لسيارات غير أمريكية)" : "") + (!info.year ? " · سنة الصنع ما بتنقرأ من هالشاص (الخانة 10 مو حرف سنة) — اخترها" : "") + (info.vdsTrim && info.trim ? " · الفئة (تقدير): " + info.trim + " — راجع" : info.vdsTrimHint ? " · فئة محتملة (تقدير): " + info.vdsTrimHint + " — اضغط عليها بخانة الفئة أو اختر غيرها" : " — راجع واختر الفئة")
         };
     }
     if (info.fromWmi) {
@@ -4730,9 +5039,11 @@ function carGateVinNote(info, failed, yearGuess, nowYear) {
     if (info.yearSource === "guess") text += " — السنة تخمين من الشاص، تأكد منها";
     if (info.year && info.year + 30 <= (Number(nowYear) || (new Date).getFullYear()) + 1) text += " — أو " + (info.year + 30) + " (حرف السنة بالشاص بيتكرر كل 30 سنة)";
     if (!info.model) text += " — الموديل ما انقرأ من الشاص، اختاره";
+    if (!info.year) text += " — سنة الصنع ما بتنقرأ من هالشاص (الخانة 10 مو حرف سنة)، اخترها";
     if (info.lowConf) text += " — قراءة تقريبية: الشاص مو أمريكي فالمحرك والمواصفات مخفية (غير مؤكدة)";
     const filled = !!info.trim || info.fillTrim && !!info.specText;
-    if (info.trim) text += " — الفئة: " + info.trim + (info.learnedTrim ? " (من طلبية سابقة بنفس الشاص)" : "") + (info.specExtra ? " · " + info.specExtra : ""); else if (info.fillTrim) text += " — الفئة: " + info.specText; else if (info.specExtra) text += " — مواصفات الشاص: " + info.specExtra;
+    if (info.trim) text += " — الفئة: " + info.trim + (info.learnedTrim ? " (من طلبية سابقة بنفس الشاص)" : "") + (info.vdsTrim ? " (تقدير من سجلات مفتوحة)" : "") + (info.specExtra ? " · " + info.specExtra : ""); else if (info.fillTrim) text += " — الفئة: " + info.specText; else if (info.specExtra) text += " — مواصفات الشاص: " + info.specExtra;
+    if (info.vdsTrimHint && !info.trim && !info.fillTrim) text += " — فئة محتملة (تقدير): " + info.vdsTrimHint;
     text += filled ? " — راجع" : " — راجع واختر الفئة";
     return {
         tone: info.modelMatched || !info.known ? "ok" : "warn",
@@ -4823,6 +5134,9 @@ function carGateMakeChipsHtml(query, st) {
 }
 
 function carGateModelChipsHtml(st) {
+    if (st.vdsCandidates && st.vdsCandidates.length && !String(st.model || "").trim()) {
+        return '<div class="add-part-hint">الشاص بيخدم أكتر من موديل — اضغط على الصح:</div>' + st.vdsCandidates.map((c, i) => '<button type="button" class="chip" data-car-gate-vds-pick="' + i + '">' + escapeHtml(carVdsCandLabel(c)) + "</button>").join("");
+    }
     const make = st.makeOther ? "" : st.make;
     if (!make) return '<div class="add-part-hint">اختر السيارة من البحث فوق، أو اكتب الموديل مباشرة</div>';
     const all = carCatalogModels(make);
@@ -4849,7 +5163,10 @@ function carGateTrimChipsHtml(st) {
         seen[k] = 1;
         return true;
     });
-    return infos.map(t => '<button type="button" class="chip' + (!st.trimUnknown && cur && normalizeArabicSearch(t.name) === cur ? " chip-active" : "") + '" data-car-gate-trim="' + escapeHtml(t.name) + '">' + escapeHtml(t.name) + (t.level ? "<small>" + escapeHtml(t.level) + "</small>" : "") + "</button>").join("") + '<button type="button" class="chip' + (st.trimUnknown ? " chip-active" : "") + '" data-car-gate-trim-unknown="1">غير معروفة</button>';
+    const hintTxt = carCleanText(st.vdsTrimHint, 60);
+    const hintKey = normalizeArabicSearch(hintTxt);
+    const hintChip = hintTxt && !cur && !seen[hintKey] ? '<button type="button" class="chip" data-car-gate-trim="' + escapeHtml(hintTxt) + '">📊 ' + escapeHtml(hintTxt) + "<small>تقدير من سجلات مفتوحة</small></button>" : "";
+    return hintChip + infos.map(t => '<button type="button" class="chip' + (!st.trimUnknown && cur && normalizeArabicSearch(t.name) === cur ? " chip-active" : "") + '" data-car-gate-trim="' + escapeHtml(t.name) + '">' + escapeHtml(t.name) + (t.level ? "<small>" + escapeHtml(t.level) + "</small>" : "") + "</button>").join("") + '<button type="button" class="chip' + (st.trimUnknown ? " chip-active" : "") + '" data-car-gate-trim-unknown="1">غير معروفة</button>';
 }
 
 function carGateTrimHintHtml(st) {
@@ -5002,6 +5319,7 @@ function openCarGate(opts) {
     if (root.querySelector("[data-car-gate]")) return;
     if (root.classList.contains("modal-open") && root.firstElementChild) return;
     closeCarGate();
+    carVdsLoad();
     const st = carGateInitialState(opts.car, opts.vin);
     if (!st.level) carGateApplyAutoLevel(st);
     root.innerHTML = carGateHtml(st, opts);
@@ -5093,6 +5411,7 @@ function openCarGate(opts) {
         } catch (e) {
             failed = true;
         }
+        await carVdsLoad();
         if (mine !== vinToken || st.vin !== v || !document.querySelector("#confirm-root [data-car-gate]")) return;
         if (!info) info = carFromWmi(v);
         if (info && !info.fromWmi) showVinCard(res, info, mine);
@@ -5152,6 +5471,12 @@ function openCarGate(opts) {
         vinToken++;
         st.vinSpec = null;
         redrawVinCard();
+        if (st.vdsCandidates && st.vdsCandidates.length || st.vdsTrimHint) {
+            st.vdsCandidates = [];
+            st.vdsTrimHint = "";
+            redrawModels();
+            redrawTrims();
+        }
         if (vinLooksValid(st.vin)) runVinDecode(); else {
             st.vinNote = "";
             st.vinTone = "";
@@ -5178,6 +5503,7 @@ function openCarGate(opts) {
     makeChips.addEventListener("click", e => {
         const btn = e.target.closest("button");
         if (!btn) return;
+        st.vinFilled = false;
         const prevMake = st.makeOther ? carCleanText(st.makeOtherText, 30) : st.make;
         const resetModelAndTrim = () => {
             st.model = "";
@@ -5234,6 +5560,7 @@ function openCarGate(opts) {
     });
     modelInput.addEventListener("input", () => {
         const oldTrim = st.trim;
+        st.vinFilled = false;
         st.model = modelInput.value;
         st.trimNote = "";
         if (carGateDropTrimOnModelSwitch(st)) {
@@ -5245,9 +5572,49 @@ function openCarGate(opts) {
     });
     modelChips.addEventListener("click", e => {
         const btn = e.target.closest("button");
+        const vi = btn && btn.getAttribute("data-car-gate-vds-pick");
+        if (vi != null && vi !== "") {
+            const c = (st.vdsCandidates || [])[Number(vi)];
+            if (!c) return;
+            const prevMake = st.makeOther ? carCleanText(st.makeOtherText, 30) : st.make;
+            const nextMake = c.known ? c.make : carCleanText(c.make, 30);
+            if (nextMake && prevMake && prevMake !== nextMake) {
+                st.trim = "";
+                st.trimSrc = "";
+                st.trimUnknown = false;
+                st.level = "";
+                st.levelSrc = "";
+                trimInput.value = "";
+            }
+            if (c.known) {
+                st.make = c.make;
+                st.makeOther = false;
+                st.makeOtherText = "";
+                makeOtherInput.hidden = true;
+            } else if (c.make) {
+                st.make = "";
+                st.makeOther = true;
+                st.makeOtherText = carCleanText(c.make, 30);
+                makeOtherInput.hidden = false;
+                makeOtherInput.value = st.makeOtherText;
+            }
+            st.model = c.model;
+            st.trimNote = "";
+            modelInput.value = c.model;
+            st.vdsCandidates = [];
+            st.vinFilled = false;
+            st.vinNote = "اخترت " + carVdsCandLabel(c) + " من مرشحات الشاص — راجع السنة والفئة";
+            st.vinTone = "ok";
+            redrawVin();
+            redrawMakes();
+            redrawModels();
+            redrawTrims();
+            return;
+        }
         const name = btn && btn.getAttribute("data-car-gate-model");
         if (!name) return;
         const oldTrim = st.trim;
+        st.vinFilled = false;
         st.model = name;
         st.trimNote = "";
         modelInput.value = name;
@@ -5281,6 +5648,12 @@ function openCarGate(opts) {
             st.trim = t;
             st.trimUnknown = false;
             trimInput.value = t;
+            if (st.vdsTrimHint && t === st.vdsTrimHint) {
+                st.vdsTrimHint = "";
+                st.vinNote = "الفئة " + t + " (تقدير من سجلات مفتوحة) — راجع";
+                st.vinTone = "ok";
+                redrawVin();
+            }
         }
         redrawTrims();
     });

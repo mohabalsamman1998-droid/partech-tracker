@@ -12,7 +12,7 @@
 // بياخذ دايمًا آخر نسخة منشورة، والكاش مجرد شبكة أمان لما الشبكة تفشل أو تتأخر. هذا مهم لأن
 // النشر متكرر والتحديث لازم يوصل بدون أي خطوة من المستخدم.
 
-// build-id: 864cb45fb76b
+// build-id: 2075f80434a4
 const SHELL_CACHE = 'partech-shell-v1';
 const SHELL_URLS = [
   './',
@@ -20,7 +20,8 @@ const SHELL_URLS = [
   './manifest.json',
   './icon-192-v2.png',
   './icon-512-v2.png',
-  './logo.png'
+  './logo.png',
+  './vds.json'
 ];
 // مهلة انتظار الشبكة قبل ما نرجع للنسخة المحفوظة. لازم تكون أطول من تحميل الصفحة على شبكة
 // جوال بطيئة (الملف ~150KB مضغوط) وبنفس الوقت أقصر بكتير من صبر المستخدم على شاشة فاضية.
@@ -86,8 +87,28 @@ self.addEventListener('fetch', (event) => {
   // ملف الـservice worker نفسه لازم يوصل من الشبكة دايمًا حتى يقدر يتحدّث
   if (url.pathname.endsWith('/sw.js')) return;
 
+  // جدول الشاصيات الكبير (vds.json، ~270KB مضغوط، بيتغيّر بالنشرات بس): الكاش أولًا مع تحديث بالخلفية — بدل ما ينحمّل من جديد بكل جلسة
+  if (url.pathname.endsWith('/vds.json')) {
+    event.respondWith(handleVdsGet(request, event));
+    return;
+  }
+
   event.respondWith(handleSameOriginGet(request));
 });
+
+async function handleVdsGet(request, event) {
+  const cache = await caches.open(SHELL_CACHE);
+  const cached = await cache.match(request);
+  const refresh = fetch(request, { cache: 'no-cache' }).then((res) => {
+    if (res && res.status === 200 && res.type === 'basic') cache.put(request, res.clone()).catch(() => {});
+    return res;
+  });
+  if (cached) {
+    event.waitUntil(refresh.catch(() => {}));
+    return cached;
+  }
+  try { return await refresh; } catch (e) { return Response.error(); }
+}
 
 async function handleSameOriginGet(request) {
   const cache = await caches.open(SHELL_CACHE);
