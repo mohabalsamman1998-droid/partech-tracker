@@ -12,7 +12,7 @@
 // بياخذ دايمًا آخر نسخة منشورة، والكاش مجرد شبكة أمان لما الشبكة تفشل أو تتأخر. هذا مهم لأن
 // النشر متكرر والتحديث لازم يوصل بدون أي خطوة من المستخدم.
 
-// build-id: 9da9a29bb857
+// build-id: e89b27687190
 const SHELL_CACHE = 'partech-shell-v1';
 const SHELL_URLS = [
   './',
@@ -68,7 +68,7 @@ function offlineFallbackResponse() {
     'background:#0E1210;color:#EEF1ED;font-family:system-ui,sans-serif;padding:20px;text-align:center;">' +
     '<div><div style="font-size:40px;margin-bottom:14px;">📶</div>' +
     '<div style="font-size:17px;font-weight:800;margin-bottom:10px;">تعذر تحميل التطبيق</div>' +
-    '<div style="color:#9CA89F;font-size:13px;line-height:1.7;margin-bottom:18px;">تحقق من اتصال الإنترنت وحاول مرة ثانية.</div>' +
+    '<div style="color:#9CA89F;font-size:13px;line-height:1.7;margin-bottom:18px;">تحقق من اتصال الإنترنت وحاول مرة أخرى.</div>' +
     '<button onclick="location.reload()" style="background:#22D07A;color:#06170F;border:0;border-radius:10px;' +
     'padding:12px 22px;font-size:15px;font-weight:700;">إعادة المحاولة</button></div></body></html>',
     { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
@@ -152,7 +152,7 @@ self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch (e) {}
   const title = data.title || 'بارتك';
-  const body = data.body || 'في شي جديد يحتاج انتباهك';
+  const body = data.body || 'يوجد شيء جديد يحتاج إلى انتباهك';
   event.waitUntil(
     self.registration.showNotification(title, {
       body: body,
