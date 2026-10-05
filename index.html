@@ -11967,6 +11967,58 @@ function docPdfFilename() {
     return "PARTECH-" + num + ".pdf";
 }
 
+function pdfSplitLtrRuns(txt) {
+    txt = String(txt || "");
+    if (!/[ء-ي]/.test(txt)) return null;
+    const re = /[A-Za-z0-9]+(?:[-.,:/][A-Za-z0-9]+)*%?/g;
+    const out = [];
+    let last = 0, m;
+    while (m = re.exec(txt)) {
+        if (m.index > last) out.push({
+            t: txt.slice(last, m.index),
+            ltr: false
+        });
+        out.push({
+            t: m[0],
+            ltr: true
+        });
+        last = m.index + m[0].length;
+    }
+    if (!out.length) return null;
+    if (last < txt.length) out.push({
+        t: txt.slice(last),
+        ltr: false
+    });
+    return out;
+}
+
+function pdfIsolateLtrRuns(root) {
+    const doc = root.ownerDocument;
+    const walker = doc.createTreeWalker(root, 4);
+    const nodes = [];
+    let n;
+    while (n = walker.nextNode()) nodes.push(n);
+    nodes.forEach(tn => {
+        const par = tn.parentNode;
+        if (!par || /^(SCRIPT|STYLE|TEXTAREA|INPUT)$/.test(par.nodeName)) return;
+        const parts = pdfSplitLtrRuns(tn.nodeValue);
+        if (!parts) return;
+        const frag = doc.createDocumentFragment();
+        parts.forEach(p => {
+            if (!p.ltr) {
+                frag.appendChild(doc.createTextNode(p.t));
+                return;
+            }
+            const sp = doc.createElement("span");
+            sp.setAttribute("dir", "ltr");
+            sp.style.unicodeBidi = "isolate";
+            sp.textContent = p.t;
+            frag.appendChild(sp);
+        });
+        par.replaceChild(frag, tn);
+    });
+}
+
 async function buildDocPdfBlob() {
     try {
         await ensureHtml2pdf();
@@ -11999,7 +12051,13 @@ async function buildDocPdfBlob() {
                 scale: 1,
                 useCORS: true,
                 backgroundColor: "#ffffff",
-                windowWidth: 900
+                windowWidth: 900,
+                onclone: clonedDoc => {
+                    try {
+                        const c = clonedDoc.querySelector(".html2pdf__container");
+                        if (c) pdfIsolateLtrRuns(c);
+                    } catch (e) {}
+                }
             },
             jsPDF: {
                 unit: "mm",
