@@ -12,7 +12,7 @@
 // بياخذ دايمًا آخر نسخة منشورة، والكاش مجرد شبكة أمان لما الشبكة تفشل أو تتأخر. هذا مهم لأن
 // النشر متكرر والتحديث لازم يوصل بدون أي خطوة من المستخدم.
 
-// build-id: a4f40d9a95eb
+// build-id: 3f97218ff477
 const SHELL_CACHE = 'partech-shell-v1';
 const SHELL_URLS = [
   './',
@@ -21,7 +21,8 @@ const SHELL_URLS = [
   './icon-192-v2.png',
   './icon-512-v2.png',
   './logo.png',
-  './vds.json'
+  './vds.json',
+  './parts-tree.json'
 ];
 // مهلة انتظار الشبكة قبل ما نرجع للنسخة المحفوظة. لازم تكون أطول من تحميل الصفحة على شبكة
 // جوال بطيئة (الملف ~150KB مضغوط) وبنفس الوقت أقصر بكتير من صبر المستخدم على شاشة فاضية.
@@ -87,8 +88,8 @@ self.addEventListener('fetch', (event) => {
   // ملف الـservice worker نفسه لازم يوصل من الشبكة دايمًا حتى يقدر يتحدّث
   if (url.pathname.endsWith('/sw.js')) return;
 
-  // جدول الشاصيات الكبير (vds.json، ~270KB مضغوط، بيتغيّر بالنشرات بس): الكاش أولًا مع تحديث بالخلفية — بدل ما ينحمّل من جديد بكل جلسة
-  if (url.pathname.endsWith('/vds.json')) {
+  // ملفات البيانات الكبيرة اللي بتتغيّر بالنشرات بس (vds.json جدول الشاصيات ~270KB مضغوط، parts-tree.json شجرة كتالوج القطع ~65KB مضغوط): الكاش أولًا مع تحديث بالخلفية — بدل ما تنحمّل من جديد بكل جلسة
+  if (url.pathname.endsWith('/vds.json') || url.pathname.endsWith('/parts-tree.json')) {
     event.respondWith(handleVdsGet(request, event));
     return;
   }
