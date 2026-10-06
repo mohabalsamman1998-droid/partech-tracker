@@ -271,7 +271,7 @@
   .ops-day-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:2px 0 8px;font-size:12.5px;color:var(--text-dim);}
   .ops-range{font-size:12px;color:var(--text-faint);margin:2px 0 10px;}
   .ops-note{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;font-size:12.5px;color:var(--amber);}
-  .ops-tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-bottom:12px;}
+  .ops-tiles{display:grid;grid-template-columns:repeat(var(--n,5),minmax(0,1fr));gap:10px;margin-bottom:12px;}
   .ops-tile{position:relative;text-align:start;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:11px 12px 14px;cursor:pointer;color:var(--text);font-family:inherit;min-width:0;display:flex;flex-direction:column;gap:3px;transition:border-color .2s,background .2s,transform .15s;}
   .ops-tile::after{content:'';position:absolute;inset-inline:12px;bottom:0;height:3px;border-radius:3px 3px 0 0;background:var(--c);opacity:.3;transition:opacity .2s;}
   .ops-tile:active{transform:scale(.98);}
@@ -2455,6 +2455,10 @@ const OPS_KPI_PERIODS = [ {
 
 const OPS_KPI_STAFF_PERIOD_IDS = [ "today", "d2", "d3", "d4", "d5", "week" ];
 
+function opsKpiHiddenMetricsFor(role) {
+    return role === "scrapyard" ? [ "success" ] : [];
+}
+
 function opsKpiPeriodsFor(elevated) {
     return elevated ? OPS_KPI_PERIODS : OPS_KPI_PERIODS.filter(p => OPS_KPI_STAFF_PERIOD_IDS.indexOf(p.id) !== -1);
 }
@@ -2758,10 +2762,10 @@ function opsKpiBucketLabels(range, idx) {
     };
 }
 
-function opsKpiTilesHtml(data, loadState, metricId) {
+function opsKpiTilesHtml(data, loadState, metricId, metrics) {
     const t = data.totals;
     const pending = loadState === "error" ? "—" : "…";
-    return OPS_KPI_METRICS.map(m => {
+    return (metrics || OPS_KPI_METRICS).map(m => {
         let value, sub = m.sub;
         if (m.id === "created") value = String(t.created); else if (m.id === "success") value = String(t.success); else if (m.id === "pricedNew" || m.id === "pricedUsed") {
             value = data.kindsReady ? String(t[m.id]) : pending;
@@ -2775,7 +2779,7 @@ function opsKpiTilesHtml(data, loadState, metricId) {
     }).join("");
 }
 
-function opsKpiChartHtml(metric, data, range, loadState) {
+function opsKpiChartHtml(metric, data, range, loadState, showSuccess) {
     const idx = opsKpiVisibleIdx(range, data);
     const series = opsKpiSeries(metric.id, data);
     const isTime = metric.id === "avgTime";
@@ -2804,7 +2808,7 @@ function opsKpiChartHtml(metric, data, range, loadState) {
     const dataMissing = isTime ? !data.ready : (metric.id === "pricedNew" || metric.id === "pricedUsed") && !data.kindsReady;
     const topLbl = isTime ? opsKpiShortDuration(top) : String(top);
     const caption = dataMissing ? loadState === "error" ? "تعذر تحميل بيانات التسعير" : "جاري تحميل بيانات التسعير…" : empty ? "لا توجد حركة بهذه الفترة" : "اضغط على عمود لعرض تفاصيله";
-    return '<div class="ops-chart-box">' + '<div class="ops-chart-title"><span class="ops-dot" style="background:' + metric.color + ';"></span>' + escapeHtml(metric.label) + " — " + escapeHtml(range.hourly ? "حسب الساعة" : "حسب اليوم") + "</div>" + '<div class="ops-plot" style="--c:' + metric.color + ';">' + '<div class="ops-grid" style="bottom:50%;"></div>' + '<div class="ops-grid" style="bottom:100%;"><span class="ops-grid-lbl num">' + escapeHtml(topLbl) + "</span></div>" + cols + "</div>" + '<div class="ops-xaxis">' + xs + "</div>" + '<div class="ops-caption" id="ops-chart-caption" aria-live="polite">' + caption + "</div>" + '<div class="ops-foot">كل مؤشر يُحتسب في يوم حدوثه الفعلي لا بتاريخ الطلبية: الإنشاء يوم إنشاء الطلبية، والتسعير يوم اكتمال تسعيرها لأول مرة، والنجاح يوم توريدها (وتشمل الطلبيات الموردة دون المرور بمسار التسعير). نوع التسعير (جديد/مستخدم) يُثبَّت وقت حدوثه: إذا تغيّر تصنيف قطعة بعد تسعيرها تبقى الطلبية محسوبة للنوع الأول بيوم تسعيرها، وتُحتسب للنوع الآخر أيضًا بيوم تسعيره. الطلبية المختلطة تُحتسب في الفئتين. متوسط الوقت يخص الطلبيات المسعّرة بالفترة فقط، بساعات الدوام (9 ص – 6 م) دون يوم الجمعة.</div>' + "</div>";
+    return '<div class="ops-chart-box">' + '<div class="ops-chart-title"><span class="ops-dot" style="background:' + metric.color + ';"></span>' + escapeHtml(metric.label) + " — " + escapeHtml(range.hourly ? "حسب الساعة" : "حسب اليوم") + "</div>" + '<div class="ops-plot" style="--c:' + metric.color + ';">' + '<div class="ops-grid" style="bottom:50%;"></div>' + '<div class="ops-grid" style="bottom:100%;"><span class="ops-grid-lbl num">' + escapeHtml(topLbl) + "</span></div>" + cols + "</div>" + '<div class="ops-xaxis">' + xs + "</div>" + '<div class="ops-caption" id="ops-chart-caption" aria-live="polite">' + caption + "</div>" + '<div class="ops-foot">كل مؤشر يُحتسب في يوم حدوثه الفعلي لا بتاريخ الطلبية: الإنشاء يوم إنشاء الطلبية، والتسعير يوم اكتمال تسعيرها لأول مرة' + (showSuccess === false ? "" : "، والنجاح يوم توريدها (وتشمل الطلبيات الموردة دون المرور بمسار التسعير)") + ". نوع التسعير (جديد/مستخدم) يُثبَّت وقت حدوثه: إذا تغيّر تصنيف قطعة بعد تسعيرها تبقى الطلبية محسوبة للنوع الأول بيوم تسعيرها، وتُحتسب للنوع الآخر أيضًا بيوم تسعيره. الطلبية المختلطة تُحتسب في الفئتين. متوسط الوقت يخص الطلبيات المسعّرة بالفترة فقط، بساعات الدوام (9 ص – 6 م) دون يوم الجمعة.</div>" + "</div>";
 }
 
 function opsKpiParts(st) {
@@ -2813,13 +2817,15 @@ function opsKpiParts(st) {
     const periodId = periods.some(p => p.id === st.period) ? st.period : "today";
     const range = opsKpiRange(periodId, st.day, nowMs);
     const data = opsKpiCompute(st.orders, st.readyMap, range, st.kindsMap);
-    const metric = OPS_KPI_METRICS.find(m => m.id === st.metric) || OPS_KPI_METRICS[0];
+    const hidden = st.hiddenMetrics || [];
+    const metrics = OPS_KPI_METRICS.filter(m => hidden.indexOf(m.id) === -1);
+    const metric = metrics.find(m => m.id === st.metric) || metrics[0];
     const chips = periods.map(p => '<button type="button" class="chip' + (range.id === p.id ? " chip-active" : "") + '" data-ops-period="' + p.id + '" aria-pressed="' + (range.id === p.id ? "true" : "false") + '">' + (p.id === "day" ? "📅 " : "") + escapeHtml(p.label) + "</button>").join("");
     const dayRow = range.id === "day" ? '<div class="ops-day-row"><label for="ops-kpi-day-input">اختر اليوم</label><input type="date" id="ops-kpi-day-input" class="extra-indicators-month-input" max="' + opsKpiDayStr(nowMs) + '" value="' + opsKpiDayStr(range.startMs) + '"></div>' : "";
     const failed = st.loadState === "error" && !(st.readyMap && st.kindsMap);
     const note = failed ? '<div class="ops-note"><span>تعذر تحميل بيانات التسعير</span><button type="button" class="chip" data-ops-retry>إعادة المحاولة</button></div>' : "";
     const top = '<div class="ops-head">' + '<div class="ops-title">📈 مؤشر الأداء</div>' + '<button type="button" class="ops-link-btn" data-ops-collapse aria-expanded="' + (st.collapsed ? "false" : "true") + '">' + (st.collapsed ? "عرض الرسم البياني ▾" : "إخفاء الرسم البياني ▴") + "</button>" + "</div>" + '<div class="ops-periods" role="group" aria-label="الفترة">' + chips + "</div>" + dayRow;
-    const body = '<div class="ops-range">' + (range.id === "today" ? "اليوم — " : "") + escapeHtml(opsKpiRangeLabel(range)) + "</div>" + note + '<div class="ops-tiles">' + opsKpiTilesHtml(data, st.loadState, metric.id) + "</div>" + (st.collapsed ? "" : opsKpiChartHtml(metric, data, range, st.loadState));
+    const body = '<div class="ops-range">' + (range.id === "today" ? "اليوم — " : "") + escapeHtml(opsKpiRangeLabel(range)) + "</div>" + note + '<div class="ops-tiles" style="--n:' + metrics.length + ';">' + opsKpiTilesHtml(data, st.loadState, metric.id, metrics) + "</div>" + (st.collapsed ? "" : opsKpiChartHtml(metric, data, range, st.loadState, hidden.indexOf("success") === -1));
     return {
         top: top,
         body: body
@@ -2889,6 +2895,7 @@ function renderOpsKpi(opts) {
             metric: opsKpiMetric,
             collapsed: opsKpiReadCollapsed(),
             elevated: !!currentUserIsElevated,
+            hiddenMetrics: opsKpiHiddenMetricsFor(currentUserRole),
             loadState: src.loadState,
             orders: src.orders,
             readyMap: src.readyMap,
@@ -2975,7 +2982,9 @@ function opsKpiOnClick(e) {
     if (!t || !t.closest) return;
     const tile = t.closest("[data-ops-metric]");
     if (tile) {
-        opsKpiMetric = tile.getAttribute("data-ops-metric");
+        const mid = tile.getAttribute("data-ops-metric");
+        if (opsKpiHiddenMetricsFor(currentUserRole).indexOf(mid) !== -1) return;
+        opsKpiMetric = mid;
         renderOpsKpi({
             animate: true,
             force: true
