@@ -2385,6 +2385,8 @@ function computeAggregateFinancials(matchPeriodFn) {
     };
 }
 
+const KPI_CONFIRMED_HIDDEN_EMAILS = [ "manomahomed11223@gmail.com" ];
+
 function renderKPIs() {
     const el = document.getElementById("kpi-row");
     const f = computeAggregateFinancials();
@@ -2415,7 +2417,7 @@ function renderKPIs() {
     const returnReceivablesBreakdown = {
         note: "مرتجعات مستحقة من " + suppliersWithReceivables + " مورد/تشليح"
     };
-    el.innerHTML = treasuryCardHtml("kpiConfirmed", "الطلبيات المؤكدة", '<div class="kpi-value num">' + f.confirmedCount + "</div>", f.unconfirmedCount > 0 ? '<div class="kpi-sub">+ ' + f.unconfirmedCount + " بانتظار التأكيد</div>" : null, confirmedBreakdown, null, "kpi-card") + treasuryCardHtml("kpiDueToScrapyard", "مستحق للتشليح", '<div class="kpi-value num">' + fmtMoney(dueToScrapyardShown) + "</div>", null, dueToScrapyardBreakdown, "kpi-rust", "kpi-card") + treasuryCardHtml("kpiDueToSuppliers", "مستحق للموردين", '<div class="kpi-value num">' + fmtMoney(f.dueToSuppliers) + "</div>", null, dueToSuppliersBreakdown, "kpi-rust", "kpi-card") + treasuryCardHtml("kpiDueFromCustomers", "مستحق من الزبائن", '<div class="kpi-value num">' + fmtMoney(f.dueFromCustomers) + "</div>", null, dueFromCustomersBreakdown, "kpi-amber", "kpi-card") + (returnsOwedToUs > 0 ? treasuryCardHtml("kpiReturnReceivables", "لنا من التشاليح/الموردين (مرتجعات)", '<div class="kpi-value num">' + fmtMoney(returnsOwedToUs) + "</div>", null, returnReceivablesBreakdown, "kpi-green", "kpi-card") : "");
+    el.innerHTML = (KPI_CONFIRMED_HIDDEN_EMAILS.indexOf(String(presenceEmail || "").toLowerCase()) !== -1 ? "" : treasuryCardHtml("kpiConfirmed", "الطلبيات المؤكدة", '<div class="kpi-value num">' + f.confirmedCount + "</div>", f.unconfirmedCount > 0 ? '<div class="kpi-sub">+ ' + f.unconfirmedCount + " بانتظار التأكيد</div>" : null, confirmedBreakdown, null, "kpi-card")) + treasuryCardHtml("kpiDueToScrapyard", "مستحق للتشليح", '<div class="kpi-value num">' + fmtMoney(dueToScrapyardShown) + "</div>", null, dueToScrapyardBreakdown, "kpi-rust", "kpi-card") + treasuryCardHtml("kpiDueToSuppliers", "مستحق للموردين", '<div class="kpi-value num">' + fmtMoney(f.dueToSuppliers) + "</div>", null, dueToSuppliersBreakdown, "kpi-rust", "kpi-card") + treasuryCardHtml("kpiDueFromCustomers", "مستحق من الزبائن", '<div class="kpi-value num">' + fmtMoney(f.dueFromCustomers) + "</div>", null, dueFromCustomersBreakdown, "kpi-amber", "kpi-card") + (returnsOwedToUs > 0 ? treasuryCardHtml("kpiReturnReceivables", "لنا من التشاليح/الموردين (مرتجعات)", '<div class="kpi-value num">' + fmtMoney(returnsOwedToUs) + "</div>", null, returnReceivablesBreakdown, "kpi-green", "kpi-card") : "");
     bindTreasuryCardToggles(el);
     renderOpsKpi();
 }
@@ -2450,6 +2452,12 @@ const OPS_KPI_PERIODS = [ {
     id: "month",
     label: "هذا الشهر"
 } ];
+
+const OPS_KPI_STAFF_PERIOD_IDS = [ "today", "d2", "d3", "d4", "d5", "week" ];
+
+function opsKpiPeriodsFor(elevated) {
+    return elevated ? OPS_KPI_PERIODS : OPS_KPI_PERIODS.filter(p => OPS_KPI_STAFF_PERIOD_IDS.indexOf(p.id) !== -1);
+}
 
 const OPS_KPI_METRICS = [ {
     id: "created",
@@ -2491,6 +2499,22 @@ let opsKpiMetric = "created";
 let opsKpiCollapsed = null;
 
 let opsKpiReadyFirst = null;
+
+let opsKpiKinds = null;
+
+let opsKpiPendingKinds = [];
+
+let opsKpiKindsChannel = null;
+
+let opsKpiLoadInFlight = false;
+
+let opsKpiScrap = null;
+
+let opsKpiScrapState = "idle";
+
+let opsKpiScrapTimer = null;
+
+let opsKpiLastEl = null;
 
 let opsKpiLoadState = "idle";
 
@@ -2590,7 +2614,7 @@ function opsKpiMs(iso) {
     return new Date(iso).getTime();
 }
 
-function opsKpiCompute(orders, readyMap, range) {
+function opsKpiCompute(orders, readyMap, range, kindsMap) {
     const nb = range.hourly ? 24 : range.dayStarts.length;
     const buckets = [];
     for (let i = 0; i < nb; i++) buckets.push({
@@ -2604,6 +2628,7 @@ function opsKpiCompute(orders, readyMap, range) {
         timeCount: 0
     });
     const ready = !!readyMap;
+    const kindsReady = !!kindsMap;
     (orders || []).forEach(o => {
         if (!o) return;
         const cMs = opsKpiMs(o.createdAt);
@@ -2616,17 +2641,21 @@ function opsKpiCompute(orders, readyMap, range) {
             const qMs = opsKpiMs(readyMap.get(o.id));
             if (opsKpiInRange(qMs, range)) {
                 const b = buckets[opsKpiBucketOf(qMs, range)];
-                const parts = orderActiveParts(o).filter(p => !p.returned);
-                const hasUsed = parts.some(p => !!p.used);
-                const hasNew = parts.some(p => !p.used);
                 b.pricedAny++;
-                if (hasNew) b.pricedNew++;
-                if (hasUsed) b.pricedUsed++;
-                if (hasNew && hasUsed) b.pricedMixed++;
                 if (!isNaN(cMs) && qMs >= cMs) {
                     b.timeSum += businessMinutesBetween(cMs, qMs, SALES_KPI_BUSINESS_START_HOUR, SALES_KPI_BUSINESS_END_HOUR, BUSINESS_HOLIDAY_WEEKDAY);
                     b.timeCount++;
                 }
+            }
+        }
+        if (kindsReady) {
+            const k = kindsMap.get(o.id);
+            if (k) {
+                const uMs = opsKpiMs(k.used), nMs = opsKpiMs(k.new);
+                const uIn = opsKpiInRange(uMs, range), nIn = opsKpiInRange(nMs, range);
+                if (uIn) buckets[opsKpiBucketOf(uMs, range)].pricedUsed++;
+                if (nIn) buckets[opsKpiBucketOf(nMs, range)].pricedNew++;
+                if (uIn && nIn) buckets[opsKpiBucketOf(Math.max(uMs, nMs), range)].pricedMixed++;
             }
         }
     });
@@ -2649,6 +2678,7 @@ function opsKpiCompute(orders, readyMap, range) {
     totals.avgCount = totals.timeCount;
     return {
         ready: ready,
+        kindsReady: kindsReady,
         buckets: buckets,
         totals: totals
     };
@@ -2657,7 +2687,7 @@ function opsKpiCompute(orders, readyMap, range) {
 function opsKpiSeries(metricId, data) {
     return data.buckets.map(b => {
         if (metricId === "avgTime") return b.timeCount ? Math.round(b.timeSum / b.timeCount) : null;
-        if ((metricId === "pricedNew" || metricId === "pricedUsed") && !data.ready) return null;
+        if ((metricId === "pricedNew" || metricId === "pricedUsed") && !data.kindsReady) return null;
         return b[metricId];
     });
 }
@@ -2670,7 +2700,7 @@ function opsKpiVisibleIdx(range, data) {
     }
     let lo = 8, hi = 20;
     data.buckets.forEach((b, h) => {
-        if (b.created || b.success || b.pricedAny || b.timeCount) {
+        if (b.created || b.success || b.pricedAny || b.pricedNew || b.pricedUsed || b.timeCount) {
             if (h < lo) lo = h;
             if (h > hi) hi = h;
         }
@@ -2734,8 +2764,8 @@ function opsKpiTilesHtml(data, loadState, metricId) {
     return OPS_KPI_METRICS.map(m => {
         let value, sub = m.sub;
         if (m.id === "created") value = String(t.created); else if (m.id === "success") value = String(t.success); else if (m.id === "pricedNew" || m.id === "pricedUsed") {
-            value = data.ready ? String(t[m.id]) : pending;
-            if (data.ready && t.pricedMixed > 0) sub = "منها " + t.pricedMixed + " مختلطة";
+            value = data.kindsReady ? String(t[m.id]) : pending;
+            if (data.kindsReady && t.pricedMixed > 0) sub = "منها " + t.pricedMixed + " مختلطة";
         } else {
             value = data.ready ? opsKpiDurationLabel(t.avgMin) : pending;
             if (data.ready && t.avgCount > 0) sub = m.sub + " · " + opsKpiOrdersLabel(t.avgCount);
@@ -2771,20 +2801,22 @@ function opsKpiChartHtml(metric, data, range, loadState) {
         xs += '<span class="ops-xlbl' + (showX ? "" : " ops-xlbl-hide") + '">' + xInner + "</span>";
     });
     const empty = !real.some(v => v > 0);
-    const needsReady = metric.id === "pricedNew" || metric.id === "pricedUsed" || isTime;
+    const dataMissing = isTime ? !data.ready : (metric.id === "pricedNew" || metric.id === "pricedUsed") && !data.kindsReady;
     const topLbl = isTime ? opsKpiShortDuration(top) : String(top);
-    const caption = needsReady && !data.ready ? loadState === "error" ? "تعذر تحميل بيانات التسعير" : "جاري تحميل بيانات التسعير…" : empty ? "لا توجد حركة بهذه الفترة" : "اضغط على عمود لعرض تفاصيله";
-    return '<div class="ops-chart-box">' + '<div class="ops-chart-title"><span class="ops-dot" style="background:' + metric.color + ';"></span>' + escapeHtml(metric.label) + " — " + escapeHtml(range.hourly ? "حسب الساعة" : "حسب اليوم") + "</div>" + '<div class="ops-plot" style="--c:' + metric.color + ';">' + '<div class="ops-grid" style="bottom:50%;"></div>' + '<div class="ops-grid" style="bottom:100%;"><span class="ops-grid-lbl num">' + escapeHtml(topLbl) + "</span></div>" + cols + "</div>" + '<div class="ops-xaxis">' + xs + "</div>" + '<div class="ops-caption" id="ops-chart-caption" aria-live="polite">' + caption + "</div>" + '<div class="ops-foot">كل مؤشر يُحتسب في يوم حدوثه الفعلي لا بتاريخ الطلبية: الإنشاء يوم إنشاء الطلبية، والتسعير يوم اكتمال تسعيرها لأول مرة، والنجاح يوم توريدها (وتشمل الطلبيات الموردة دون المرور بمسار التسعير). الطلبية المختلطة (جديد ومستخدم) تُحتسب في الفئتين. متوسط الوقت يخص الطلبيات المسعّرة بالفترة فقط، بساعات الدوام (9 ص – 6 م) دون يوم الجمعة.</div>' + "</div>";
+    const caption = dataMissing ? loadState === "error" ? "تعذر تحميل بيانات التسعير" : "جاري تحميل بيانات التسعير…" : empty ? "لا توجد حركة بهذه الفترة" : "اضغط على عمود لعرض تفاصيله";
+    return '<div class="ops-chart-box">' + '<div class="ops-chart-title"><span class="ops-dot" style="background:' + metric.color + ';"></span>' + escapeHtml(metric.label) + " — " + escapeHtml(range.hourly ? "حسب الساعة" : "حسب اليوم") + "</div>" + '<div class="ops-plot" style="--c:' + metric.color + ';">' + '<div class="ops-grid" style="bottom:50%;"></div>' + '<div class="ops-grid" style="bottom:100%;"><span class="ops-grid-lbl num">' + escapeHtml(topLbl) + "</span></div>" + cols + "</div>" + '<div class="ops-xaxis">' + xs + "</div>" + '<div class="ops-caption" id="ops-chart-caption" aria-live="polite">' + caption + "</div>" + '<div class="ops-foot">كل مؤشر يُحتسب في يوم حدوثه الفعلي لا بتاريخ الطلبية: الإنشاء يوم إنشاء الطلبية، والتسعير يوم اكتمال تسعيرها لأول مرة، والنجاح يوم توريدها (وتشمل الطلبيات الموردة دون المرور بمسار التسعير). نوع التسعير (جديد/مستخدم) يُثبَّت وقت حدوثه: إذا تغيّر تصنيف قطعة بعد تسعيرها تبقى الطلبية محسوبة للنوع الأول بيوم تسعيرها، وتُحتسب للنوع الآخر أيضًا بيوم تسعيره. الطلبية المختلطة تُحتسب في الفئتين. متوسط الوقت يخص الطلبيات المسعّرة بالفترة فقط، بساعات الدوام (9 ص – 6 م) دون يوم الجمعة.</div>' + "</div>";
 }
 
 function opsKpiParts(st) {
     const nowMs = st.nowMs != null ? st.nowMs : Date.now();
-    const range = opsKpiRange(st.period, st.day, nowMs);
-    const data = opsKpiCompute(st.orders, st.readyMap, range);
+    const periods = opsKpiPeriodsFor(!!st.elevated);
+    const periodId = periods.some(p => p.id === st.period) ? st.period : "today";
+    const range = opsKpiRange(periodId, st.day, nowMs);
+    const data = opsKpiCompute(st.orders, st.readyMap, range, st.kindsMap);
     const metric = OPS_KPI_METRICS.find(m => m.id === st.metric) || OPS_KPI_METRICS[0];
-    const chips = OPS_KPI_PERIODS.map(p => '<button type="button" class="chip' + (range.id === p.id ? " chip-active" : "") + '" data-ops-period="' + p.id + '" aria-pressed="' + (range.id === p.id ? "true" : "false") + '">' + (p.id === "day" ? "📅 " : "") + escapeHtml(p.label) + "</button>").join("");
+    const chips = periods.map(p => '<button type="button" class="chip' + (range.id === p.id ? " chip-active" : "") + '" data-ops-period="' + p.id + '" aria-pressed="' + (range.id === p.id ? "true" : "false") + '">' + (p.id === "day" ? "📅 " : "") + escapeHtml(p.label) + "</button>").join("");
     const dayRow = range.id === "day" ? '<div class="ops-day-row"><label for="ops-kpi-day-input">اختر اليوم</label><input type="date" id="ops-kpi-day-input" class="extra-indicators-month-input" max="' + opsKpiDayStr(nowMs) + '" value="' + opsKpiDayStr(range.startMs) + '"></div>' : "";
-    const failed = st.loadState === "error" && !st.readyMap;
+    const failed = st.loadState === "error" && !(st.readyMap && st.kindsMap);
     const note = failed ? '<div class="ops-note"><span>تعذر تحميل بيانات التسعير</span><button type="button" class="chip" data-ops-retry>إعادة المحاولة</button></div>' : "";
     const top = '<div class="ops-head">' + '<div class="ops-title">📈 مؤشر الأداء</div>' + '<button type="button" class="ops-link-btn" data-ops-collapse aria-expanded="' + (st.collapsed ? "false" : "true") + '">' + (st.collapsed ? "عرض الرسم البياني ▾" : "إخفاء الرسم البياني ▴") + "</button>" + "</div>" + '<div class="ops-periods" role="group" aria-label="الفترة">' + chips + "</div>" + dayRow;
     const body = '<div class="ops-range">' + (range.id === "today" ? "اليوم — " : "") + escapeHtml(opsKpiRangeLabel(range)) + "</div>" + note + '<div class="ops-tiles">' + opsKpiTilesHtml(data, st.loadState, metric.id) + "</div>" + (st.collapsed ? "" : opsKpiChartHtml(metric, data, range, st.loadState));
@@ -2809,14 +2841,46 @@ function opsKpiReadCollapsed() {
     return opsKpiCollapsed;
 }
 
+function opsKpiEl() {
+    return document.getElementById(currentUserRole === "scrapyard" ? "ops-kpi-scrapyard" : "ops-kpi");
+}
+
 function renderOpsKpi(opts) {
     try {
-        const el = document.getElementById("ops-kpi");
-        if (!el || currentUserRole !== "full") return;
+        const scrap = currentUserRole === "scrapyard";
+        const el = opsKpiEl();
+        if (!el || currentUserRole !== "full" && !scrap) return;
         opsKpiBind(el);
-        if (!opsKpiOrdersReady) {
-            if (!el.firstChild) el.innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
-            return;
+        if (el !== opsKpiLastEl) {
+            opsKpiLastEl = el;
+            opsKpiLastTop = "";
+            opsKpiLastBody = "";
+        }
+        let src;
+        if (scrap) {
+            if (!opsKpiScrap) {
+                opsKpiLastTop = "";
+                opsKpiLastBody = "";
+                el.innerHTML = opsKpiScrapState === "error" ? '<div class="ops-note"><span>تعذر تحميل مؤشر الأداء</span><button type="button" class="chip" data-ops-retry>إعادة المحاولة</button></div>' : '<div class="loading">جاري تحميل البيانات…</div>';
+                return;
+            }
+            src = {
+                orders: opsKpiScrap.orders,
+                readyMap: opsKpiScrap.readyMap,
+                kindsMap: opsKpiScrap.kindsMap,
+                loadState: "ok"
+            };
+        } else {
+            if (!opsKpiOrdersReady) {
+                if (!el.firstChild) el.innerHTML = '<div class="loading">جاري تحميل البيانات…</div>';
+                return;
+            }
+            src = {
+                orders: appData.orders,
+                readyMap: opsKpiReadyFirst,
+                kindsMap: opsKpiKinds,
+                loadState: opsKpiLoadState
+            };
         }
         const act = document.activeElement;
         const parts = opsKpiParts({
@@ -2824,9 +2888,11 @@ function renderOpsKpi(opts) {
             day: opsKpiDay,
             metric: opsKpiMetric,
             collapsed: opsKpiReadCollapsed(),
-            loadState: opsKpiLoadState,
-            orders: appData.orders,
-            readyMap: opsKpiReadyFirst,
+            elevated: !!currentUserIsElevated,
+            loadState: src.loadState,
+            orders: src.orders,
+            readyMap: src.readyMap,
+            kindsMap: src.kindsMap,
             nowMs: Date.now()
         });
         const animate = !!(opts && opts.animate);
@@ -2919,7 +2985,7 @@ function opsKpiOnClick(e) {
     const chip = t.closest("[data-ops-period]");
     if (chip) {
         const id = chip.getAttribute("data-ops-period");
-        if (!OPS_KPI_PERIODS.some(p => p.id === id)) return;
+        if (!opsKpiPeriodsFor(!!currentUserIsElevated).some(p => p.id === id)) return;
         opsKpiPeriod = id;
         if (id === "day" && !opsKpiDay) opsKpiDay = opsKpiDayStr(Date.now());
         renderOpsKpi({
@@ -2941,7 +3007,7 @@ function opsKpiOnClick(e) {
         return;
     }
     if (t.closest("[data-ops-retry]")) {
-        opsKpiLoadReady(true);
+        if (currentUserRole === "scrapyard") opsKpiLoadScrapyard(true); else opsKpiLoadReady(true);
         return;
     }
     const plot = t.closest(".ops-plot");
@@ -2966,7 +3032,8 @@ function opsKpiNearestCol(plot, clientX) {
 }
 
 function opsKpiSelectCol(col) {
-    const capEl = document.getElementById("ops-chart-caption");
+    const box = col.closest ? col.closest(".ops-kpi") : null;
+    const capEl = box ? box.querySelector("#ops-chart-caption") : document.getElementById("ops-chart-caption");
     if (capEl) capEl.textContent = col.getAttribute("data-ops-cap");
     const host = col.parentNode;
     if (host) host.querySelectorAll(".ops-col-sel").forEach(c => c.classList.remove("ops-col-sel"));
@@ -3010,48 +3077,163 @@ async function fetchQuoteReadyFirstMap() {
     return map;
 }
 
+async function fetchPricingKindsMap() {
+    const {data: data, error: error} = await fetchAllRows((from, to) => sb.from("order_pricing_kinds").select("order_id,kind,first_at").order("order_id", {
+        ascending: true
+    }).order("kind", {
+        ascending: true
+    }).range(from, to));
+    if (error) throw error;
+    const map = new Map;
+    (data || []).forEach(r => opsKpiAddKind(map, r));
+    return map;
+}
+
+function opsKpiAddKind(map, r) {
+    if (!r || !r.order_id || r.kind !== "used" && r.kind !== "new" || !r.first_at) return;
+    const cur = map.get(r.order_id) || {};
+    if (!cur[r.kind]) cur[r.kind] = r.first_at;
+    map.set(r.order_id, cur);
+}
+
 async function opsKpiLoadReady(force) {
     if (currentUserRole !== "full" || !sb) return;
-    if (opsKpiLoadState === "loading") return;
+    if (opsKpiLoadState === "loading" || opsKpiLoadInFlight) return;
     if (opsKpiLoadState === "ok" && !force) return;
     const gen = ++opsKpiLoadGen;
-    const first = !opsKpiReadyFirst;
+    const first = !opsKpiReadyFirst || !opsKpiKinds;
     if (first) {
         opsKpiLoadState = "loading";
         renderOpsKpi();
     }
+    opsKpiLoadInFlight = true;
+    opsKpiPendingReady = [];
+    opsKpiPendingKinds = [];
     try {
-        const map = await withTimeout(fetchQuoteReadyFirstMap(), 25e3, "ops_kpi_ready");
+        const res = await withTimeout(Promise.all([ fetchQuoteReadyFirstMap(), fetchPricingKindsMap() ]), 25e3, "ops_kpi_ready");
         if (gen !== opsKpiLoadGen) return;
+        const map = res[0], kinds = res[1];
         opsKpiPendingReady.forEach(ev => {
             if (ev.order_id && !map.has(ev.order_id)) map.set(ev.order_id, ev.created_at);
         });
-        opsKpiPendingReady = [];
-        if (opsKpiReadyFirst) opsKpiReadyFirst.forEach((iso, id) => {
-            if (!map.has(id)) map.set(id, iso);
+        opsKpiPendingKinds.forEach(r => {
+            const had = kinds.get(r.order_id);
+            if (!(had && had[r.kind])) opsKpiAddKind(kinds, r);
         });
         opsKpiReadyFirst = map;
+        opsKpiKinds = kinds;
         opsKpiLoadState = "ok";
     } catch (e) {
         if (gen !== opsKpiLoadGen) return;
         console.error("opsKpiLoadReady:", e);
-        opsKpiLoadState = opsKpiReadyFirst ? "ok" : "error";
+        opsKpiLoadState = opsKpiReadyFirst && opsKpiKinds ? "ok" : "error";
+    } finally {
+        if (gen === opsKpiLoadGen) {
+            opsKpiLoadInFlight = false;
+            opsKpiPendingReady = [];
+            opsKpiPendingKinds = [];
+        }
     }
     renderOpsKpi();
 }
 
 function opsKpiNoteReady(ev) {
     if (currentUserRole !== "full" || !ev || !ev.order_id || !ev.created_at) return;
-    if (!opsKpiReadyFirst) {
-        if (opsKpiLoadState === "loading" && opsKpiPendingReady.length < 500) opsKpiPendingReady.push({
-            order_id: ev.order_id,
-            created_at: ev.created_at
-        });
-        return;
-    }
+    if (opsKpiLoadInFlight && opsKpiPendingReady.length < 500) opsKpiPendingReady.push({
+        order_id: ev.order_id,
+        created_at: ev.created_at
+    });
+    if (!opsKpiReadyFirst) return;
     if (opsKpiReadyFirst.has(ev.order_id)) return;
     opsKpiReadyFirst.set(ev.order_id, ev.created_at);
     scheduleOpsKpiRender();
+}
+
+function opsKpiNoteKind(row) {
+    if (currentUserRole !== "full" || !row || !row.order_id || !row.first_at || row.kind !== "used" && row.kind !== "new") return;
+    if (opsKpiLoadInFlight && opsKpiPendingKinds.length < 500) opsKpiPendingKinds.push({
+        order_id: row.order_id,
+        kind: row.kind,
+        first_at: row.first_at
+    });
+    if (!opsKpiKinds) return;
+    const had = opsKpiKinds.get(row.order_id);
+    if (had && had[row.kind]) return;
+    opsKpiAddKind(opsKpiKinds, row);
+    scheduleOpsKpiRender();
+}
+
+function opsKpiSubscribeKinds() {
+    if (!sb || opsKpiKindsChannel || currentUserRole !== "full") return;
+    let seenSubscribed = false;
+    opsKpiKindsChannel = sb.channel("ops-kpi-kinds").on("postgres_changes", {
+        event: "INSERT",
+        schema: "public",
+        table: "order_pricing_kinds"
+    }, payload => {
+        opsKpiNoteKind(payload && payload.new);
+    }).subscribe(status => {
+        if (status === "SUBSCRIBED") {
+            if (seenSubscribed) opsKpiLoadReady(true);
+            seenSubscribed = true;
+        }
+    });
+}
+
+function opsKpiBuildScrapData(d) {
+    const readyMap = new Map;
+    (d && d.ready || []).forEach(r => {
+        if (r && r.order_id && r.at && !readyMap.has(r.order_id)) readyMap.set(r.order_id, r.at);
+    });
+    const kindsMap = new Map;
+    (d && d.kinds || []).forEach(r => opsKpiAddKind(kindsMap, r));
+    const orders = (d && d.orders || []).filter(o => o && o.id).map(o => ({
+        id: o.id,
+        createdAt: o.createdAt,
+        suppliedAt: o.suppliedAt,
+        confirmed: !!o.confirmed,
+        supplied: !!o.supplied,
+        isQuote: !!o.isQuote
+    }));
+    return {
+        orders: orders,
+        readyMap: readyMap,
+        kindsMap: kindsMap
+    };
+}
+
+async function opsKpiLoadScrapyard(force) {
+    if (currentUserRole !== "scrapyard" || !sb) return;
+    if (opsKpiScrapState === "loading") return;
+    if (opsKpiScrapState === "ok" && !force) return;
+    const gen = ++opsKpiLoadGen;
+    if (!opsKpiScrap) {
+        opsKpiScrapState = "loading";
+        renderOpsKpi();
+    }
+    try {
+        const res = await withTimeout(sb.rpc("get_ops_kpi_data", {
+            p_days: 8
+        }), 2e4, "ops_kpi_scrapyard");
+        if (res.error) throw res.error;
+        if (gen !== opsKpiLoadGen) return;
+        opsKpiScrap = opsKpiBuildScrapData(res.data);
+        opsKpiScrapState = "ok";
+    } catch (e) {
+        if (gen !== opsKpiLoadGen) return;
+        console.error("opsKpiLoadScrapyard:", e);
+        opsKpiScrapState = opsKpiScrap ? "ok" : "error";
+    }
+    renderOpsKpi();
+}
+
+function opsKpiStartScrapyard() {
+    opsKpiScheduleMidnight();
+    if (opsKpiScrapTimer) clearInterval(opsKpiScrapTimer);
+    opsKpiScrapTimer = setInterval(() => {
+        if (document.visibilityState === "visible") opsKpiLoadScrapyard(true);
+    }, 12e4);
+    opsKpiLoadScrapyard(true);
 }
 
 function opsKpiScheduleMidnight() {
@@ -3067,14 +3249,31 @@ function opsKpiScheduleMidnight() {
 
 function opsKpiStart() {
     opsKpiScheduleMidnight();
+    opsKpiSubscribeKinds();
     opsKpiLoadReady(false);
 }
 
 function opsKpiReset() {
     opsKpiLoadGen++;
     opsKpiReadyFirst = null;
+    opsKpiKinds = null;
     opsKpiLoadState = "idle";
     opsKpiPendingReady = [];
+    opsKpiPendingKinds = [];
+    opsKpiLoadInFlight = false;
+    opsKpiScrap = null;
+    opsKpiScrapState = "idle";
+    opsKpiLastEl = null;
+    if (opsKpiScrapTimer) {
+        clearInterval(opsKpiScrapTimer);
+        opsKpiScrapTimer = null;
+    }
+    if (opsKpiKindsChannel) {
+        try {
+            if (sb) sb.removeChannel(opsKpiKindsChannel);
+        } catch (e) {}
+        opsKpiKindsChannel = null;
+    }
     opsKpiPeriod = "today";
     opsKpiDay = "";
     opsKpiMetric = "created";
@@ -3093,11 +3292,13 @@ function opsKpiReset() {
         clearTimeout(opsKpiAnimTimer);
         opsKpiAnimTimer = null;
     }
-    const el = document.getElementById("ops-kpi");
-    if (el) {
-        el.innerHTML = "";
-        el.classList.remove("ops-anim");
-    }
+    [ "ops-kpi", "ops-kpi-scrapyard" ].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.innerHTML = "";
+            el.classList.remove("ops-anim");
+        }
+    });
 }
 
 const FILTERS = [ {
@@ -22560,6 +22761,7 @@ async function initScrapyardView(email) {
     startPresenceHeartbeat(email);
     subscribeScrapyardRealtime();
     subscribeScrapyardAppDataRealtime();
+    opsKpiStartScrapyard();
     refreshActivityEvents();
     subscribeActivityEventsRealtime();
     loadAnnouncement();
@@ -23022,7 +23224,7 @@ function renderScrapyardHomeView() {
     const pendingTasks = (scrapyardSharedState.tasks || []).filter(t => !t.done).length;
     const pendingQuotes = quotesMatchingList().filter(o => !o.quoteReady).length;
     const settlementUnseen = scrapyardCustodyUnseenCount() + scrapyardPartsUnseenCount();
-    root.innerHTML = '<div class="app-top-utility-row">' + '<div class="app-top-logo-row"><span class="app-welcome-greeting">اهلا ' + escapeHtml(displayNameForEmail(presenceEmail)) + '</span><img class="app-corner-logo" src="' + PARTECH_LOGO_DATA_URI + '" id="scrapyard-home-logo-img" alt="PARTECH" title="الصفحة الرئيسية"></div>' + '<div class="corner-mini-bar">' + scrapyardThemeToggleHtml() + '<button id="btn-activity-log-scrapyard" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge-scrapyard" class="tasks-badge"></span></button></div>' + "</div>" + '<div class="app-top-divider"></div>' + announcementBannerHtml() + '<div class="app-top-divider"></div>' + '<header class="topbar" style="justify-content:space-between;"><div class="brand">قسم المشتريات</div>' + '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-suppliers">🏭 الموردين</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-statistics">📊 الإحصائيات</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-part-price-log">➕ إدخال بيانات</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-parts-catalog">📚 الكتالوج</button>' + "</div></header>" + '<section class="kpi-row scrapyard-kpi-row">' + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للتشليح</div><div class="kpi-value num">' + fmtMoney(usedTotal) + "</div></div>" + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للموردين</div><div class="kpi-value num">' + fmtMoney(newTotal) + "</div></div>" + '<div class="kpi-card' + (pendingTasks > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">مهام معلّقة</div><div class="kpi-value num">' + pendingTasks + "</div></div>" + '<div class="kpi-card' + (pendingQuotes > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">طلبات تسعير معلّقة</div><div class="kpi-value num">' + pendingQuotes + "</div></div>" + "</section>" + '<div class="new-order-btn-row top-toggle-row">' + '<button type="button" class="btn btn-primary btn-with-badge" id="btn-toggle-scrapyard-settlement" aria-expanded="' + (scrapyardHomeOpenSection === "settlement" ? "true" : "false") + '">السداد<span class="tasks-badge" style="' + (settlementUnseen > 0 ? "display:flex;" : "display:none;") + '">' + (settlementUnseen > 0 ? settlementUnseen : "") + "</span></button>" + '<button type="button" class="btn btn-amber btn-with-badge" id="btn-toggle-scrapyard-quotes" aria-expanded="' + (scrapyardHomeOpenSection === "quotes" ? "true" : "false") + '">طلبات التسعير<span class="tasks-badge" style="' + (pendingQuotes > 0 ? "display:flex;" : "display:none;") + '">' + (pendingQuotes > 0 ? pendingQuotes : "") + "</span></button>" + '<button type="button" class="btn btn-ghost" id="btn-toggle-scrapyard-approved" aria-expanded="' + (scrapyardHomeOpenSection === "approved" ? "true" : "false") + '">✅ التسعيرات المعتمدة</button>' + '<button type="button" class="btn btn-ghost btn-with-badge" id="btn-toggle-scrapyard-tasks" aria-expanded="' + (scrapyardHomeOpenSection === "tasks" ? "true" : "false") + '">المهام<span class="tasks-badge" style="' + (pendingTasks > 0 ? "display:flex;" : "display:none;") + '">' + (pendingTasks > 0 ? pendingTasks : "") + "</span></button>" + "</div>" + '<div id="scrapyard-home-settlement-section" style="' + (scrapyardHomeOpenSection === "settlement" ? "" : "display:none;") + '">' + '<div class="new-order-btn-row">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-settlement">' + SETTLEMENT_KINDS.used.homeLabel + " — " + fmtMoney(usedTotal) + "</button>" + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-new-parts-settlement">' + SETTLEMENT_KINDS.new.homeLabel + " — " + fmtMoney(newTotal) + "</button>" + "</div>" + "</div>" + '<div id="scrapyard-home-quotes-section" style="' + (scrapyardHomeOpenSection === "quotes" ? "" : "display:none;") + '">' + '<div class="task-items-list" id="scrapyard-quotes-items-list">' + quotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-approved-section" style="' + (scrapyardHomeOpenSection === "approved" ? "" : "display:none;") + '">' + '<input type="text" id="approved-quotes-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث برقم الطلبية أو وصف القطعة..." value="' + escapeHtml(approvedQuotesSearchQuery) + '">' + '<div class="task-items-list" id="scrapyard-approved-quotes-items-list">' + approvedQuotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-tasks-section" style="' + (scrapyardHomeOpenSection === "tasks" ? "" : "display:none;") + '">' + '<div class="task-items-list">' + purchasesTasksListHtml() + "</div>" + "</div>";
+    root.innerHTML = '<div class="app-top-utility-row">' + '<div class="app-top-logo-row"><span class="app-welcome-greeting">اهلا ' + escapeHtml(displayNameForEmail(presenceEmail)) + '</span><img class="app-corner-logo" src="' + PARTECH_LOGO_DATA_URI + '" id="scrapyard-home-logo-img" alt="PARTECH" title="الصفحة الرئيسية"></div>' + '<div class="corner-mini-bar">' + scrapyardThemeToggleHtml() + '<button id="btn-activity-log-scrapyard" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge-scrapyard" class="tasks-badge"></span></button></div>' + "</div>" + '<div class="app-top-divider"></div>' + announcementBannerHtml() + '<div class="app-top-divider"></div>' + '<header class="topbar" style="justify-content:space-between;"><div class="brand">قسم المشتريات</div>' + '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-suppliers">🏭 الموردين</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-statistics">📊 الإحصائيات</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-part-price-log">➕ إدخال بيانات</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-parts-catalog">📚 الكتالوج</button>' + "</div></header>" + '<section id="ops-kpi-scrapyard" class="ops-kpi" aria-label="مؤشر الأداء اليومي"></section>' + '<section class="kpi-row scrapyard-kpi-row">' + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للتشليح</div><div class="kpi-value num">' + fmtMoney(usedTotal) + "</div></div>" + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للموردين</div><div class="kpi-value num">' + fmtMoney(newTotal) + "</div></div>" + '<div class="kpi-card' + (pendingTasks > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">مهام معلّقة</div><div class="kpi-value num">' + pendingTasks + "</div></div>" + '<div class="kpi-card' + (pendingQuotes > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">طلبات تسعير معلّقة</div><div class="kpi-value num">' + pendingQuotes + "</div></div>" + "</section>" + '<div class="new-order-btn-row top-toggle-row">' + '<button type="button" class="btn btn-primary btn-with-badge" id="btn-toggle-scrapyard-settlement" aria-expanded="' + (scrapyardHomeOpenSection === "settlement" ? "true" : "false") + '">السداد<span class="tasks-badge" style="' + (settlementUnseen > 0 ? "display:flex;" : "display:none;") + '">' + (settlementUnseen > 0 ? settlementUnseen : "") + "</span></button>" + '<button type="button" class="btn btn-amber btn-with-badge" id="btn-toggle-scrapyard-quotes" aria-expanded="' + (scrapyardHomeOpenSection === "quotes" ? "true" : "false") + '">طلبات التسعير<span class="tasks-badge" style="' + (pendingQuotes > 0 ? "display:flex;" : "display:none;") + '">' + (pendingQuotes > 0 ? pendingQuotes : "") + "</span></button>" + '<button type="button" class="btn btn-ghost" id="btn-toggle-scrapyard-approved" aria-expanded="' + (scrapyardHomeOpenSection === "approved" ? "true" : "false") + '">✅ التسعيرات المعتمدة</button>' + '<button type="button" class="btn btn-ghost btn-with-badge" id="btn-toggle-scrapyard-tasks" aria-expanded="' + (scrapyardHomeOpenSection === "tasks" ? "true" : "false") + '">المهام<span class="tasks-badge" style="' + (pendingTasks > 0 ? "display:flex;" : "display:none;") + '">' + (pendingTasks > 0 ? pendingTasks : "") + "</span></button>" + "</div>" + '<div id="scrapyard-home-settlement-section" style="' + (scrapyardHomeOpenSection === "settlement" ? "" : "display:none;") + '">' + '<div class="new-order-btn-row">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-settlement">' + SETTLEMENT_KINDS.used.homeLabel + " — " + fmtMoney(usedTotal) + "</button>" + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-new-parts-settlement">' + SETTLEMENT_KINDS.new.homeLabel + " — " + fmtMoney(newTotal) + "</button>" + "</div>" + "</div>" + '<div id="scrapyard-home-quotes-section" style="' + (scrapyardHomeOpenSection === "quotes" ? "" : "display:none;") + '">' + '<div class="task-items-list" id="scrapyard-quotes-items-list">' + quotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-approved-section" style="' + (scrapyardHomeOpenSection === "approved" ? "" : "display:none;") + '">' + '<input type="text" id="approved-quotes-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث برقم الطلبية أو وصف القطعة..." value="' + escapeHtml(approvedQuotesSearchQuery) + '">' + '<div class="task-items-list" id="scrapyard-approved-quotes-items-list">' + approvedQuotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-tasks-section" style="' + (scrapyardHomeOpenSection === "tasks" ? "" : "display:none;") + '">' + '<div class="task-items-list">' + purchasesTasksListHtml() + "</div>" + "</div>";
     const logo = document.getElementById("scrapyard-home-logo-img");
     if (logo) logo.addEventListener("click", goToScrapyardHome);
     bindScrapyardThemeToggle();
@@ -23061,6 +23263,9 @@ function renderScrapyardHomeView() {
         refreshApprovedQuotesList();
     });
     bindScrapyardHomeTasksEvents();
+    renderOpsKpi({
+        force: true
+    });
 }
 
 function scrapyardSupplierTotals() {
@@ -25019,6 +25224,7 @@ async function refreshOnResumeWork(myGen) {
             if (myGen !== resumeRefreshGeneration) return;
             renderScrapyardHomeView();
         }
+        opsKpiLoadScrapyard(true);
         refreshActivityEvents();
         loadAnnouncement();
         return;
