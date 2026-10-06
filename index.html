@@ -2624,7 +2624,7 @@ function opsKpiCompute(orders, readyMap, range) {
                 if (hasUsed) b.pricedUsed++;
                 if (hasNew && hasUsed) b.pricedMixed++;
                 if (!isNaN(cMs) && qMs >= cMs) {
-                    b.timeSum += businessMinutesBetween(cMs, qMs, SALES_KPI_BUSINESS_START_HOUR, SALES_KPI_BUSINESS_END_HOUR, 5);
+                    b.timeSum += businessMinutesBetween(cMs, qMs, SALES_KPI_BUSINESS_START_HOUR, SALES_KPI_BUSINESS_END_HOUR, BUSINESS_HOLIDAY_WEEKDAY);
                     b.timeCount++;
                 }
             }
@@ -10441,6 +10441,8 @@ function canReorderQuotePriority() {
     return hasElevatedAccess() || currentUserRole === "scrapyard" || QUOTE_PRIORITY_EXTRA_EMAILS.includes(presenceEmail);
 }
 
+const BUSINESS_HOLIDAY_WEEKDAY = 5;
+
 function businessMinutesBetween(startMs, endMs, startHour, endHour, skipWeekday) {
     if (!(startMs < endMs)) return 0;
     let totalMs = 0;
@@ -10467,7 +10469,7 @@ function quoteBusinessMinutesElapsed(createdAtIso, nowMs) {
     if (!createdAtIso) return 0;
     const startMs = new Date(createdAtIso).getTime();
     const now = nowMs != null ? nowMs : Date.now();
-    return businessMinutesBetween(startMs, now, QUOTE_BUSINESS_START_HOUR, QUOTE_BUSINESS_END_HOUR);
+    return businessMinutesBetween(startMs, now, QUOTE_BUSINESS_START_HOUR, QUOTE_BUSINESS_END_HOUR, BUSINESS_HOLIDAY_WEEKDAY);
 }
 
 function quoteElapsedLabel(createdAtIso, nowMs) {
@@ -20062,7 +20064,7 @@ const SALES_KPI_BUSINESS_END_HOUR = 18;
 function stepTimingAverages(periodKey, customMonth) {
     if (!quoteReadyFirstByOrderId) return null;
     const toQuote = [], toSupply = [], total = [], toCustomer = [], customerToSupply = [];
-    const bizMinutes = (fromMs, toMs) => businessMinutesBetween(fromMs, toMs, SALES_KPI_BUSINESS_START_HOUR, SALES_KPI_BUSINESS_END_HOUR);
+    const bizMinutes = (fromMs, toMs) => businessMinutesBetween(fromMs, toMs, SALES_KPI_BUSINESS_START_HOUR, SALES_KPI_BUSINESS_END_HOUR, BUSINESS_HOLIDAY_WEEKDAY);
     (appData.orders || []).forEach(o => {
         if (!o.createdAt) return;
         if (!dateMatchesPeriod(periodDateOf(o.createdAt), periodKey, customMonth)) return;
