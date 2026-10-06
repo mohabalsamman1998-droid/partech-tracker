@@ -284,7 +284,7 @@
   .ops-chart-box{border-top:1px solid var(--border-soft);padding-top:12px;}
   .ops-chart-title{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:700;color:var(--text);}
   .ops-dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto;display:inline-block;}
-  .ops-plot{position:relative;height:150px;margin-top:22px;display:flex;align-items:stretch;gap:4px;border-bottom:1px solid var(--border);}
+  .ops-plot{position:relative;height:150px;margin-top:22px;display:flex;align-items:stretch;gap:4px;border-bottom:1px solid var(--border);touch-action:pan-y;}
   .ops-grid{position:absolute;inset-inline:0;border-top:1px dashed var(--border-soft);pointer-events:none;}
   .ops-grid-lbl{position:absolute;inset-inline-start:0;top:-15px;font-size:10px;color:var(--text-faint);line-height:1;}
   .ops-col{flex:1 1 0;min-width:0;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;background:none;border:none;padding:0;cursor:pointer;font-family:inherit;}
@@ -2901,6 +2901,7 @@ function opsKpiBind(el) {
     el.dataset.opsBound = "1";
     el.addEventListener("click", opsKpiOnClick);
     el.addEventListener("change", opsKpiOnChange);
+    el.addEventListener("pointermove", opsKpiOnPointerMove);
 }
 
 function opsKpiOnClick(e) {
@@ -2943,14 +2944,43 @@ function opsKpiOnClick(e) {
         opsKpiLoadReady(true);
         return;
     }
-    const col = t.closest("[data-ops-cap]");
-    if (col) {
-        const capEl = document.getElementById("ops-chart-caption");
-        if (capEl) capEl.textContent = col.getAttribute("data-ops-cap");
-        const host = col.parentNode;
-        if (host) host.querySelectorAll(".ops-col-sel").forEach(c => c.classList.remove("ops-col-sel"));
-        col.classList.add("ops-col-sel");
+    const plot = t.closest(".ops-plot");
+    if (plot) {
+        const direct = t.closest("[data-ops-cap]");
+        const col = e.detail === 0 && direct ? direct : opsKpiNearestCol(plot, e.clientX);
+        if (col) opsKpiSelectCol(col);
     }
+}
+
+function opsKpiNearestCol(plot, clientX) {
+    let best = null, bestD = Infinity;
+    plot.querySelectorAll(".ops-col").forEach(c => {
+        const r = c.getBoundingClientRect();
+        const d = Math.abs(clientX - (r.left + r.width / 2));
+        if (d < bestD) {
+            bestD = d;
+            best = c;
+        }
+    });
+    return best;
+}
+
+function opsKpiSelectCol(col) {
+    const capEl = document.getElementById("ops-chart-caption");
+    if (capEl) capEl.textContent = col.getAttribute("data-ops-cap");
+    const host = col.parentNode;
+    if (host) host.querySelectorAll(".ops-col-sel").forEach(c => c.classList.remove("ops-col-sel"));
+    col.classList.add("ops-col-sel");
+}
+
+function opsKpiOnPointerMove(e) {
+    if (!(e.pointerType === "touch" || e.buttons & 1)) return;
+    const t = e.target;
+    if (!t || !t.closest) return;
+    const plot = t.closest(".ops-plot");
+    if (!plot) return;
+    const col = opsKpiNearestCol(plot, e.clientX);
+    if (col && !col.classList.contains("ops-col-sel")) opsKpiSelectCol(col);
 }
 
 function opsKpiOnChange(e) {
