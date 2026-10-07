@@ -1037,6 +1037,7 @@
     transition:.15s ease;
   }
   .cost-split-box:hover{border-color:var(--text-faint);}
+  .cost-split-box:disabled{opacity:.5;cursor:not-allowed;}
   .cost-split-box span:first-child{font-size:10.5px;color:var(--text-faint);font-weight:600;}
   .cost-split-box .num{color:var(--rust);font-size:13.5px;font-family:'Cairo',sans-serif;font-weight:700;font-variant-numeric:tabular-nums;}
   .cost-split-status{font-size:10.5px;color:var(--rust);font-weight:700;}
@@ -2168,6 +2169,8 @@ function groupSupplierOrCustomerRows(rows) {
 
 let archivedOrdersHydration = null;
 
+let carriedArchivedOrderIds = new Set;
+
 const ORDERS_ACTIVE_FILTER = "extra->archived.is.null,extra->>archived.eq.false";
 
 async function hydrateArchivedOrders() {
@@ -2177,8 +2180,18 @@ async function hydrateArchivedOrders() {
             ascending: true
         }).range(from, to)), 3, 1500);
         if (error) throw error;
-        const existingIds = new Set(appData.orders.map(o => o.id));
         let addedAny = false;
+        if (carriedArchivedOrderIds.size) {
+            const freshById = new Map((data || []).map(r => [ r.id, r ]));
+            appData.orders = appData.orders.map(o => {
+                if (!carriedArchivedOrderIds.has(o.id)) return o;
+                const fr = freshById.get(o.id);
+                return fr ? orderRowToObject(fr) : null;
+            }).filter(Boolean);
+            carriedArchivedOrderIds = new Set;
+            addedAny = true;
+        }
+        const existingIds = new Set(appData.orders.map(o => o.id));
         (data || []).forEach(row => {
             if (existingIds.has(row.id)) return;
             appData.orders.push(orderRowToObject(row));
@@ -2192,6 +2205,7 @@ async function hydrateArchivedOrders() {
         }
     } catch (e) {
         console.error("hydrateArchivedOrders:", e);
+        carriedArchivedOrderIds = new Set;
         showToast("تعذر تحميل باقي الطلبيات بالخلفية — بعض البيانات قد تكون ناقصة مؤقتًا، جرّب تحديث الصفحة", "error");
     } finally {
         opsKpiOrdersReady = true;
@@ -2223,6 +2237,7 @@ async function loadData(opts) {
         } else {
             refreshServerOmarCustodyBalance().then(renderKPIs);
         }
+        const carriedArchived = preserveOnFailure && appData && Array.isArray(appData.orders) ? appData.orders.filter(o => o && o.archived) : [];
         appData = {
             orders: (ordersRes.data || []).map(orderRowToObject),
             treasury: groupTreasuryRows(treasuryRes.data),
@@ -2231,6 +2246,16 @@ async function loadData(opts) {
             customers: groupSupplierOrCustomerRows(customersRes.data),
             deliveryAgents: deliveryAgentsRes.error ? [] : (deliveryAgentsRes.data || []).map(deliveryAgentRowToObject)
         };
+        carriedArchivedOrderIds = new Set;
+        if (carriedArchived.length) {
+            const haveIds = new Set(appData.orders.map(o => o.id));
+            carriedArchived.forEach(o => {
+                if (!haveIds.has(o.id)) {
+                    appData.orders.push(o);
+                    carriedArchivedOrderIds.add(o.id);
+                }
+            });
+        }
         opsKpiOrdersReady = false;
         archivedOrdersHydration = hydrateArchivedOrders();
         ok = true;
@@ -2369,7 +2394,7 @@ function computeAggregateFinancials(matchPeriodFn) {
     });
     return {
         confirmedCount: confirmedOrders.length,
-        unconfirmedCount: realOrders.length - confirmedOrders.length,
+        unconfirmedCount: realOrders.filter(o => !o.confirmed && !o.archived).length,
         dueToScrapyard: dueToScrapyard,
         dueToScrapyardCount: dueToScrapyardCount,
         dueToSuppliers: dueToSuppliers,
@@ -3951,11 +3976,15 @@ function partRowHtml(p, i) {
     return '<div class="part-row' + (selectionOn && !included ? " part-row-excluded" : "") + '" data-part-id="' + escapeHtml(p.id) + '">' + includeCheckHtml + '<div class="part-desc-wrap">' + '<div class="part-desc-row">' + '<span class="part-index-badge">' + ((i != null ? i : 0) + 1) + "</span>" + descHtml + "</div>" + usedBadgeHtml + partConditionBadgeHtml(p) + (draft ? mediaStripHtml(draft.id, p.id, "edit") : "") + "</div>" + '<div class="part-price-group">' + '<label class="mini-label">العدد' + qtyHtml + "</label>" + '<label class="mini-label mini-label-cost">سعر الشراء' + costHtml + "</label>" + '<label class="mini-label mini-label-sell">سعر البيع' + sellHtml + "</label>" + (hasElevatedAccess() ? '<label class="mini-label mini-label-supplier">' + (p.used ? "التشليح" : "المورد") + supplierFieldHtml + "</label>" : "") + "</div>" + '<button type="button" class="part-remove-btn" data-part-actions="' + escapeHtml(p.id) + '" aria-label="خيارات القطعة (حذف أو إرجاع)">⋯</button>' + "</div>";
 }
 
+function costSplitLockAttr(d, settled) {
+    return !d.confirmed && !settled ? ' disabled title="يجب تأكيد الطلبية أولًا قبل تسجيل السداد"' : "";
+}
+
 function costSplitButtonsHtml(d, t) {
     if (!orderIsMixedPartType(t)) {
-        return '<div class="cost-split-row">' + '<button type="button" class="cost-split-box' + (orderPurchaseSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn">' + "<span>المجموع للمورد</span>" + '<span class="num" id="cost-split-display">' + fmtMoney(t.costTotal) + "</span>" + '<span class="cost-split-status" id="cost-split-status">' + costSplitStatusLabel(d) + "</span>" + "</button>" + "</div>";
+        return '<div class="cost-split-row">' + '<button type="button" class="cost-split-box' + (orderPurchaseSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn"' + costSplitLockAttr(d, orderPurchaseSettled(d, t)) + ">" + "<span>المجموع للمورد</span>" + '<span class="num" id="cost-split-display">' + fmtMoney(t.costTotal) + "</span>" + '<span class="cost-split-status" id="cost-split-status">' + costSplitStatusLabel(d) + "</span>" + "</button>" + "</div>";
     }
-    return '<div class="cost-split-row">' + '<button type="button" class="cost-split-box' + (scrapyardCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-scrapyard">' + "<span>سداد التشليح</span>" + '<span class="num">' + fmtMoney(t.costToScrapyard) + "</span>" + '<span class="cost-split-status">' + costSplitStatusLabel(d) + "</span>" + "</button>" + '<button type="button" class="cost-split-box' + (newPartsCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-new">' + "<span>سداد الجديد</span>" + '<span class="num">' + fmtMoney(t.costToSupplier) + "</span>" + '<span class="cost-split-status">' + costSplitStatusLabel(d, "new") + "</span>" + "</button>" + "</div>";
+    return '<div class="cost-split-row">' + '<button type="button" class="cost-split-box' + (scrapyardCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-scrapyard"' + costSplitLockAttr(d, scrapyardCostSettled(d, t) && t.costToScrapyard > 0) + ">" + "<span>سداد التشليح</span>" + '<span class="num">' + fmtMoney(t.costToScrapyard) + "</span>" + '<span class="cost-split-status">' + costSplitStatusLabel(d) + "</span>" + "</button>" + '<button type="button" class="cost-split-box' + (newPartsCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-new"' + costSplitLockAttr(d, newPartsCostSettled(d, t) && t.costToSupplier > 0) + ">" + "<span>سداد الجديد</span>" + '<span class="num">' + fmtMoney(t.costToSupplier) + "</span>" + '<span class="cost-split-status">' + costSplitStatusLabel(d, "new") + "</span>" + "</button>" + "</div>";
 }
 
 function normalizeVin(s) {
@@ -7259,6 +7288,12 @@ function bindCostSplitButtons() {
                 return;
             }
             openSettlementChoiceModal(draft, choice => {
+                const prevChoice = bucket === "new" ? draft.paidToSupplierNew ? "supplier" : draft.paidToAmerNew ? "amer" : draft.paidToOmarNew ? "omar" : null : draft.paidToSupplier ? "supplier" : draft.paidToAmer ? "amer" : draft.paidToOmar ? "omar" : null;
+                if (choice === prevChoice) return;
+                if (choice && !draft.confirmed) {
+                    showToast("لا يمكن تسجيل السداد قبل تأكيد الطلبية", "error");
+                    return;
+                }
                 const now = (new Date).toISOString();
                 const amountSnapshot = orderTotals(draft)[amountKey];
                 const supplierKey = bucket === "new" ? "paidToSupplierNew" : "paidToSupplier";
@@ -12231,12 +12266,37 @@ async function confirmDelete(orderId, knownMediaN) {
 
 const pendingConfirmToggleIds = new Set;
 
+function orderHasSettlementFlag(order) {
+    return !!(order && (order.paidToAmer || order.paidToOmar || order.paidToSupplier || order.paidToAmerNew || order.paidToOmarNew || order.paidToSupplierNew));
+}
+
+function orderHasPendingCustomerRefund(order) {
+    return !!(order && (order.customerPayments || []).some(p => {
+        if (!p.returnAdjustment) return false;
+        const lp = (order.parts || []).find(pp => pp.id === p.linkedPartId);
+        return !(lp && lp.customerRefundConfirmed);
+    }));
+}
+
+function orderUnconfirmBlockReason(order) {
+    if (orderHasSettlementFlag(order)) return "لا يمكن إلغاء تأكيد طلبية عليها تسديد للمشتريات — ألغِ التسديد أولًا من نافذة الطلبية";
+    if (orderHasPendingCustomerRefund(order)) return "لا يمكن إلغاء تأكيد طلبية فيها مبلغ مرتجع بانتظار ردّه للعميل — أكِّد الرد أولًا";
+    return "";
+}
+
 function confirmToggleConfirmation(orderId) {
     if (pendingConfirmToggleIds.has(orderId)) return;
     const order = appData.orders.find(o => o.id === orderId);
     if (!order) return;
     const willConfirm = !order.confirmed;
     const willResetSupply = !willConfirm && order.supplied;
+    if (!willConfirm) {
+        const blockReason = orderUnconfirmBlockReason(order);
+        if (blockReason) {
+            showToast(blockReason, "error");
+            return;
+        }
+    }
     confirmAction({
         title: willConfirm ? "تأكيد الطلبية " + order.orderNumber + "؟" : "إلغاء تأكيد الطلبية " + order.orderNumber + "؟",
         message: willConfirm ? "بعد التأكيد، ستدخل أرقام هذه الطلبية ضمن مجموع الطلبيات المؤكدة بمؤشرات الأعلى." : "بعد الإلغاء، لن تدخل أرقام هذه الطلبية ضمن مجموع الطلبيات المؤكدة بمؤشرات الأعلى." + (willResetSupply ? ' وسيتم إلغاء تحديد "تم التوريد" معها، فتختفي من شاشة السداد.' : ""),
@@ -12247,15 +12307,24 @@ function confirmToggleConfirmation(orderId) {
             try {
                 const order = appData.orders.find(o => o.id === orderId);
                 if (!order) return;
+                if (!willConfirm) {
+                    const liveBlock = orderUnconfirmBlockReason(order);
+                    if (liveBlock) {
+                        showToast(liveBlock, "error");
+                        return;
+                    }
+                }
                 const prev = {
                     confirmed: order.confirmed,
                     supplied: order.supplied,
                     suppliedAt: order.suppliedAt,
                     updatedAt: order.updatedAt,
                     unsuccessfulReason: order.unsuccessfulReason,
-                    unsuccessfulReasonDetails: order.unsuccessfulReasonDetails
+                    unsuccessfulReasonDetails: order.unsuccessfulReasonDetails,
+                    confirmedAt: order.confirmedAt
                 };
                 order.confirmed = willConfirm;
+                if (willConfirm) order.confirmedAt = (new Date).toISOString(); else delete order.confirmedAt;
                 if (willResetSupply) {
                     order.supplied = false;
                     order.suppliedAt = null;
@@ -13155,7 +13224,7 @@ function statementPdfFilename(customer) {
 
 function statementOrderRowsHtml(rows) {
     return rows.map(r => {
-        const statusHtml = r.hasChargeable === false ? '<span class="num text-amber">بانتظار تسعير</span>' : r.remaining >= CUSTOMER_REMAINING_TOLERANCE ? '<span class="num text-rust">' + fmtNum(r.remaining) + "</span>" : '<span class="num text-green">مسدد</span>';
+        const statusHtml = r.hasChargeable === false ? '<span class="num text-amber">' + escapeHtml(r.unpricedLabel || "بانتظار تسعير") + "</span>" : r.remaining >= CUSTOMER_REMAINING_TOLERANCE ? '<span class="num text-rust">' + fmtNum(r.remaining) + "</span>" : '<span class="num text-green">مسدد</span>';
         return '<tr data-open-order="' + escapeHtml(r.orderId) + '" style="cursor:pointer;">' + '<td><span class="statement-order-label-cell" data-label-cell="' + escapeHtml(r.orderId) + '">' + '<span class="statement-order-label-text">' + escapeHtml(r.orderNumber || "") + (r.orderLabel ? " — " + escapeHtml(r.orderLabel) : "") + "</span> " + '<button type="button" class="icon-btn no-print" data-edit-order-label="' + escapeHtml(r.orderId) + '" title="تعديل عنوان الطلبية" aria-label="تعديل عنوان الطلبية">✏️</button>' + "</span></td>" + '<td style="text-align:center;">' + isoToDisplayDate(r.date) + "</td>" + '<td style="text-align:center;" class="num">' + (r.hasChargeable === false ? "—" : fmtNum(r.total)) + "</td>" + '<td style="text-align:center;">' + statusHtml + "</td>" + "</tr>";
     }).join("");
 }
@@ -13196,7 +13265,7 @@ function buildStatementWhatsAppText(customer, ongoing, past, refunds, opts) {
     if (ongoing.length) {
         lines.push("طلبيات جارية:");
         ongoing.forEach((r, i) => {
-            const status = r.hasChargeable === false ? "بانتظار تسعير" : r.remaining >= CUSTOMER_REMAINING_TOLERANCE ? fmtNum(r.remaining) + " ريال متبقي" : "مسدد";
+            const status = r.hasChargeable === false ? r.unpricedLabel || "بانتظار تسعير" : r.remaining >= CUSTOMER_REMAINING_TOLERANCE ? fmtNum(r.remaining) + " ريال متبقي" : "مسدد";
             lines.push(i + 1 + ". " + (r.orderNumber || "") + (r.orderLabel ? " — " + r.orderLabel : "") + " (" + isoToDisplayDate(r.date) + ") — " + status);
         });
         lines.push("");
@@ -13562,6 +13631,8 @@ const EXPENSE_CATEGORIES = [ {
 let treasuryPeriodFilter = "all";
 
 let editingExpenseEntries = {};
+
+let expenseEditOriginals = {};
 
 let unsavedDraftEntryIds = new Set;
 
@@ -16128,6 +16199,10 @@ function openWithdrawCustodyModal(categoryKey, employeeLabel, onSaved) {
             return;
         }
         if (!Array.isArray(appData.treasury[categoryKey])) appData.treasury[categoryKey] = [];
+        if (!parseDMY(isoToDmy(dateInput.value))) {
+            showToast("أدخل تاريخًا صحيحًا", "error");
+            return;
+        }
         const newEntry = {
             id: uid("exp"),
             amount: -amount,
@@ -16164,6 +16239,16 @@ function openExpenseHistoryModal(key, label, onClosed) {
     root.innerHTML = '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-header"><div class="modal-title">' + escapeHtml(label) + "</div>" + '<button type="button" class="icon-btn" id="expense-history-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="expense-entries-list" data-entries-key="' + escapeHtml(key) + '">' + (matching.length ? matching.map(entry => expenseEntryRowHtml(entry, key)).join("") : '<div class="expense-empty-hint">لا توجد مبالغ ضمن هذه الفترة</div>') + "</div>" + "</div>" + "</div>";
     root.classList.add("modal-open");
     const close = () => {
+        (appData.treasury[key] || []).forEach(e => {
+            const orig = expenseEditOriginals[e.id];
+            if (orig && editingExpenseEntries[e.id]) {
+                e.amount = orig.amount;
+                e.date = orig.date;
+                e.note = orig.note;
+            }
+            delete expenseEditOriginals[e.id];
+            delete editingExpenseEntries[e.id];
+        });
         if (Array.isArray(appData.treasury[key])) {
             appData.treasury[key] = appData.treasury[key].filter(e => {
                 if (!unsavedDraftEntryIds.has(e.id)) return true;
@@ -16219,6 +16304,10 @@ function openAddExpenseModal() {
             return;
         }
         if (!Array.isArray(appData.treasury[addExpenseSelectedType])) appData.treasury[addExpenseSelectedType] = [];
+        if (!parseDMY(isoToDmy(dateInput.value))) {
+            showToast("أدخل تاريخًا صحيحًا", "error");
+            return;
+        }
         const newEntry = {
             id: uid("exp"),
             amount: amount,
@@ -16248,6 +16337,11 @@ function bindExpenseEntryEvents(key) {
         const editBtn = row.querySelector(".expense-entry-edit-btn");
         if (editBtn) {
             editBtn.addEventListener("click", () => {
+                if (!expenseEditOriginals[entryId]) expenseEditOriginals[entryId] = {
+                    amount: entry.amount,
+                    date: entry.date,
+                    note: entry.note
+                };
                 editingExpenseEntries[entryId] = true;
                 refreshExpenseEntries(key);
             });
@@ -16259,6 +16353,10 @@ function bindExpenseEntryEvents(key) {
                 const isSupport = key === "support" || key === "amerCustody" || key === "omarCustody";
                 if (entry.amount === "" || isNaN(amt) || amt === 0 || !isSupport && amt < 0) {
                     showToast("أدخل مبلغًا صحيحًا", "error");
+                    return;
+                }
+                if (!parseDMY(entry.date)) {
+                    showToast("أدخل تاريخًا صحيحًا للقيد", "error");
                     return;
                 }
                 const liveEntry = (appData.treasury[key] || []).find(e => e.id === entryId);
@@ -16284,6 +16382,7 @@ function bindExpenseEntryEvents(key) {
                 }
                 delete editingExpenseEntries[entryId];
                 unsavedDraftEntryIds.delete(entryId);
+                delete expenseEditOriginals[entryId];
                 refreshExpenseEntries(key);
                 showToast("تم حفظ المبلغ", "ok");
             });
@@ -19552,9 +19651,10 @@ function customerOrderHistory(customerId) {
             total: t.hasChargeable ? t.sellTotal : 0,
             remaining: t.hasChargeable ? t.customerRemaining : 0,
             hasChargeable: t.hasChargeable,
+            unpricedLabel: t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "بانتظار تسعير",
             date: o.suppliedAt || o.updatedAt || o.createdAt || ""
         };
-        (!t.customerFullyPaid ? ongoing : past).push(row);
+        (!t.customerFullyPaid && !(t.allPartsReturned && !t.hasChargeable) ? ongoing : past).push(row);
     });
     const byDateDesc = (a, b) => new Date(b.date || 0) - new Date(a.date || 0);
     ongoing.sort(byDateDesc);
@@ -19585,7 +19685,7 @@ function customerPendingOrders(customerId) {
 }
 
 function orderHistoryRowHtml(row) {
-    const amountHtml = row.hasChargeable === false ? '<span class="num text-amber">بانتظار تسعير</span>' : '<span class="num ' + (row.remaining >= CUSTOMER_REMAINING_TOLERANCE ? "text-rust" : "text-green") + '">' + fmtMoney(row.remaining >= CUSTOMER_REMAINING_TOLERANCE ? row.remaining : row.total) + "</span>";
+    const amountHtml = row.hasChargeable === false ? '<span class="num text-amber">' + escapeHtml(row.unpricedLabel || "بانتظار تسعير") + "</span>" : '<span class="num ' + (row.remaining >= CUSTOMER_REMAINING_TOLERANCE ? "text-rust" : "text-green") + '">' + fmtMoney(row.remaining >= CUSTOMER_REMAINING_TOLERANCE ? row.remaining : row.total) + "</span>";
     return '<button type="button" class="purchase-history-row" data-open-order="' + escapeHtml(row.orderId) + '">' + '<div class="purchase-history-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(row.orderNumber || "") + (row.orderLabel ? " — " + escapeHtml(row.orderLabel) : "") + "</span>" + amountHtml + "</div>" + '<div class="purchase-history-row-sub"><span>' + isoToDisplayDate(row.date) + "</span></div>" + "</button>";
 }
 
