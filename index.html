@@ -1745,6 +1745,8 @@ let draftOpenedAtUpdatedAt = null;
 
 let draftSettleBase = null;
 
+let orderSaveInFlightDraft = null;
+
 let quoteSettleBase = null;
 
 let draftVinAtOpen = "";
@@ -2129,9 +2131,19 @@ function settlementResetPlan(liveOrder, draftOrder) {
 function settlementResetWarningText(plan) {
     if (!plan || !plan.resetUsed && !plan.resetNew) return "";
     const bits = [];
-    if (plan.resetUsed) bits.push("التشليح: من " + fmtMoney(plan.usedBefore) + " إلى " + fmtMoney(plan.usedAfter));
-    if (plan.resetNew) bits.push("الجديد: من " + fmtMoney(plan.newBefore) + " إلى " + fmtMoney(plan.newAfter));
-    return "تتغيّر تكلفة قطع " + plan.label + " بعد تسجيل سدادها (" + bits.join("، ") + "). سيُلغى تسديد " + plan.label + " المسجّل (الجهة والتاريخ والمبلغ) ويعود المبلغ مستحقًا، وعليك تسجيل التسديد من جديد بالمبلغ الصحيح.";
+    if (plan.resetUsed) bits.push("قطع التشليح من " + fmtMoney(plan.usedBefore) + " إلى " + fmtMoney(plan.usedAfter));
+    if (plan.resetNew) bits.push("قطع الجديد من " + fmtMoney(plan.newBefore) + " إلى " + fmtMoney(plan.newAfter));
+    const both = plan.resetUsed && plan.resetNew;
+    return "هذا التعديل يغيّر تكلفة " + bits.join(" و") + "، وقد سبق تسجيل " + (both ? "سدادهما" : "سدادها") + ". سيُلغى تسديد " + plan.label + " المسجّل (الجهة والتاريخ والمبلغ) ويعود المبلغ مستحقًا، وعليك تسجيل التسديد من جديد بالمبلغ الصحيح.";
+}
+
+function settlementResetNoticeText(plan) {
+    if (!plan || !plan.resetUsed && !plan.resetNew) return "";
+    const both = plan.resetUsed && plan.resetNew;
+    const bits = [];
+    if (plan.resetUsed) bits.push((both ? "التشليح " : "التكلفة ") + "من " + fmtMoney(plan.usedBefore) + " إلى " + fmtMoney(plan.usedAfter));
+    if (plan.resetNew) bits.push((both ? "الجديد " : "التكلفة ") + "من " + fmtMoney(plan.newBefore) + " إلى " + fmtMoney(plan.newAfter));
+    return "حفظ هذا التعديل سيلغي تسديد " + plan.label + " (" + bits.join("، ") + ") — ستحتاج تسجيل التسديد من جديد";
 }
 
 function settlementResetLabel(which) {
@@ -2531,28 +2543,55 @@ function showToast(msg, type) {
     }, 2600);
 }
 
+function orderDirectPaidAmount(o, t) {
+    const p = orderDirectPaidParts(o, t);
+    return p.used + p.new;
+}
+
+function orderDirectPaidParts(o, t) {
+    t = t || orderTotals(o);
+    const parts = {
+        used: 0,
+        new: 0
+    };
+    if (scrapyardCostSettled(o, t) && o.paidToSupplier && o.paidToSupplierAt && o.paidToSupplierAt >= DIRECT_PAID_FIX_CUTOFF) parts.used = t.costToScrapyard;
+    if (t.costToSupplier > 0) {
+        const stNew = bucketSettlement(o, t, "new");
+        if (stNew.payer) {
+            if (stNew.at && stNew.at >= DIRECT_PAID_FIX_CUTOFF) {
+                if (stNew.payer === "supplier") parts.new = t.costToSupplier;
+            } else parts.new = t.costToSupplier;
+        }
+    }
+    return parts;
+}
+
+function orderCustodyPaidAmount(o, t, who) {
+    if (!o.confirmed || o.custodyLegacy) return 0;
+    t = t || orderTotals(o);
+    const K = who === "omar" ? "Omar" : "Amer";
+    let amt = 0;
+    if (o["paidTo" + K] && !o.paidToSupplier) amt += t.costToScrapyard;
+    if (t.costToSupplier > 0 && bucketSettlement(o, t, "new").payer === who) amt += t.costToSupplier;
+    return amt;
+}
+
 function computeAggregateFinancials(matchPeriodFn) {
     const realOrders = appData.orders.filter(o => !o.isQuote);
     const periodOrders = realOrders.filter(o => matchPeriodFn ? matchPeriodFn(o) : true);
     const confirmedOrders = periodOrders.filter(o => o.confirmed);
+    const cashOrders = appData.orders.filter(o => matchPeriodFn ? matchPeriodFn(o) : true);
     let dueToScrapyard = 0, dueToSuppliers = 0, dueFromCustomers = 0, dueFromCustomersCount = 0, collectedProfit = 0, uncollectedProfit = 0;
     let dueToScrapyardCount = 0, dueToSuppliersCount = 0;
     let directPaidTotal = 0, customerReceiptsTotal = 0, deliveryPaidTotal = 0, deliveryDueTotal = 0;
-    periodOrders.forEach(o => {
+    cashOrders.forEach(o => {
         const t = orderTotals(o);
-        if (scrapyardCostSettled(o, t) && o.paidToSupplier && o.paidToSupplierAt && o.paidToSupplierAt >= DIRECT_PAID_FIX_CUTOFF) directPaidTotal += t.costToScrapyard;
-        if (t.costToSupplier > 0) {
-            const stNew = bucketSettlement(o, t, "new");
-            if (stNew.payer) {
-                if (stNew.at && stNew.at >= DIRECT_PAID_FIX_CUTOFF) {
-                    if (stNew.payer === "supplier") directPaidTotal += t.costToSupplier;
-                } else directPaidTotal += t.costToSupplier;
-            }
-        }
+        directPaidTotal += orderDirectPaidAmount(o, t);
         customerReceiptsTotal += t.customerPaidAmountForBox;
         if (deliveryOrderEligible(o)) {
             if (o.deliveryCostPaid) deliveryPaidTotal += t.deliveryCost; else deliveryDueTotal += t.deliveryCost;
         }
+        if (o.isQuote) return;
         if (!o.confirmed) return;
         if (!scrapyardCostSettled(o, t)) {
             if (o.supplied && t.costToScrapyard > 0) {
@@ -2591,6 +2630,143 @@ function computeAggregateFinancials(matchPeriodFn) {
         deliveryPaidTotal: deliveryPaidTotal,
         deliveryDueTotal: deliveryDueTotal
     };
+}
+
+function moneyEventNowIso() {
+    return (new Date).toISOString();
+}
+
+function stampPartRefundConfirmed(part, atIso) {
+    part.customerRefundConfirmed = true;
+    part.customerRefundConfirmedAt = atIso || moneyEventNowIso();
+}
+
+function unstampPartRefundConfirmed(part) {
+    delete part.customerRefundConfirmed;
+    delete part.customerRefundConfirmedAt;
+}
+
+function stampPartReturnCollected(part, atIso) {
+    part.returnCollected = true;
+    part.returnCollectedAt = atIso || moneyEventNowIso();
+}
+
+function unstampPartReturnCollected(part) {
+    delete part.returnCollected;
+    delete part.returnCollectedAt;
+}
+
+function partStampSnapshot(part, flagKey) {
+    const has = k => Object.prototype.hasOwnProperty.call(part, k);
+    const atKey = flagKey + "At";
+    return {
+        flagKey: flagKey,
+        hasFlag: has(flagKey),
+        flag: part[flagKey],
+        hasAt: has(atKey),
+        at: part[atKey]
+    };
+}
+
+function partStampRestore(part, snap) {
+    if (!part || !snap) return;
+    const atKey = snap.flagKey + "At";
+    if (snap.hasFlag) part[snap.flagKey] = snap.flag; else delete part[snap.flagKey];
+    if (snap.hasAt) part[atKey] = snap.at; else delete part[atKey];
+}
+
+function partReturnCollectEffect(order, part) {
+    const zero = {
+        box: 0,
+        amer: 0,
+        omar: 0
+    };
+    if (!order || !part || !part.returned || !part.returnHasReceivable) return zero;
+    const withState = collected => Object.assign({}, order, {
+        parts: (order.parts || []).map(p => p.id === part.id ? Object.assign({}, p, {
+            returnCollected: collected
+        }) : p)
+    });
+    const unc = withState(false), col = withState(true);
+    const tU = orderTotals(unc), tC = orderTotals(col);
+    return {
+        box: round2(orderDirectPaidAmount(unc, tU) - orderDirectPaidAmount(col, tC)),
+        amer: round2(orderCustodyPaidAmount(unc, tU, "amer") - orderCustodyPaidAmount(col, tC, "amer")),
+        omar: round2(orderCustodyPaidAmount(unc, tU, "omar") - orderCustodyPaidAmount(col, tC, "omar"))
+    };
+}
+
+function returnCollectDestination(order, part) {
+    const eff = partReturnCollectEffect(order, part);
+    const amt = round2((Number(part && part.qty) || 1) * (Number(part && part.costPrice) || 0));
+    const dests = [];
+    if (eff.box > .005) dests.push({
+        k: "box",
+        label: "صافي الصندوق"
+    });
+    if (eff.amer > .005) dests.push({
+        k: "amer",
+        label: "عهدة عامر"
+    });
+    if (eff.omar > .005) dests.push({
+        k: "omar",
+        label: "عهدة عمر"
+    });
+    const dateNote = " (بتاريخ اليوم " + todayNumeric() + ")";
+    if (!dests.length) {
+        return {
+            key: "none",
+            labels: [],
+            amount: 0,
+            confirmMessage: "لن يتأثر الصندوق ولا عهدة المشتريات بهذا التحصيل (القطعة غير مسدّدة للمورد حاليًا). سيُسجَّل التحصيل" + dateNote + " فقط.",
+            toast: "تم تسجيل التحصيل (بلا أثر على الصندوق أو العهدة)"
+        };
+    }
+    const labels = dests.map(d => d.label);
+    const custodyOnly = dests.every(d => d.k !== "box");
+    const shown = dests.map(d => d.k === "box" ? "الصندوق" : d.label);
+    return {
+        key: dests.map(d => d.k).join("+"),
+        labels: labels,
+        amount: round2(eff.box + eff.amer + eff.omar),
+        confirmMessage: "سيُضاف المبلغ (" + fmtMoney(amt) + ") إلى " + labels.join(" و") + dateNote + "." + (custodyOnly ? ' لن يتأثر الصندوق — القطعة سُدّدت من العهدة. إذا أردت إعادته إلى الصندوق استخدم "سحب من العهدة" في شاشة الصندوق.' : ""),
+        toast: "تم تسجيل التحصيل، وأُضيف المبلغ إلى " + shown.join(" و")
+    };
+}
+
+function partReturnFallbackDate(order, part) {
+    const dayOf = iso => {
+        const d = new Date(iso);
+        return isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    };
+    if (part && part.returnedAt) {
+        const d = dayOf(part.returnedAt);
+        if (d) return d;
+    }
+    const adj = (order.customerPayments || []).find(pay => pay.returnAdjustment && part && pay.linkedPartId === part.id);
+    if (adj) {
+        const d = parseDMY(adj.date);
+        if (d) return d;
+    }
+    return null;
+}
+
+function partReturnCollectInSettlementEpoch(order, part, fallbackDay) {
+    const st = bucketSettlement(order, null, part && part.used ? "used" : "new");
+    const at = st && st.at ? Date.parse(st.at) : NaN;
+    if (isNaN(at)) return true;
+    const stamp = part && part.returnCollectedAt ? Date.parse(part.returnCollectedAt) : NaN;
+    if (!isNaN(stamp)) return stamp >= at;
+    if (fallbackDay) {
+        const a = new Date(at);
+        return fallbackDay.getTime() >= new Date(a.getFullYear(), a.getMonth(), a.getDate()).getTime();
+    }
+    return true;
+}
+
+function accountsActivityNet(a) {
+    const t = a.totals;
+    return round2(t.customerPayments - t.customerRefundsPaid + t.supplierReturnsBox - t.supplierPaymentsDirect - t.deliveryPayments - t.expenses + t.support - t.custody - t.custodyOmar);
 }
 
 const KPI_CONFIRMED_HIDDEN_EMAILS = [ "manomahomed11223@gmail.com" ];
@@ -4133,10 +4309,10 @@ function partRowHtml(p, i) {
     const selectionOn = !!(typeof draft !== "undefined" && draft && draft.partsSelectionEnabled);
     const included = p.included !== false;
     if (p.returned) {
-        const statusLabel = p.returnHasReceivable ? p.returnCollected ? "✅ مرتجعة — تم تحصيل المبلغ من المورد" : "🔄 مرتجعة — بانتظار تحصيل المبلغ من المورد" : "🔄 مرتجعة";
+        const statusLabel = p.returnHasReceivable ? p.returnCollected ? "✅ مرتجعة — تم تحصيل المبلغ من المورد" + (hasElevatedAccess() && p.returnCollectedAt && fmtDateShort(p.returnCollectedAt) ? " (" + fmtDateShort(p.returnCollectedAt) + ")" : "") : "🔄 مرتجعة — بانتظار تحصيل المبلغ من المورد" : "🔄 مرتجعة";
         const refundDone = !!p.customerRefundConfirmed;
         const canUndo = !p.returnCollected && !refundDone;
-        return '<div class="part-row part-row-returned" data-part-id="' + escapeHtml(p.id) + '">' + '<div class="part-desc-wrap">' + '<div class="part-desc-row"><span class="part-index-badge">' + ((i != null ? i : 0) + 1) + '</span><span class="part-desc-returned">' + escapeHtml(p.description) + "</span></div>" + '<span class="used-badge used-badge-off">' + statusLabel + (refundDone ? " · ✅ تم رد المبلغ للزبون" : "") + "</span>" + (draft ? mediaStripHtml(draft.id, p.id, "view") : "") + "</div>" + '<div class="part-price-group">' + '<span class="num">' + escapeHtml(qtyVal) + " × " + fmtMoney(Number(costVal) || 0) + "</span>" + "</div>" + (canUndo ? '<button type="button" class="icon-btn" data-undo-return-part="' + escapeHtml(p.id) + '" title="تراجع عن الإرجاع" aria-label="تراجع عن الإرجاع">↩️</button>' : "") + "</div>";
+        return '<div class="part-row part-row-returned" data-part-id="' + escapeHtml(p.id) + '">' + '<div class="part-desc-wrap">' + '<div class="part-desc-row"><span class="part-index-badge">' + ((i != null ? i : 0) + 1) + '</span><span class="part-desc-returned">' + escapeHtml(p.description) + "</span></div>" + '<span class="used-badge used-badge-off">' + statusLabel + (refundDone ? " · ✅ تم رد المبلغ للزبون" + (p.customerRefundConfirmedAt && fmtDateShort(p.customerRefundConfirmedAt) ? " (" + fmtDateShort(p.customerRefundConfirmedAt) + ")" : "") : "") + "</span>" + (draft ? mediaStripHtml(draft.id, p.id, "view") : "") + "</div>" + '<div class="part-price-group">' + '<span class="num">' + escapeHtml(qtyVal) + " × " + fmtMoney(Number(costVal) || 0) + "</span>" + "</div>" + (canUndo ? '<button type="button" class="icon-btn" data-undo-return-part="' + escapeHtml(p.id) + '" title="تراجع عن الإرجاع" aria-label="تراجع عن الإرجاع">↩️</button>' : "") + "</div>";
     }
     const descFieldUi = fieldRequestUiHtml("description", p.id, p.description, '<span class="field-readonly-value field-readonly-desc">' + escapeHtml(p.description || "") + "</span>");
     const descHtml = descFieldUi != null ? descFieldUi : '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="' + escapeHtml(p.description) + '">';
@@ -7251,6 +7427,10 @@ function openModal(mode, orderId, opts) {
             showToast("هذه الطلبية غير موجودة (ربما تم حذفها)", "error");
             return;
         }
+        if (found.isQuote) {
+            openQuoteModal("edit", orderId);
+            return;
+        }
         draft = JSON.parse(JSON.stringify(found));
         draft.isNew = false;
     }
@@ -7299,8 +7479,8 @@ function escListener(e) {
     closeModal();
 }
 
-function orderModalStillOpen(draftId) {
-    return !!draft && draft.id === draftId;
+function orderModalStillOpen(draftId, draftRef) {
+    return !!draft && draft.id === draftId && (draftRef === undefined || draft === draftRef);
 }
 
 function friendlyErrorText(e) {
@@ -7644,7 +7824,7 @@ function attachModalHandlers() {
     bindOrderActionButtons();
     const quoteBtn = root.querySelector("#modal-quote-btn");
     if (quoteBtn) {
-        quoteBtn.addEventListener("click", async () => {
+        bindBusyButton(quoteBtn, async () => {
             const id = draft.id;
             const ok = await onSaveOrder();
             if (ok) openDocumentView(id, "quote");
@@ -7652,7 +7832,7 @@ function attachModalHandlers() {
     }
     const invoiceBtn = root.querySelector("#modal-invoice-btn");
     if (invoiceBtn) {
-        invoiceBtn.addEventListener("click", async () => {
+        bindBusyButton(invoiceBtn, async () => {
             const id = draft.id;
             const ok = await onSaveOrder();
             if (ok) openDocumentView(id, "invoice");
@@ -8058,8 +8238,11 @@ function applyPartReturnOnOrder(order, part, extraRefundCap) {
     extraRefundCap = round2(Math.max(0, Number(extraRefundCap) || 0));
     const hasReceivable = partPurchaseCostSettled(order, part);
     part.returned = true;
+    part.returnedAt = moneyEventNowIso();
     part.returnHasReceivable = hasReceivable;
     part.returnCollected = false;
+    delete part.returnCollectedAt;
+    delete part.customerRefundConfirmedAt;
     const sellAmount = part.sellPrice !== null && part.sellPrice !== undefined && part.sellPrice !== "" ? (Number(part.qty) || 1) * Number(part.sellPrice) : 0;
     const t = orderTotals(order);
     const overpay = round2(t.customerPaidAmount - t.sellTotal);
@@ -8096,8 +8279,9 @@ function undoPartReturnOnOrder(order, part) {
     }
     delete part.returned;
     delete part.returnHasReceivable;
-    delete part.returnCollected;
-    delete part.customerRefundConfirmed;
+    delete part.returnedAt;
+    unstampPartReturnCollected(part);
+    unstampPartRefundConfirmed(part);
     delete part.returnKeptFeeShare;
     delete part.returnKeptServiceFeeShare;
     delete part.returnKeptDeliveryShare;
@@ -8328,7 +8512,7 @@ function updateModalTotals() {
             if (livePl.blockReason) {
                 costSplitWrap.insertAdjacentHTML("beforeend", '<div class="settlement-reset-notice" id="settlement-reset-notice">⚠️ ' + escapeHtml(livePl.blockReason) + "</div>");
             } else if (livePl.resetUsed || livePl.resetNew) {
-                costSplitWrap.insertAdjacentHTML("beforeend", '<div class="settlement-reset-notice" id="settlement-reset-notice">⚠️ حفظ هذا التعديل سيلغي تسديد ' + livePl.label + " (تغيّرت التكلفة بعد السداد) — ستحتاج تسجيل التسديد من جديد</div>");
+                costSplitWrap.insertAdjacentHTML("beforeend", '<div class="settlement-reset-notice" id="settlement-reset-notice">⚠️ ' + escapeHtml(settlementResetNoticeText(livePl)) + "</div>");
             }
         }
     }
@@ -8381,7 +8565,7 @@ function bindOrderRefundConfirmButton() {
     confirmRefundBtn.addEventListener("click", () => {
         confirmAction({
             title: "تأكيد رد المبلغ للزبون؟",
-            message: "سيتم خصم المبلغ من صافي الصندوق. احفظ الطلبية بعدها حتى يتم تثبيته.",
+            message: "سيتم خصم المبلغ من صافي الصندوق بتاريخ اليوم (" + todayNumeric() + "). احفظ الطلبية بعدها حتى يتم تثبيته.",
             confirmLabel: "تم الرد",
             dangerous: true,
             onConfirm: () => {
@@ -8389,7 +8573,7 @@ function bindOrderRefundConfirmButton() {
                 (draft.parts || []).forEach(p => {
                     if (!p.returned || p.customerRefundConfirmed) return;
                     const adj = (draft.customerPayments || []).find(pay => pay.returnAdjustment && pay.linkedPartId === p.id);
-                    if (adj) p.customerRefundConfirmed = true;
+                    if (adj) stampPartRefundConfirmed(p);
                 });
                 refreshPartsList();
                 updateModalTotals();
@@ -8414,165 +8598,200 @@ function orderCustomerRefundStatusHtml(order) {
     return (pendingTotal > 0 ? '<div class="customer-refund-status customer-refund-status-pending">يجب إرجاع ' + fmtMoney(pendingTotal) + " للزبون " + confirmBtn + "</div>" : "") + (confirmedTotal > 0 ? '<div class="customer-refund-status customer-refund-status-done">✅ تم إرجاع ' + fmtMoney(confirmedTotal) + " للزبون</div>" : "");
 }
 
-async function onSaveOrder() {
-    if (!draft.isNew) {
-        const liveOrder = appData.orders.find(o => o.id === draft.id);
-        if (!liveOrder) {
-            showToast("تم حذف هذه الطلبية من مكان آخر — أغلقنا النافذة حتى لا يتم حفظها من جديد", "error");
-            closeModal();
+async function checkOrderSaveConflict(baseline) {
+    const cId = draft.id, cRef = draft;
+    const liveOrder = appData.orders.find(o => o.id === cId);
+    if (!liveOrder) {
+        showToast("تم حذف هذه الطلبية من مكان آخر — أغلقنا النافذة حتى لا يتم حفظها من جديد", "error");
+        closeModal();
+        return false;
+    }
+    if (baseline && liveOrder.updatedAt && liveOrder.updatedAt !== baseline) {
+        document.removeEventListener("keydown", escListener);
+        const proceedAnyway = await new Promise(resolve => {
+            confirmAction({
+                title: "تم تغيير الطلبية من مكان آخر",
+                message: "طرأ عليها تحديث (مثل قبول اقتراح تسعير من عامر، أو تعديل من مستخدم آخر) بعد أن فتحت هذه النافذة. إذا أكملت وحفظت، سيضيع ذلك التحديث. الأفضل أن تغلقها وتفتحها من جديد لترى آخر نسخة.",
+                confirmLabel: "أكمل واحفظ نسختي (سيلغي تعديلهم)",
+                cancelLabel: "أغلق بدون حفظ",
+                dangerous: true,
+                onConfirm: () => resolve(true),
+                onCancel: () => resolve(false)
+            });
+        });
+        const stillOpen = orderModalStillOpen(cId, cRef);
+        if (!proceedAnyway) {
+            if (stillOpen) closeModal();
             return false;
         }
-        if (draftOpenedAtUpdatedAt && liveOrder.updatedAt && liveOrder.updatedAt !== draftOpenedAtUpdatedAt) {
-            document.removeEventListener("keydown", escListener);
-            const proceedAnyway = await new Promise(resolve => {
-                confirmAction({
-                    title: "تم تغيير الطلبية من مكان آخر",
-                    message: "طرأ عليها تحديث (مثل قبول اقتراح تسعير من عامر، أو تعديل من مستخدم آخر) بعد أن فتحت هذه النافذة. إذا أكملت وحفظت، سيضيع ذلك التحديث. الأفضل أن تغلقها وتفتحها من جديد لترى آخر نسخة.",
-                    confirmLabel: "أكمل واحفظ نسختي (سيلغي تعديلهم)",
-                    cancelLabel: "أغلق بدون حفظ",
-                    dangerous: true,
-                    onConfirm: () => resolve(true),
-                    onCancel: () => resolve(false)
-                });
-            });
-            if (!proceedAnyway) {
-                closeModal();
-                return false;
-            }
-            document.addEventListener("keydown", escListener);
-        }
-    }
-    if (!draft.orderNumber || !draft.orderNumber.trim()) {
-        showToast("يجب كتابة رقم الطلب", "error");
-        return false;
-    }
-    const dup = appData.orders.find(o => o.orderNumber.trim() === draft.orderNumber.trim() && o.id !== draft.id);
-    if (dup) {
-        showToast("رقم الطلب مستخدم من قبل، غيّره", "error");
-        return false;
-    }
-    if (!vinApplyForSave(draft, "order")) return false;
-    if (!carApplyForSave(draft, "order")) return false;
-    if (mediaStagedOnBlankParts(draft.id, draft.parts)) return false;
-    const cleanedParts = draft.parts.filter(p => p.description && p.description.trim()).map(p => Object.assign({}, p, {
-        id: p.id,
-        description: p.description.trim(),
-        qty: p.qty === "" || p.qty == null || Number(p.qty) <= 0 ? 1 : Math.max(1, Number(p.qty)),
-        costPrice: p.costPrice === "" ? 0 : Math.max(0, Number(p.costPrice) || 0),
-        sellPrice: p.sellPrice === "" || p.sellPrice === null || p.sellPrice === undefined ? null : Math.max(0, Number(p.sellPrice) || 0),
-        used: !!p.used,
-        included: p.included !== false,
-        supplierId: p.supplierId || null,
-        returned: !!p.returned,
-        returnHasReceivable: !!p.returnHasReceivable,
-        returnCollected: !!p.returnCollected,
-        customerRefundConfirmed: !!p.customerRefundConfirmed
-    }));
-    if (cleanedParts.length === 0) {
-        showToast("يجب إضافة وصف لقطعة واحدة على الأقل", "error");
-        return false;
-    }
-    if (currentUserRole === "full" && !hasElevatedAccess() && !draft.customerId) {
-        document.removeEventListener("keydown", escListener);
-        await confirmReminder("لم تحدد عميلًا لهذه الطلبية.");
+        if (!stillOpen) return false;
         document.addEventListener("keydown", escListener);
     }
-    const paymentsMissingMethod = (draft.customerPayments || []).some(p => !p.returnAdjustment && p.amount !== "" && p.amount != null && Number(p.amount) > 0 && !p.method);
-    if (paymentsMissingMethod) {
-        showToast("يجب تحديد طريقة الدفع (كاش/شبكة) لكل دفعة قبل الحفظ", "error");
-        return false;
-    }
-    const cleanedPayments = (draft.customerPayments || []).filter(p => p.amount !== "" && p.amount != null && Number(p.amount) > 0).map(p => ({
-        id: p.id,
-        amount: Number(p.amount) || 0,
-        method: p.method || "",
-        date: (p.date || "").trim(),
-        returnAdjustment: !!p.returnAdjustment,
-        linkedPartId: p.linkedPartId || null
-    }));
-    if (!draft.isNew && draftSettleBase) {
-        const resetPlan = settlementResetPlan(draftSettleBase, Object.assign({}, draft, {
-            parts: cleanedParts
-        }));
-        if (resetPlan.blockReason && hasElevatedAccess()) {
-            showToast(resetPlan.blockReason, "error");
+    return true;
+}
+
+async function onSaveOrder() {
+    if (draft && orderSaveInFlightDraft === draft) return false;
+    const saveFlightRef = draft;
+    orderSaveInFlightDraft = saveFlightRef;
+    try {
+        if (!draft.isNew) {
+            if (!await checkOrderSaveConflict(draftOpenedAtUpdatedAt)) return false;
+        }
+        if (!draft.orderNumber || !draft.orderNumber.trim()) {
+            showToast("يجب كتابة رقم الطلب", "error");
             return false;
         }
-        if (resetPlan.resetUsed || resetPlan.resetNew) {
-            const resetDraftId = draft.id;
-            const goOn = await confirmSettlementResetOrAbort(resetPlan, escListener);
-            if (!goOn || !orderModalStillOpen(resetDraftId)) return false;
+        const dup = appData.orders.find(o => o.orderNumber.trim() === draft.orderNumber.trim() && o.id !== draft.id);
+        if (dup) {
+            showToast("رقم الطلب مستخدم من قبل، غيّره", "error");
+            return false;
+        }
+        if (!vinApplyForSave(draft, "order")) return false;
+        if (!carApplyForSave(draft, "order")) return false;
+        if (mediaStagedOnBlankParts(draft.id, draft.parts)) return false;
+        const cleanedParts = draft.parts.filter(p => p.description && p.description.trim()).map(p => Object.assign({}, p, {
+            id: p.id,
+            description: p.description.trim(),
+            qty: p.qty === "" || p.qty == null || Number(p.qty) <= 0 ? 1 : Math.max(1, Number(p.qty)),
+            costPrice: p.costPrice === "" ? 0 : Math.max(0, Number(p.costPrice) || 0),
+            sellPrice: p.sellPrice === "" || p.sellPrice === null || p.sellPrice === undefined ? null : Math.max(0, Number(p.sellPrice) || 0),
+            used: !!p.used,
+            included: p.included !== false,
+            supplierId: p.supplierId || null,
+            returned: !!p.returned,
+            returnHasReceivable: !!p.returnHasReceivable,
+            returnCollected: !!p.returnCollected,
+            customerRefundConfirmed: !!p.customerRefundConfirmed
+        }));
+        if (cleanedParts.length === 0) {
+            showToast("يجب إضافة وصف لقطعة واحدة على الأقل", "error");
+            return false;
+        }
+        if (currentUserRole === "full" && !hasElevatedAccess() && !draft.customerId) {
+            document.removeEventListener("keydown", escListener);
+            await confirmReminder("لم تحدد عميلًا لهذه الطلبية.");
+            document.addEventListener("keydown", escListener);
+        }
+        const paymentsMissingMethod = (draft.customerPayments || []).some(p => !p.returnAdjustment && p.amount !== "" && p.amount != null && Number(p.amount) > 0 && !p.method);
+        if (paymentsMissingMethod) {
+            showToast("يجب تحديد طريقة الدفع (كاش/شبكة) لكل دفعة قبل الحفظ", "error");
+            return false;
+        }
+        const cleanedPayments = (draft.customerPayments || []).filter(p => p.amount !== "" && p.amount != null && Number(p.amount) > 0).map(p => ({
+            id: p.id,
+            amount: Number(p.amount) || 0,
+            method: p.method || "",
+            date: (p.date || "").trim(),
+            returnAdjustment: !!p.returnAdjustment,
+            linkedPartId: p.linkedPartId || null
+        }));
+        if (!draft.isNew && draftSettleBase) {
+            const resetPlan = settlementResetPlan(draftSettleBase, Object.assign({}, draft, {
+                parts: cleanedParts
+            }));
+            if (resetPlan.blockReason && hasElevatedAccess()) {
+                showToast(resetPlan.blockReason, "error");
+                return false;
+            }
+            if (resetPlan.resetUsed || resetPlan.resetNew) {
+                const resetDraftId = draft.id, resetDraftRef = draft;
+                const resetLive = appData.orders.find(o => o.id === resetDraftId);
+                const resetLiveStamp = resetLive ? resetLive.updatedAt || null : null;
+                const goOn = await confirmSettlementResetOrAbort(resetPlan, escListener);
+                if (!orderModalStillOpen(resetDraftId, resetDraftRef)) {
+                    if (!draft) document.removeEventListener("keydown", escListener);
+                    return false;
+                }
+                if (!goOn) return false;
+                if (!await checkOrderSaveConflict(resetLiveStamp)) return false;
+            }
+        }
+        draft.parts = cleanedParts;
+        draft.customerPayments = cleanedPayments;
+        draft.orderNumber = draft.orderNumber.trim();
+        draft.orderLabel = (draft.orderLabel || "").trim();
+        draft.updatedAt = (new Date).toISOString();
+        const orderWasNew = !!draft.isNew;
+        const draftId = draft.id;
+        const savingOrder = draft;
+        const scrapyardCancellationsSnapshot = new Set(pendingScrapyardCancellations);
+        const editProposalsCancellationSnapshot = pendingEditProposalsCancellation;
+        const partProposalPurgesSnapshot = new Set(pendingPartProposalPurges);
+        const mediaSnap = mediaTakeStagedSnapshot(draftId);
+        const savedVin = savingOrder.vin || "";
+        const savedCar = JSON.stringify(savingOrder.car || null);
+        const saveInfo = {};
+        const saved = await persistOrder(savingOrder, orderWasNew, saveInfo);
+        if (!saved) {
+            mediaRestoreStagedSnapshot(mediaSnap);
+            return false;
+        }
+        const newSettleBase = captureSettleBase(savingOrder);
+        delete savingOrder.isNew;
+        const idx = appData.orders.findIndex(o => o.id === savingOrder.id);
+        if (idx >= 0) appData.orders[idx] = savingOrder; else appData.orders.push(savingOrder);
+        mediaAfterSaveSuccess(savingOrder.id, mediaSnap, cleanedParts);
+        if (scrapyardCancellationsSnapshot.size) {
+            for (const partId of scrapyardCancellationsSnapshot) {
+                await cancelPendingScrapyardProposalsForPart(partId);
+            }
+        }
+        if (editProposalsCancellationSnapshot) {
+            await cancelPendingSuppliedGatedProposalsForOrder(savingOrder.id);
+            await cancelPendingScrapyardProposalsForOrder(savingOrder.id);
+        }
+        if (partProposalPurgesSnapshot.size) {
+            for (const partId of partProposalPurgesSnapshot) {
+                await purgeEditProposalsForPart(savingOrder.id, partId);
+            }
+        }
+        renderKPIs();
+        renderTable();
+        updateCustomersBadge();
+        updateSuppliersBadge();
+        showToast("تم حفظ الطلبية", "ok");
+        if (saveInfo.settlementReset && hasElevatedAccess()) showToast("أُلغي تسديد " + settlementResetLabel(saveInfo.settlementReset) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح", "ok");
+        if (!orderModalStillOpen(draftId, savingOrder)) return true;
+        draftOpenedAtUpdatedAt = draft.updatedAt;
+        draftSettleBase = newSettleBase;
+        draftVinAtOpen = savedVin;
+        draftCarAtOpen = savedCar;
+        editingPayments = {};
+        pendingScrapyardCancellations.clear();
+        pendingEditProposalsCancellation = false;
+        pendingPartProposalPurges.clear();
+        const root = document.getElementById("modal-root");
+        const prevBackdrop = root.querySelector(".modal-backdrop");
+        const prevScrollTop = prevBackdrop ? prevBackdrop.scrollTop : 0;
+        root.innerHTML = modalHtml(draft);
+        attachModalHandlers();
+        updateModalTotals();
+        const newBackdrop = root.querySelector(".modal-backdrop");
+        if (newBackdrop) newBackdrop.scrollTop = prevScrollTop;
+        return true;
+    } finally {
+        if (orderSaveInFlightDraft === saveFlightRef) orderSaveInFlightDraft = null;
+    }
+}
+
+function quoteReturnConfirmMessage(order) {
+    let msg = 'سيتم فتحها كطلب تسعير للمراجعة — لا تصل إلى عامر إلا عند الضغط على "حفظ و اعادة طلب" داخلها.';
+    if (orderCashFootprintVisible(order)) {
+        if (hasElevatedAccess()) {
+            msg += " ملاحظة: الدفعات والتسديدات المسجّلة على هذه الطلبية تبقى محسوبة بالصندوق والعهدة وتقرير حركة الحسابات كما هي، أما المستحقات (من الزبائن وللتشاليح والموردين) والأرباح فتُعلَّق مؤقتًا إلى أن تُعتمد التسعيرة من جديد.";
+            if (orderHasSettlementFlag(order)) msg += " وإذا تغيّرت تكلفة قطعة مسددة أثناء إعادة التسعير يُلغى تسديدها تلقائيًا ويلزم تسجيله من جديد بعد الاعتماد.";
+        } else {
+            msg += " ملاحظة: الدفعات المسجّلة على هذه الطلبية تبقى محسوبة بالصندوق وتقرير حركة الحسابات، وتُعلَّق المستحقات والأرباح مؤقتًا إلى أن تُعتمد التسعيرة من جديد.";
         }
     }
-    draft.parts = cleanedParts;
-    draft.customerPayments = cleanedPayments;
-    draft.orderNumber = draft.orderNumber.trim();
-    draft.orderLabel = (draft.orderLabel || "").trim();
-    draft.updatedAt = (new Date).toISOString();
-    const orderWasNew = !!draft.isNew;
-    const draftId = draft.id;
-    const savingOrder = draft;
-    const scrapyardCancellationsSnapshot = new Set(pendingScrapyardCancellations);
-    const editProposalsCancellationSnapshot = pendingEditProposalsCancellation;
-    const partProposalPurgesSnapshot = new Set(pendingPartProposalPurges);
-    const mediaSnap = mediaTakeStagedSnapshot(draftId);
-    const savedVin = savingOrder.vin || "";
-    const savedCar = JSON.stringify(savingOrder.car || null);
-    const saveInfo = {};
-    const saved = await persistOrder(savingOrder, orderWasNew, saveInfo);
-    if (!saved) {
-        mediaRestoreStagedSnapshot(mediaSnap);
-        return false;
-    }
-    const newSettleBase = captureSettleBase(savingOrder);
-    delete savingOrder.isNew;
-    const idx = appData.orders.findIndex(o => o.id === savingOrder.id);
-    if (idx >= 0) appData.orders[idx] = savingOrder; else appData.orders.push(savingOrder);
-    mediaAfterSaveSuccess(savingOrder.id, mediaSnap, cleanedParts);
-    if (scrapyardCancellationsSnapshot.size) {
-        for (const partId of scrapyardCancellationsSnapshot) {
-            await cancelPendingScrapyardProposalsForPart(partId);
-        }
-    }
-    if (editProposalsCancellationSnapshot) {
-        await cancelPendingSuppliedGatedProposalsForOrder(savingOrder.id);
-        await cancelPendingScrapyardProposalsForOrder(savingOrder.id);
-    }
-    if (partProposalPurgesSnapshot.size) {
-        for (const partId of partProposalPurgesSnapshot) {
-            await purgeEditProposalsForPart(savingOrder.id, partId);
-        }
-    }
-    renderKPIs();
-    renderTable();
-    updateCustomersBadge();
-    updateSuppliersBadge();
-    showToast("تم حفظ الطلبية", "ok");
-    if (saveInfo.settlementReset && hasElevatedAccess()) showToast("أُلغي تسديد " + settlementResetLabel(saveInfo.settlementReset) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح", "ok");
-    if (!orderModalStillOpen(draftId)) return true;
-    draftOpenedAtUpdatedAt = draft.updatedAt;
-    draftSettleBase = newSettleBase;
-    draftVinAtOpen = savedVin;
-    draftCarAtOpen = savedCar;
-    editingPayments = {};
-    pendingScrapyardCancellations.clear();
-    pendingEditProposalsCancellation = false;
-    pendingPartProposalPurges.clear();
-    const root = document.getElementById("modal-root");
-    const prevBackdrop = root.querySelector(".modal-backdrop");
-    const prevScrollTop = prevBackdrop ? prevBackdrop.scrollTop : 0;
-    root.innerHTML = modalHtml(draft);
-    attachModalHandlers();
-    updateModalTotals();
-    const newBackdrop = root.querySelector(".modal-backdrop");
-    if (newBackdrop) newBackdrop.scrollTop = prevScrollTop;
-    return true;
+    return msg;
 }
 
 function confirmReturnOrderToQuote() {
     confirmAction({
         title: "إرجاع هذه الطلبية لطلب تسعير؟",
-        message: 'سيتم فتحها كطلب تسعير للمراجعة — لا تصل إلى عامر إلا عند الضغط على "حفظ و اعادة طلب" داخلها.',
+        message: quoteReturnConfirmMessage(draft),
         confirmLabel: "تأكيد الإرجاع",
         dangerous: true,
         onConfirm: () => {
@@ -11042,13 +11261,18 @@ function quoteRowColorState(o, nowMs) {
     return quoteBusinessMinutesElapsed(o.createdAt, nowMs) >= QUOTE_ROW_LATE_MINUTES ? "critical" : "";
 }
 
+function quoteRowCashChipHtml(o, role) {
+    if (role !== "full" || !hasElevatedAccess() || !orderHasCashFootprint(o)) return "";
+    return '<span class="quote-row-elapsed" title="الدفعات والتسديدات المسجّلة على هذه الطلبية تبقى محسوبة بالصندوق والعهدة وتقرير حركة الحسابات حتى تُعتمد التسعيرة">💰 عليها دفعات/تسديد</span>';
+}
+
 function quoteRowHtml(o, idx, total) {
     const elapsed = o.createdAt ? quoteElapsedLabel(o.createdAt) : "";
     const badgeSeverity = quoteElapsedSeverity(o.createdAt);
     const rowState = quoteRowColorState(o);
     const priorityControls = canReorderQuotePriority() ? '<div class="quote-priority-controls">' + '<button type="button" class="quote-priority-btn" data-priority-move="up"' + (idx === 0 ? " disabled" : "") + ' title="رفع الأولوية">▲</button>' + '<button type="button" class="quote-priority-btn" data-priority-move="down"' + (idx === total - 1 ? " disabled" : "") + ' title="خفض الأولوية">▼</button>' + "</div>" : "";
     const priceSelfBtn = currentUserRole === "full" && currentUserIsElevated ? '<button type="button" class="icon-btn" data-quote-price-self="' + escapeHtml(o.id) + '" title="سعّر هذه الطلبية بنفسك" aria-label="سعّر بنفسك">💰</button>' : "";
-    return '<div class="task-item-row quote-row' + (rowState ? " quote-row-" + rowState : "") + '" data-quote-id="' + escapeHtml(o.id) + '">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(orderDisplayLabel(o) || "—") + "</span>" + (elapsed ? '<span class="quote-row-elapsed' + (badgeSeverity ? " quote-row-elapsed-" + badgeSeverity : "") + '" data-created-at="' + escapeHtml(o.createdAt) + '">⏱ ' + escapeHtml(elapsed) + "</span>" : "") + priceSelfBtn + priorityControls + "</div>";
+    return '<div class="task-item-row quote-row' + (rowState ? " quote-row-" + rowState : "") + '" data-quote-id="' + escapeHtml(o.id) + '">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(orderDisplayLabel(o) || "—") + "</span>" + quoteRowCashChipHtml(o, currentUserRole) + (elapsed ? '<span class="quote-row-elapsed' + (badgeSeverity ? " quote-row-elapsed-" + badgeSeverity : "") + '" data-created-at="' + escapeHtml(o.createdAt) + '">⏱ ' + escapeHtml(elapsed) + "</span>" : "") + priceSelfBtn + priorityControls + "</div>";
 }
 
 function quotesListHtml() {
@@ -11417,8 +11641,9 @@ function quotePartRowHtml(p, i) {
     const qtyVal = p.qty === "" || p.qty == null ? 1 : p.qty;
     const readOnly = quoteModalRole === "purchasing";
     const undetermined = p.used === null;
+    const locked = !!p.returned;
     const usedLabel = undetermined ? "جديد أو مستعمل" : p.used ? "مستعمل" : readOnly ? "جديد" : "غير مستعمل";
-    const usedBadgeHtml = '<button type="button" class="used-badge' + (p.used ? "" : " used-badge-off") + '" data-toggle-used="' + escapeHtml(p.id) + '">' + usedLabel + " ✏️</button>";
+    const usedBadgeHtml = locked ? '<span class="used-badge used-badge-off" title="قطعة مرتجعة — ما بتتعدّل بالتسعيرة">' + usedLabel + " 🔒 مرتجعة</span>" : '<button type="button" class="used-badge' + (p.used ? "" : " used-badge-off") + '" data-toggle-used="' + escapeHtml(p.id) + '">' + usedLabel + " ✏️</button>";
     const supplierListLabel = p.used === null ? "المورد/التشليح" : p.used ? "التشليح" : "المورد";
     const supplierPlaceholder = p.used === null ? "— بدون مورد/تشليح —" : p.used ? "— بدون تشليح —" : "— بدون مورد —";
     const supplierFieldHtml = !readOnly || undetermined ? "" : '<label class="mini-label mini-label-supplier">' + supplierListLabel + searchableSelectHtml("quote-part-supplier-select", (appData.suppliers || []).filter(s => p.used === null ? s.handlesNew || s.handlesUsed : p.used ? s.handlesUsed : s.handlesNew).map(s => ({
@@ -11430,7 +11655,7 @@ function quotePartRowHtml(p, i) {
     const conditionBadgeForSalesHtml = readOnly ? "" : partConditionBadgeHtml(p);
     const salesNotesHtml = readOnly ? p.notes ? '<div class="part-notes-readonly">' + escapeHtml(p.notes) + "</div>" : "" : '<input type="text" class="part-notes-input" placeholder="ملاحظات (اختياري)" value="' + escapeHtml(p.notes || "") + '">';
     const purchasingNotesHtml = readOnly ? '<input type="text" class="part-purchasing-notes-input" placeholder="ملاحظاتك (اختياري)" value="' + escapeHtml(p.purchasingNotes || "") + '">' : p.purchasingNotes ? '<div class="part-notes-readonly">' + escapeHtml(p.purchasingNotes) + "</div>" : "";
-    return '<div class="part-row" data-part-id="' + escapeHtml(p.id) + '">' + '<div class="part-desc-wrap">' + '<div class="part-desc-row">' + '<span class="part-index-badge">' + ((i != null ? i : 0) + 1) + "</span>" + '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="' + escapeHtml(p.description) + '">' + "</div>" + salesNotesHtml + purchasingNotesHtml + usedBadgeHtml + conditionBadgeForSalesHtml + (quoteDraft ? mediaStripHtml(quoteDraft.id, p.id, "edit") : "") + "</div>" + '<div class="part-price-group">' + '<label class="mini-label">العدد<input type="number" min="1" step="1" class="part-qty-input num" value="' + escapeHtml(qtyVal) + '"></label>' + '<label class="mini-label mini-label-cost">سعر الشراء<input type="number" min="0" step="0.01" class="part-cost-input num" value="' + escapeHtml(costVal) + '"></label>' + supplierFieldHtml + conditionFieldHtml + "</div>" + (quoteDraft ? mediaPartAddButtonHtml("quote", quoteDraft.id, p.id, "btn btn-sm part-media-btn") : "") + '<button type="button" class="part-remove-btn" data-remove-quote-part="' + escapeHtml(p.id) + '" aria-label="حذف القطعة">✕</button>' + "</div>";
+    return '<div class="part-row" data-part-id="' + escapeHtml(p.id) + '">' + '<div class="part-desc-wrap">' + '<div class="part-desc-row">' + '<span class="part-index-badge">' + ((i != null ? i : 0) + 1) + "</span>" + '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="' + escapeHtml(p.description) + '">' + "</div>" + salesNotesHtml + purchasingNotesHtml + usedBadgeHtml + conditionBadgeForSalesHtml + (quoteDraft ? mediaStripHtml(quoteDraft.id, p.id, "edit") : "") + "</div>" + '<div class="part-price-group">' + '<label class="mini-label">العدد<input type="number" min="1" step="1" class="part-qty-input num" value="' + escapeHtml(qtyVal) + '"' + (locked ? " disabled" : "") + "></label>" + '<label class="mini-label mini-label-cost">سعر الشراء<input type="number" min="0" step="0.01" class="part-cost-input num" value="' + escapeHtml(costVal) + '"' + (locked ? " disabled" : "") + "></label>" + supplierFieldHtml + conditionFieldHtml + "</div>" + (quoteDraft ? mediaPartAddButtonHtml("quote", quoteDraft.id, p.id, "btn btn-sm part-media-btn") : "") + (locked ? "" : '<button type="button" class="part-remove-btn" data-remove-quote-part="' + escapeHtml(p.id) + '" aria-label="حذف القطعة">✕</button>') + "</div>";
 }
 
 function bindQuotePartRowEvents() {
@@ -11729,10 +11954,10 @@ function attachQuoteModalHandlers() {
             if (cr && cr.classList.contains("modal-open")) return;
             const mediaLine = orderMediaDeleteLine(mediaN);
             const live = appData.orders.find(o => o.id === id);
-            const hasPayments = !!(live && (live.customerPayments || []).length);
+            const hasPayments = orderCashFootprintVisible(live);
             confirmAction({
                 title: hasPayments ? "حذف الطلبية " + number + " نهائيًا؟" : "حذف طلب التسعير هذا؟",
-                message: (hasPayments ? "⚠️ هذه طلبية حقيقية عادت إلى التسعير، وعليها دفعات مسجّلة للزبون — سيؤدي الحذف إلى مسحها مع دفعاتها نهائيًا." : "هذا الإجراء نهائي ولا يمكن التراجع عنه.") + (mediaLine ? " " + mediaLine : ""),
+                message: (hasPayments ? quoteDeleteCashWarning() : "هذا الإجراء نهائي ولا يمكن التراجع عنه.") + (mediaLine ? " " + mediaLine : ""),
                 confirmLabel: "تأكيد الحذف",
                 dangerous: true,
                 onConfirm: async () => {
@@ -11748,6 +11973,10 @@ function attachQuoteModalHandlers() {
             });
         });
     }
+}
+
+function quoteDeleteCashWarning() {
+    return hasElevatedAccess() ? "⚠️ هذه طلبية حقيقية عادت إلى التسعير، وعليها دفعات أو تسديدات مسجّلة — سيؤدي الحذف إلى مسحها نهائيًا مع كل ما عليها، فتخرج هذه المبالغ من الصندوق والعهدة وتقرير حركة الحسابات رغم أن الكاش تحرّك فعلًا." : "⚠️ هذه طلبية حقيقية عادت إلى التسعير، وعليها دفعات مسجّلة — سيؤدي الحذف إلى مسحها نهائيًا مع دفعاتها، فتخرج هذه المبالغ من الصندوق وتقرير حركة الحسابات رغم أن الكاش تحرّك فعلًا.";
 }
 
 function cleanedQuoteParts() {
@@ -11785,15 +12014,17 @@ function quoteMissingConditionForPricedUsedParts() {
     });
 }
 
-async function checkQuoteSaveConflict() {
+async function checkQuoteSaveConflict(baselineOverride) {
     if (quoteDraft.isNew) return true;
+    const cqId = quoteDraft.id, cqRef = quoteDraft;
+    const baseline = baselineOverride !== undefined ? baselineOverride : quoteOpenedAtUpdatedAt;
     const liveOrder = appData.orders.find(o => o.id === quoteDraft.id);
     if (!liveOrder) {
         showToast("هذه التسعيرة لم تعد موجودة — ربما تم اعتمادها أو حذفها من مكان آخر. تم إغلاق النافذة، افتح آخر نسخة من القائمة", "error");
         closeQuoteModal();
         return false;
     }
-    if (!quoteOpenedAtUpdatedAt || !liveOrder.updatedAt || liveOrder.updatedAt === quoteOpenedAtUpdatedAt) return true;
+    if (!baseline || !liveOrder.updatedAt || liveOrder.updatedAt === baseline) return true;
     if (quoteModalRole === "purchasing") {
         await handleScrapyardQuoteConflict(quoteDraft.id);
         return false;
@@ -11810,16 +12041,18 @@ async function checkQuoteSaveConflict() {
             onCancel: () => resolve(false)
         });
     });
+    const cqStillOpen = quoteModalStillOpen(cqId, cqRef);
     if (!proceed) {
-        closeQuoteModal();
+        if (cqStillOpen) closeQuoteModal();
         return false;
     }
+    if (!cqStillOpen) return false;
     document.addEventListener("keydown", quoteEscListener);
     return true;
 }
 
-function quoteModalStillOpen(draftId) {
-    return !!quoteDraft && quoteDraft.id === draftId;
+function quoteModalStillOpen(draftId, draftRef) {
+    return !!quoteDraft && quoteDraft.id === draftId && (draftRef === undefined || quoteDraft === draftRef);
 }
 
 async function saveQuoteDraft(markSent) {
@@ -11846,9 +12079,16 @@ async function saveQuoteDraft(markSent) {
             return false;
         }
         if (qPlan.resetUsed || qPlan.resetNew) {
-            const qId = quoteDraft.id;
+            const qId = quoteDraft.id, qRef = quoteDraft;
+            const qLive = appData.orders.find(o => o.id === qId);
+            const qLiveStamp = qLive ? qLive.updatedAt || null : null;
             const qGo = await confirmSettlementResetOrAbort(qPlan, quoteEscListener);
-            if (!qGo || !quoteModalStillOpen(qId)) return false;
+            if (!quoteModalStillOpen(qId, qRef)) {
+                if (!quoteDraft) document.removeEventListener("keydown", quoteEscListener);
+                return false;
+            }
+            if (!qGo) return false;
+            if (!await checkQuoteSaveConflict(qLiveStamp)) return false;
         }
     }
     quoteDraft.parts = cleanedParts;
@@ -11880,6 +12120,7 @@ async function saveQuoteDraft(markSent) {
         mediaRestoreStagedSnapshot(mediaSnap);
         return false;
     }
+    const newQuoteSettleBase = captureSettleBase(savingDraft);
     mediaAfterSaveSuccess(draftId, mediaSnap, cleanedParts);
     if (markSent || quoteWasNew) {
         const orderRef = "#" + savingDraft.orderNumber + (orderDisplayLabel(savingDraft) ? " — " + orderDisplayLabel(savingDraft) : "");
@@ -11898,10 +12139,13 @@ async function saveQuoteDraft(markSent) {
             showToast('تم حفظ الطلبية لكن تعذّر إرسال إشعار التسعير للمشتريات — أعد الضغط على "حفظ و اعادة طلب"', "error");
         }
     }
-    if (!quoteModalStillOpen(draftId)) return true;
+    if (!quoteModalStillOpen(draftId, savingDraft)) {
+        if (quoteSaveInfo.settlementReset && hasElevatedAccess()) showToast("أُلغي تسديد " + settlementResetLabel(quoteSaveInfo.settlementReset) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح", "ok");
+        return true;
+    }
     delete quoteDraft.isNew;
     quoteOpenedAtUpdatedAt = quoteDraft.updatedAt;
-    quoteSettleBase = captureSettleBase(quoteDraft);
+    quoteSettleBase = newQuoteSettleBase;
     const idx = appData.orders.findIndex(o => o.id === quoteDraft.id);
     if (idx >= 0) appData.orders[idx] = quoteDraft; else appData.orders.push(quoteDraft);
     quoteOriginalSnapshot = quoteContentSnapshot(quoteDraft);
@@ -11971,9 +12215,16 @@ async function onApproveQuote() {
             return;
         }
         if (aPlan.resetUsed || aPlan.resetNew) {
-            const aId = quoteDraft.id;
+            const aId = quoteDraft.id, aRef = quoteDraft;
+            const aLive = appData.orders.find(o => o.id === aId);
+            const aLiveStamp = aLive ? aLive.updatedAt || null : null;
             const aGo = await confirmSettlementResetOrAbort(aPlan, quoteEscListener);
-            if (!aGo || !quoteModalStillOpen(aId)) return;
+            if (!quoteModalStillOpen(aId, aRef)) {
+                if (!quoteDraft) document.removeEventListener("keydown", quoteEscListener);
+                return;
+            }
+            if (!aGo) return;
+            if (!await checkQuoteSaveConflict(aLiveStamp)) return;
         }
     }
     const liveApprovedOrder = (appData.orders || []).find(o => o.id === quoteDraft.id);
@@ -12010,7 +12261,7 @@ async function onApproveQuote() {
     renderQuotesList();
     showToast("تم اعتماد طلب التسعير — أصبح طلبية " + approvedNumber, "ok");
     if (approveSaveInfo.settlementReset && hasElevatedAccess()) showToast("أُلغي تسديد " + settlementResetLabel(approveSaveInfo.settlementReset) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح", "ok");
-    if (!quoteModalStillOpen(approvedId)) return;
+    if (!quoteModalStillOpen(approvedId, approvedDraft)) return;
     const pendingReturn = modalCloseCallback;
     modalCloseCallback = null;
     closeQuoteModal();
@@ -12645,6 +12896,15 @@ const pendingConfirmToggleIds = new Set;
 
 function orderHasSettlementFlag(order) {
     return !!(order && (order.paidToAmer || order.paidToOmar || order.paidToSupplier || order.paidToAmerNew || order.paidToOmarNew || order.paidToSupplierNew));
+}
+
+function orderHasCashFootprint(order) {
+    return !!(order && ((order.customerPayments || []).length > 0 || orderHasSettlementFlag(order) || order.deliveryCostPaid));
+}
+
+function orderCashFootprintVisible(order) {
+    if (!order) return false;
+    return hasElevatedAccess() ? orderHasCashFootprint(order) : (order.customerPayments || []).length > 0;
 }
 
 function orderHasPendingCustomerRefund(order) {
@@ -15235,13 +15495,13 @@ function applyEditProposal(pr, orderOverride, opts) {
     } else if (pr.kind === "return_collect") {
         const part = (order.parts || []).find(p => p.id === pr.part_id);
         if (!part || !part.returned || !part.returnHasReceivable || part.returnCollected) return false;
-        part.returnCollected = true;
+        stampPartReturnCollected(part);
     } else if (pr.kind === "customer_refund_confirm") {
         const part = (order.parts || []).find(p => p.id === pr.part_id);
         if (!part || !part.returned || part.customerRefundConfirmed) return false;
         const adjustment = (order.customerPayments || []).find(pay => pay.returnAdjustment && pay.linkedPartId === part.id);
         if (!adjustment) return false;
-        part.customerRefundConfirmed = true;
+        stampPartRefundConfirmed(part);
     } else {
         return false;
     }
@@ -15316,6 +15576,15 @@ async function handleEditProposalDecision(proposalId, accept) {
     proceedEditProposalDecision(proposalId, accept, false);
 }
 
+function editProposalAcceptMessage(pr) {
+    const generic = "سيتم تطبيق التعديل مباشرة على الطلبية.";
+    if (!pr || pr.kind !== "return_collect" && pr.kind !== "customer_refund_confirm") return generic;
+    if (pr.kind === "customer_refund_confirm") return "سيتم خصم المبلغ من صافي الصندوق بتاريخ اليوم (" + todayNumeric() + ").";
+    const o = (appData.orders || []).find(x => x.id === pr.order_id);
+    const p = o ? (o.parts || []).find(x => x.id === pr.part_id) : null;
+    return o && p ? returnCollectDestination(o, p).confirmMessage : generic;
+}
+
 function proceedEditProposalDecision(proposalId, accept, keepFee) {
     const pr = (editProposals || []).find(p => p.id === proposalId);
     if (!pr) return;
@@ -15336,7 +15605,7 @@ function proceedEditProposalDecision(proposalId, accept, keepFee) {
     }
     confirmAction({
         title: accept ? "قبول هذا الطلب؟" : "رفض هذا الطلب؟",
-        message: accept ? isCustomerDelete ? "سيتم حذف العميل نهائيًا (ستبقى الطلبيات القديمة بدون عميل محدد)." : isCustomerRequest ? "سيتم تطبيق التعديل مباشرة على بيانات العميل." : "سيتم تطبيق التعديل مباشرة على الطلبية." + (resetPlan ? " تنبيه: " + settlementResetWarningText(resetPlan) : "") : "سيتم حذف الطلب بدون أي تغيير.",
+        message: accept ? isCustomerDelete ? "سيتم حذف العميل نهائيًا (ستبقى الطلبيات القديمة بدون عميل محدد)." : isCustomerRequest ? "سيتم تطبيق التعديل مباشرة على بيانات العميل." : editProposalAcceptMessage(pr) + (resetPlan ? " تنبيه: " + settlementResetWarningText(resetPlan) : "") : "سيتم حذف الطلب بدون أي تغيير.",
         confirmLabel: accept ? resetPlan ? "قبول وإلغاء التسديد" : "قبول وتطبيق" : "تأكيد الرفض",
         dangerous: !accept || !!resetPlan,
         onConfirm: async () => {
@@ -16028,30 +16297,105 @@ function latestPaidFlagKind(candidates) {
     return best;
 }
 
-function accountsActivityForDate(isoDate) {
-    const matchDmy = dateStr => isoDateMatches(parseDMY(dateStr), isoDate);
+function accountsActivityForDate(isoDate, opts) {
+    const allDated = !!(opts && opts.allDated);
+    const matchDmy = allDated ? dateStr => !!parseDMY(dateStr) : dateStr => isoDateMatches(parseDMY(dateStr), isoDate);
     const matchIso = isoStr => {
         if (!isoStr) return false;
         const dt = new Date(isoStr);
         if (isNaN(dt.getTime())) return false;
-        return isoDateMatches(new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()), isoDate);
+        return allDated ? true : isoDateMatches(new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()), isoDate);
     };
+    const matchDay = d => allDated ? !!(d && !isNaN(d.getTime())) : isoDateMatches(d, isoDate);
     const customerPayments = [], customerRefunds = [], supplierPayments = [], expenses = [], support = [], custody = [], custodyOmar = [];
     const deliveryPayments = [];
+    const customerRefundsPaid = [], supplierReturnsCollected = [];
+    const undatedCollects = [];
+    const matchStamp = stamp => {
+        if (!stamp) return null;
+        const dt = new Date(stamp);
+        if (isNaN(dt.getTime())) return null;
+        return matchIso(stamp);
+    };
     (appData.orders || []).forEach(o => {
-        if (o.isQuote) return;
         (o.customerPayments || []).forEach(p => {
+            const linkedPart = p.returnAdjustment ? (o.parts || []).find(pp => pp.id === p.linkedPartId) : null;
+            if (p.returnAdjustment && linkedPart && linkedPart.customerRefundConfirmed) {
+                const st = matchStamp(linkedPart.customerRefundConfirmedAt);
+                if (st !== null ? st : matchDmy(p.date)) {
+                    customerRefundsPaid.push({
+                        orderId: o.id,
+                        orderNumber: o.orderNumber,
+                        orderLabel: orderDisplayLabel(o),
+                        amount: Number(p.amount) || 0,
+                        description: linkedPart.description || "",
+                        approx: st === null
+                    });
+                }
+            }
             if (!matchDmy(p.date)) return;
             const row = {
+                orderId: o.id,
                 orderNumber: o.orderNumber,
                 orderLabel: orderDisplayLabel(o),
                 amount: Number(p.amount) || 0,
                 method: p.method || ""
             };
-            if (p.returnAdjustment) customerRefunds.push(row); else customerPayments.push(row);
+            if (p.returnAdjustment) {
+                row.confirmed = !!(linkedPart && linkedPart.customerRefundConfirmed);
+                customerRefunds.push(row);
+            } else customerPayments.push(row);
+        });
+        (o.parts || []).forEach(part => {
+            if (!part.returned || !part.returnHasReceivable || !part.returnCollected) return;
+            const eff = partReturnCollectEffect(o, part);
+            if (eff.box < .005 && eff.amer < .005 && eff.omar < .005) return;
+            const st = matchStamp(part.returnCollectedAt);
+            const fd = st === null ? partReturnFallbackDate(o, part) : null;
+            if (!partReturnCollectInSettlementEpoch(o, part, fd)) return;
+            const hit = st !== null ? st : matchDay(fd);
+            const bucket = part.used ? "used" : "new";
+            if (!hit) {
+                if (allDated && st === null && !fd) {
+                    [ [ "box", eff.box ], [ "amer", eff.amer ], [ "omar", eff.omar ] ].forEach(([dest, amt]) => {
+                        if (amt >= .005) undatedCollects.push({
+                            orderId: o.id,
+                            orderNumber: o.orderNumber,
+                            orderLabel: orderDisplayLabel(o),
+                            amount: amt,
+                            dest: dest,
+                            bucket: bucket,
+                            description: part.description || ""
+                        });
+                    });
+                }
+                return;
+            }
+            [ [ "box", eff.box ], [ "amer", eff.amer ], [ "omar", eff.omar ] ].forEach(([dest, amt]) => {
+                if (amt < .005) return;
+                supplierReturnsCollected.push({
+                    orderId: o.id,
+                    orderNumber: o.orderNumber,
+                    orderLabel: orderDisplayLabel(o),
+                    amount: amt,
+                    dest: dest,
+                    bucket: bucket,
+                    description: part.description || "",
+                    approx: st === null
+                });
+            });
         });
         const tBase = orderTotals(o);
-        const baseFallback = orderSingleBucket(tBase) === "new" && !orderHasUsedPart(o) ? tBase.costToSupplier : tBase.costToScrapyard;
+        const baseIsNew = orderSingleBucket(tBase) === "new" && !orderHasUsedPart(o);
+        const baseFallback = baseIsNew ? tBase.costToSupplier : tBase.costToScrapyard;
+        const payRow = (amt, kind, bucket) => ({
+            orderId: o.id,
+            orderNumber: o.orderNumber,
+            orderLabel: orderDisplayLabel(o),
+            amount: amt,
+            kind: kind,
+            bucket: bucket
+        });
         const baseLatest = latestPaidFlagKind([ {
             kind: "مورد",
             at: o.paidToSupplierAt
@@ -16064,30 +16408,15 @@ function accountsActivityForDate(isoDate) {
         } ]);
         if (baseLatest === "مورد" && matchIso(o.paidToSupplierAt)) {
             const amt = o.paidToSupplierAmountSnapshot != null ? Number(o.paidToSupplierAmountSnapshot) || 0 : baseFallback;
-            supplierPayments.push({
-                orderNumber: o.orderNumber,
-                orderLabel: orderDisplayLabel(o),
-                amount: amt,
-                kind: "مورد"
-            });
+            supplierPayments.push(payRow(amt, "مورد", baseIsNew ? "new" : "used"));
         }
         if (baseLatest === "تشليح (عامر)" && matchIso(o.paidToAmerAt)) {
             const amt = o.paidToAmerAmountSnapshot != null ? Number(o.paidToAmerAmountSnapshot) || 0 : baseFallback;
-            supplierPayments.push({
-                orderNumber: o.orderNumber,
-                orderLabel: orderDisplayLabel(o),
-                amount: amt,
-                kind: "تشليح (عامر)"
-            });
+            supplierPayments.push(payRow(amt, "تشليح (عامر)", baseIsNew ? "new" : "used"));
         }
         if (baseLatest === "تشليح (عمر)" && matchIso(o.paidToOmarAt)) {
             const amt = o.paidToOmarAmountSnapshot != null ? Number(o.paidToOmarAmountSnapshot) || 0 : baseFallback;
-            supplierPayments.push({
-                orderNumber: o.orderNumber,
-                orderLabel: orderDisplayLabel(o),
-                amount: amt,
-                kind: "تشليح (عمر)"
-            });
+            supplierPayments.push(payRow(amt, "تشليح (عمر)", baseIsNew ? "new" : "used"));
         }
         const newLatest = latestPaidFlagKind([ {
             kind: "مورد (جديد)",
@@ -16101,34 +16430,20 @@ function accountsActivityForDate(isoDate) {
         } ]);
         if (newLatest === "مورد (جديد)" && matchIso(o.paidToSupplierNewAt)) {
             const amt = o.paidToSupplierNewAmountSnapshot != null ? Number(o.paidToSupplierNewAmountSnapshot) || 0 : orderTotals(o).costToSupplier;
-            supplierPayments.push({
-                orderNumber: o.orderNumber,
-                orderLabel: orderDisplayLabel(o),
-                amount: amt,
-                kind: "مورد (جديد)"
-            });
+            supplierPayments.push(payRow(amt, "مورد (جديد)", "new"));
         }
         if (newLatest === "جديد (عامر)" && matchIso(o.paidToAmerNewAt)) {
             const amt = o.paidToAmerNewAmountSnapshot != null ? Number(o.paidToAmerNewAmountSnapshot) || 0 : orderTotals(o).costToSupplier;
-            supplierPayments.push({
-                orderNumber: o.orderNumber,
-                orderLabel: orderDisplayLabel(o),
-                amount: amt,
-                kind: "جديد (عامر)"
-            });
+            supplierPayments.push(payRow(amt, "جديد (عامر)", "new"));
         }
         if (newLatest === "جديد (عمر)" && matchIso(o.paidToOmarNewAt)) {
             const amt = o.paidToOmarNewAmountSnapshot != null ? Number(o.paidToOmarNewAmountSnapshot) || 0 : orderTotals(o).costToSupplier;
-            supplierPayments.push({
-                orderNumber: o.orderNumber,
-                orderLabel: orderDisplayLabel(o),
-                amount: amt,
-                kind: "جديد (عمر)"
-            });
+            supplierPayments.push(payRow(amt, "جديد (عمر)", "new"));
         }
         if (o.deliveryCostPaid && deliveryOrderEligible(o) && matchIso(o.deliveryCostPaidAt)) {
             const agent = o.deliveryAgentId ? deliveryAgentById(o.deliveryAgentId) : null;
             deliveryPayments.push({
+                orderId: o.id,
                 orderNumber: o.orderNumber,
                 orderLabel: orderDisplayLabel(o),
                 amount: tBase.deliveryCost,
@@ -16172,16 +16487,22 @@ function accountsActivityForDate(isoDate) {
     return {
         customerPayments: customerPayments,
         customerRefunds: customerRefunds,
+        customerRefundsPaid: customerRefundsPaid,
         supplierPayments: supplierPayments,
+        supplierReturnsCollected: supplierReturnsCollected,
         deliveryPayments: deliveryPayments,
         expenses: expenses,
         support: support,
         custody: custody,
         custodyOmar: custodyOmar,
+        undatedCollects: undatedCollects,
         totals: {
             customerPayments: sum(customerPayments),
             customerRefunds: sum(customerRefunds),
+            customerRefundsPaid: sum(customerRefundsPaid),
             supplierPayments: sum(supplierPayments),
+            supplierReturnsCollected: sum(supplierReturnsCollected),
+            supplierReturnsBox: sum(supplierReturnsCollected.filter(r => r.dest === "box")),
             supplierPaymentsDirect: sum(supplierPaymentsDirect),
             deliveryPayments: sum(deliveryPayments),
             expenses: sum(expenses),
@@ -16190,6 +16511,144 @@ function accountsActivityForDate(isoDate) {
             custodyOmar: sum(custodyOmar)
         }
     };
+}
+
+function accountsLedgerReasonLabel(reason) {
+    if (reason === "pre_cutoff") return "تسديد مسجّل قبل 26/09/2026 — الصندوق يعالجه بالقاعدة القديمة (قرار سابق) فيختلف عن عرضه بتاريخه بالتقرير";
+    if (reason === "snapshot") return "مبلغ التسديد المسجّل بتاريخه يختلف عن تكلفة الطلبية الحالية (تعديل قديم قبل ما يلغي النظام التسديد تلقائيًا) — الصندوق يعدّ التكلفة الحالية";
+    if (reason === "undated") return "حركة قديمة بلا تاريخ مسجّل (تسديد/دفعة/تحصيل/مصروف) — محسوبة بالصندوق وغير ظاهرة بأي يوم";
+    return "غير مصنَّف — أبلغ عنه";
+}
+
+function accountsLedgerReconciliation() {
+    const all = accountsActivityForDate("", {
+        allDated: true
+    });
+    const box = treasuryTotals().net;
+    const daysSum = accountsActivityNet(all);
+    const total = round2(box - daysSum);
+    const emptySlot = () => ({
+        cust: 0,
+        del: 0,
+        pay: {
+            used: 0,
+            new: 0
+        },
+        col: {
+            used: 0,
+            new: 0
+        },
+        und: {
+            used: 0,
+            new: 0
+        }
+    });
+    const per = {};
+    const slot = id => per[id] || (per[id] = emptySlot());
+    all.customerPayments.forEach(r => {
+        slot(r.orderId).cust += r.amount;
+    });
+    all.customerRefundsPaid.forEach(r => {
+        slot(r.orderId).cust -= r.amount;
+    });
+    all.deliveryPayments.forEach(r => {
+        slot(r.orderId).del += r.amount;
+    });
+    all.supplierPayments.forEach(r => {
+        if (r.kind === "مورد" || r.kind === "مورد (جديد)") slot(r.orderId).pay[r.bucket] += r.amount;
+    });
+    all.supplierReturnsCollected.forEach(r => {
+        if (r.dest === "box") slot(r.orderId).col[r.bucket] += r.amount;
+    });
+    all.undatedCollects.forEach(r => {
+        if (r.dest === "box") slot(r.orderId).und[r.bucket] += r.amount;
+    });
+    const rows = [];
+    const push = (o, reason, amt) => {
+        amt = round2(amt);
+        if (Math.abs(amt) < .005) return;
+        rows.push({
+            scope: "order",
+            orderId: o.id,
+            orderNumber: o.orderNumber,
+            orderLabel: orderDisplayLabel(o),
+            reason: reason,
+            amount: amt
+        });
+    };
+    (appData.orders || []).forEach(o => {
+        const t = orderTotals(o);
+        const p = per[o.id] || emptySlot();
+        push(o, "undated", t.customerPaidAmountForBox - p.cust);
+        push(o, "undated", p.del - (deliveryOrderEligible(o) && o.deliveryCostPaid ? t.deliveryCost : 0));
+        const dp = orderDirectPaidParts(o, t);
+        [ "used", "new" ].forEach(b => {
+            let rest = round2(p.pay[b] - p.col[b] - dp[b]);
+            const und = p.und[b] > .005 && rest > .005 ? Math.min(round2(p.und[b]), rest) : 0;
+            if (und >= .005) {
+                push(o, "undated", und);
+                rest = round2(rest - und);
+            }
+            if (Math.abs(rest) >= .005) {
+                const st = bucketSettlement(o, t, b);
+                push(o, !st.payer ? "snapshot" : !st.at ? "undated" : st.at < DIRECT_PAID_FIX_CUTOFF && (dp[b] === 0 || p.pay[b] === 0) ? "pre_cutoff" : "snapshot", rest);
+            }
+        });
+    });
+    let allExpenses = 0;
+    EXPENSE_CATEGORIES.forEach(c => {
+        (appData.treasury[c.key] || []).forEach(entry => {
+            allExpenses += Number(entry.amount) || 0;
+        });
+    });
+    const boxTreasury = round2(treasurySupportTotal(() => true) - amerCustodyTopupsTotalAll() - omarCustodyTopupsTotalAll() - allExpenses);
+    const daysTreasury = round2(all.totals.support - all.totals.custody - all.totals.custodyOmar - all.totals.expenses);
+    const treasuryResidual = round2(boxTreasury - daysTreasury);
+    if (Math.abs(treasuryResidual) >= .005) rows.push({
+        scope: "treasury",
+        orderId: null,
+        orderNumber: "",
+        orderLabel: "قيود الصندوق (مصاريف/دعم/عهدة) بلا تاريخ صالح",
+        reason: "undated",
+        amount: treasuryResidual
+    });
+    const explained = round2(rows.reduce((s, r) => s + r.amount, 0));
+    const other = round2(total - explained);
+    if (Math.abs(other) >= .005) rows.push({
+        scope: "other",
+        orderId: null,
+        orderNumber: "",
+        orderLabel: "",
+        reason: "other",
+        amount: other
+    });
+    const byReason = [ "pre_cutoff", "snapshot", "undated", "other" ].map(reason => {
+        const rs = rows.filter(r => r.reason === reason);
+        return {
+            reason: reason,
+            label: accountsLedgerReasonLabel(reason),
+            amount: round2(rs.reduce((s, r) => s + r.amount, 0)),
+            count: rs.length,
+            rows: rs
+        };
+    }).filter(g => g.rows.length);
+    return {
+        box: box,
+        daysSum: daysSum,
+        total: total,
+        rows: rows,
+        byReason: byReason,
+        exact: Math.abs(other) < .005
+    };
+}
+
+function accountsLedgerReconciliationHtml(rec) {
+    if (!rec) return "";
+    const line = (label, valueHtml) => '<div class="treasury-summary-row"><span>' + label + "</span>" + valueHtml + "</div>";
+    const head = '<div class="purchase-history-section-title"><span>🧮 مطابقة الصندوق مع كل الأيام</span></div>' + '<div class="treasury-summary">' + line("مجموع صافي كل الأيام منذ البداية", '<span class="num">' + fmtSigned(rec.daysSum) + "</span>") + (Math.abs(rec.total) >= .005 ? line("+ فروقات قديمة غير مؤرَّخة (مفصَّلة أدناه)", '<span class="num ' + (rec.total < 0 ? "text-rust" : "text-green") + '">' + fmtSigned(rec.total) + "</span>") : "") + line("= الصندوق الحالي", '<span class="num">' + fmtSigned(rec.box) + "</span>") + "</div>";
+    if (Math.abs(rec.total) < .005 && !rec.rows.length) return '<div class="purchase-history-section">' + head + '<p class="modal-sub" style="margin-top:6px;">✅ مجموع صافي الأيام يساوي الصندوق بالضبط.</p></div>';
+    const groups = rec.byReason.map(g => '<details class="ledger-recon-group" style="margin-top:8px;"><summary style="cursor:pointer;font-size:13px;line-height:1.6;">' + escapeHtml(g.label) + ' — <span class="num">' + fmtSigned(g.amount) + "</span> (" + g.count + ")</summary>" + g.rows.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.scope === "order" ? r.orderNumber + (r.orderLabel ? " — " + r.orderLabel : "") : r.orderLabel || "غير مصنَّف", "", r.amount, r.amount < 0 ? "text-rust" : "text-green") + "</div>").join("") + "</details>").join("");
+    return '<div class="purchase-history-section">' + head + groups + '<p class="modal-sub" style="margin-top:6px;">هذه فروق في بيانات قديمة سابقة لقواعد التسجيل الحالية (لا خطأ في حركات الأيام نفسها): الصندوق = مجموع صافي الأيام + هذه الفروق بالضبط، وكل فرق منسوب لطلبية وسبب محدد.</p></div>';
 }
 
 function orderDateMatchesPeriod(order) {
@@ -16403,16 +16862,24 @@ function accountsActivityModalHtml() {
     })();
     const a = accountsActivityForDate(iso);
     const paymentsRowsHtml = a.customerPayments.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.orderNumber + (r.orderLabel ? " — " + r.orderLabel : ""), r.method === "cash" ? "كاش" : r.method === "card" ? "شبكة" : "", r.amount, "text-green") + "</div>").join("");
-    const refundsRowsHtml = a.customerRefunds.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.orderNumber + (r.orderLabel ? " — " + r.orderLabel : ""), "مرتجع", r.amount, "text-amber") + "</div>").join("");
+    const refundsRowsHtml = a.customerRefunds.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.orderNumber + (r.orderLabel ? " — " + r.orderLabel : ""), r.confirmed ? "مرتجع — تم رد المبلغ (يظهر في «ردّ مبالغ للزبائن» بتاريخ الرد)" : "مرتجع — بانتظار رد المبلغ", r.amount, "text-amber") + "</div>").join("");
+    const refundsPaidRowsHtml = a.customerRefundsPaid.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.orderNumber + (r.orderLabel ? " — " + r.orderLabel : ""), "رد مبلغ مرتجع" + (r.description ? " — " + r.description : "") + (r.approx ? " (تاريخ تقريبي: تاريخ الإرجاع — لا يوجد تاريخ رد مسجّل)" : ""), r.amount, "text-rust") + "</div>").join("");
+    const returnsCollectedRowsHtml = a.supplierReturnsCollected.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.orderNumber + (r.orderLabel ? " — " + r.orderLabel : ""), "تحصيل مرتجع" + (r.description ? " — " + r.description : "") + " — " + (r.dest === "box" ? "عاد إلى الصندوق" : r.dest === "amer" ? "عاد إلى عهدة عامر — غير داخل في الصافي" : "عاد إلى عهدة عمر — غير داخل في الصافي") + (r.approx ? " (تاريخ تقريبي: تاريخ الإرجاع — لا يوجد تاريخ تحصيل مسجّل)" : ""), r.amount, r.dest === "box" ? "text-green" : "text-amber") + "</div>").join("");
     const supplierRowsHtml = a.supplierPayments.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.orderNumber + (r.orderLabel ? " — " + r.orderLabel : ""), "تسديد " + r.kind + (r.kind !== "مورد" && r.kind !== "مورد (جديد)" ? " (من عهدة المشتريات — غير داخل في الصافي)" : ""), r.amount, "text-rust") + "</div>").join("");
     const expensesRowsHtml = a.expenses.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.label, r.note, r.amount, "text-rust") + "</div>").join("");
     const supportRowsHtml = a.support.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml("دعم الصندوق من الخارج", r.note, r.amount, r.amount < 0 ? "text-rust" : "text-green") + "</div>").join("");
     const custodyRowsHtml = a.custody.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.amount < 0 ? "سحب من عهدة عامر" : "سداد لعهدة عامر", r.note, r.amount, r.amount < 0 ? "text-green" : "text-rust") + "</div>").join("");
     const custodyOmarRowsHtml = a.custodyOmar.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.amount < 0 ? "سحب من عهدة عمر" : "سداد لعهدة عمر", r.note, r.amount, r.amount < 0 ? "text-green" : "text-rust") + "</div>").join("");
-    const netTotal = round2(a.totals.customerPayments - a.totals.supplierPaymentsDirect - a.totals.deliveryPayments - a.totals.expenses + a.totals.support - a.totals.custody - a.totals.custodyOmar);
-    const hasAnything = a.customerPayments.length || a.customerRefunds.length || a.supplierPayments.length || a.deliveryPayments.length || a.expenses.length || a.support.length || a.custody.length || a.custodyOmar.length;
+    const netTotal = accountsActivityNet(a);
+    let reconHtml = "";
+    try {
+        reconHtml = accountsLedgerReconciliationHtml(accountsLedgerReconciliation());
+    } catch (err) {
+        console.error("accountsLedgerReconciliation", err);
+    }
+    const hasAnything = a.customerPayments.length || a.customerRefunds.length || a.customerRefundsPaid.length || a.supplierPayments.length || a.supplierReturnsCollected.length || a.deliveryPayments.length || a.expenses.length || a.support.length || a.custody.length || a.custodyOmar.length;
     const deliveryRowsHtml = a.deliveryPayments.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.orderNumber + (r.orderLabel ? " — " + r.orderLabel : ""), "تسديد مندوب: " + r.agentName, r.amount, "text-rust") + "</div>").join("");
-    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-header"><div class="modal-title">📜 حركة الحسابات</div>' + '<button type="button" class="icon-btn" id="accounts-activity-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="treasury-chip-row" style="margin-bottom:10px;">' + '<button type="button" class="chip ' + (iso === todayIso ? "chip-active" : "") + '" data-activity-date="' + todayIso + '">اليوم</button>' + '<button type="button" class="chip ' + (iso === yesterdayIso ? "chip-active" : "") + '" data-activity-date="' + yesterdayIso + '">أمس</button>' + '<input type="date" id="accounts-activity-date-input" class="expense-entry-date-input" value="' + iso + '">' + "</div>" + '<div class="treasury-summary" style="margin-bottom:6px;">' + '<div class="treasury-summary-row"><span>صافي حركة اليوم</span><span class="num ' + (netTotal < 0 ? "text-rust" : "text-green") + '">' + fmtSigned(netTotal) + "</span></div>" + "</div>" + (hasAnything ? "" : '<div class="expense-empty-hint">لا توجد حركات مسجّلة بهذا التاريخ</div>') + accountsActivitySectionHtml("📥 دفعات الزبائن", a.customerPayments, a.totals.customerPayments, "text-green", paymentsRowsHtml) + accountsActivitySectionHtml("🔄 مرتجعات الزبائن (عادت قطعتها اليوم — بانتظار رد المبلغ)", a.customerRefunds, a.totals.customerRefunds, "text-amber", refundsRowsHtml) + accountsActivitySectionHtml("📤 تسديد للموردين/التشاليح", a.supplierPayments, a.totals.supplierPayments, "text-rust", supplierRowsHtml) + accountsActivitySectionHtml("🚚 تسديد المناديب", a.deliveryPayments, a.totals.deliveryPayments, "text-rust", deliveryRowsHtml) + accountsActivitySectionHtml("💸 المصاريف", a.expenses, a.totals.expenses, "text-rust", expensesRowsHtml) + accountsActivitySectionHtml("🤝 دعم الصندوق الخارجي", a.support, a.totals.support, a.totals.support < 0 ? "text-rust" : "text-green", supportRowsHtml) + accountsActivitySectionHtml("🔧 عهدة عامر", a.custody, a.totals.custody, a.totals.custody < 0 ? "text-green" : "text-rust", custodyRowsHtml) + accountsActivitySectionHtml("🔧 عهدة عمر", a.custodyOmar, a.totals.custodyOmar, a.totals.custodyOmar < 0 ? "text-green" : "text-rust", custodyOmarRowsHtml) + '<p class="modal-sub" style="margin-top:14px;">تسديد المورد/التشليح يظهر هنا فقط من تاريخ إضافة هذا التقرير فصاعدًا — الطلبيات المسدّدة قبله ليس لها تاريخ سداد مسجّل. مرتجعات الزبائن هنا غير خارجة من صافي حركة اليوم — لا يخرج الكاش فعليًا إلا لحظة تأكيد الرد من شاشة الطلبية/العميل. تسديد "تشليح" غير داخل في صافي اليوم أيضًا — خرج الكاش فعليًا لحظة شحن عهدة المشتريات، وتسديد عامر للتشليح مجرد صرف من رصيد بحوزته أصلًا (إذا تم الشحن والتسديد في اليوم نفسه، يعكس الصافي الـ900 مرة واحدة فقط، لا مرتين).</p>' + "</div>" + "</div>";
+    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-header"><div class="modal-title">📜 حركة الحسابات</div>' + '<button type="button" class="icon-btn" id="accounts-activity-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="treasury-chip-row" style="margin-bottom:10px;">' + '<button type="button" class="chip ' + (iso === todayIso ? "chip-active" : "") + '" data-activity-date="' + todayIso + '">اليوم</button>' + '<button type="button" class="chip ' + (iso === yesterdayIso ? "chip-active" : "") + '" data-activity-date="' + yesterdayIso + '">أمس</button>' + '<input type="date" id="accounts-activity-date-input" class="expense-entry-date-input" value="' + iso + '">' + "</div>" + '<div class="treasury-summary" style="margin-bottom:6px;">' + '<div class="treasury-summary-row"><span>صافي حركة اليوم</span><span class="num ' + (netTotal < 0 ? "text-rust" : "text-green") + '">' + fmtSigned(netTotal) + "</span></div>" + "</div>" + (hasAnything ? "" : '<div class="expense-empty-hint">لا توجد حركات مسجّلة بهذا التاريخ</div>') + accountsActivitySectionHtml("📥 دفعات الزبائن", a.customerPayments, a.totals.customerPayments, "text-green", paymentsRowsHtml) + accountsActivitySectionHtml("🔄 مرتجعات الزبائن (عادت قطعتها اليوم — التزام برد المبلغ، غير داخل في الصافي)", a.customerRefunds, a.totals.customerRefunds, "text-amber", refundsRowsHtml) + accountsActivitySectionHtml("↩️ ردّ مبالغ للزبائن (خرجت من الصندوق اليوم)", a.customerRefundsPaid, a.totals.customerRefundsPaid, "text-rust", refundsPaidRowsHtml) + accountsActivitySectionHtml("📤 تسديد للموردين/التشاليح", a.supplierPayments, a.totals.supplierPayments, "text-rust", supplierRowsHtml) + accountsActivitySectionHtml("📥 تحصيل مرتجعات من الموردين/التشاليح" + (round2(a.totals.supplierReturnsCollected - a.totals.supplierReturnsBox) > .005 ? " (إضافة إلى " + fmtMoney(round2(a.totals.supplierReturnsCollected - a.totals.supplierReturnsBox)) + " عادت لعهدة عامر/عمر — غير داخلة في الصافي)" : ""), a.supplierReturnsCollected, a.totals.supplierReturnsBox, "text-green", returnsCollectedRowsHtml) + accountsActivitySectionHtml("🚚 تسديد المناديب", a.deliveryPayments, a.totals.deliveryPayments, "text-rust", deliveryRowsHtml) + accountsActivitySectionHtml("💸 المصاريف", a.expenses, a.totals.expenses, "text-rust", expensesRowsHtml) + accountsActivitySectionHtml("🤝 دعم الصندوق الخارجي", a.support, a.totals.support, a.totals.support < 0 ? "text-rust" : "text-green", supportRowsHtml) + accountsActivitySectionHtml("🔧 عهدة عامر", a.custody, a.totals.custody, a.totals.custody < 0 ? "text-green" : "text-rust", custodyRowsHtml) + accountsActivitySectionHtml("🔧 عهدة عمر", a.custodyOmar, a.totals.custodyOmar, a.totals.custodyOmar < 0 ? "text-green" : "text-rust", custodyOmarRowsHtml) + reconHtml + '<p class="modal-sub" style="margin-top:14px;">تسديد المورد/التشليح يظهر هنا فقط من تاريخ إضافة هذا التقرير فصاعدًا — الطلبيات المسدّدة قبله ليس لها تاريخ سداد مسجّل. مرتجعات الزبائن (التزام برد المبلغ) غير داخلة في صافي حركة اليوم — يخرج الكاش فعليًا لحظة تأكيد «تم رد المبلغ» فيدخل الصافي كخروج بتاريخ التأكيد. تحصيل مرتجع المورد/التشليح يدخل الصافي كدخول للصندوق بتاريخ «تم التحصيل» إذا كانت القطعة سُدّدت مباشرة، أما إن كانت مسدّدة من عهدة عامر/عمر فيعود المبلغ لعهدته ولا يدخل الصافي. الرد/التحصيل المؤكَّد قبل إضافة ختم التاريخ (2026-10-07) يُنسب إلى تاريخ إرجاع القطع ويُعلَّم «تاريخ تقريبي»؛ وإن لم يوجد تاريخ إرجاع أصلًا لا يُنسب لأي يوم ويظهر ضمن «فروقات قديمة غير مؤرَّخة» أسفل التقرير. تسديد "تشليح" غير داخل في صافي اليوم أيضًا — خرج الكاش فعليًا لحظة شحن عهدة المشتريات، وتسديد عامر للتشليح مجرد صرف من رصيد بحوزته أصلًا (إذا تم الشحن والتسديد في اليوم نفسه، يعكس الصافي الـ900 مرة واحدة فقط، لا مرتين).</p>' + "</div>" + "</div>";
 }
 
 function openAccountsActivityModal() {
@@ -16963,7 +17430,7 @@ function customersWithPendingRefundsCount() {
 function totalCustomerRefundsPending() {
     let total = 0;
     (appData.orders || []).forEach(o => {
-        if (!o.confirmed || o.isQuote) return;
+        if (!o.confirmed) return;
         (o.parts || []).forEach(p => {
             if (!p.returned || p.customerRefundConfirmed) return;
             if (!partIsIncludedInOrder(o, p)) return;
@@ -16998,10 +17465,7 @@ function amerCustodyTopupsTotal(matchFn) {
 function paidToScrapyardTotalForCustody() {
     let total = 0;
     (appData.orders || []).forEach(o => {
-        if (!o.confirmed || o.custodyLegacy || o.isQuote) return;
-        const t = orderTotals(o);
-        if (o.paidToAmer && !o.paidToSupplier) total += t.costToScrapyard;
-        if (t.costToSupplier > 0 && bucketSettlement(o, t, "new").payer === "amer") total += t.costToSupplier;
+        total += orderCustodyPaidAmount(o, null, "amer");
     });
     return round2(total);
 }
@@ -17039,10 +17503,7 @@ function omarCustodyTopupsTotal(matchFn) {
 function paidToScrapyardTotalForOmar() {
     let total = 0;
     (appData.orders || []).forEach(o => {
-        if (!o.confirmed || o.custodyLegacy || o.isQuote) return;
-        const t = orderTotals(o);
-        if (o.paidToOmar && !o.paidToSupplier) total += t.costToScrapyard;
-        if (t.costToSupplier > 0 && bucketSettlement(o, t, "new").payer === "omar") total += t.costToSupplier;
+        total += orderCustodyPaidAmount(o, null, "omar");
     });
     return round2(total);
 }
@@ -17083,7 +17544,8 @@ function deliveryAgentById(id) {
 }
 
 function deliveryOrderEligible(order) {
-    if (!order || order.isQuote) return false;
+    if (!order) return false;
+    if (order.isQuote && !order.deliveryCostPaid) return false;
     if (!order.supplied && !order.deliveryCostPaid) return false;
     return orderTotals(order).deliveryCost > 0;
 }
@@ -17790,13 +18252,14 @@ async function exportAllDataToExcel() {
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(partsRows)), "تفاصيل القطع");
     const paymentsRows = [];
-    appData.orders.filter(o => !o.isQuote).forEach(o => {
+    (appData.orders || []).forEach(o => {
         (o.customerPayments || []).forEach(p => {
             paymentsRows.push({
                 "رقم الطلب": o.orderNumber,
                 "المبلغ": p.amount,
                 "الطريقة": paymentMethodLabel(p.method),
-                "التاريخ": p.date || ""
+                "التاريخ": p.date || "",
+                "حالة الطلبية": o.isQuote ? "عادت للتسعير" : ""
             });
         });
     });
@@ -19319,7 +19782,6 @@ function supplierPricedHistory(supplierId) {
 function supplierReturnReceivables(supplierId) {
     const rows = [];
     (appData.orders || []).forEach(o => {
-        if (o.isQuote) return;
         if (!o.confirmed) return;
         (o.parts || []).forEach(p => {
             if (p.supplierId !== supplierId) return;
@@ -19346,7 +19808,6 @@ function supplierReturnReceivableTotal(supplierId) {
 function supplierReturnReceivablesIndex() {
     const bySupplierRaw = {};
     (appData.orders || []).forEach(o => {
-        if (o.isQuote) return;
         if (!o.confirmed) return;
         (o.parts || []).forEach(p => {
             if (!p.supplierId) return;
@@ -19444,25 +19905,34 @@ function openSupplierHistoryModal(supplierId) {
             if (isUsed) {
                 confirmCollectScrapyardReturn(orderId, partId, supplierId);
             } else {
+                const order0 = appData.orders.find(o => o.id === orderId);
+                const part0 = order0 ? (order0.parts || []).find(p => p.id === partId) : null;
                 confirmAction({
                     title: "تأكيد تحصيل هذا المبلغ من المورد؟",
-                    message: "سيُضاف المبلغ تلقائيًا إلى صافي الصندوق.",
+                    message: part0 ? returnCollectDestination(order0, part0).confirmMessage : "سيُسجَّل التحصيل بتاريخ اليوم (" + todayNumeric() + ").",
                     confirmLabel: "تم التحصيل",
                     onConfirm: async () => {
                         const order = appData.orders.find(o => o.id === orderId);
                         if (!order) return;
                         const part = (order.parts || []).find(p => p.id === partId);
                         if (!part) return;
+                        if (part.returnCollected) {
+                            showToast("هذه القطعة محصَّلة مسبقًا", "ok");
+                            openSupplierHistoryModal(supplierId);
+                            return;
+                        }
                         const prevUpdatedAt = order.updatedAt;
-                        part.returnCollected = true;
+                        const prevStamp = partStampSnapshot(part, "returnCollected");
+                        stampPartReturnCollected(part);
                         order.updatedAt = (new Date).toISOString();
                         const saved = await persistOrder(order);
                         if (!saved) {
-                            part.returnCollected = false;
+                            unstampPartReturnCollected(part);
+                            partStampRestore(part, prevStamp);
                             order.updatedAt = prevUpdatedAt;
                             return;
                         }
-                        showToast("تم تسجيل التحصيل، وأُضيف المبلغ للصندوق", "ok");
+                        showToast(returnCollectDestination(order, part).toast, "ok");
                         refreshSuppliersList();
                         updateSuppliersBadge();
                         renderKPIs();
@@ -19475,25 +19945,34 @@ function openSupplierHistoryModal(supplierId) {
 }
 
 function confirmCollectScrapyardReturn(orderId, partId, supplierId) {
+    const order0 = appData.orders.find(o => o.id === orderId);
+    const part0 = order0 ? (order0.parts || []).find(p => p.id === partId) : null;
     confirmAction({
         title: "تأكيد تحصيل هذا المبلغ من التشليح؟",
-        message: 'سيُضاف إلى رصيد المشتريات. إذا أردت إعادته إلى الصندوق، يوجد خيار "سحب من العهدة" في شاشة الصندوق.',
+        message: part0 ? returnCollectDestination(order0, part0).confirmMessage : "سيُسجَّل التحصيل بتاريخ اليوم (" + todayNumeric() + ").",
         confirmLabel: "تم التحصيل",
         onConfirm: async () => {
             const order = appData.orders.find(o => o.id === orderId);
             if (!order) return;
             const part = (order.parts || []).find(p => p.id === partId);
             if (!part) return;
+            if (part.returnCollected) {
+                showToast("هذه القطعة محصَّلة مسبقًا", "ok");
+                openSupplierHistoryModal(supplierId);
+                return;
+            }
             const prevUpdatedAt = order.updatedAt;
-            part.returnCollected = true;
+            const prevStamp = partStampSnapshot(part, "returnCollected");
+            stampPartReturnCollected(part);
             order.updatedAt = (new Date).toISOString();
             const saved = await persistOrder(order);
             if (!saved) {
-                part.returnCollected = false;
+                unstampPartReturnCollected(part);
+                partStampRestore(part, prevStamp);
                 order.updatedAt = prevUpdatedAt;
                 return;
             }
-            showToast("تم تسجيل التحصيل، وأُضيف لرصيد المشتريات", "ok");
+            showToast(returnCollectDestination(order, part).toast, "ok");
             refreshSuppliersList();
             updateSuppliersBadge();
             renderKPIs();
@@ -20001,7 +20480,6 @@ function customerRefundsPending(customerId) {
     const rows = [];
     (appData.orders || []).forEach(o => {
         if (o.customerId !== customerId) return;
-        if (o.isQuote) return;
         if (!o.confirmed) return;
         (o.parts || []).forEach(p => {
             if (!p.returned || p.customerRefundConfirmed) return;
@@ -20029,7 +20507,6 @@ function customerRefundsPendingIndex() {
     const byCustomerRaw = {};
     (appData.orders || []).forEach(o => {
         if (!o.customerId) return;
-        if (o.isQuote) return;
         if (!o.confirmed) return;
         (o.parts || []).forEach(p => {
             if (!p.returned || p.customerRefundConfirmed) return;
@@ -20185,7 +20662,7 @@ function openCustomerHistoryModal(customerId) {
             }
             confirmAction({
                 title: "تأكيد إرجاع هذا المبلغ للعميل؟",
-                message: "سيتم خصم المبلغ تلقائيًا من صافي الصندوق.",
+                message: "سيتم خصم المبلغ من صافي الصندوق بتاريخ اليوم (" + todayNumeric() + ").",
                 confirmLabel: "تم الإرجاع",
                 dangerous: true,
                 onConfirm: async () => {
@@ -20193,12 +20670,19 @@ function openCustomerHistoryModal(customerId) {
                     if (!order) return;
                     const part = (order.parts || []).find(p => p.id === partId);
                     if (!part) return;
+                    if (part.customerRefundConfirmed) {
+                        showToast("تم تأكيد رد هذا المبلغ مسبقًا", "ok");
+                        openCustomerHistoryModal(customerId);
+                        return;
+                    }
                     const prevUpdatedAt = order.updatedAt;
-                    part.customerRefundConfirmed = true;
+                    const prevStamp = partStampSnapshot(part, "customerRefundConfirmed");
+                    stampPartRefundConfirmed(part);
                     order.updatedAt = (new Date).toISOString();
                     const saved = await persistOrder(order);
                     if (!saved) {
-                        delete part.customerRefundConfirmed;
+                        unstampPartRefundConfirmed(part);
+                        partStampRestore(part, prevStamp);
                         order.updatedAt = prevUpdatedAt;
                         return;
                     }
@@ -23424,7 +23908,7 @@ function ownerScrapyardPartsFromAppData(kind) {
 function ownerScrapyardReturnReceivablesFromAppData(kind) {
     const list = [];
     const wantUsed = kind === "used";
-    appData.orders.filter(o => !o.isQuote && o.confirmed).forEach(o => {
+    appData.orders.filter(o => o.confirmed).forEach(o => {
         (o.parts || []).forEach(p => {
             if (!p.returned || !p.returnHasReceivable || p.returnCollected) return;
             if (!!p.used !== wantUsed) return;
@@ -23883,7 +24367,7 @@ function scrapyardMarkCollectedDirect(orderId, partId) {
     const isUsed = !!part.used;
     confirmAction({
         title: isUsed ? "تأكيد تحصيل هذا المبلغ من التشليح؟" : "تأكيد تحصيل هذا المبلغ من المورد؟",
-        message: isUsed ? 'ستتم إضافته إلى رصيد المشتريات. إذا أردت إرجاعه إلى الصندوق، فاستخدم "سحب من العهدة" في شاشة الصندوق.' : "ستتم إضافة المبلغ تلقائيًا إلى صافي الصندوق.",
+        message: returnCollectDestination(order, part).confirmMessage,
         confirmLabel: "تم التحصيل",
         onConfirm: async () => {
             const freshOrder = appData.orders.find(o => o.id === orderId);
@@ -23891,17 +24375,19 @@ function scrapyardMarkCollectedDirect(orderId, partId) {
             const freshPart = (freshOrder.parts || []).find(p => p.id === partId);
             if (!freshPart || freshPart.returnCollected) return;
             const prevUpdatedAt = freshOrder.updatedAt;
-            freshPart.returnCollected = true;
+            const prevStamp = partStampSnapshot(freshPart, "returnCollected");
+            stampPartReturnCollected(freshPart);
             freshOrder.updatedAt = (new Date).toISOString();
             const saved = await persistOrder(freshOrder);
             if (!saved) {
-                freshPart.returnCollected = false;
+                unstampPartReturnCollected(freshPart);
+                partStampRestore(freshPart, prevStamp);
                 freshOrder.updatedAt = prevUpdatedAt;
                 return;
             }
             const stalePending = pendingActionProposalFor("return_collect", orderId, partId);
             if (stalePending) await sb.from("edit_proposals").delete().eq("id", stalePending.id);
-            showToast("تم تسجيل التحصيل" + (isUsed ? "، وتمت إضافته إلى رصيد المشتريات" : "، وتمت إضافة المبلغ إلى الصندوق"), "ok");
+            showToast(returnCollectDestination(freshOrder, freshPart).toast, "ok");
             await refreshEditProposals();
             await loadScrapyardData(scrapyardSharedState.activeKind);
             renderScrapyardView();
