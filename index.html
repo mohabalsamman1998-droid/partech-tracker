@@ -1038,6 +1038,7 @@
   }
   .cost-split-box:hover{border-color:var(--text-faint);}
   .cost-split-box:disabled{opacity:.5;cursor:not-allowed;}
+  .settlement-reset-notice{margin-top:6px;padding:6px 9px;border-radius:6px;background:var(--rust-dim);border:1px solid var(--rust-line);color:var(--rust);font-size:11.5px;line-height:1.5;}
   .cost-split-box span:first-child{font-size:10.5px;color:var(--text-faint);font-weight:600;}
   .cost-split-box .num{color:var(--rust);font-size:13.5px;font-family:'Cairo',sans-serif;font-weight:700;font-variant-numeric:tabular-nums;}
   .cost-split-status{font-size:10.5px;color:var(--rust);font-weight:700;}
@@ -1742,6 +1743,10 @@ let draft = null;
 
 let draftOpenedAtUpdatedAt = null;
 
+let draftSettleBase = null;
+
+let quoteSettleBase = null;
+
 let draftVinAtOpen = "";
 
 let draftCarAtOpen = "null";
@@ -2005,12 +2010,16 @@ function bucketPayerOf(order, isNew) {
     return order["paidToSupplier" + sfx] ? "supplier" : order["paidToAmer" + sfx] ? "amer" : order["paidToOmar" + sfx] ? "omar" : null;
 }
 
+function orderHasUsedPart(order) {
+    return !!order && (order.parts || []).some(p => p && p.used);
+}
+
 function bucketSettlement(order, t, bucket) {
     const isNew = bucket === "new";
     let payer = bucketPayerOf(order, isNew), legacy = false;
     if (isNew && !payer && bucketPayerOf(order, false)) {
         t = t || orderTotals(order);
-        if (t.costToScrapyard <= 0 && t.costToSupplier > 0) {
+        if (t.costToScrapyard <= 0 && t.costToSupplier > 0 && !orderHasUsedPart(order)) {
             payer = bucketPayerOf(order, false);
             legacy = true;
         }
@@ -2052,8 +2061,156 @@ function partPurchaseCostSettled(order, part, t) {
     return part && part.used ? scrapyardCostSettled(order, t) : newPartsCostSettled(order, t);
 }
 
-function bucketHasPaidFlag(order, t, used) {
-    return !!(used ? bucketPayerOf(order, false) : bucketSettlement(order, t, "new").payer);
+function _pgBool(v, dflt) {
+    if (v === null || v === undefined) return dflt;
+    if (typeof v === "boolean") return v;
+    const s = String(v).trim().toLowerCase();
+    if (s === "true" || s === "t" || s === "yes" || s === "y" || s === "on" || s === "1") return true;
+    if (s === "false" || s === "f" || s === "no" || s === "n" || s === "off" || s === "0") return false;
+    return dflt;
+}
+
+function orderBucketBasis(parts, partsSelectionEnabled, used) {
+    const sel = _pgBool(partsSelectionEnabled, false);
+    let sum = 0;
+    (Array.isArray(parts) ? parts : []).forEach(p => {
+        if (!p || typeof p !== "object") return;
+        if (_pgBool(p.used, false) !== !!used) return;
+        if (sel && _pgBool(p.included, true) === false) return;
+        if (_pgBool(p.returned, false) && !_pgBool(p.returnHasReceivable, false)) return;
+        const qn = p.qty === null || p.qty === undefined || p.qty === "" ? 0 : Number(p.qty);
+        const q = qn === 0 || isNaN(qn) ? 1 : qn;
+        const c = p.costPrice === null || p.costPrice === undefined || p.costPrice === "" ? 0 : Number(p.costPrice) || 0;
+        sum += q * c;
+    });
+    return sum;
+}
+
+function orderBucketSettled(order, isNew) {
+    if (!order) return false;
+    const s = isNew ? "New" : "";
+    return !!(order["paidToAmer" + s] || order["paidToOmar" + s] || order["paidToSupplier" + s]);
+}
+
+function settlementResetPlan(liveOrder, draftOrder) {
+    const plan = {
+        resetUsed: false,
+        resetNew: false,
+        label: "",
+        usedBefore: 0,
+        usedAfter: 0,
+        newBefore: 0,
+        newAfter: 0
+    };
+    if (!liveOrder || !draftOrder) return plan;
+    const liveUsed = orderBucketSettled(liveOrder, false), liveNew = orderBucketSettled(liveOrder, true);
+    if (!liveUsed && !liveNew) return plan;
+    if (liveUsed && orderBucketSettled(draftOrder, false)) {
+        plan.usedBefore = orderBucketBasis(liveOrder.parts, liveOrder.partsSelectionEnabled, true);
+        plan.usedAfter = orderBucketBasis(draftOrder.parts, draftOrder.partsSelectionEnabled, true);
+        plan.resetUsed = Math.abs(plan.usedAfter - plan.usedBefore) > .005;
+    }
+    if (liveNew && orderBucketSettled(draftOrder, true)) {
+        plan.newBefore = orderBucketBasis(liveOrder.parts, liveOrder.partsSelectionEnabled, false);
+        plan.newAfter = orderBucketBasis(draftOrder.parts, draftOrder.partsSelectionEnabled, false);
+        plan.resetNew = Math.abs(plan.newAfter - plan.newBefore) > .005;
+    }
+    plan.label = plan.resetUsed && plan.resetNew ? "التشليح والجديد" : plan.resetUsed ? "التشليح" : plan.resetNew ? "الجديد" : "";
+    const blockedUsed = !!plan.resetUsed && bucketUncollectedReturnParts(draftOrder, true).length > 0;
+    const blockedNew = !!plan.resetNew && bucketUncollectedReturnParts(draftOrder, false).length > 0;
+    if (blockedUsed || blockedNew) {
+        plan.blockedUsed = blockedUsed;
+        plan.blockedNew = blockedNew;
+        plan.blockReason = unsettleBlockReason(draftOrder, blockedUsed ? undefined : "new", "edit");
+    }
+    return plan;
+}
+
+function settlementResetWarningText(plan) {
+    if (!plan || !plan.resetUsed && !plan.resetNew) return "";
+    const bits = [];
+    if (plan.resetUsed) bits.push("التشليح: من " + fmtMoney(plan.usedBefore) + " إلى " + fmtMoney(plan.usedAfter));
+    if (plan.resetNew) bits.push("الجديد: من " + fmtMoney(plan.newBefore) + " إلى " + fmtMoney(plan.newAfter));
+    return "تتغيّر تكلفة قطع " + plan.label + " بعد تسجيل سدادها (" + bits.join("، ") + "). سيُلغى تسديد " + plan.label + " المسجّل (الجهة والتاريخ والمبلغ) ويعود المبلغ مستحقًا، وعليك تسجيل التسديد من جديد بالمبلغ الصحيح.";
+}
+
+function settlementResetLabel(which) {
+    const u = !!(which && (which.used || which.resetUsed)), n = !!(which && (which.new || which.resetNew));
+    return u && n ? "التشليح والجديد" : u ? "التشليح" : n ? "الجديد" : "";
+}
+
+function bucketUncollectedReturnParts(order, used) {
+    return orderActiveParts(order).filter(p => p.returned && p.returnHasReceivable && !p.returnCollected && !!p.used === !!used);
+}
+
+function unsettleBlockReason(order, bucket, action) {
+    if (!order) return "";
+    if (!bucketUncollectedReturnParts(order, bucket !== "new").length) return "";
+    return action === "edit" ? "لا يمكن تعديل تكلفة هذه القطع — فيها قطعة مرتجعة مسددة لم يُحصَّل مبلغها من المورد. حصّل المرتجع أولًا أو تراجع عن الإرجاع." : "لا يمكن إلغاء التسديد — فيه قطعة مرتجعة مسددة لم يُحصَّل مبلغها من المورد. حصّل المرتجع أولًا أو تراجع عن الإرجاع.";
+}
+
+function settlementResetKeys(isNew) {
+    const s = isNew ? "New" : "";
+    return [ "paidToSupplier" + s + "At", "paidToAmer" + s + "At", "paidToOmar" + s + "At", "paidToSupplier" + s + "AmountSnapshot", "paidToAmer" + s + "AmountSnapshot", "paidToOmar" + s + "AmountSnapshot" ];
+}
+
+function applySettlementResetToOrder(order, which) {
+    if (!order || !which) return false;
+    let changed = false;
+    [ [ !!(which.used || which.resetUsed), false ], [ !!(which.new || which.resetNew), true ] ].forEach(pair => {
+        if (!pair[0]) return;
+        const s = pair[1] ? "New" : "";
+        order["paidToAmer" + s] = false;
+        order["paidToOmar" + s] = false;
+        order["paidToSupplier" + s] = false;
+        settlementResetKeys(pair[1]).forEach(k => {
+            delete order[k];
+        });
+        changed = true;
+    });
+    return changed;
+}
+
+function orderSettlementRowFlags(order) {
+    return {
+        paid_to_amer: !!(order && order.paidToAmer),
+        paid_to_omar: !!(order && order.paidToOmar),
+        paid_to_supplier: !!(order && order.paidToSupplier),
+        paid_to_amer_new: !!(order && order.paidToAmerNew),
+        paid_to_omar_new: !!(order && order.paidToOmarNew),
+        paid_to_supplier_new: !!(order && order.paidToSupplierNew)
+    };
+}
+
+function settlementEchoDetect(sentRow, retRow) {
+    const r = {
+        used: false,
+        new: false
+    };
+    if (!sentRow || !retRow) return r;
+    const any = (o, sfx) => !!(o["paid_to_amer" + sfx] || o["paid_to_omar" + sfx] || o["paid_to_supplier" + sfx]);
+    r.used = any(sentRow, "") && !any(retRow, "");
+    r.new = any(sentRow, "_new") && !any(retRow, "_new");
+    return r;
+}
+
+function captureSettleBase(order) {
+    if (!order) return null;
+    return Object.assign(orderSettlementRowFlagsCamel(order), {
+        partsSelectionEnabled: !!order.partsSelectionEnabled,
+        parts: JSON.parse(JSON.stringify(Array.isArray(order.parts) ? order.parts : []))
+    });
+}
+
+function orderSettlementRowFlagsCamel(order) {
+    return {
+        paidToAmer: !!order.paidToAmer,
+        paidToOmar: !!order.paidToOmar,
+        paidToSupplier: !!order.paidToSupplier,
+        paidToAmerNew: !!order.paidToAmerNew,
+        paidToOmarNew: !!order.paidToOmarNew,
+        paidToSupplierNew: !!order.paidToSupplierNew
+    };
 }
 
 function costSplitStatusLabel(order, bucket) {
@@ -7100,6 +7257,7 @@ function openModal(mode, orderId, opts) {
     draftOpenedAtUpdatedAt = draft.updatedAt || null;
     draftVinAtOpen = draft.vin || "";
     draftCarAtOpen = JSON.stringify(draft.car || null);
+    draftSettleBase = draft.isNew ? null : captureSettleBase(draft);
     if (draft.isNew) {
         persistedPartIds.delete(draft.id);
         mediaIndexInitEmpty(draft.id);
@@ -7122,6 +7280,7 @@ function closeModal() {
     if (draft) mediaDiscardStaged(draft.id);
     closeMediaOverlays();
     draft = null;
+    draftSettleBase = null;
     pendingScrapyardCancellations.clear();
     pendingEditProposalsCancellation = false;
     pendingPartProposalPurges.clear();
@@ -7316,9 +7475,23 @@ function bindCostSplitButtons() {
             openSettlementChoiceModal(draft, choice => {
                 const prevChoice = bucket === "new" ? bucketSettlement(draft, orderTotals(draft), "new").payer : bucketPayerOf(draft, false);
                 if (choice === prevChoice) return;
+                if (!choice) {
+                    const unsettleWhy = unsettleBlockReason(draft, bucket, "unsettle");
+                    if (unsettleWhy) {
+                        showToast(unsettleWhy, "error");
+                        return;
+                    }
+                }
                 if (choice && !draft.confirmed) {
                     showToast("لا يمكن تسجيل السداد قبل تأكيد الطلبية", "error");
                     return;
+                }
+                if (choice && draftSettleBase) {
+                    const resetPl = settlementResetPlan(draftSettleBase, draft);
+                    if (bucket === "new" ? resetPl.resetNew : resetPl.resetUsed) {
+                        showToast("تغيّرت تكلفة هذا الجزء بعد تسجيل سداده — احفظ الطلبية أولًا (سيُلغى التسديد القديم) ثم سجّل التسديد من جديد", "error");
+                        return;
+                    }
                 }
                 const now = (new Date).toISOString();
                 const amountSnapshot = orderTotals(draft)[amountKey];
@@ -7334,7 +7507,7 @@ function bindCostSplitButtons() {
                 draft[omarKey] = choice === "omar";
                 draft[omarKey + "At"] = choice === "omar" ? now : null;
                 draft[omarKey + "AmountSnapshot"] = choice === "omar" ? amountSnapshot : null;
-                if (bucket === "new" && orderTotals(draft).costToScrapyard <= 0) {
+                if (bucket === "new" && orderTotals(draft).costToScrapyard <= 0 && !orderHasUsedPart(draft)) {
                     [ "paidToSupplier", "paidToAmer", "paidToOmar" ].forEach(k => {
                         draft[k] = false;
                         draft[k + "At"] = null;
@@ -7354,8 +7527,9 @@ function bindCostSplitButtons() {
 function openSettlementChoiceModal(order, onChoose, bucket) {
     const root = document.getElementById("confirm-root");
     const current = bucket === "new" ? bucketSettlement(order, orderTotals(order), "new").payer : bucketPayerOf(order, false);
+    const unsettleWhy = current ? unsettleBlockReason(order, bucket, "unsettle") : "";
     const optionBtn = (key, label) => '<button type="button" class="btn ' + (current === key ? "btn-primary" : "btn-ghost") + '" data-settlement-choice="' + key + '" style="width:100%;margin-bottom:8px;">' + (current === key ? "✓ " : "") + label + "</button>";
-    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">سداد ' + (bucket === "new" ? "القطع الجديدة" : "المشتريات") + " — من؟</div>" + optionBtn("supplier", "سداد مباشر") + optionBtn("amer", "من عهدة عامر") + optionBtn("omar", "من عهدة عمر") + (current ? '<button type="button" class="btn btn-ghost" id="settlement-choice-clear-btn" style="width:100%;margin-bottom:8px;">✕ إلغاء التسديد</button>' : "") + '<div class="modal-footer-actions" style="margin-top:8px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="settlement-choice-cancel-btn">إغلاق</button>' + "</div>" + "</div>" + "</div>";
+    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">سداد ' + (bucket === "new" ? "القطع الجديدة" : "المشتريات") + " — من؟</div>" + optionBtn("supplier", "سداد مباشر") + optionBtn("amer", "من عهدة عامر") + optionBtn("omar", "من عهدة عمر") + (current ? unsettleWhy ? '<button type="button" class="btn btn-ghost" id="settlement-choice-clear-btn" disabled style="width:100%;margin-bottom:4px;opacity:.5;cursor:not-allowed;">✕ إلغاء التسديد</button>' + '<p class="modal-sub" style="margin:0 0 8px;font-size:12px;">' + escapeHtml(unsettleWhy) + "</p>" : '<button type="button" class="btn btn-ghost" id="settlement-choice-clear-btn" style="width:100%;margin-bottom:8px;">✕ إلغاء التسديد</button>' : "") + '<div class="modal-footer-actions" style="margin-top:8px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="settlement-choice-cancel-btn">إغلاق</button>' + "</div>" + "</div>" + "</div>";
     root.classList.add("modal-open");
     const close = () => {
         root.innerHTML = "";
@@ -7608,22 +7782,9 @@ function bindPartRowEvents() {
                             showToast("لا يمكن التراجع — تم رد المبلغ للزبون فعلًا", "error");
                             return;
                         }
-                        if (part.returnKeptFeeShare || part.returnKeptServiceFeeShare || part.returnKeptDeliveryShare || part.returnKeptExcessShare) {
-                            draft.returnKeptFeeAmount = round2(Math.max(0, (draft.returnKeptFeeAmount || 0) - (part.returnKeptFeeShare || 0)));
-                            draft.returnKeptServiceFeeAmount = round2(Math.max(0, (draft.returnKeptServiceFeeAmount || 0) - (part.returnKeptServiceFeeShare || 0)));
-                            draft.returnKeptDeliveryAmount = round2(Math.max(0, (draft.returnKeptDeliveryAmount || 0) - (part.returnKeptDeliveryShare || 0)));
-                            draft.returnKeptExcessAmount = round2(Math.max(0, (draft.returnKeptExcessAmount || 0) - (part.returnKeptExcessShare || 0)));
-                        }
-                        delete part.returned;
-                        delete part.returnHasReceivable;
-                        delete part.returnCollected;
-                        delete part.customerRefundConfirmed;
-                        delete part.returnKeptFeeShare;
-                        delete part.returnKeptServiceFeeShare;
-                        delete part.returnKeptDeliveryShare;
-                        delete part.returnKeptExcessShare;
+                        const undoRes = undoPartReturnOnOrder(draft, part);
+                        if (undoRes.releasedKeptDelivery > .01) showToast("أُلغي الاحتفاظ بأجور التوصيل (" + fmtMoney(undoRes.releasedKeptDelivery) + " ريال) لأن التوصيل صار يُحسب مع القطعة", "ok");
                         pendingPartProposalPurges.delete(pid);
-                        draft.customerPayments = (draft.customerPayments || []).filter(p => !(p.returnAdjustment && p.linkedPartId === pid));
                         refreshPartsList();
                         refreshPaymentsList();
                     }
@@ -7812,6 +7973,7 @@ function proceedSinglePartReturn(part, hasReceivable, keepFee) {
         dangerous: true,
         onConfirm: () => {
             const s = computeReturnFeeShare(draft, part);
+            const tBeforeReturn = orderTotals(draft);
             let leftoverExcess = 0;
             if (keepFee) {
                 part.returnKeptFeeShare = s.feeShare;
@@ -7828,11 +7990,12 @@ function proceedSinglePartReturn(part, hasReceivable, keepFee) {
             refreshPaymentsList();
             if (leftoverExcess > .01) {
                 const excessOpenedForDraftId = draft.id;
+                const deliveryDropped = deliveryDroppedByReturn(tBeforeReturn, orderTotals(draft), draft);
                 openReturnExcessChoiceModal(leftoverExcess, draft, part, () => {
                     if (!draft || draft.id !== excessOpenedForDraftId) return;
                     refreshPartsList();
                     refreshPaymentsList();
-                });
+                }, deliveryDropped);
             }
         }
     });
@@ -7923,7 +8086,101 @@ function applyPartReturn(part, extraRefundCap) {
     return applyPartReturnOnOrder(draft, part, extraRefundCap);
 }
 
-function openReturnExcessChoiceModal(excessAmount, order, linkedPart, onDone) {
+function undoPartReturnOnOrder(order, part) {
+    const hadSellBefore = orderTotals(order).hasSell;
+    if (part.returnKeptFeeShare || part.returnKeptServiceFeeShare || part.returnKeptDeliveryShare || part.returnKeptExcessShare) {
+        order.returnKeptFeeAmount = round2(Math.max(0, (order.returnKeptFeeAmount || 0) - (part.returnKeptFeeShare || 0)));
+        order.returnKeptServiceFeeAmount = round2(Math.max(0, (order.returnKeptServiceFeeAmount || 0) - (part.returnKeptServiceFeeShare || 0)));
+        order.returnKeptDeliveryAmount = round2(Math.max(0, (order.returnKeptDeliveryAmount || 0) - (part.returnKeptDeliveryShare || 0)));
+        order.returnKeptExcessAmount = round2(Math.max(0, (order.returnKeptExcessAmount || 0) - (part.returnKeptExcessShare || 0)));
+    }
+    delete part.returned;
+    delete part.returnHasReceivable;
+    delete part.returnCollected;
+    delete part.customerRefundConfirmed;
+    delete part.returnKeptFeeShare;
+    delete part.returnKeptServiceFeeShare;
+    delete part.returnKeptDeliveryShare;
+    delete part.returnKeptExcessShare;
+    order.customerPayments = (order.customerPayments || []).filter(p => !(p.returnAdjustment && p.linkedPartId === part.id));
+    let released = 0;
+    const keptDelivery = round2(Math.max(0, Number(order.returnKeptDeliveryAmount) || 0));
+    if (!hadSellBefore && keptDelivery > .01) {
+        const t = orderTotals(order);
+        if (t.hasSell) {
+            const liveDelivery = round2(Math.max(0, t.deliveryFeeAmount - keptDelivery));
+            const dup = round2(Math.min(keptDelivery, liveDelivery));
+            if (dup > .01) {
+                released = dup;
+                order.returnKeptDeliveryAmount = round2(keptDelivery - dup);
+                let left = dup;
+                (order.parts || []).forEach(p => {
+                    const share = Number(p.returnKeptDeliveryShare) || 0;
+                    if (left <= .01 || share <= 0) return;
+                    const take = round2(Math.min(share, left));
+                    left = round2(left - take);
+                    const rest = round2(share - take);
+                    if (rest > .01) p.returnKeptDeliveryShare = rest; else delete p.returnKeptDeliveryShare;
+                });
+            }
+        }
+    }
+    return {
+        releasedKeptDelivery: released
+    };
+}
+
+function deliveryDroppedByReturn(tBefore, tAfter, order) {
+    if (!tBefore || !tAfter || !tBefore.hasSell || tAfter.hasSell) return 0;
+    return round2(Math.max(0, (Number(tBefore.deliveryFeeAmount) || 0) - (Number(order.returnKeptDeliveryAmount) || 0)));
+}
+
+function applyReturnExcessKeepToOrder(order, linkedPart, amount, deliveryDropped) {
+    amount = round2(Math.max(0, Number(amount) || 0));
+    let d = round2(Math.min(amount, Math.max(0, Number(deliveryDropped) || 0)));
+    if (d <= .01) d = 0; else if (amount - d <= .01) d = amount;
+    const e = round2(amount - d);
+    if (d > 0) {
+        order.returnKeptDeliveryAmount = round2((Number(order.returnKeptDeliveryAmount) || 0) + d);
+        if (linkedPart) linkedPart.returnKeptDeliveryShare = round2((Number(linkedPart.returnKeptDeliveryShare) || 0) + d);
+    }
+    if (e > 0 || d === 0) {
+        order.returnKeptExcessAmount = round2((Number(order.returnKeptExcessAmount) || 0) + e);
+        if (linkedPart) linkedPart.returnKeptExcessShare = e;
+    }
+}
+
+function applyReturnExcessRefundToOrder(order, linkedPartId, amount) {
+    amount = round2(Math.max(0, Number(amount) || 0));
+    if (!Array.isArray(order.customerPayments)) order.customerPayments = [];
+    const linkedPart = linkedPartId ? (order.parts || []).find(p => p.id === linkedPartId) : null;
+    const existing = linkedPartId ? order.customerPayments.find(pay => pay.returnAdjustment && pay.linkedPartId === linkedPartId) : null;
+    if (existing) {
+        if (linkedPart && linkedPart.customerRefundConfirmed) {
+            return {
+                ok: false,
+                message: "تعذر تسجيل استرجاع الزيادة — مبلغ هذه القطعة رُدّ للزبون وأُكِّد قبل لحظات. الزيادة باقية ضمن دفعات الزبون، راجع الطلبية."
+            };
+        }
+        existing.amount = round2((Number(existing.amount) || 0) + amount);
+        return {
+            ok: true
+        };
+    }
+    order.customerPayments.push({
+        id: uid("pay"),
+        amount: amount,
+        method: "مرتجع",
+        date: todayNumeric(),
+        returnAdjustment: true,
+        linkedPartId: linkedPartId || null
+    });
+    return {
+        ok: true
+    };
+}
+
+function openReturnExcessChoiceModal(excessAmount, order, linkedPart, onDone, deliveryDropped) {
     const linkedPartId = linkedPart ? linkedPart.id : null;
     const root = document.getElementById("confirm-root");
     root.innerHTML = '<div class="modal-backdrop">' + '<div class="modal-card modal-card-sm" role="alertdialog" aria-modal="true">' + '<div class="modal-title">توجد زيادة دفع غير مرتبطة بسعر القطعة/الرسوم</div>' + '<p class="modal-sub">المبلغ: ' + fmtMoney(excessAmount) + " ريال — ليس من سعر القطعة/القطع المرتجعة ولا من نسبة الخدمة/التوصيل. تُرجعها للزبون، أو تحتفظ بها الطلبية؟</p>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;flex-wrap:wrap;">' + '<button type="button" class="btn btn-ghost" id="excess-choice-keep-btn">الاحتفاظ بها</button>' + '<button type="button" class="btn btn-primary" id="excess-choice-refund-btn">استرجاعها للزبون</button>' + "</div>" + "</div>" + "</div>";
@@ -7934,25 +8191,16 @@ function openReturnExcessChoiceModal(excessAmount, order, linkedPart, onDone) {
     };
     root.querySelector("#excess-choice-keep-btn").addEventListener("click", () => {
         close();
-        order.returnKeptExcessAmount = round2((Number(order.returnKeptExcessAmount) || 0) + excessAmount);
-        if (linkedPart) linkedPart.returnKeptExcessShare = excessAmount;
+        applyReturnExcessKeepToOrder(order, linkedPart, excessAmount, deliveryDropped);
         onDone("keep");
     });
     root.querySelector("#excess-choice-refund-btn").addEventListener("click", () => {
         close();
-        const existing = linkedPartId ? (order.customerPayments || []).find(pay => pay.returnAdjustment && pay.linkedPartId === linkedPartId) : null;
-        if (existing) {
-            existing.amount = round2((Number(existing.amount) || 0) + excessAmount);
-        } else {
-            if (!Array.isArray(order.customerPayments)) order.customerPayments = [];
-            order.customerPayments.push({
-                id: uid("pay"),
-                amount: excessAmount,
-                method: "مرتجع",
-                date: todayNumeric(),
-                returnAdjustment: true,
-                linkedPartId: linkedPartId || null
-            });
+        const res = applyReturnExcessRefundToOrder(order, linkedPartId, excessAmount);
+        if (!res.ok) {
+            showToast(res.message, "error");
+            onDone("none");
+            return;
         }
         onDone("refund");
     });
@@ -8075,6 +8323,14 @@ function updateModalTotals() {
     if (costSplitWrap) {
         costSplitWrap.innerHTML = costSplitButtonsHtml(draft, t);
         bindCostSplitButtons();
+        if (hasElevatedAccess() && draftSettleBase) {
+            const livePl = settlementResetPlan(draftSettleBase, draft);
+            if (livePl.blockReason) {
+                costSplitWrap.insertAdjacentHTML("beforeend", '<div class="settlement-reset-notice" id="settlement-reset-notice">⚠️ ' + escapeHtml(livePl.blockReason) + "</div>");
+            } else if (livePl.resetUsed || livePl.resetNew) {
+                costSplitWrap.insertAdjacentHTML("beforeend", '<div class="settlement-reset-notice" id="settlement-reset-notice">⚠️ حفظ هذا التعديل سيلغي تسديد ' + livePl.label + " (تغيّرت التكلفة بعد السداد) — ستحتاج تسجيل التسديد من جديد</div>");
+            }
+        }
     }
     const feePreviewEl = document.getElementById("fee-amount-preview");
     if (feePreviewEl) {
@@ -8234,6 +8490,20 @@ async function onSaveOrder() {
         returnAdjustment: !!p.returnAdjustment,
         linkedPartId: p.linkedPartId || null
     }));
+    if (!draft.isNew && draftSettleBase) {
+        const resetPlan = settlementResetPlan(draftSettleBase, Object.assign({}, draft, {
+            parts: cleanedParts
+        }));
+        if (resetPlan.blockReason && hasElevatedAccess()) {
+            showToast(resetPlan.blockReason, "error");
+            return false;
+        }
+        if (resetPlan.resetUsed || resetPlan.resetNew) {
+            const resetDraftId = draft.id;
+            const goOn = await confirmSettlementResetOrAbort(resetPlan, escListener);
+            if (!goOn || !orderModalStillOpen(resetDraftId)) return false;
+        }
+    }
     draft.parts = cleanedParts;
     draft.customerPayments = cleanedPayments;
     draft.orderNumber = draft.orderNumber.trim();
@@ -8248,11 +8518,13 @@ async function onSaveOrder() {
     const mediaSnap = mediaTakeStagedSnapshot(draftId);
     const savedVin = savingOrder.vin || "";
     const savedCar = JSON.stringify(savingOrder.car || null);
-    const saved = await persistOrder(savingOrder, orderWasNew);
+    const saveInfo = {};
+    const saved = await persistOrder(savingOrder, orderWasNew, saveInfo);
     if (!saved) {
         mediaRestoreStagedSnapshot(mediaSnap);
         return false;
     }
+    const newSettleBase = captureSettleBase(savingOrder);
     delete savingOrder.isNew;
     const idx = appData.orders.findIndex(o => o.id === savingOrder.id);
     if (idx >= 0) appData.orders[idx] = savingOrder; else appData.orders.push(savingOrder);
@@ -8276,8 +8548,10 @@ async function onSaveOrder() {
     updateCustomersBadge();
     updateSuppliersBadge();
     showToast("تم حفظ الطلبية", "ok");
+    if (saveInfo.settlementReset && hasElevatedAccess()) showToast("أُلغي تسديد " + settlementResetLabel(saveInfo.settlementReset) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح", "ok");
     if (!orderModalStillOpen(draftId)) return true;
     draftOpenedAtUpdatedAt = draft.updatedAt;
+    draftSettleBase = newSettleBase;
     draftVinAtOpen = savedVin;
     draftCarAtOpen = savedCar;
     editingPayments = {};
@@ -11325,6 +11599,7 @@ function openQuoteModal(mode, orderId, role, opts) {
     }
     quoteOriginalSnapshot = quoteContentSnapshot(quoteDraft);
     quoteOpenedAtUpdatedAt = quoteDraft.updatedAt || null;
+    quoteSettleBase = quoteDraft.isNew ? null : captureSettleBase(quoteDraft);
     if (quoteDraft.isNew) {
         persistedPartIds.delete(quoteDraft.id);
         mediaIndexInitEmpty(quoteDraft.id);
@@ -11348,6 +11623,7 @@ function closeQuoteModal() {
     }
     closeMediaOverlays();
     quoteDraft = null;
+    quoteSettleBase = null;
     document.removeEventListener("keydown", quoteEscListener);
     if (modalCloseCallback) {
         const cb = modalCloseCallback;
@@ -11561,6 +11837,20 @@ async function saveQuoteDraft(markSent) {
         showToast("يجب إضافة وصف لقطعة واحدة على الأقل", "error");
         return false;
     }
+    if (!quoteDraft.isNew && quoteSettleBase) {
+        const qPlan = settlementResetPlan(quoteSettleBase, Object.assign({}, quoteDraft, {
+            parts: cleanedParts
+        }));
+        if (qPlan.blockReason && hasElevatedAccess()) {
+            showToast(qPlan.blockReason, "error");
+            return false;
+        }
+        if (qPlan.resetUsed || qPlan.resetNew) {
+            const qId = quoteDraft.id;
+            const qGo = await confirmSettlementResetOrAbort(qPlan, quoteEscListener);
+            if (!qGo || !quoteModalStillOpen(qId)) return false;
+        }
+    }
     quoteDraft.parts = cleanedParts;
     quoteDraft.orderLabel = (quoteDraft.orderLabel || "").trim();
     quoteDraft.updatedAt = (new Date).toISOString();
@@ -11579,7 +11869,8 @@ async function saveQuoteDraft(markSent) {
     const draftId = quoteDraft.id;
     const savingDraft = quoteDraft;
     const mediaSnap = mediaTakeStagedSnapshot(draftId);
-    const saved = await persistOrder(quoteDraft, quoteWasNew);
+    const quoteSaveInfo = {};
+    const saved = await persistOrder(quoteDraft, quoteWasNew, quoteSaveInfo);
     if (!saved) {
         if (wasPendingReturn) {
             savingDraft.pendingReturnToQuote = true;
@@ -11610,6 +11901,7 @@ async function saveQuoteDraft(markSent) {
     if (!quoteModalStillOpen(draftId)) return true;
     delete quoteDraft.isNew;
     quoteOpenedAtUpdatedAt = quoteDraft.updatedAt;
+    quoteSettleBase = captureSettleBase(quoteDraft);
     const idx = appData.orders.findIndex(o => o.id === quoteDraft.id);
     if (idx >= 0) appData.orders[idx] = quoteDraft; else appData.orders.push(quoteDraft);
     quoteOriginalSnapshot = quoteContentSnapshot(quoteDraft);
@@ -11623,6 +11915,7 @@ async function saveQuoteDraft(markSent) {
     if (newBackdrop) newBackdrop.scrollTop = prevScrollTop;
     renderQuotesList();
     showToast(markSent ? "تم الحفظ والإرسال" : "تم الحفظ", "ok");
+    if (quoteSaveInfo.settlementReset && hasElevatedAccess()) showToast("أُلغي تسديد " + settlementResetLabel(quoteSaveInfo.settlementReset) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح", "ok");
     return true;
 }
 
@@ -11669,6 +11962,20 @@ async function onApproveQuote() {
         showToast("توجد قطعة مستعملة مسعّرة بلا حالة نظافة محددة — يجب تحديدها قبل الاعتماد (أو إعادتها إلى عامر للتصحيح)", "error");
         return;
     }
+    if (!quoteDraft.isNew && quoteSettleBase) {
+        const aPlan = settlementResetPlan(quoteSettleBase, Object.assign({}, quoteDraft, {
+            parts: cleanedParts
+        }));
+        if (aPlan.blockReason && hasElevatedAccess()) {
+            showToast(aPlan.blockReason, "error");
+            return;
+        }
+        if (aPlan.resetUsed || aPlan.resetNew) {
+            const aId = quoteDraft.id;
+            const aGo = await confirmSettlementResetOrAbort(aPlan, quoteEscListener);
+            if (!aGo || !quoteModalStillOpen(aId)) return;
+        }
+    }
     const liveApprovedOrder = (appData.orders || []).find(o => o.id === quoteDraft.id);
     if (liveApprovedOrder) {
         if (!quoteDraft.quoteApprovedAt && liveApprovedOrder.quoteApprovedAt) quoteDraft.quoteApprovedAt = liveApprovedOrder.quoteApprovedAt;
@@ -11685,7 +11992,8 @@ async function onApproveQuote() {
     const approvedNumber = quoteDraft.orderNumber;
     const approvedDraft = quoteDraft;
     const mediaSnap = mediaTakeStagedSnapshot(approvedId);
-    const saved = await persistOrder(quoteDraft, quoteWasNew);
+    const approveSaveInfo = {};
+    const saved = await persistOrder(quoteDraft, quoteWasNew, approveSaveInfo);
     if (!saved) {
         approvedDraft.isQuote = true;
         if (approvalStampAdded) delete approvedDraft.quoteApprovedAt;
@@ -11701,6 +12009,7 @@ async function onApproveQuote() {
     renderTable();
     renderQuotesList();
     showToast("تم اعتماد طلب التسعير — أصبح طلبية " + approvedNumber, "ok");
+    if (approveSaveInfo.settlementReset && hasElevatedAccess()) showToast("أُلغي تسديد " + settlementResetLabel(approveSaveInfo.settlementReset) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح", "ok");
     if (!quoteModalStillOpen(approvedId)) return;
     const pendingReturn = modalCloseCallback;
     modalCloseCallback = null;
@@ -11849,6 +12158,21 @@ async function handleScrapyardQuoteConflict(draftId) {
     return "reopened";
 }
 
+async function adoptSettlementFromDb(order) {
+    try {
+        if (!sb || !order || !orderHasSettlementFlag(order)) return null;
+        const {data: data, error: error} = await withTimeout(sb.from("orders").select("paid_to_amer,paid_to_omar,paid_to_supplier,paid_to_amer_new,paid_to_omar_new,paid_to_supplier_new").eq("id", order.id).maybeSingle(), 5e3, "adoptSettlementFromDb");
+        if (error || !data) return null;
+        const echo = settlementEchoDetect(orderSettlementRowFlags(order), data);
+        if (!echo.used && !echo.new) return null;
+        applySettlementResetToOrder(order, echo);
+        return echo;
+    } catch (e) {
+        console.warn("adoptSettlementFromDb:", e);
+        return null;
+    }
+}
+
 async function onSaveQuotePricing() {
     if (!await checkQuoteSaveConflict()) return;
     if (mediaStagedOnBlankParts(quoteDraft.id, quoteDraft.parts)) return;
@@ -11882,6 +12206,7 @@ async function onSaveQuotePricing() {
     }
     mediaAfterSaveSuccess(draftId, mediaSnap, cleanedParts);
     savedDraft.updatedAt = res.updatedAt;
+    await adoptSettlementFromDb(savedDraft);
     const idx = appData.orders.findIndex(o => o.id === draftId);
     if (idx >= 0) appData.orders[idx] = savedDraft;
     if (!quoteModalStillOpen(draftId)) return;
@@ -11931,6 +12256,7 @@ async function onSaveAndSendQuotePricing() {
     }
     mediaAfterSaveSuccess(draftId, mediaSnap, cleanedParts);
     sentDraft.updatedAt = res.updatedAt;
+    await adoptSettlementFromDb(sentDraft);
     if (quoteModalStillOpen(draftId)) quoteOpenedAtUpdatedAt = res.updatedAt;
     const idx = appData.orders.findIndex(o => o.id === draftId);
     if (idx >= 0) appData.orders[idx] = sentDraft;
@@ -12223,6 +12549,26 @@ function confirmAction(opts) {
     root.querySelector("#confirm-action-ok-btn").addEventListener("click", () => {
         close();
         if (opts.onConfirm) opts.onConfirm();
+    });
+}
+
+function confirmSettlementResetOrAbort(plan, escFn) {
+    if (!plan || !plan.resetUsed && !plan.resetNew) return Promise.resolve(true);
+    if (!hasElevatedAccess()) return Promise.resolve(true);
+    document.removeEventListener("keydown", escFn);
+    return new Promise(resolve => {
+        confirmAction({
+            title: "سيُلغى تسديد " + plan.label + " لهذه الطلبية",
+            message: settlementResetWarningText(plan),
+            confirmLabel: "احفظ وألغِ التسديد",
+            cancelLabel: "عودة للتعديل",
+            dangerous: true,
+            onConfirm: () => resolve(true),
+            onCancel: () => resolve(false)
+        });
+    }).then(ok => {
+        document.addEventListener("keydown", escFn);
+        return ok;
     });
 }
 
@@ -13850,11 +14196,16 @@ function applyScrapyardProposal(pr, orderOverride) {
 function handleScrapyardProposalDecision(proposalId, accept) {
     const pr = scrapyardMgmtState.proposals.find(p => p.id === proposalId);
     if (!pr) return;
+    const resetPlan = accept ? scrapyardProposalSettlementResetPreview(pr) : null;
+    if (resetPlan && resetPlan.blockReason) {
+        showToast(resetPlan.blockReason, "error");
+        return;
+    }
     confirmAction({
         title: accept ? "قبول هذا الاقتراح؟" : "رفض هذا الاقتراح؟",
-        message: accept ? "سيتم تطبيق التعديل مباشرة على حساباتك." : "سيتم حذف الاقتراح دون أي تغيير على حساباتك.",
-        confirmLabel: accept ? "قبول وتطبيق" : "تأكيد الرفض",
-        dangerous: !accept,
+        message: accept ? "سيتم تطبيق التعديل مباشرة على حساباتك." + (resetPlan ? " تنبيه: " + settlementResetWarningText(resetPlan) : "") : "سيتم حذف الاقتراح دون أي تغيير على حساباتك.",
+        confirmLabel: accept ? resetPlan ? "قبول وإلغاء التسديد" : "قبول وتطبيق" : "تأكيد الرفض",
+        dangerous: !accept || !!resetPlan,
         onConfirm: async () => {
             const {data: deletedRows, error: delError} = await sb.from("scrapyard_proposals").delete().eq("id", pr.id).select();
             if (delError) {
@@ -13868,6 +14219,7 @@ function handleScrapyardProposalDecision(proposalId, accept) {
                 refreshScrapyardPendingCount();
                 return;
             }
+            let resetToastText = "";
             const restoreProposal = async () => {
                 const {error: error} = await sb.from("scrapyard_proposals").insert(deletedRows[0]);
                 if (error) console.error("restoreProposal:", error);
@@ -13890,7 +14242,8 @@ function handleScrapyardProposalDecision(proposalId, accept) {
                     await restoreProposal();
                     return;
                 }
-                const saved = await persistOrder(order);
+                const saveInfo = {};
+                const saved = await persistOrder(order, undefined, saveInfo);
                 if (!saved) {
                     showToast("تعذر حفظ التعديل على الطلبية — تمت إعادة الاقتراح إلى مكانه، جرّب مرة أخرى", "error");
                     await restoreProposal();
@@ -13900,8 +14253,10 @@ function handleScrapyardProposalDecision(proposalId, accept) {
                 if (idx >= 0) appData.orders[idx] = order; else appData.orders.push(order);
                 renderKPIs();
                 renderTable();
+                resetToastText = saveInfo.settlementReset ? "أُلغي تسديد " + settlementResetLabel(saveInfo.settlementReset) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح" : "";
             }
             showToast(accept ? "تم القبول والتطبيق" : "تم رفض الاقتراح", "ok");
+            if (resetToastText) showToast(resetToastText, "ok");
             await loadScrapyardData(scrapyardSharedState.activeKind);
             renderScrapyardView();
             refreshScrapyardPendingCount();
@@ -14767,9 +15122,15 @@ async function withdrawEditProposal(proposalId) {
 
 let lastEditProposalLeftoverExcess = 0;
 
+let lastEditProposalLinkedPartId = null;
+
+let lastEditProposalDeliveryDropped = 0;
+
 function applyEditProposal(pr, orderOverride, opts) {
     opts = opts || {};
     lastEditProposalLeftoverExcess = 0;
+    lastEditProposalLinkedPartId = null;
+    lastEditProposalDeliveryDropped = 0;
     const order = orderOverride || appData.orders.find(o => o.id === pr.order_id);
     if (!order) return false;
     if (pr.kind === "part_field") {
@@ -14777,10 +15138,6 @@ function applyEditProposal(pr, orderOverride, opts) {
         if (!part || part.returned) return false;
         if (pr.field === "costPrice") part.costPrice = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "sellPrice") part.sellPrice = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "description") part.description = String(pr.proposed_value || ""); else if (pr.field === "qty") part.qty = Math.max(1, Number(pr.proposed_value) || 1); else if (pr.field === "used") {
             const proposedUsed = !!pr.proposed_value;
-            if (proposedUsed !== !!part.used) {
-                const tBefore = orderTotals(order);
-                if (bucketHasPaidFlag(order, tBefore, !!part.used) || bucketHasPaidFlag(order, tBefore, proposedUsed)) return false;
-            }
             part.used = proposedUsed;
             part.supplierId = null;
         } else if (pr.field === "supplierId") part.supplierId = pr.proposed_value || null; else return false;
@@ -14826,12 +15183,10 @@ function applyEditProposal(pr, orderOverride, opts) {
     } else if (pr.kind === "part_exclude") {
         const part = (order.parts || []).find(p => p.id === pr.part_id);
         if (!part) return false;
-        if (bucketHasPaidFlag(order, orderTotals(order), !!part.used)) return false;
         part.included = false;
     } else if (pr.kind === "part_delete") {
         const targetPart = (order.parts || []).find(p => p.id === pr.part_id);
         if (!targetPart || targetPart.returned) return false;
-        if (bucketHasPaidFlag(order, orderTotals(order), !!targetPart.used)) return false;
         order.parts = (order.parts || []).filter(p => p.id !== pr.part_id);
     } else if (pr.kind === "part_return") {
         const part = (order.parts || []).find(p => p.id === pr.part_id);
@@ -14839,6 +15194,7 @@ function applyEditProposal(pr, orderOverride, opts) {
         const hasReceivable = partPurchaseCostSettled(order, part);
         if (hasReceivable && !part.supplierId) return false;
         const s = computeReturnFeeShare(order, part);
+        const tBeforeReturn = orderTotals(order);
         if (opts.keepFee) {
             part.returnKeptFeeShare = s.feeShare;
             part.returnKeptServiceFeeShare = s.serviceFeeShare;
@@ -14848,6 +15204,8 @@ function applyEditProposal(pr, orderOverride, opts) {
         } else {
             lastEditProposalLeftoverExcess = applyPartReturnOnOrder(order, part, round2(s.feeShare + s.serviceFeeShare));
         }
+        lastEditProposalLinkedPartId = part.id;
+        lastEditProposalDeliveryDropped = deliveryDroppedByReturn(tBeforeReturn, orderTotals(order), order);
     } else if (pr.kind === "order_return") {
         const activeParts = orderActiveParts(order).filter(p => !p.returned);
         if (!activeParts.length) return false;
@@ -14873,6 +15231,7 @@ function applyEditProposal(pr, orderOverride, opts) {
                 lastEditProposalLeftoverExcess = applyPartReturnOnOrder(order, p, round2(s.feeShare + s.serviceFeeShare + liveDelivery));
             }
         });
+        lastEditProposalLinkedPartId = activeParts[activeParts.length - 1].id;
     } else if (pr.kind === "return_collect") {
         const part = (order.parts || []).find(p => p.id === pr.part_id);
         if (!part || !part.returned || !part.returnHasReceivable || part.returnCollected) return false;
@@ -14888,6 +15247,44 @@ function applyEditProposal(pr, orderOverride, opts) {
     }
     order.updatedAt = (new Date).toISOString();
     return true;
+}
+
+function proposalSettlementResetPreview(pr, keepFee) {
+    if (!pr) return null;
+    const live = (appData.orders || []).find(o => o.id === pr.order_id);
+    if (!live || !orderHasSettlementFlag(live)) return null;
+    const clone = JSON.parse(JSON.stringify(live));
+    const prevExcess = lastEditProposalLeftoverExcess, prevLinked = lastEditProposalLinkedPartId, prevDropped = lastEditProposalDeliveryDropped;
+    let ok = false;
+    try {
+        ok = applyEditProposal(pr, clone, {
+            keepFee: !!keepFee
+        });
+    } catch (e) {
+        ok = false;
+    }
+    lastEditProposalLeftoverExcess = prevExcess;
+    lastEditProposalLinkedPartId = prevLinked;
+    lastEditProposalDeliveryDropped = prevDropped;
+    if (!ok) return null;
+    const plan = settlementResetPlan(live, clone);
+    return plan.resetUsed || plan.resetNew ? plan : null;
+}
+
+function scrapyardProposalSettlementResetPreview(pr) {
+    if (!pr) return null;
+    const live = (appData.orders || []).find(o => o.id === pr.order_id);
+    if (!live || !orderHasSettlementFlag(live)) return null;
+    const clone = JSON.parse(JSON.stringify(live));
+    let ok = false;
+    try {
+        ok = applyScrapyardProposal(pr, clone);
+    } catch (e) {
+        ok = false;
+    }
+    if (!ok) return null;
+    const plan = settlementResetPlan(live, clone);
+    return plan.resetUsed || plan.resetNew ? plan : null;
 }
 
 async function handleEditProposalDecision(proposalId, accept) {
@@ -14932,11 +15329,16 @@ function proceedEditProposalDecision(proposalId, accept, keepFee) {
         const o = appData.orders.find(o => o.id === pr.order_id);
         return o ? "#" + o.orderNumber + (orderDisplayLabel(o) ? " — " + orderDisplayLabel(o) : "") : "طلبية #" + pr.order_id;
     })();
+    const resetPlan = accept && !isCustomerRequest ? proposalSettlementResetPreview(pr, keepFee) : null;
+    if (resetPlan && resetPlan.blockReason) {
+        showToast(resetPlan.blockReason, "error");
+        return;
+    }
     confirmAction({
         title: accept ? "قبول هذا الطلب؟" : "رفض هذا الطلب؟",
-        message: accept ? isCustomerDelete ? "سيتم حذف العميل نهائيًا (ستبقى الطلبيات القديمة بدون عميل محدد)." : isCustomerRequest ? "سيتم تطبيق التعديل مباشرة على بيانات العميل." : "سيتم تطبيق التعديل مباشرة على الطلبية." : "سيتم حذف الطلب بدون أي تغيير.",
-        confirmLabel: accept ? "قبول وتطبيق" : "تأكيد الرفض",
-        dangerous: !accept,
+        message: accept ? isCustomerDelete ? "سيتم حذف العميل نهائيًا (ستبقى الطلبيات القديمة بدون عميل محدد)." : isCustomerRequest ? "سيتم تطبيق التعديل مباشرة على بيانات العميل." : "سيتم تطبيق التعديل مباشرة على الطلبية." + (resetPlan ? " تنبيه: " + settlementResetWarningText(resetPlan) : "") : "سيتم حذف الطلب بدون أي تغيير.",
+        confirmLabel: accept ? resetPlan ? "قبول وإلغاء التسديد" : "قبول وتطبيق" : "تأكيد الرفض",
+        dangerous: !accept || !!resetPlan,
         onConfirm: async () => {
             const {data: deletedRows, error: delError} = await sb.from("edit_proposals").delete().eq("id", pr.id).select();
             if (delError) {
@@ -15002,7 +15404,11 @@ function proceedEditProposalDecision(proposalId, accept, keepFee) {
                         await restoreProposal();
                         return;
                     }
-                    const saved = await persistOrder(order);
+                    const leftoverExcessNow = round2(lastEditProposalLeftoverExcess);
+                    const linkedPartIdNow = lastEditProposalLinkedPartId;
+                    const deliveryDroppedNow = lastEditProposalDeliveryDropped;
+                    const saveInfo = {};
+                    const saved = await persistOrder(order, undefined, saveInfo);
                     if (!saved) {
                         showToast("تعذر حفظ التعديل على الطلبية — أعدنا الطلب إلى مكانه، جرّب مرة أخرى", "error");
                         await restoreProposal();
@@ -15010,6 +15416,7 @@ function proceedEditProposalDecision(proposalId, accept, keepFee) {
                     }
                     const idx = appData.orders.findIndex(o => o.id === order.id);
                     if (idx >= 0) appData.orders[idx] = order; else appData.orders.push(order);
+                    if (saveInfo.settlementReset) showToast("أُلغي تسديد " + settlementResetLabel(saveInfo.settlementReset) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح", "ok");
                     if (claimed.kind === "part_delete" || claimed.kind === "part_return") {
                         await purgeEditProposalsForPart(order.id, claimed.part_id);
                     } else if (claimed.kind === "order_return") {
@@ -15039,6 +15446,8 @@ function proceedEditProposalDecision(proposalId, accept, keepFee) {
                         syncDraftVinFromOrder(order);
                         syncDraftCarFromOrder(order);
                         draftOpenedAtUpdatedAt = order.updatedAt;
+                        if (saveInfo.settlementReset) applySettlementResetToOrder(draft, saveInfo.settlementReset);
+                        draftSettleBase = captureSettleBase(order);
                         refreshPartsList();
                         refreshFeeFieldsBlock();
                         refreshOrderCustomerBlock();
@@ -15047,13 +15456,18 @@ function proceedEditProposalDecision(proposalId, accept, keepFee) {
                     }
                     renderKPIs();
                     renderTable();
-                    if (round2(lastEditProposalLeftoverExcess) > .01) {
-                        const returnedParts = (order.parts || []).filter(p => p.returned);
-                        const linkedPart = claimed.part_id && (order.parts || []).find(p => p.id === claimed.part_id) || (returnedParts.length ? returnedParts[returnedParts.length - 1] : null);
-                        const excessAmountToApply = round2(lastEditProposalLeftoverExcess);
+                    if (leftoverExcessNow > .01) {
+                        const linkedPart = linkedPartIdNow ? (order.parts || []).find(p => p.id === linkedPartIdNow) : null;
+                        const excessAmountToApply = leftoverExcessNow;
                         const linkedPartId = linkedPart ? linkedPart.id : null;
                         await new Promise(resolve => {
                             openReturnExcessChoiceModal(excessAmountToApply, order, linkedPart, async choice => {
+                                if (choice === "none") {
+                                    renderKPIs();
+                                    renderTable();
+                                    resolve();
+                                    return;
+                                }
                                 const {data: freshRow2} = await sb.from("orders").select("*").eq("id", order.id).maybeSingle();
                                 if (!freshRow2) {
                                     showToast("تعذر حفظ قرار الزيادة — الطلبية لم تعد موجودة", "error");
@@ -15064,23 +15478,16 @@ function proceedEditProposalDecision(proposalId, accept, keepFee) {
                                 }
                                 const freshOrder = orderRowToObject(freshRow2);
                                 if (choice === "keep") {
-                                    freshOrder.returnKeptExcessAmount = round2((Number(freshOrder.returnKeptExcessAmount) || 0) + excessAmountToApply);
                                     const freshLinkedPart = linkedPartId ? (freshOrder.parts || []).find(p => p.id === linkedPartId) : null;
-                                    if (freshLinkedPart) freshLinkedPart.returnKeptExcessShare = excessAmountToApply;
+                                    applyReturnExcessKeepToOrder(freshOrder, freshLinkedPart, excessAmountToApply, deliveryDroppedNow);
                                 } else {
-                                    const existing = linkedPartId ? (freshOrder.customerPayments || []).find(pay => pay.returnAdjustment && pay.linkedPartId === linkedPartId) : null;
-                                    if (existing) {
-                                        existing.amount = round2((Number(existing.amount) || 0) + excessAmountToApply);
-                                    } else {
-                                        if (!Array.isArray(freshOrder.customerPayments)) freshOrder.customerPayments = [];
-                                        freshOrder.customerPayments.push({
-                                            id: uid("pay"),
-                                            amount: excessAmountToApply,
-                                            method: "مرتجع",
-                                            date: todayNumeric(),
-                                            returnAdjustment: true,
-                                            linkedPartId: linkedPartId || null
-                                        });
+                                    const freshRefund = applyReturnExcessRefundToOrder(freshOrder, linkedPartId, excessAmountToApply);
+                                    if (!freshRefund.ok) {
+                                        showToast(freshRefund.message, "error");
+                                        renderKPIs();
+                                        renderTable();
+                                        resolve();
+                                        return;
                                     }
                                 }
                                 const savedExcess = await persistOrder(freshOrder);
@@ -15097,6 +15504,7 @@ function proceedEditProposalDecision(proposalId, accept, keepFee) {
                                     draft.parts = JSON.parse(JSON.stringify(freshOrder.parts || []));
                                     draft.customerPayments = JSON.parse(JSON.stringify(freshOrder.customerPayments || []));
                                     draft.returnKeptExcessAmount = freshOrder.returnKeptExcessAmount;
+                                    draft.returnKeptDeliveryAmount = freshOrder.returnKeptDeliveryAmount;
                                     syncDraftVinFromOrder(freshOrder);
                                     syncDraftCarFromOrder(freshOrder);
                                     draftOpenedAtUpdatedAt = freshOrder.updatedAt;
@@ -15285,15 +15693,19 @@ function subscribeActivityEventsRealtime() {
     }).subscribe();
 }
 
+function activityEventIcon(kind) {
+    return kind === "order_settlement_reset" ? "⚠️ " : "";
+}
+
 function activityLogListHtml() {
     if (!activityEvents.length) return '<p class="add-part-locked-hint">لا توجد إشعارات حتى الآن</p>';
     return '<div class="task-items-list">' + activityEvents.map(ev => {
         const ms = new Date(ev.created_at).getTime();
         if (ev.kind === "storage_threshold" && currentUserIsElevated && currentUserRole === "full") {
-            return '<div class="task-item-row activity-log-row" data-open-stats="1"><span class="task-item-text">' + escapeHtml(ev.message) + '</span><span class="muted" style="white-space:nowrap;">' + arabicRelativeTime(ms) + "</span></div>";
+            return '<div class="task-item-row activity-log-row" data-open-stats="1"><span class="task-item-text">' + activityEventIcon(ev.kind) + escapeHtml(ev.message) + '</span><span class="muted" style="white-space:nowrap;">' + arabicRelativeTime(ms) + "</span></div>";
         }
         const clickable = !!ev.order_id;
-        return '<div class="task-item-row' + (clickable ? " activity-log-row" : "") + '"' + (clickable ? ' data-open-order-id="' + escapeHtml(ev.order_id) + '"' : "") + '><span class="task-item-text">' + escapeHtml(ev.message) + '</span><span class="muted" style="white-space:nowrap;">' + arabicRelativeTime(ms) + "</span></div>";
+        return '<div class="task-item-row' + (clickable ? " activity-log-row" : "") + '"' + (clickable ? ' data-open-order-id="' + escapeHtml(ev.order_id) + '"' : "") + '><span class="task-item-text">' + activityEventIcon(ev.kind) + escapeHtml(ev.message) + '</span><span class="muted" style="white-space:nowrap;">' + arabicRelativeTime(ms) + "</span></div>";
     }).join("") + "</div>";
 }
 
@@ -15639,7 +16051,7 @@ function accountsActivityForDate(isoDate) {
             if (p.returnAdjustment) customerRefunds.push(row); else customerPayments.push(row);
         });
         const tBase = orderTotals(o);
-        const baseFallback = orderSingleBucket(tBase) === "new" ? tBase.costToSupplier : tBase.costToScrapyard;
+        const baseFallback = orderSingleBucket(tBase) === "new" && !orderHasUsedPart(o) ? tBase.costToSupplier : tBase.costToScrapyard;
         const baseLatest = latestPaidFlagKind([ {
             kind: "مورد",
             at: o.paidToSupplierAt
@@ -18064,15 +18476,22 @@ function subscribeOrdersRealtime() {
     }, applyRemoteOrderChange).subscribe();
 }
 
-async function persistOrder(order, isNew) {
+async function persistOrder(order, isNew, outInfo) {
     try {
         if (!sb) throw new Error("NO_DB");
         const row = orderObjectToRow(order);
-        const {data: data, error: error} = isNew ? await withTimeout(sb.from("orders").insert(row).select("id"), 2e4, "persistOrder insert") : await withTimeout(sb.from("orders").update(row).eq("id", order.id).select("id"), 2e4, "persistOrder update");
+        const {data: data, error: error} = isNew ? await withTimeout(sb.from("orders").insert(row).select("id"), 2e4, "persistOrder insert") : await withTimeout(sb.from("orders").update(row).eq("id", order.id).select("id,paid_to_amer,paid_to_omar,paid_to_supplier,paid_to_amer_new,paid_to_omar_new,paid_to_supplier_new"), 2e4, "persistOrder update");
         if (error) throw error;
         if (!data || !data.length) {
             showToast("تعذر حفظ الطلبية — يبدو أنه تم تعديلها أو حذفها من مكان آخر، أو ليست لديك صلاحية عليها. أغلق النافذة وافتحها من جديد", "error");
             return false;
+        }
+        if (!isNew) {
+            const echo = settlementEchoDetect(row, data[0]);
+            if (echo.used || echo.new) {
+                applySettlementResetToOrder(order, echo);
+                if (outInfo) outInfo.settlementReset = echo;
+            }
         }
         return true;
     } catch (e) {
