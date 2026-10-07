@@ -2000,11 +2000,41 @@ function scrapyardCostSettled(order, t) {
     return t.costToScrapyard <= 0 || !!(order.paidToAmer || order.paidToOmar || order.paidToSupplier);
 }
 
+function bucketPayerOf(order, isNew) {
+    const sfx = isNew ? "New" : "";
+    return order["paidToSupplier" + sfx] ? "supplier" : order["paidToAmer" + sfx] ? "amer" : order["paidToOmar" + sfx] ? "omar" : null;
+}
+
+function bucketSettlement(order, t, bucket) {
+    const isNew = bucket === "new";
+    let payer = bucketPayerOf(order, isNew), legacy = false;
+    if (isNew && !payer && bucketPayerOf(order, false)) {
+        t = t || orderTotals(order);
+        if (t.costToScrapyard <= 0 && t.costToSupplier > 0) {
+            payer = bucketPayerOf(order, false);
+            legacy = true;
+        }
+    }
+    const cap = payer === "supplier" ? "Supplier" : payer === "amer" ? "Amer" : payer === "omar" ? "Omar" : "";
+    const sfx = isNew && !legacy ? "New" : "";
+    const at = payer ? order["paidTo" + cap + sfx + "At"] : null;
+    const snap = payer ? order["paidTo" + cap + sfx + "AmountSnapshot"] : null;
+    return {
+        payer: payer,
+        legacy: legacy,
+        at: at || null,
+        snapshot: snap === undefined ? null : snap
+    };
+}
+
+function orderSingleBucket(t) {
+    return t.costToSupplier > 0 && t.costToScrapyard <= 0 ? "new" : undefined;
+}
+
 function newPartsCostSettled(order, t) {
     t = t || orderTotals(order);
     if (t.costToSupplier <= 0) return true;
-    if (t.costToScrapyard > 0) return !!(order.paidToAmerNew || order.paidToOmarNew || order.paidToSupplierNew);
-    return !!(order.paidToAmer || order.paidToOmar || order.paidToSupplier);
+    return !!bucketSettlement(order, t, "new").payer;
 }
 
 function orderIsMixedPartType(t) {
@@ -2023,18 +2053,14 @@ function partPurchaseCostSettled(order, part, t) {
 }
 
 function bucketHasPaidFlag(order, t, used) {
-    if (used) return !!(order.paidToAmer || order.paidToOmar || order.paidToSupplier);
-    if (orderIsMixedPartType(t)) return !!(order.paidToAmerNew || order.paidToOmarNew || order.paidToSupplierNew);
-    return !!(order.paidToAmer || order.paidToOmar || order.paidToSupplier);
+    return !!(used ? bucketPayerOf(order, false) : bucketSettlement(order, t, "new").payer);
 }
 
 function costSplitStatusLabel(order, bucket) {
-    const supplier = bucket === "new" ? order.paidToSupplierNew : order.paidToSupplier;
-    const amer = bucket === "new" ? order.paidToAmerNew : order.paidToAmer;
-    const omar = bucket === "new" ? order.paidToOmarNew : order.paidToOmar;
-    if (supplier) return "✓ سداد مباشر";
-    if (amer) return "✓ من عهدة عامر";
-    if (omar) return "✓ من عهدة عمر";
+    const payer = bucket === "new" ? bucketSettlement(order, null, "new").payer : bucketPayerOf(order, false);
+    if (payer === "supplier") return "✓ سداد مباشر";
+    if (payer === "amer") return "✓ من عهدة عامر";
+    if (payer === "omar") return "✓ من عهدة عمر";
     return "غير مسدد";
 }
 
@@ -2358,13 +2384,13 @@ function computeAggregateFinancials(matchPeriodFn) {
     periodOrders.forEach(o => {
         const t = orderTotals(o);
         if (scrapyardCostSettled(o, t) && o.paidToSupplier && o.paidToSupplierAt && o.paidToSupplierAt >= DIRECT_PAID_FIX_CUTOFF) directPaidTotal += t.costToScrapyard;
-        if (newPartsCostSettled(o, t)) {
-            const mixed = orderIsMixedPartType(t);
-            const isDirectNew = mixed ? o.paidToSupplierNew : o.paidToSupplier;
-            const settledAtNew = mixed ? o.paidToSupplierNewAt || o.paidToAmerNewAt || o.paidToOmarNewAt : o.paidToSupplierAt || o.paidToAmerAt || o.paidToOmarAt;
-            if (settledAtNew && settledAtNew >= DIRECT_PAID_FIX_CUTOFF) {
-                if (isDirectNew) directPaidTotal += t.costToSupplier;
-            } else directPaidTotal += t.costToSupplier;
+        if (t.costToSupplier > 0) {
+            const stNew = bucketSettlement(o, t, "new");
+            if (stNew.payer) {
+                if (stNew.at && stNew.at >= DIRECT_PAID_FIX_CUTOFF) {
+                    if (stNew.payer === "supplier") directPaidTotal += t.costToSupplier;
+                } else directPaidTotal += t.costToSupplier;
+            }
         }
         customerReceiptsTotal += t.customerPaidAmountForBox;
         if (deliveryOrderEligible(o)) {
@@ -3444,7 +3470,7 @@ function rowHtml(order, precomputedTotals, markArchived) {
     const highlightClass = order.confirmed ? order.supplied ? "row-supplied" : "row-not-supplied" : "row-unconfirmed";
     const pendingCount = orderPendingProposalsCount(order.id);
     const archivedTag = markArchived && order.archived ? '<span class="stamp stamp-amber" style="margin-inline-start:8px;vertical-align:middle;">🗄️ مؤرشفة</span>' : "";
-    return '<tr class="' + highlightClass + '">' + '<td class="confirm-cell">' + (order.confirmed ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="' + escapeHtml(order.id) + '">✓ مؤكدة</button>' : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="' + escapeHtml(order.id) + '">تأكيد</button>') + "</td>" + '<td class="num cell-order">' + escapeHtml(order.orderNumber) + (orderDisplayLabel(order) ? '<span class="order-label-tag">' + escapeHtml(orderDisplayLabel(order)) + "</span>" : "") + archivedTag + (pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">' + pendingCount + "</span>" : "") + "</td>" + "<td>" + ((order.customerPhone || "").trim() ? '<button type="button" class="icon-btn" data-contact-open="' + escapeHtml(order.id) + '" aria-label="تواصل">📞</button>' : '<span class="muted">—</span>') + "</td>" + '<td class="num">' + (t.hasChargeable ? '<span class="' + profitColorClass(t) + '">' + fmtMoney(t.sellTotal) + "</span>" : '<span class="muted">' + (t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد") + "</span>") + "</td>" + "<td>" + (hasElevatedAccess() && (scrapyardCostSettled(order, t) || order.supplied) && t.costToScrapyard > 0 ? stampBadge(scrapyardCostSettled(order, t), "مسدد" + (order.paidToOmar ? " لعمر" : order.paidToAmer ? " لعامر" : order.paidToSupplier ? " مباشرة" : "") + " " + fmtMoney(t.costToScrapyard), "غير مسدد " + fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>') + "</td>" + "<td>" + (hasElevatedAccess() && (newPartsCostSettled(order, t) || order.supplied) && t.costToSupplier > 0 ? stampBadge(newPartsCostSettled(order, t), "مسدد" + (orderIsMixedPartType(t) ? order.paidToAmerNew ? " (عامر)" : order.paidToOmarNew ? " (عمر)" : "" : order.paidToAmer ? " (عامر)" : order.paidToOmar ? " (عمر)" : "") + " " + fmtMoney(t.costToSupplier), "غير مسدد " + fmtMoney(t.costToSupplier)) : '<span class="muted">—</span>') + "</td>" + "<td>" + (order.confirmed ? customerPaymentCellHtml(t, true) : '<span class="muted">—</span>') + "</td>" + '<td class="row-actions">' + '<button class="icon-btn" data-open="' + escapeHtml(order.id) + '">فتح</button>' + (order.archived && !order.confirmed ? '<button class="icon-btn" data-unsuccessful-reason="' + escapeHtml(order.id) + '" title="سبب عدم النجاح">📋' + (order.unsuccessfulReason ? " " + unsuccessfulReasonLabel(order.unsuccessfulReason) : " سبب الفشل") + "</button>" : "") + (order.archived ? '<button class="icon-btn" data-restore="' + escapeHtml(order.id) + '">↩️ استعادة</button>' : '<button class="icon-btn" data-archive="' + escapeHtml(order.id) + '">🗄️ أرشفة</button>') + "</td>" + "</tr>";
+    return '<tr class="' + highlightClass + '">' + '<td class="confirm-cell">' + (order.confirmed ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="' + escapeHtml(order.id) + '">✓ مؤكدة</button>' : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="' + escapeHtml(order.id) + '">تأكيد</button>') + "</td>" + '<td class="num cell-order">' + escapeHtml(order.orderNumber) + (orderDisplayLabel(order) ? '<span class="order-label-tag">' + escapeHtml(orderDisplayLabel(order)) + "</span>" : "") + archivedTag + (pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">' + pendingCount + "</span>" : "") + "</td>" + "<td>" + ((order.customerPhone || "").trim() ? '<button type="button" class="icon-btn" data-contact-open="' + escapeHtml(order.id) + '" aria-label="تواصل">📞</button>' : '<span class="muted">—</span>') + "</td>" + '<td class="num">' + (t.hasChargeable ? '<span class="' + profitColorClass(t) + '">' + fmtMoney(t.sellTotal) + "</span>" : '<span class="muted">' + (t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد") + "</span>") + "</td>" + "<td>" + (hasElevatedAccess() && (scrapyardCostSettled(order, t) || order.supplied) && t.costToScrapyard > 0 ? stampBadge(scrapyardCostSettled(order, t), "مسدد" + (order.paidToOmar ? " لعمر" : order.paidToAmer ? " لعامر" : order.paidToSupplier ? " مباشرة" : "") + " " + fmtMoney(t.costToScrapyard), "غير مسدد " + fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>') + "</td>" + "<td>" + (hasElevatedAccess() && (newPartsCostSettled(order, t) || order.supplied) && t.costToSupplier > 0 ? stampBadge(newPartsCostSettled(order, t), "مسدد" + (bucketSettlement(order, t, "new").payer === "amer" ? " (عامر)" : bucketSettlement(order, t, "new").payer === "omar" ? " (عمر)" : "") + " " + fmtMoney(t.costToSupplier), "غير مسدد " + fmtMoney(t.costToSupplier)) : '<span class="muted">—</span>') + "</td>" + "<td>" + (order.confirmed ? customerPaymentCellHtml(t, true) : '<span class="muted">—</span>') + "</td>" + '<td class="row-actions">' + '<button class="icon-btn" data-open="' + escapeHtml(order.id) + '">فتح</button>' + (order.archived && !order.confirmed ? '<button class="icon-btn" data-unsuccessful-reason="' + escapeHtml(order.id) + '" title="سبب عدم النجاح">📋' + (order.unsuccessfulReason ? " " + unsuccessfulReasonLabel(order.unsuccessfulReason) : " سبب الفشل") + "</button>" : "") + (order.archived ? '<button class="icon-btn" data-restore="' + escapeHtml(order.id) + '">↩️ استعادة</button>' : '<button class="icon-btn" data-archive="' + escapeHtml(order.id) + '">🗄️ أرشفة</button>') + "</td>" + "</tr>";
 }
 
 function cardHtml(order, precomputedTotals, markArchived) {
@@ -3452,7 +3478,7 @@ function cardHtml(order, precomputedTotals, markArchived) {
     const highlightClass = order.confirmed ? order.supplied ? "card-supplied" : "card-not-supplied" : "card-unconfirmed";
     const pendingCount = orderPendingProposalsCount(order.id);
     const archivedTag = markArchived && order.archived ? '<span class="stamp stamp-amber" style="margin-inline-start:8px;vertical-align:middle;">🗄️ مؤرشفة</span>' : "";
-    return '<div class="order-card ' + highlightClass + '">' + '<div class="order-card-head">' + '<span class="num cell-order">' + escapeHtml(order.orderNumber) + (orderDisplayLabel(order) ? ' <span class="order-label-tag">' + escapeHtml(orderDisplayLabel(order)) + "</span>" : "") + archivedTag + (pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">' + pendingCount + "</span>" : "") + "</span>" + '<div class="order-card-head-actions">' + (order.confirmed ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="' + escapeHtml(order.id) + '">✓ مؤكدة</button>' : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="' + escapeHtml(order.id) + '">تأكيد</button>') + ((order.customerPhone || "").trim() ? '<button type="button" class="icon-btn" data-contact-open="' + escapeHtml(order.id) + '" aria-label="تواصل">📞</button>' : "") + "</div>" + "</div>" + '<div class="order-card-row"><span>إجمالي البيع</span><span class="num ' + (t.hasChargeable ? profitColorClass(t) : "") + '">' + (t.hasChargeable ? fmtMoney(t.sellTotal) : t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد") + "</span></div>" + '<div class="order-card-badges">' + (hasElevatedAccess() && (scrapyardCostSettled(order, t) || order.supplied) && t.costToScrapyard > 0 ? stampBadge(scrapyardCostSettled(order, t), "مسدد للتشليح" + (order.paidToOmar ? " (عمر)" : order.paidToAmer ? " (عامر)" : order.paidToSupplier ? " (مباشرة)" : "") + " " + fmtMoney(t.costToScrapyard), "غير مسدد للتشليح " + fmtMoney(t.costToScrapyard)) : "") + (hasElevatedAccess() && (newPartsCostSettled(order, t) || order.supplied) && t.costToSupplier > 0 ? stampBadge(newPartsCostSettled(order, t), "مسدد للمورد" + (orderIsMixedPartType(t) ? order.paidToAmerNew ? " (عامر)" : order.paidToOmarNew ? " (عمر)" : "" : order.paidToAmer ? " (عامر)" : order.paidToOmar ? " (عمر)" : "") + " " + fmtMoney(t.costToSupplier), "غير مسدد للمورد " + fmtMoney(t.costToSupplier)) : "") + (!t.fullyPriced && !t.allPartsReturned && !t.noActiveParts ? '<span class="stamp stamp-amber">بانتظار التسعير</span>' : order.confirmed ? customerPaymentCellHtml(t, false) : "") + "</div>" + '<div class="order-card-actions">' + '<button class="icon-btn" data-open="' + escapeHtml(order.id) + '">فتح</button>' + (order.archived && !order.confirmed ? '<button class="icon-btn" data-unsuccessful-reason="' + escapeHtml(order.id) + '" title="سبب عدم النجاح">📋' + (order.unsuccessfulReason ? " " + unsuccessfulReasonLabel(order.unsuccessfulReason) : " سبب الفشل") + "</button>" : "") + (order.archived ? '<button class="icon-btn" data-restore="' + escapeHtml(order.id) + '">↩️ استعادة</button>' : '<button class="icon-btn" data-archive="' + escapeHtml(order.id) + '">🗄️ أرشفة</button>') + "</div>" + "</div>";
+    return '<div class="order-card ' + highlightClass + '">' + '<div class="order-card-head">' + '<span class="num cell-order">' + escapeHtml(order.orderNumber) + (orderDisplayLabel(order) ? ' <span class="order-label-tag">' + escapeHtml(orderDisplayLabel(order)) + "</span>" : "") + archivedTag + (pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">' + pendingCount + "</span>" : "") + "</span>" + '<div class="order-card-head-actions">' + (order.confirmed ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="' + escapeHtml(order.id) + '">✓ مؤكدة</button>' : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="' + escapeHtml(order.id) + '">تأكيد</button>') + ((order.customerPhone || "").trim() ? '<button type="button" class="icon-btn" data-contact-open="' + escapeHtml(order.id) + '" aria-label="تواصل">📞</button>' : "") + "</div>" + "</div>" + '<div class="order-card-row"><span>إجمالي البيع</span><span class="num ' + (t.hasChargeable ? profitColorClass(t) : "") + '">' + (t.hasChargeable ? fmtMoney(t.sellTotal) : t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد") + "</span></div>" + '<div class="order-card-badges">' + (hasElevatedAccess() && (scrapyardCostSettled(order, t) || order.supplied) && t.costToScrapyard > 0 ? stampBadge(scrapyardCostSettled(order, t), "مسدد للتشليح" + (order.paidToOmar ? " (عمر)" : order.paidToAmer ? " (عامر)" : order.paidToSupplier ? " (مباشرة)" : "") + " " + fmtMoney(t.costToScrapyard), "غير مسدد للتشليح " + fmtMoney(t.costToScrapyard)) : "") + (hasElevatedAccess() && (newPartsCostSettled(order, t) || order.supplied) && t.costToSupplier > 0 ? stampBadge(newPartsCostSettled(order, t), "مسدد للمورد" + (bucketSettlement(order, t, "new").payer === "amer" ? " (عامر)" : bucketSettlement(order, t, "new").payer === "omar" ? " (عمر)" : "") + " " + fmtMoney(t.costToSupplier), "غير مسدد للمورد " + fmtMoney(t.costToSupplier)) : "") + (!t.fullyPriced && !t.allPartsReturned && !t.noActiveParts ? '<span class="stamp stamp-amber">بانتظار التسعير</span>' : order.confirmed ? customerPaymentCellHtml(t, false) : "") + "</div>" + '<div class="order-card-actions">' + '<button class="icon-btn" data-open="' + escapeHtml(order.id) + '">فتح</button>' + (order.archived && !order.confirmed ? '<button class="icon-btn" data-unsuccessful-reason="' + escapeHtml(order.id) + '" title="سبب عدم النجاح">📋' + (order.unsuccessfulReason ? " " + unsuccessfulReasonLabel(order.unsuccessfulReason) : " سبب الفشل") + "</button>" : "") + (order.archived ? '<button class="icon-btn" data-restore="' + escapeHtml(order.id) + '">↩️ استعادة</button>' : '<button class="icon-btn" data-archive="' + escapeHtml(order.id) + '">🗄️ أرشفة</button>') + "</div>" + "</div>";
 }
 
 function orderNumberSortKey(order) {
@@ -3982,7 +4008,7 @@ function costSplitLockAttr(d, settled) {
 
 function costSplitButtonsHtml(d, t) {
     if (!orderIsMixedPartType(t)) {
-        return '<div class="cost-split-row">' + '<button type="button" class="cost-split-box' + (orderPurchaseSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn"' + costSplitLockAttr(d, orderPurchaseSettled(d, t)) + ">" + "<span>المجموع للمورد</span>" + '<span class="num" id="cost-split-display">' + fmtMoney(t.costTotal) + "</span>" + '<span class="cost-split-status" id="cost-split-status">' + costSplitStatusLabel(d) + "</span>" + "</button>" + "</div>";
+        return '<div class="cost-split-row">' + '<button type="button" class="cost-split-box' + (orderPurchaseSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn"' + costSplitLockAttr(d, orderPurchaseSettled(d, t)) + ">" + "<span>المجموع للمورد</span>" + '<span class="num" id="cost-split-display">' + fmtMoney(t.costTotal) + "</span>" + '<span class="cost-split-status" id="cost-split-status">' + costSplitStatusLabel(d, orderSingleBucket(t)) + "</span>" + "</button>" + "</div>";
     }
     return '<div class="cost-split-row">' + '<button type="button" class="cost-split-box' + (scrapyardCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-scrapyard"' + costSplitLockAttr(d, scrapyardCostSettled(d, t) && t.costToScrapyard > 0) + ">" + "<span>سداد التشليح</span>" + '<span class="num">' + fmtMoney(t.costToScrapyard) + "</span>" + '<span class="cost-split-status">' + costSplitStatusLabel(d) + "</span>" + "</button>" + '<button type="button" class="cost-split-box' + (newPartsCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-new"' + costSplitLockAttr(d, newPartsCostSettled(d, t) && t.costToSupplier > 0) + ">" + "<span>سداد الجديد</span>" + '<span class="num">' + fmtMoney(t.costToSupplier) + "</span>" + '<span class="cost-split-status">' + costSplitStatusLabel(d, "new") + "</span>" + "</button>" + "</div>";
 }
@@ -7288,7 +7314,7 @@ function bindCostSplitButtons() {
                 return;
             }
             openSettlementChoiceModal(draft, choice => {
-                const prevChoice = bucket === "new" ? draft.paidToSupplierNew ? "supplier" : draft.paidToAmerNew ? "amer" : draft.paidToOmarNew ? "omar" : null : draft.paidToSupplier ? "supplier" : draft.paidToAmer ? "amer" : draft.paidToOmar ? "omar" : null;
+                const prevChoice = bucket === "new" ? bucketSettlement(draft, orderTotals(draft), "new").payer : bucketPayerOf(draft, false);
                 if (choice === prevChoice) return;
                 if (choice && !draft.confirmed) {
                     showToast("لا يمكن تسجيل السداد قبل تأكيد الطلبية", "error");
@@ -7308,21 +7334,26 @@ function bindCostSplitButtons() {
                 draft[omarKey] = choice === "omar";
                 draft[omarKey + "At"] = choice === "omar" ? now : null;
                 draft[omarKey + "AmountSnapshot"] = choice === "omar" ? amountSnapshot : null;
+                if (bucket === "new" && orderTotals(draft).costToScrapyard <= 0) {
+                    [ "paidToSupplier", "paidToAmer", "paidToOmar" ].forEach(k => {
+                        draft[k] = false;
+                        draft[k + "At"] = null;
+                        draft[k + "AmountSnapshot"] = null;
+                    });
+                }
                 updateModalTotals();
             }, bucket);
         });
     };
-    bindOne("cost-split-btn", undefined, "costTotal");
+    const singleBucket = orderSingleBucket(orderTotals(draft));
+    bindOne("cost-split-btn", singleBucket, singleBucket === "new" ? "costToSupplier" : "costToScrapyard");
     bindOne("cost-split-btn-scrapyard", undefined, "costToScrapyard");
     bindOne("cost-split-btn-new", "new", "costToSupplier");
 }
 
 function openSettlementChoiceModal(order, onChoose, bucket) {
     const root = document.getElementById("confirm-root");
-    const supplierField = bucket === "new" ? order.paidToSupplierNew : order.paidToSupplier;
-    const amerField = bucket === "new" ? order.paidToAmerNew : order.paidToAmer;
-    const omarField = bucket === "new" ? order.paidToOmarNew : order.paidToOmar;
-    const current = supplierField ? "supplier" : amerField ? "amer" : omarField ? "omar" : null;
+    const current = bucket === "new" ? bucketSettlement(order, orderTotals(order), "new").payer : bucketPayerOf(order, false);
     const optionBtn = (key, label) => '<button type="button" class="btn ' + (current === key ? "btn-primary" : "btn-ghost") + '" data-settlement-choice="' + key + '" style="width:100%;margin-bottom:8px;">' + (current === key ? "✓ " : "") + label + "</button>";
     root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">سداد ' + (bucket === "new" ? "القطع الجديدة" : "المشتريات") + " — من؟</div>" + optionBtn("supplier", "سداد مباشر") + optionBtn("amer", "من عهدة عامر") + optionBtn("omar", "من عهدة عمر") + (current ? '<button type="button" class="btn btn-ghost" id="settlement-choice-clear-btn" style="width:100%;margin-bottom:8px;">✕ إلغاء التسديد</button>' : "") + '<div class="modal-footer-actions" style="margin-top:8px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" id="settlement-choice-cancel-btn">إغلاق</button>' + "</div>" + "</div>" + "</div>";
     root.classList.add("modal-open");
@@ -15608,7 +15639,7 @@ function accountsActivityForDate(isoDate) {
             if (p.returnAdjustment) customerRefunds.push(row); else customerPayments.push(row);
         });
         const tBase = orderTotals(o);
-        const baseFallback = orderIsMixedPartType(tBase) ? tBase.costToScrapyard : tBase.costTotal;
+        const baseFallback = orderSingleBucket(tBase) === "new" ? tBase.costToSupplier : tBase.costToScrapyard;
         const baseLatest = latestPaidFlagKind([ {
             kind: "مورد",
             at: o.paidToSupplierAt
@@ -16557,9 +16588,8 @@ function paidToScrapyardTotalForCustody() {
     (appData.orders || []).forEach(o => {
         if (!o.confirmed || o.custodyLegacy || o.isQuote) return;
         const t = orderTotals(o);
-        const mixed = orderIsMixedPartType(t);
-        if (o.paidToAmer && !o.paidToSupplier) total += mixed ? t.costToScrapyard : t.costTotal;
-        if (o.paidToAmerNew && mixed && !o.paidToSupplierNew) total += t.costToSupplier;
+        if (o.paidToAmer && !o.paidToSupplier) total += t.costToScrapyard;
+        if (t.costToSupplier > 0 && bucketSettlement(o, t, "new").payer === "amer") total += t.costToSupplier;
     });
     return round2(total);
 }
@@ -16599,9 +16629,8 @@ function paidToScrapyardTotalForOmar() {
     (appData.orders || []).forEach(o => {
         if (!o.confirmed || o.custodyLegacy || o.isQuote) return;
         const t = orderTotals(o);
-        const mixed = orderIsMixedPartType(t);
-        if (o.paidToOmar && !o.paidToSupplier) total += mixed ? t.costToScrapyard : t.costTotal;
-        if (o.paidToOmarNew && mixed && !o.paidToSupplierNew) total += t.costToSupplier;
+        if (o.paidToOmar && !o.paidToSupplier) total += t.costToScrapyard;
+        if (t.costToSupplier > 0 && bucketSettlement(o, t, "new").payer === "omar") total += t.costToSupplier;
     });
     return round2(total);
 }
@@ -17313,7 +17342,7 @@ async function exportAllDataToExcel() {
             "مستحق للتشليح": t.costToScrapyard,
             "مسدد للتشليح": t.costToScrapyard > 0 ? o.paidToAmer ? "نعم (عامر)" : o.paidToOmar ? "نعم (عمر)" : o.paidToSupplier ? "مسدد مباشرة" : "لا" : "",
             "مستحق للمورد": t.costToSupplier,
-            "مسدد للمورد": t.costToSupplier > 0 ? orderIsMixedPartType(t) ? o.paidToSupplierNew ? "نعم" : newPartsCostSettled(o, t) ? "مسدد عن طريق العهدة" : "لا" : o.paidToSupplier ? "نعم" : newPartsCostSettled(o, t) ? "مسدد عن طريق العهدة" : "لا" : "",
+            "مسدد للمورد": t.costToSupplier > 0 ? bucketSettlement(o, t, "new").payer === "supplier" ? "نعم" : newPartsCostSettled(o, t) ? "مسدد عن طريق العهدة" : "لا" : "",
             "مسعّرة بالكامل": t.fullyPriced ? "نعم" : "لا",
             "إجمالي البيع": t.hasChargeable ? t.sellTotal : "",
             "نسبة رسوم الخدمة %": t.feeEnabled ? t.feePercent : "",
