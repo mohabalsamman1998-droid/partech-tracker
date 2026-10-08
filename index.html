@@ -2338,6 +2338,15 @@ function settlementResetPlan(liveOrder, draftOrder) {
         plan.resetNew = Math.abs(plan.newAfter - plan.newBefore) > .005;
     }
     plan.label = plan.resetUsed && plan.resetNew ? "التشليح والجديد" : plan.resetUsed ? "التشليح" : plan.resetNew ? "الجديد" : "";
+    const frozenUsed = !!plan.resetUsed && orderBucketLegacySettled(liveOrder, false);
+    const shimNewChanged = !plan.resetNew && liveUsed && !liveNew && orderBucketSettled(draftOrder, false) && Math.abs(orderBucketBasis(draftOrder.parts, draftOrder.partsSelectionEnabled, false) - orderBucketBasis(liveOrder.parts, liveOrder.partsSelectionEnabled, false)) > .005;
+    const frozenNew = !!plan.resetNew && orderBucketLegacySettled(liveOrder, true) || shimNewChanged && !orderHasUsedPart(liveOrder) && orderBucketLegacySettled(liveOrder, false);
+    if (frozenUsed || frozenNew) {
+        plan.frozenUsed = frozenUsed;
+        plan.frozenNew = frozenNew;
+        plan.blockReason = settlementFrozenText(frozenUsed, frozenNew, true);
+        return plan;
+    }
     const blockedUsed = !!plan.resetUsed && bucketUncollectedReturnParts(draftOrder, true).length > 0;
     const blockedNew = !!plan.resetNew && bucketUncollectedReturnParts(draftOrder, false).length > 0;
     if (blockedUsed || blockedNew) {
@@ -2346,6 +2355,35 @@ function settlementResetPlan(liveOrder, draftOrder) {
         plan.blockReason = unsettleBlockReason(draftOrder, blockedUsed ? undefined : "new", "edit");
     }
     return plan;
+}
+
+function orderBucketLegacySettled(order, isNew) {
+    if (!order) return false;
+    const s = isNew ? "New" : "";
+    const cap = order["paidToSupplier" + s] ? "Supplier" : order["paidToAmer" + s] ? "Amer" : order["paidToOmar" + s] ? "Omar" : "";
+    if (!cap) return false;
+    if (order.custodyLegacy) return true;
+    const at = order["paidTo" + cap + s + "At"];
+    return !(typeof at === "string" && at >= DIRECT_PAID_FIX_CUTOFF);
+}
+
+function settlementFrozenText(frozenUsed, frozenNew, elevated) {
+    if (!elevated) return "لا يمكن تعديل تكلفة أو كمية أو قطع هذه الطلبية — طلبية قديمة مقفلة حسابيًا. راجع الإدارة.";
+    const which = frozenUsed && frozenNew ? "قطع التشليح والجديد" : frozenUsed ? "قطع التشليح" : "القطع الجديدة";
+    return "لا يمكن تعديل تكلفة أو كمية " + which + " في هذه الطلبية ولا إضافة أو حذف أو استبعاد أو تبديل نوع قطعة منها: تسديدها قديم (قبل 26/09/2026 أو بلا تاريخ أو من عهدة قديمة) " + "ومحسوب بالصندوق بالقاعدة القديمة، وإلغاؤه وإعادة تسجيله يخصم المبلغ مرة ثانية. لا تعديل على القديم.";
+}
+
+function settlementBucketFrozen(base, bucket) {
+    if (!base) return false;
+    if (bucket === "new") {
+        if (orderBucketSettled(base, true)) return orderBucketLegacySettled(base, true);
+        return orderBucketSettled(base, false) && !orderHasUsedPart(base) && orderBucketLegacySettled(base, false);
+    }
+    return orderBucketLegacySettled(base, false);
+}
+
+function settlementFlagsFrozenText(bucket) {
+    return "لا يمكن إلغاء أو تغيير تسديد " + (bucket === "new" ? "القطع الجديدة" : "قطع التشليح") + " في هذه الطلبية: تسديدها قديم (قبل 26/09/2026 أو بلا تاريخ أو من عهدة قديمة) " + "ومحسوب بالصندوق بالقاعدة القديمة، وإلغاؤه أو إعادة تسجيله يغيّر الصندوق ويحسب المبلغ مرة ثانية. لا تعديل على القديم.";
 }
 
 function settlementResetWarningText(plan) {
@@ -2431,7 +2469,15 @@ function captureSettleBase(order) {
     return Object.assign(orderSettlementRowFlagsCamel(order), {
         partsSelectionEnabled: !!order.partsSelectionEnabled,
         parts: JSON.parse(JSON.stringify(Array.isArray(order.parts) ? order.parts : []))
+    }, settlementLegacyKeysOf(order));
+}
+
+function settlementLegacyKeysOf(order) {
+    const out = {};
+    [ "paidToSupplierAt", "paidToAmerAt", "paidToOmarAt", "paidToSupplierNewAt", "paidToAmerNewAt", "paidToOmarNewAt", "custodyLegacy" ].forEach(k => {
+        if (order[k] !== undefined) out[k] = order[k];
     });
+    return out;
 }
 
 function orderSettlementRowFlagsCamel(order) {
@@ -7710,6 +7756,8 @@ function friendlyErrorText(e) {
     if (code === "PT422" || e && e.hint === "media_part_not_saved") return "لم يتم حفظ القطعة بعد";
     if (code === "PT412" || e && e.hint === "media_objects_missing") return "لم يكتمل الرفع — جرّب مرة أخرى";
     if (code === "PT410" || e && e.hint === "media_deleted") return "تم حذف الملف";
+    if (code === "PT424" || e && e.hint === "settled_bucket_return_block") return e && e.message || "لا يمكن تعديل سعر أو عدد أو نوع قطع هذه الطلبية الآن";
+    if (code === "PT423" || e && e.hint === "legacy_settlement_frozen") return "هذه الطلبية قديمة ومقفلة حسابيًا — لا يمكن تعديل تكلفة أو كمية أو قطع منها. راجع الإدارة";
     if (msg === "NO_DB") return "الاتصال بقاعدة البيانات غير متاح حاليًا";
     if (code === "PGRST202") return "نسخة التطبيق لديك قديمة — حدّث الصفحة وحاول مرة أخرى";
     if (/fetch|network|timeout/i.test(msg)) return "تحقق من اتصال الإنترنت وحاول مرة أخرى";
@@ -7872,6 +7920,10 @@ function bindCostSplitButtons() {
                 showToast("غير متاح", "error");
                 return;
             }
+            if (settlementBucketFrozen(draftSettleBase, bucket)) {
+                showToast(settlementFlagsFrozenText(bucket), "error");
+                return;
+            }
             openSettlementChoiceModal(draft, choice => {
                 const prevChoice = bucket === "new" ? bucketSettlement(draft, orderTotals(draft), "new").payer : bucketPayerOf(draft, false);
                 if (choice === prevChoice) return;
@@ -7889,7 +7941,7 @@ function bindCostSplitButtons() {
                 if (choice && draftSettleBase) {
                     const resetPl = settlementResetPlan(draftSettleBase, draft);
                     if (bucket === "new" ? resetPl.resetNew : resetPl.resetUsed) {
-                        showToast("تغيّرت تكلفة هذا الجزء بعد تسجيل سداده — احفظ الطلبية أولًا (سيُلغى التسديد القديم) ثم سجّل التسديد من جديد", "error");
+                        showToast((bucket === "new" ? resetPl.frozenNew : resetPl.frozenUsed) ? resetPl.blockReason : "تغيّرت تكلفة هذا الجزء بعد تسجيل سداده — احفظ الطلبية أولًا (سيُلغى التسديد القديم) ثم سجّل التسديد من جديد", "error");
                         return;
                     }
                 }
@@ -8904,20 +8956,27 @@ async function onSaveOrder() {
             showToast("يجب تحديد طريقة الدفع (كاش/شبكة) لكل دفعة قبل الحفظ", "error");
             return false;
         }
-        const cleanedPayments = (draft.customerPayments || []).filter(p => p.amount !== "" && p.amount != null && Number(p.amount) > 0).map(p => ({
-            id: p.id,
-            amount: Number(p.amount) || 0,
-            method: p.method || "",
-            date: (p.date || "").trim(),
-            returnAdjustment: !!p.returnAdjustment,
-            linkedPartId: p.linkedPartId || null
-        }));
+        const cleanedPayments = (draft.customerPayments || []).filter(p => p.amount !== "" && p.amount != null && Number(p.amount) > 0).map(p => {
+            const c = {
+                id: p.id,
+                amount: Number(p.amount) || 0,
+                method: p.method || "",
+                date: (p.date || "").trim()
+            };
+            if (p.returnAdjustment || Object.prototype.hasOwnProperty.call(p, "returnAdjustment")) c.returnAdjustment = !!p.returnAdjustment;
+            if (p.linkedPartId || Object.prototype.hasOwnProperty.call(p, "linkedPartId")) c.linkedPartId = p.linkedPartId || null;
+            return c;
+        });
         if (!draft.isNew && draftSettleBase) {
             const resetPlan = settlementResetPlan(draftSettleBase, Object.assign({}, draft, {
                 parts: cleanedParts
             }));
             if (resetPlan.blockReason && hasElevatedAccess()) {
                 showToast(resetPlan.blockReason, "error");
+                return false;
+            }
+            if (resetPlan.frozenUsed || resetPlan.frozenNew) {
+                showToast(settlementFrozenText(resetPlan.frozenUsed, resetPlan.frozenNew, false), "error");
                 return false;
             }
             if (resetPlan.resetUsed || resetPlan.resetNew) {
@@ -9006,7 +9065,7 @@ function quoteReturnConfirmMessage(order) {
     if (orderCashFootprintVisible(order)) {
         if (hasElevatedAccess()) {
             msg += " ملاحظة: الدفعات والتسديدات المسجّلة على هذه الطلبية تبقى محسوبة بالصندوق والعهدة وتقرير حركة الحسابات كما هي، أما المستحقات (من الزبائن وللتشاليح والموردين) والأرباح فتُعلَّق مؤقتًا إلى أن تُعتمد التسعيرة من جديد.";
-            if (orderHasSettlementFlag(order)) msg += " وإذا تغيّرت تكلفة قطعة مسددة أثناء إعادة التسعير يُلغى تسديدها تلقائيًا ويلزم تسجيله من جديد بعد الاعتماد.";
+            if (orderHasSettlementFlag(order)) msg += settlementBucketFrozen(order, undefined) || settlementBucketFrozen(order, "new") ? " تنبيه: في هذه الطلبية تسديد قديم مجمّد (لا تعديل على القديم) — تعديل تكلفة قطعه (سعر/كمية/نوع/إضافة/حذف) سيُرفض عند الحفظ، ولا يمكن إلغاء ذلك التسديد." : " وإذا تغيّرت تكلفة قطعة مسددة أثناء إعادة التسعير يُلغى تسديدها تلقائيًا ويلزم تسجيله من جديد بعد الاعتماد.";
         } else {
             msg += " ملاحظة: الدفعات المسجّلة على هذه الطلبية تبقى محسوبة بالصندوق وتقرير حركة الحسابات، وتُعلَّق المستحقات والأرباح مؤقتًا إلى أن تُعتمد التسعيرة من جديد.";
         }
@@ -11873,7 +11932,8 @@ function quotePartRowHtml(p, i) {
     const usedBadgeHtml = locked ? '<span class="used-badge used-badge-off" title="قطعة مرتجعة — ما بتتعدّل بالتسعيرة">' + usedLabel + " 🔒 مرتجعة</span>" : '<button type="button" class="used-badge' + (p.used ? "" : " used-badge-off") + '" data-toggle-used="' + escapeHtml(p.id) + '">' + usedLabel + " ✏️</button>";
     const supplierListLabel = p.used === null ? "المورد/التشليح" : p.used ? "التشليح" : "المورد";
     const supplierPlaceholder = p.used === null ? "— بدون مورد/تشليح —" : p.used ? "— بدون تشليح —" : "— بدون مورد —";
-    const supplierFieldHtml = !readOnly || undetermined ? "" : '<label class="mini-label mini-label-supplier">' + supplierListLabel + searchableSelectHtml("quote-part-supplier-select", (appData.suppliers || []).filter(s => p.used === null ? s.handlesNew || s.handlesUsed : p.used ? s.handlesUsed : s.handlesNew).map(s => ({
+    const lockedSupplier = locked && p.supplierId ? (appData.suppliers || []).find(s => s.id === p.supplierId) : null;
+    const supplierFieldHtml = !readOnly || undetermined ? "" : locked ? '<label class="mini-label mini-label-supplier">' + supplierListLabel + '<span class="field-readonly-value" title="قطعة مرتجعة — المورد ما بيتغيّر بالتسعيرة">' + escapeHtml(lockedSupplier ? lockedSupplier.name || lockedSupplier.phone || "مورد" : p.supplierId ? "مورد" : supplierPlaceholder) + " 🔒</span>" + "</label>" : '<label class="mini-label mini-label-supplier">' + supplierListLabel + searchableSelectHtml("quote-part-supplier-select", (appData.suppliers || []).filter(s => p.used === null ? s.handlesNew || s.handlesUsed : p.used ? s.handlesUsed : s.handlesNew).map(s => ({
         id: s.id,
         label: s.name || s.phone || "مورد",
         sublabel: s.phone
@@ -12232,6 +12292,7 @@ function quoteMissingSupplierForPricedParts() {
     return quoteDraft.parts.some(p => {
         if (!p.description || !p.description.trim()) return false;
         if (p.used === null || p.supplierId) return false;
+        if (p.returned) return false;
         return quotePartIsPriced(p);
     });
 }
@@ -12306,6 +12367,10 @@ async function saveQuoteDraft(markSent) {
         }));
         if (qPlan.blockReason && hasElevatedAccess()) {
             showToast(qPlan.blockReason, "error");
+            return false;
+        }
+        if (qPlan.frozenUsed || qPlan.frozenNew) {
+            showToast(settlementFrozenText(qPlan.frozenUsed, qPlan.frozenNew, false), "error");
             return false;
         }
         if (qPlan.resetUsed || qPlan.resetNew) {
@@ -12442,6 +12507,10 @@ async function onApproveQuote() {
         }));
         if (aPlan.blockReason && hasElevatedAccess()) {
             showToast(aPlan.blockReason, "error");
+            return;
+        }
+        if (aPlan.frozenUsed || aPlan.frozenNew) {
+            showToast(settlementFrozenText(aPlan.frozenUsed, aPlan.frozenNew, false), "error");
             return;
         }
         if (aPlan.resetUsed || aPlan.resetNew) {
@@ -12671,6 +12740,7 @@ async function onSaveQuotePricing() {
         showToast("يجب تحديد حالة كل قطعة مستعملة (نظيف تماما / نظيف مع ملاحظات / غير نظيف) قبل الحفظ", "error");
         return;
     }
+    if (!await quotePricingSettlementGate(cleanedParts)) return;
     quoteDraft.parts = cleanedParts;
     quoteDraft.orderLabel = (quoteDraft.orderLabel || "").trim();
     const draftId = quoteDraft.id;
@@ -12688,11 +12758,16 @@ async function onSaveQuotePricing() {
     }
     mediaAfterSaveSuccess(draftId, mediaSnap, cleanedParts);
     savedDraft.updatedAt = res.updatedAt;
-    await adoptSettlementFromDb(savedDraft);
+    const resetEcho = await adoptSettlementFromDb(savedDraft);
     const idx = appData.orders.findIndex(o => o.id === draftId);
     if (idx >= 0) appData.orders[idx] = savedDraft;
-    if (!quoteModalStillOpen(draftId)) return;
+    const resetToastText = resetEcho && hasElevatedAccess() ? "أُلغي تسديد " + settlementResetLabel(resetEcho) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح" : "";
+    if (!quoteModalStillOpen(draftId)) {
+        if (resetToastText) showToast(resetToastText, "ok");
+        return;
+    }
     quoteOpenedAtUpdatedAt = res.updatedAt;
+    quoteSettleBase = captureSettleBase(savedDraft);
     const root = document.getElementById("modal-root");
     const prevBackdrop = root.querySelector(".modal-backdrop");
     const prevScrollTop = prevBackdrop ? prevBackdrop.scrollTop : 0;
@@ -12703,6 +12778,7 @@ async function onSaveQuotePricing() {
     if (newBackdrop) newBackdrop.scrollTop = prevScrollTop;
     renderQuotesList();
     showToast("تم الحفظ", "ok");
+    if (resetToastText) showToast(resetToastText, "ok");
 }
 
 async function onSaveAndSendQuotePricing() {
@@ -12721,6 +12797,7 @@ async function onSaveAndSendQuotePricing() {
         showToast("يجب تحديد حالة كل قطعة مستعملة (نظيف تماما / نظيف مع ملاحظات / غير نظيف) قبل الحفظ", "error");
         return;
     }
+    if (!await quotePricingSettlementGate(cleanedParts)) return;
     quoteDraft.parts = cleanedParts;
     quoteDraft.orderLabel = (quoteDraft.orderLabel || "").trim();
     quoteDraft.quoteReady = true;
@@ -12738,12 +12815,13 @@ async function onSaveAndSendQuotePricing() {
     }
     mediaAfterSaveSuccess(draftId, mediaSnap, cleanedParts);
     sentDraft.updatedAt = res.updatedAt;
-    await adoptSettlementFromDb(sentDraft);
+    const resetEcho = await adoptSettlementFromDb(sentDraft);
     if (quoteModalStillOpen(draftId)) quoteOpenedAtUpdatedAt = res.updatedAt;
     const idx = appData.orders.findIndex(o => o.id === draftId);
     if (idx >= 0) appData.orders[idx] = sentDraft;
     renderQuotesList();
     showToast("تم الحفظ والإرسال", "ok");
+    if (resetEcho && hasElevatedAccess()) showToast("أُلغي تسديد " + settlementResetLabel(resetEcho) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح", "ok");
     if (!quoteModalStillOpen(draftId)) return;
     closeQuoteModal();
 }
@@ -13054,6 +13132,41 @@ function confirmSettlementResetOrAbort(plan, escFn) {
     });
 }
 
+function quotePricingSettlementBlockText(plan, elevated) {
+    if (!plan) return "";
+    if (plan.frozenUsed || plan.frozenNew) return settlementFrozenText(!!plan.frozenUsed, !!plan.frozenNew, !!elevated);
+    if (!plan.blockedUsed && !plan.blockedNew) return "";
+    return elevated ? plan.blockReason : "لا يمكن تعديل سعر أو عدد أو نوع قطع هذه الطلبية الآن — فيها قطعة مرتجعة لم يُحصَّل مبلغها من المورد بعد. أعد القيم كما كانت، أو عدّلها بعد تحصيل المرتجع.";
+}
+
+async function quotePricingSettlementGate(cleanedParts) {
+    if (!quoteDraft) return false;
+    if ((quoteDraft.parts || []).some(p => p && p.returned && !(p.description || "").trim())) {
+        showToast("لا يمكن ترك وصف قطعة مرتجعة فارغًا — القطعة المرتجعة لا تُحذف من التسعيرة. اكتب وصفها ثم احفظ.", "error");
+        return false;
+    }
+    if (quoteDraft.isNew || !quoteSettleBase) return true;
+    const gId = quoteDraft.id, gRef = quoteDraft;
+    const plan = settlementResetPlan(quoteSettleBase, Object.assign({}, quoteDraft, {
+        parts: cleanedParts
+    }));
+    const why = quotePricingSettlementBlockText(plan, hasElevatedAccess());
+    if (why) {
+        showToast(why, "error");
+        return false;
+    }
+    if (!plan.resetUsed && !plan.resetNew) return true;
+    const gLive = appData.orders.find(o => o.id === gId);
+    const gLiveStamp = gLive ? gLive.updatedAt || null : null;
+    const gGo = await confirmSettlementResetOrAbort(plan, quoteEscListener);
+    if (!quoteModalStillOpen(gId, gRef)) {
+        if (!quoteDraft) document.removeEventListener("keydown", quoteEscListener);
+        return false;
+    }
+    if (!gGo) return false;
+    return await checkQuoteSaveConflict(gLiveStamp);
+}
+
 function confirmReminder(message) {
     return new Promise(resolve => {
         confirmAction({
@@ -13147,6 +13260,7 @@ function orderHasPendingCustomerRefund(order) {
 }
 
 function orderUnconfirmBlockReason(order) {
+    if (orderBucketLegacySettled(order, false) || orderBucketLegacySettled(order, true)) return "لا يمكن إلغاء تأكيد هذه الطلبية: عليها تسديد قديم مقفل حسابيًا (قبل 26/09/2026 أو بلا تاريخ أو من عهدة قديمة). لا تعديل على القديم.";
     if (orderHasSettlementFlag(order)) return "لا يمكن إلغاء تأكيد طلبية عليها تسديد للمشتريات — ألغِ التسديد أولًا من نافذة الطلبية";
     if (orderHasPendingCustomerRefund(order)) return "لا يمكن إلغاء تأكيد طلبية فيها مبلغ مرتجع بانتظار ردّه للعميل — أكِّد الرد أولًا";
     return "";
@@ -14662,6 +14776,7 @@ function applyScrapyardProposal(pr, orderOverride) {
     if (pr.action === "edit") {
         const part = (order.parts || []).find(p => p.id === pr.part_id);
         if (!part) return false;
+        if (part.returned) return false;
         part.costPrice = Math.max(0, Number(pr.cost_price) || 0);
     } else if (pr.action === "delete") {
         const delPart = (order.parts || []).find(p => p.id === pr.part_id);
@@ -14690,11 +14805,12 @@ function handleScrapyardProposalDecision(proposalId, accept) {
     const pr = scrapyardMgmtState.proposals.find(p => p.id === proposalId);
     if (!pr) return;
     const returnedDeleteMsg = "لا يمكن حذف قطعة مرتجعة — الحذف يمسح رد الزبون ومستحق المورد من الصندوق والتقرير. ارفض هذا الاقتراح";
-    if (accept && pr.action === "delete") {
+    const returnedEditMsg = "لا يمكن تعديل سعر قطعة مرتجعة — التعديل يغيّر مستحق المورد ويلغي التسديد دون أي حركة نقدية. ارفض هذا الاقتراح (أو تراجع عن الإرجاع أولًا)";
+    if (accept && (pr.action === "delete" || pr.action === "edit")) {
         const liveOrder = (appData.orders || []).find(o => o.id === pr.order_id);
         const livePart = liveOrder && (liveOrder.parts || []).find(p => p.id === pr.part_id);
         if (livePart && livePart.returned) {
-            showToast(returnedDeleteMsg, "error");
+            showToast(pr.action === "edit" ? returnedEditMsg : returnedDeleteMsg, "error");
             return;
         }
     }
@@ -14740,8 +14856,8 @@ function handleScrapyardProposalDecision(proposalId, accept) {
                 const order = orderRowToObject(freshRow);
                 const applied = applyScrapyardProposal(claimed, order);
                 if (!applied) {
-                    const racedPart = claimed.action === "delete" ? (order.parts || []).find(p => p.id === claimed.part_id) : null;
-                    if (racedPart && racedPart.returned) showToast(returnedDeleteMsg + " (الاقتراح رجع إلى مكانه)", "error"); else showToast("تعذر تطبيق الاقتراح — الطلبية أو القطعة غير موجودة. تمت إعادة الاقتراح إلى مكانه", "error");
+                    const racedPart = claimed.action === "delete" || claimed.action === "edit" ? (order.parts || []).find(p => p.id === claimed.part_id) : null;
+                    if (racedPart && racedPart.returned) showToast((claimed.action === "edit" ? returnedEditMsg : returnedDeleteMsg) + " (الاقتراح رجع إلى مكانه)", "error"); else showToast("تعذر تطبيق الاقتراح — الطلبية أو القطعة غير موجودة. تمت إعادة الاقتراح إلى مكانه", "error");
                     await restoreProposal();
                     return;
                 }
@@ -15771,7 +15887,7 @@ function proposalSettlementResetPreview(pr, keepFee) {
     lastEditProposalDeliveryDropped = prevDropped;
     if (!ok) return null;
     const plan = settlementResetPlan(live, clone);
-    return plan.resetUsed || plan.resetNew ? plan : null;
+    return plan.resetUsed || plan.resetNew || plan.blockReason ? plan : null;
 }
 
 function scrapyardProposalSettlementResetPreview(pr) {
@@ -15787,7 +15903,7 @@ function scrapyardProposalSettlementResetPreview(pr) {
     }
     if (!ok) return null;
     const plan = settlementResetPlan(live, clone);
-    return plan.resetUsed || plan.resetNew ? plan : null;
+    return plan.resetUsed || plan.resetNew || plan.blockReason ? plan : null;
 }
 
 async function handleEditProposalDecision(proposalId, accept) {
@@ -19204,6 +19320,8 @@ async function persistOrder(order, isNew, outInfo) {
     } catch (e) {
         if (e && e.code === "23505") {
             showToast("رقم الطلبية " + order.orderNumber + " أصبح مستخدمًا لطلبية أخرى (على الأغلب تم حفظ طلبيتين في اللحظة نفسها) — أغلق النافذة وافتحها من جديد", "error");
+        } else if (e && e.message === "غير متاح" && !hasElevatedAccess()) {
+            showToast("لم تُحفظ الطلبية: فيها تعديل على حقل مقفول لحسابك (دفعات الزبون، أو أسعار/قطع/نسب طلبية موردة) — أرسله كطلب تعديل ✏️ ليصل للإدارة", "error");
         } else {
             showToast("تعذر حفظ الطلبية: " + friendlyErrorText(e), "error");
         }
