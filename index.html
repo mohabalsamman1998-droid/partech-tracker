@@ -2154,6 +2154,7 @@ function markPartsSupplied(order, partIds, atIso) {
             targets.forEach(p => out.skipped.push(p.id));
             return out;
         }
+        if (!targets.length) return out;
         if (targets.length && targets.length === act.length) {
             order.supplied = true;
             order.suppliedAt = atIso;
@@ -2188,6 +2189,7 @@ function unmarkPartsSupplied(order, partIds) {
             targets.forEach(p => out.skipped.push(p.id));
             return out;
         }
+        if (!targets.length) return out;
         if (targets.length && targets.length === act.length) {
             order.supplied = false;
             order.suppliedAt = null;
@@ -2257,7 +2259,8 @@ function captureSupplyBase(order) {
     return {
         state: orderSupplyState(order),
         parts: parts,
-        suppliedAt: order.suppliedAt || null
+        suppliedAt: order.suppliedAt || null,
+        keyed: keyed
     };
 }
 
@@ -2337,6 +2340,7 @@ function mergeLiveSupplyIntoDraft(draftOrder, base, live) {
 
 function partUnsupplyBlockReason(order, p) {
     if (!p) return "";
+    if (settlementBucketFrozen(order, p.used ? undefined : "new")) return "تسديد هذه القطع قديم مقفل حسابيًا — لا يمكن إلغاء توريدها. لا تعديل على القديم.";
     if (p.returned) return "لا يمكن إلغاء توريد قطعة مرتجعة";
     const paid = p.used ? !!bucketPayerOf(order, false) : !!bucketSettlement(order, null, "new").payer;
     if (paid) return "لا يمكن إلغاء توريد قطعة مسدّد حسابها — ألغِ التسديد أولًا من نافذة الطلبية";
@@ -2367,10 +2371,10 @@ function addPartsSupplyBlockReason(order, list, arrived) {
     if (!anySupplied(order)) return "";
     const full = orderSupplyState(order) === "full";
     if (full && !!arrived) return "";
+    if (list.some(p => settlementBucketFrozen(order, p.used ? undefined : "new"))) return "تسديد هذه القطع قديم مقفل حسابيًا — لا يمكن إضافة قطعة غير موردة لنوعها. لا تعديل على القديم.";
     const hit = list.find(p => p.used ? !!bucketPayerOf(order, false) : !!bucketSettlement(order, null, "new").payer);
     if (!hit) return "";
-    const kind = hit.used ? "التشليح" : "الجديد";
-    return full ? "لا يمكن إضافة قطعة غير موردة لنوع " + kind + " مسدّد — ألغِ التسديد أولًا، أو اختر «نعم، وصلت» إن كانت القطعة قد وصلت" : "لا يمكن إضافة قطعة لنوع " + kind + " المسدّد والطلبية موردة جزئيًا — ألغِ التسديد أولًا ثم أضف القطعة";
+    return full ? "لا يمكن إضافة قطعة غير موردة لنوع مسدّد — أضفها بعد وصولها («نعم، وصلت») أو في طلبية منفصلة" : "لا يمكن إضافة قطعة غير موردة لنوع مسدّد والطلبية موردة جزئيًا — أضفها في طلبية منفصلة أو بعد اكتمال توريد الطلبية";
 }
 
 function supplyCountGen(n) {
@@ -2443,10 +2447,63 @@ function settlementSupplyConflictBucket(order, base) {
     return "";
 }
 
+function settlementSupplyBlockText(kind, elevated) {
+    if (!elevated) return "غير متاح";
+    return kind === "PT426" ? "لا يمكن تسجيل السداد قبل توريد كل قطع هذا النوع — حدّث الطلبية" : "لا يمكن تعديل قطع نوع مسدّد قبل اكتمال توريده — انتظر وصول باقي قطعه ثم عدّل";
+}
+
+function settlementResetIncompleteBucket(plan, after) {
+    if (!plan || !after || orderSupplyState(after) !== "partial") return "";
+    const u = !!plan.resetUsed && !supplyBucketComplete(after, true);
+    const n = !!plan.resetNew && !supplyBucketComplete(after, false);
+    return u && n ? "التشليح والجديد" : u ? "التشليح" : n ? "الجديد" : "";
+}
+
+function partTypeToggleBlockReason(order, p) {
+    if (!order || !p || p.returned || !partIsIncludedInOrder(order, p) || !anySupplied(order) || partSupplied(order, p)) return "";
+    const destPaid = p.used ? !!bucketSettlement(order, null, "new").payer : !!bucketPayerOf(order, false);
+    return destPaid ? settlementSupplyBlockText("PT427", hasElevatedAccess()) : "";
+}
+
+function settlementWordingVisible() {
+    return hasElevatedAccess() || typeof currentUserRole !== "undefined" && currentUserRole === "scrapyard";
+}
+
+function bucketPaidNotLegacy(order, isNew) {
+    return orderBucketSettled(order, isNew) && !orderBucketLegacySettled(order, isNew);
+}
+
+function partPaidBucketLocked(order, p) {
+    if (!order || !p || p.returned || !partIsIncludedInOrder(order, p) || !anySupplied(order) || partSupplied(order, p)) return false;
+    return bucketPaidNotLegacy(order, !p.used);
+}
+
+function wholeOrderReturnPaidDropBlockReason(order, elevated) {
+    if (!order || !orderHasSupplyKeys(order)) return "";
+    const act = orderActiveParts(order).filter(p => !p.returned);
+    if (!act.some(p => partSupplied(order, p, true))) return "";
+    if (!act.some(p => !partSupplied(order, p, true) && bucketPaidNotLegacy(order, !p.used))) return "";
+    return elevated ? "في الطلبية قطع لم تصل بعد من نوع مسدّد مسبقًا — لا يمكن إرجاع الطلبية كاملة قبل اكتمال توريد هذا النوع. أرجِع القطع التي وصلت قطعةً قطعة، أو انتظر وصول الباقي" : "غير متاح";
+}
+
+function settlementIncompleteEditIntroduced(base, before, after) {
+    if (!base || !before || !after) return false;
+    const hit = o => {
+        const s = Object.assign({}, o);
+        syncOrderSupply(s);
+        const pl = settlementResetPlan(base, s);
+        return pl.blockReason ? "" : settlementResetIncompleteBucket(pl, s);
+    };
+    const b = hit(before), a = hit(after);
+    return a.indexOf("التشليح") >= 0 && b.indexOf("التشليح") < 0 || a.indexOf("الجديد") >= 0 && b.indexOf("الجديد") < 0;
+}
+
 function wholeOrderUnsupplyBlockReason(order) {
     if (!order) return "";
     const keyed = orderHasSupplyKeys(order);
-    const hit = orderActiveParts(order).find(p => partSupplied(order, p, keyed) && (p.used ? !!bucketPayerOf(order, false) : !!bucketSettlement(order, null, "new").payer));
+    const sup = orderActiveParts(order).filter(p => partSupplied(order, p, keyed));
+    if (sup.some(p => settlementBucketFrozen(order, p.used ? undefined : "new"))) return "تسديد هذه القطع قديم مقفل حسابيًا — لا يمكن إلغاء توريدها. لا تعديل على القديم.";
+    const hit = sup.find(p => p.used ? !!bucketPayerOf(order, false) : !!bucketSettlement(order, null, "new").payer);
     return hit ? "لا يمكن إلغاء توريد قطعة مسدّد حسابها — ألغِ التسديد أولًا من نافذة الطلبية" : "";
 }
 
@@ -3096,10 +3153,14 @@ function settlementEchoDetect(sentRow, retRow) {
 
 function captureSettleBase(order) {
     if (!order) return null;
-    return Object.assign(orderSettlementRowFlagsCamel(order), {
+    const base = Object.assign(orderSettlementRowFlagsCamel(order), {
         partsSelectionEnabled: !!order.partsSelectionEnabled,
         parts: JSON.parse(JSON.stringify(Array.isArray(order.parts) ? order.parts : []))
     }, settlementLegacyKeysOf(order));
+    [ "paidToSupplierAmountSnapshot", "paidToAmerAmountSnapshot", "paidToOmarAmountSnapshot", "paidToSupplierNewAmountSnapshot", "paidToAmerNewAmountSnapshot", "paidToOmarNewAmountSnapshot" ].forEach(k => {
+        if (order[k] !== undefined) base[k] = order[k];
+    });
+    return base;
 }
 
 function settlementLegacyKeysOf(order) {
@@ -4865,7 +4926,8 @@ function pastePartsFromClipboard() {
     }));
     const askedArrival = orderSupplyState(draft) === "full" && (partialSupplyEnabled() || orderHasSupplyKeys(draft));
     draftAddParts(pasted);
-    if (!askedArrival) showToast("تم لصق " + pasted.length + " قطعة", "ok");
+    const pastedCount = draft && Array.isArray(draft.parts) ? pasted.filter(p => draft.parts.indexOf(p) >= 0).length : 0;
+    if (!askedArrival && pastedCount > 0) showToast("تم لصق " + pastedCount + " قطعة", "ok");
 }
 
 function partTypeGateHtml() {
@@ -8413,6 +8475,8 @@ function friendlyErrorText(e) {
     if (code === "PT410" || e && e.hint === "media_deleted") return "تم حذف الملف";
     if (code === "PT424" || e && e.hint === "settled_bucket_return_block") return e && e.message || "لا يمكن تعديل سعر أو عدد أو نوع قطع هذه الطلبية الآن";
     if (code === "PT423" || e && e.hint === "legacy_settlement_frozen") return "هذه الطلبية قديمة ومقفلة حسابيًا — لا يمكن تعديل تكلفة أو كمية أو قطع منها. راجع الإدارة";
+    if (code === "PT426" || e && e.hint === "settlement_bucket_not_supplied") return settlementSupplyBlockText("PT426", settlementWordingVisible());
+    if (code === "PT427" || e && e.hint === "settlement_bucket_incomplete_edit") return settlementSupplyBlockText("PT427", settlementWordingVisible());
     if (msg === "NO_DB") return "الاتصال بقاعدة البيانات غير متاح حاليًا";
     if (code === "PGRST202") return "نسخة التطبيق لديك قديمة — حدّث الصفحة وحاول مرة أخرى";
     if (/fetch|network|timeout/i.test(msg)) return "تحقق من اتصال الإنترنت وحاول مرة أخرى";
@@ -8593,39 +8657,67 @@ function bindCostSplitButtons() {
                     showToast("لا يمكن تسجيل السداد قبل تأكيد الطلبية", "error");
                     return;
                 }
-                if (choice && orderTotals(draft)[amountKey] > 0 && orderSupplyState(draft) === "partial" && !supplyBucketComplete(draft, bucket !== "new")) {
+                const storedPaid = draftSettleBase ? orderBucketSettled(draftSettleBase, bucket === "new") : !!prevChoice;
+                if (choice && !storedPaid && orderTotals(draft)[amountKey] > 0 && orderSupplyState(draft) === "partial" && !supplyBucketComplete(draft, bucket !== "new")) {
                     showToast(supplyBucketBlockReason(draft, bucket !== "new"), "error");
                     return;
                 }
                 if (choice && draftSettleBase) {
                     const resetPl = settlementResetPlan(draftSettleBase, draft);
                     if (bucket === "new" ? resetPl.resetNew : resetPl.resetUsed) {
-                        showToast((bucket === "new" ? resetPl.frozenNew : resetPl.frozenUsed) ? resetPl.blockReason : "تغيّرت تكلفة هذا الجزء بعد تسجيل سداده — احفظ الطلبية أولًا (سيُلغى التسديد القديم) ثم سجّل التسديد من جديد", "error");
+                        const incompleteEdit = !resetPl.blockReason && settlementResetIncompleteBucket(bucket === "new" ? {
+                            resetNew: true
+                        } : {
+                            resetUsed: true
+                        }, draft);
+                        showToast((bucket === "new" ? resetPl.frozenNew : resetPl.frozenUsed) ? resetPl.blockReason : incompleteEdit ? settlementSupplyBlockText("PT427", true) : "تغيّرت تكلفة هذا الجزء بعد تسجيل سداده — احفظ الطلبية أولًا (سيُلغى التسديد القديم) ثم سجّل التسديد من جديد", "error");
                         return;
                     }
                 }
-                const now = (new Date).toISOString();
-                const amountSnapshot = orderTotals(draft)[amountKey];
-                const supplierKey = bucket === "new" ? "paidToSupplierNew" : "paidToSupplier";
-                const amerKey = bucket === "new" ? "paidToAmerNew" : "paidToAmer";
-                const omarKey = bucket === "new" ? "paidToOmarNew" : "paidToOmar";
-                draft[supplierKey] = choice === "supplier";
-                draft[supplierKey + "At"] = choice === "supplier" ? now : null;
-                draft[supplierKey + "AmountSnapshot"] = choice === "supplier" ? amountSnapshot : null;
-                draft[amerKey] = choice === "amer";
-                draft[amerKey + "At"] = choice === "amer" ? now : null;
-                draft[amerKey + "AmountSnapshot"] = choice === "amer" ? amountSnapshot : null;
-                draft[omarKey] = choice === "omar";
-                draft[omarKey + "At"] = choice === "omar" ? now : null;
-                draft[omarKey + "AmountSnapshot"] = choice === "omar" ? amountSnapshot : null;
-                if (bucket === "new" && orderTotals(draft).costToScrapyard <= 0 && !orderHasUsedPart(draft)) {
-                    [ "paidToSupplier", "paidToAmer", "paidToOmar" ].forEach(k => {
-                        draft[k] = false;
-                        draft[k + "At"] = null;
-                        draft[k + "AmountSnapshot"] = null;
+                const applyChoice = () => {
+                    const now = (new Date).toISOString();
+                    const amountSnapshot = orderTotals(draft)[amountKey];
+                    const supplierKey = bucket === "new" ? "paidToSupplierNew" : "paidToSupplier";
+                    const amerKey = bucket === "new" ? "paidToAmerNew" : "paidToAmer";
+                    const omarKey = bucket === "new" ? "paidToOmarNew" : "paidToOmar";
+                    const choiceKey = choice === "supplier" ? supplierKey : choice === "amer" ? amerKey : choice === "omar" ? omarKey : "";
+                    const restoreStored = !!(choiceKey && draftSettleBase && bucketPayerOf(draftSettleBase, bucket === "new") === choice);
+                    const storedVal = k => draftSettleBase[k] === undefined ? null : draftSettleBase[k];
+                    const atVal = restoreStored ? storedVal(choiceKey + "At") : now;
+                    const snapVal = restoreStored ? storedVal(choiceKey + "AmountSnapshot") : amountSnapshot;
+                    draft[supplierKey] = choice === "supplier";
+                    draft[supplierKey + "At"] = choice === "supplier" ? atVal : null;
+                    draft[supplierKey + "AmountSnapshot"] = choice === "supplier" ? snapVal : null;
+                    draft[amerKey] = choice === "amer";
+                    draft[amerKey + "At"] = choice === "amer" ? atVal : null;
+                    draft[amerKey + "AmountSnapshot"] = choice === "amer" ? snapVal : null;
+                    draft[omarKey] = choice === "omar";
+                    draft[omarKey + "At"] = choice === "omar" ? atVal : null;
+                    draft[omarKey + "AmountSnapshot"] = choice === "omar" ? snapVal : null;
+                    if (bucket === "new" && orderTotals(draft).costToScrapyard <= 0 && !orderHasUsedPart(draft)) {
+                        [ "paidToSupplier", "paidToAmer", "paidToOmar" ].forEach(k => {
+                            draft[k] = false;
+                            draft[k + "At"] = null;
+                            draft[k + "AmountSnapshot"] = null;
+                        });
+                    }
+                    updateModalTotals();
+                };
+                if (!choice && orderSupplyState(draft) === "partial" && !supplyBucketComplete(draft, bucket !== "new")) {
+                    const unsettleRef = draft;
+                    confirmAction({
+                        title: "إلغاء التسديد؟",
+                        message: "تنبيه: بعد حفظ الإلغاء لن يمكن تسجيل التسديد من جديد قبل اكتمال توريد قطع هذا النوع",
+                        confirmLabel: "إلغاء التسديد",
+                        cancelLabel: "تراجع",
+                        dangerous: true,
+                        onConfirm: () => {
+                            if (draft && draft === unsettleRef) applyChoice();
+                        }
                     });
+                    return;
                 }
-                updateModalTotals();
+                applyChoice();
             }, bucket);
         });
     };
@@ -8666,7 +8758,7 @@ function openSettlementChoiceModal(order, onChoose, bucket) {
 
 let draftSupplyBase = null;
 
-const PARTIAL_SUPPLY_ENABLED = false;
+const PARTIAL_SUPPLY_ENABLED = true;
 
 let partialSupplyDbReady = false;
 
@@ -8696,6 +8788,7 @@ function supplyDraftDirty() {
     if (!draft || !draftSupplyBase) return false;
     const cur = captureSupplyBase(draft);
     if (cur.state !== draftSupplyBase.state) return true;
+    if (!cur.keyed) return false;
     return Object.keys(cur.parts).some(id => {
         const b = draftSupplyBase.parts[id];
         return !b || b.s !== cur.parts[id].s;
@@ -8892,6 +8985,10 @@ function onSuppliedButtonClick() {
         return;
     }
     const remaining = orderUnsuppliedParts(draft);
+    if (!remaining.length && !c.keyed) {
+        legacyToggleSupplyAll();
+        return;
+    }
     const elevatedDoor = hasElevatedAccess() && c.done > 0;
     if (remaining.length === 1 && !elevatedDoor) {
         openSupplyConfirmAll(remaining, c);
@@ -9091,7 +9188,7 @@ function openSupplyManageSheet() {
             cancelLabel: "لا",
             onConfirm: () => {
                 if (!draft) return;
-                if (orderHasSupplyKeys(draft)) clearOrderSupply(draft); else unmarkPartsSupplied(draft, orderActiveParts(draft).map(p => p.id));
+                clearOrderSupply(draft);
                 refreshSupplyUi();
                 showToast('تم إلغاء توريد الطلبية — اضغط "حفظ الطلبية" لتثبيته', "ok");
             }
@@ -9179,6 +9276,24 @@ async function fetchLiveOrderForSupplyMerge(d) {
     }
 }
 
+function togglePartSelectionInDraft() {
+    if (!draft) return false;
+    if (!hasElevatedAccess() && anySupplied(draft)) {
+        showToast("غير متاح", "error");
+        return false;
+    }
+    if (hasElevatedAccess() && settlementIncompleteEditIntroduced(draftSettleBase, draft, Object.assign({}, draft, {
+        partsSelectionEnabled: !draft.partsSelectionEnabled
+    }))) {
+        showToast(settlementSupplyBlockText("PT427", true), "error");
+        return false;
+    }
+    draft.partsSelectionEnabled = !draft.partsSelectionEnabled;
+    syncOrderSupply(draft);
+    refreshSupplyUi();
+    return true;
+}
+
 function attachModalHandlers() {
     const root = document.getElementById("modal-root");
     root.querySelector("[data-close-backdrop]").addEventListener("click", e => {
@@ -9197,9 +9312,7 @@ function attachModalHandlers() {
         openQuickAddSupplierModal();
     });
     root.querySelector("#btn-toggle-part-selection").addEventListener("click", () => {
-        draft.partsSelectionEnabled = !draft.partsSelectionEnabled;
-        syncOrderSupply(draft);
-        refreshSupplyUi();
+        if (!togglePartSelectionInDraft()) return;
         const btn = root.querySelector("#btn-toggle-part-selection");
         if (btn) {
             btn.classList.toggle("chip-active", draft.partsSelectionEnabled);
@@ -9313,6 +9426,15 @@ function bindPartRowEvents() {
                     showToast("غير متاح", "error");
                     return;
                 }
+                if (hasElevatedAccess() && !(e.target.checked && orderSupplyState(draft) === "full") && settlementIncompleteEditIntroduced(draftSettleBase, draft, Object.assign({}, draft, {
+                    parts: draft.parts.map(x => x === part ? Object.assign({}, x, {
+                        included: e.target.checked
+                    }) : x)
+                }))) {
+                    e.target.checked = !e.target.checked;
+                    showToast(settlementSupplyBlockText("PT427", true), "error");
+                    return;
+                }
                 const wasPartialBeforeExclude = !e.target.checked && orderSupplyState(draft) === "partial";
                 const wasFullBefore = e.target.checked && orderSupplyState(draft) === "full";
                 const fullAtBefore = draft.suppliedAt;
@@ -9372,6 +9494,20 @@ function bindPartRowEvents() {
         const toggleUsedBtn = row.querySelector("[data-toggle-used]");
         if (toggleUsedBtn) {
             toggleUsedBtn.addEventListener("click", () => {
+                const typeWhy = partTypeToggleBlockReason(draft, part);
+                if (typeWhy) {
+                    showToast(typeWhy, "error");
+                    return;
+                }
+                if (hasElevatedAccess() && settlementIncompleteEditIntroduced(draftSettleBase, draft, Object.assign({}, draft, {
+                    parts: draft.parts.map(x => x === part ? Object.assign({}, x, {
+                        used: !part.used,
+                        supplierId: null
+                    }) : x)
+                }))) {
+                    showToast(settlementSupplyBlockText("PT427", true), "error");
+                    return;
+                }
                 const willBeUsed = !part.used;
                 confirmAction({
                     title: willBeUsed ? "تغيير القطعة إلى مستعملة؟" : "تغيير القطعة إلى غير مستعملة؟",
@@ -9425,6 +9561,11 @@ function confirmReturnWholeOrder() {
         showToast("لا توجد قطع قابلة للإرجاع بهذه الطلبية", "error");
         return;
     }
+    const dropWhy = wholeOrderReturnPaidDropBlockReason(draft, hasElevatedAccess());
+    if (dropWhy) {
+        showToast(dropWhy, "error");
+        return;
+    }
     const missingSupplier = activeParts.some(p => {
         const hasReceivable = partPurchaseCostSettled(draft, p);
         return hasReceivable && !p.supplierId;
@@ -9442,6 +9583,11 @@ function confirmReturnWholeOrder() {
 }
 
 function proceedReturnWholeOrder(activeParts, keepFee) {
+    const dropWhy = wholeOrderReturnPaidDropBlockReason(draft, hasElevatedAccess());
+    if (dropWhy) {
+        showToast(dropWhy, "error");
+        return;
+    }
     const anyPaid = activeParts.some(p => partPurchaseCostSettled(draft, p));
     const dropCount = orderActiveParts(draft).filter(p => !p.returned && !partSupplied(draft, p)).length;
     confirmAction({
@@ -9962,7 +10108,10 @@ function updateModalTotals() {
             if (livePl.blockReason) {
                 costSplitWrap.insertAdjacentHTML("beforeend", '<div class="settlement-reset-notice" id="settlement-reset-notice">⚠️ ' + escapeHtml(livePl.blockReason) + "</div>");
             } else if (livePl.resetUsed || livePl.resetNew) {
-                costSplitWrap.insertAdjacentHTML("beforeend", '<div class="settlement-reset-notice" id="settlement-reset-notice">⚠️ ' + escapeHtml(settlementResetNoticeText(livePl)) + "</div>");
+                const liveSynced = Object.assign({}, draft);
+                syncOrderSupply(liveSynced);
+                const liveIncomplete = settlementResetIncompleteBucket(livePl, liveSynced);
+                costSplitWrap.insertAdjacentHTML("beforeend", '<div class="settlement-reset-notice" id="settlement-reset-notice">⚠️ ' + escapeHtml(liveIncomplete ? settlementSupplyBlockText("PT427", true) : settlementResetNoticeText(livePl)) + "</div>");
             }
         }
     }
@@ -10107,7 +10256,7 @@ async function onSaveOrder() {
         if (mediaStagedOnBlankParts(draft.id, draft.parts)) return false;
         const cleanedParts = draft.parts.filter(p => p.description && p.description.trim()).map(p => Object.assign({}, p, {
             id: p.id,
-            description: p.description.trim(),
+            description: fieldGated(p.id) ? p.description : p.description.trim(),
             qty: p.qty === "" || p.qty == null || Number(p.qty) <= 0 ? 1 : Math.max(1, Number(p.qty)),
             costPrice: p.costPrice === "" ? 0 : Math.max(0, Number(p.costPrice) || 0),
             sellPrice: p.sellPrice === "" || p.sellPrice === null || p.sellPrice === undefined ? null : Math.max(0, Number(p.sellPrice) || 0),
@@ -10133,6 +10282,20 @@ async function onSaveOrder() {
             showToast("يجب تحديد طريقة الدفع (كاش/شبكة) لكل دفعة قبل الحفظ", "error");
             return false;
         }
+        const supplyMerged = Object.assign({}, draft, {
+            parts: cleanedParts
+        });
+        const supplyMergeRes = supplyLive ? mergeLiveSupplyIntoDraft(supplyMerged, draftSupplyBase, supplyLive) : {
+            byOthers: [],
+            adopted: 0
+        };
+        syncOrderSupply(supplyMerged);
+        if (draftSupplyBase && draftSupplyBase.keyed === false && !(supplyLive && orderHasSupplyKeys(supplyLive)) && orderHasSupplyKeys(supplyMerged) && orderSupplyState(supplyMerged) === draftSupplyBase.state) {
+            cleanedParts.forEach(p => {
+                delete p.supplied;
+                delete p.suppliedAt;
+            });
+        }
         const cleanedPayments = (draft.customerPayments || []).filter(p => p.amount !== "" && p.amount != null && Number(p.amount) > 0).map(p => {
             const c = {
                 id: p.id,
@@ -10156,6 +10319,10 @@ async function onSaveOrder() {
                 showToast(settlementFrozenText(resetPlan.frozenUsed, resetPlan.frozenNew, false), "error");
                 return false;
             }
+            if (!resetPlan.blockReason && settlementResetIncompleteBucket(resetPlan, supplyMerged)) {
+                showToast(settlementSupplyBlockText("PT427", hasElevatedAccess()), "error");
+                return false;
+            }
             if (resetPlan.resetUsed || resetPlan.resetNew) {
                 const resetDraftId = draft.id, resetDraftRef = draft;
                 const resetLive = appData.orders.find(o => o.id === resetDraftId);
@@ -10169,14 +10336,6 @@ async function onSaveOrder() {
                 if (!await checkOrderSaveConflict(resetLiveStamp)) return false;
             }
         }
-        const supplyMerged = Object.assign({}, draft, {
-            parts: cleanedParts
-        });
-        const supplyMergeRes = supplyLive ? mergeLiveSupplyIntoDraft(supplyMerged, draftSupplyBase, supplyLive) : {
-            byOthers: [],
-            adopted: 0
-        };
-        syncOrderSupply(supplyMerged);
         const settleSupplyBucket = draft.isNew ? "" : settlementSupplyConflictBucket(supplyMerged, draftSettleBase);
         if (settleSupplyBucket) {
             showToast("لم تُحفظ الطلبية: السداد المسجّل لقطع " + settleSupplyBucket + " يتطلب اكتمال توريدها والطلبية الآن موردة جزئيًا — ألغِ هذا السداد أو أكمل توريد قطع " + settleSupplyBucket + " ثم احفظ", "error");
@@ -13557,7 +13716,7 @@ function quoteDeleteCashWarning() {
 function cleanedQuoteParts() {
     return quoteDraft.parts.filter(p => p.description && p.description.trim()).map(p => Object.assign({}, p, {
         id: p.id,
-        description: p.description.trim(),
+        description: !hasElevatedAccess() && partSupplied(quoteDraft, p) ? p.description : p.description.trim(),
         notes: (p.notes || "").trim(),
         purchasingNotes: (p.purchasingNotes || "").trim(),
         qty: p.qty === "" || p.qty == null || Number(p.qty) <= 0 ? 1 : Math.max(1, Number(p.qty)),
@@ -13659,6 +13818,14 @@ async function saveQuoteDraft(markSent) {
             return false;
         }
         if (qPlan.resetUsed || qPlan.resetNew) {
+            const qAfter = Object.assign({}, quoteDraft, {
+                parts: cleanedParts
+            });
+            syncOrderSupply(qAfter);
+            if (!qPlan.blockReason && settlementResetIncompleteBucket(qPlan, qAfter)) {
+                showToast(settlementSupplyBlockText("PT427", hasElevatedAccess()), "error");
+                return false;
+            }
             const qId = quoteDraft.id, qRef = quoteDraft;
             const qLive = appData.orders.find(o => o.id === qId);
             const qLiveStamp = qLive ? qLive.updatedAt || null : null;
@@ -13700,6 +13867,7 @@ async function saveQuoteDraft(markSent) {
         mediaRestoreStagedSnapshot(mediaSnap);
         return false;
     }
+    syncOrderSupply(savingDraft);
     const newQuoteSettleBase = captureSettleBase(savingDraft);
     mediaAfterSaveSuccess(draftId, mediaSnap, cleanedParts);
     if (markSent || quoteWasNew) {
@@ -13799,6 +13967,14 @@ async function onApproveQuote() {
             return;
         }
         if (aPlan.resetUsed || aPlan.resetNew) {
+            const aAfter = Object.assign({}, quoteDraft, {
+                parts: cleanedParts
+            });
+            syncOrderSupply(aAfter);
+            if (!aPlan.blockReason && settlementResetIncompleteBucket(aPlan, aAfter)) {
+                showToast(settlementSupplyBlockText("PT427", hasElevatedAccess()), "error");
+                return;
+            }
             const aId = quoteDraft.id, aRef = quoteDraft;
             const aLive = appData.orders.find(o => o.id === aId);
             const aLiveStamp = aLive ? aLive.updatedAt || null : null;
@@ -13835,6 +14011,7 @@ async function onApproveQuote() {
         mediaRestoreStagedSnapshot(mediaSnap);
         return;
     }
+    syncOrderSupply(approvedDraft);
     mediaAfterSaveSuccess(approvedId, mediaSnap, cleanedParts);
     delete approvedDraft.isNew;
     quoteOpenedAtUpdatedAt = approvedDraft.updatedAt;
@@ -14441,6 +14618,14 @@ async function quotePricingSettlementGate(cleanedParts) {
         return false;
     }
     if (!plan.resetUsed && !plan.resetNew) return true;
+    const gAfter = Object.assign({}, quoteDraft, {
+        parts: cleanedParts
+    });
+    syncOrderSupply(gAfter);
+    if (!plan.blockReason && settlementResetIncompleteBucket(plan, gAfter)) {
+        showToast(settlementSupplyBlockText("PT427", settlementWordingVisible()), "error");
+        return false;
+    }
     const gLive = appData.orders.find(o => o.id === gId);
     const gLiveStamp = gLive ? gLive.updatedAt || null : null;
     const gGo = await confirmSettlementResetOrAbort(plan, quoteEscListener);
@@ -14545,6 +14730,7 @@ function orderHasPendingCustomerRefund(order) {
 }
 
 function orderUnconfirmBlockReason(order) {
+    if (!hasElevatedAccess() && (anySupplied(order) || orderHasSettlementFlag(order))) return "غير متاح";
     if (orderBucketLegacySettled(order, false) || orderBucketLegacySettled(order, true)) return "لا يمكن إلغاء تأكيد هذه الطلبية: عليها تسديد قديم مقفل حسابيًا (قبل 26/09/2026 أو بلا تاريخ أو من عهدة قديمة). لا تعديل على القديم.";
     if (orderHasSettlementFlag(order)) return "لا يمكن إلغاء تأكيد طلبية عليها تسديد للمشتريات — ألغِ التسديد أولًا من نافذة الطلبية";
     if (orderHasPendingCustomerRefund(order)) return "لا يمكن إلغاء تأكيد طلبية فيها مبلغ مرتجع بانتظار ردّه للعميل — أكِّد الرد أولًا";
@@ -16282,7 +16468,7 @@ function fieldGated(partId) {
     if (!draft || hasElevatedAccess()) return false;
     if (partId) {
         const gp = (draft.parts || []).find(x => x.id === partId);
-        if (gp) return partSupplied(draft, gp);
+        if (gp) return partSupplied(draft, gp) || partPaidBucketLocked(draft, gp);
     }
     return anySupplied(draft);
 }
@@ -16591,6 +16777,7 @@ async function sendFieldEditRequest(fieldKey, partId) {
             showToast("أدخل اسمًا للقطعة", "error");
             return;
         }
+        proposedValue = proposedValue.trim();
     }
     let currentValue;
     if (partId) {
@@ -17004,6 +17191,12 @@ function requestOrderReturn() {
         showToast("لا توجد قطع قابلة للإرجاع بهذه الطلبية", "error");
         return;
     }
+    const storedForReturn = (appData.orders || []).find(o => o.id === draft.id);
+    const dropWhy = wholeOrderReturnPaidDropBlockReason(storedForReturn || draft, hasElevatedAccess());
+    if (dropWhy) {
+        showToast(dropWhy, "error");
+        return;
+    }
     const missingSupplier = activeParts.some(p => {
         const hasReceivable = partPurchaseCostSettled(draft, p);
         return hasReceivable && !p.supplierId;
@@ -17067,7 +17260,7 @@ function applyEditProposal(pr, orderOverride, opts) {
     if (pr.kind === "part_field") {
         const part = (order.parts || []).find(p => p.id === pr.part_id);
         if (!part || part.returned) return false;
-        if (pr.field === "costPrice") part.costPrice = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "sellPrice") part.sellPrice = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "description") part.description = String(pr.proposed_value || ""); else if (pr.field === "qty") part.qty = Math.max(1, Number(pr.proposed_value) || 1); else if (pr.field === "used") {
+        if (pr.field === "costPrice") part.costPrice = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "sellPrice") part.sellPrice = Math.max(0, Number(pr.proposed_value) || 0); else if (pr.field === "description") part.description = String(pr.proposed_value || "").trim(); else if (pr.field === "qty") part.qty = Math.max(1, Number(pr.proposed_value) || 1); else if (pr.field === "used") {
             const proposedUsed = !!pr.proposed_value;
             part.used = proposedUsed;
             part.supplierId = null;
@@ -17192,6 +17385,15 @@ function proposalSettlementResetPreview(pr, keepFee) {
     if (!pr) return null;
     const live = (appData.orders || []).find(o => o.id === pr.order_id);
     if (!live || !orderHasSettlementFlag(live)) return null;
+    if (pr.kind === "order_return") {
+        const dropWhy = wholeOrderReturnPaidDropBlockReason(live, true);
+        if (dropWhy) return {
+            resetUsed: false,
+            resetNew: false,
+            label: "",
+            blockReason: dropWhy
+        };
+    }
     const clone = JSON.parse(JSON.stringify(live));
     const prevExcess = lastEditProposalLeftoverExcess, prevLinked = lastEditProposalLinkedPartId, prevDropped = lastEditProposalDeliveryDropped;
     let ok = false;
@@ -17207,6 +17409,8 @@ function proposalSettlementResetPreview(pr, keepFee) {
     lastEditProposalDeliveryDropped = prevDropped;
     if (!ok) return null;
     const plan = settlementResetPlan(live, clone);
+    syncOrderSupply(clone);
+    if (!plan.blockReason && settlementResetIncompleteBucket(plan, clone)) plan.blockReason = settlementSupplyBlockText("PT427", true);
     return plan.resetUsed || plan.resetNew || plan.blockReason ? plan : null;
 }
 
@@ -17223,12 +17427,21 @@ function scrapyardProposalSettlementResetPreview(pr) {
     }
     if (!ok) return null;
     const plan = settlementResetPlan(live, clone);
+    syncOrderSupply(clone);
+    if (!plan.blockReason && settlementResetIncompleteBucket(plan, clone)) plan.blockReason = settlementSupplyBlockText("PT427", true);
     return plan.resetUsed || plan.resetNew || plan.blockReason ? plan : null;
 }
 
 async function handleEditProposalDecision(proposalId, accept) {
     const pr = (editProposals || []).find(p => p.id === proposalId);
     if (!pr) return;
+    if (accept && pr.kind === "order_return") {
+        const dropWhy = wholeOrderReturnPaidDropBlockReason((appData.orders || []).find(o => o.id === pr.order_id), hasElevatedAccess());
+        if (dropWhy) {
+            showToast(dropWhy, "error");
+            return;
+        }
+    }
     const needsFeeChoice = accept && (pr.kind === "part_return" || pr.kind === "order_return");
     if (needsFeeChoice) {
         let shareAmount = 0;
@@ -20690,6 +20903,8 @@ async function persistOrder(order, isNew, outInfo) {
     } catch (e) {
         if (e && e.code === "23505") {
             showToast("رقم الطلبية " + order.orderNumber + " أصبح مستخدمًا لطلبية أخرى (على الأغلب تم حفظ طلبيتين في اللحظة نفسها) — أغلق النافذة وافتحها من جديد", "error");
+        } else if (e && !settlementWordingVisible() && (e.code === "PT426" || e.code === "PT427" || e.hint === "settlement_bucket_not_supplied" || e.hint === "settlement_bucket_incomplete_edit" || e.code === "PT424" || e.hint === "settled_bucket_return_block")) {
+            showToast("غير متاح", "error");
         } else if (e && e.message === "غير متاح" && !hasElevatedAccess()) {
             showToast("لم تُحفظ الطلبية: فيها تعديل على حقل مقفول لحسابك (دفعات الزبون، أو أسعار/قطع/نسب طلبية موردة) — أرسله كطلب تعديل ✏️ ليصل للإدارة", "error");
         } else {
