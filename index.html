@@ -2065,6 +2065,7 @@ function orderSupplyLedger(order) {
 
 function partInPurchaseLedger(order, p, led) {
     led = led || orderSupplyLedger(order);
+    if (partialPaymentActive(order)) return partSupplied(order, p, led.keyed);
     return p.used ? led.usedComplete : led.newComplete;
 }
 
@@ -2482,6 +2483,7 @@ function wholeOrderReturnPaidDropBlockReason(order, elevated) {
     if (!order || !orderHasSupplyKeys(order)) return "";
     const act = orderActiveParts(order).filter(p => !p.returned);
     if (!act.some(p => partSupplied(order, p, true))) return "";
+    if (act.some(p => !partSupplied(order, p, true) && partHasPayKey(p))) return elevated ? "في الطلبية قطع لم تصل مدفوعة مقدّمًا — استرد مبلغها من المورد وألغِ دفعتها من نافذة السداد (تبويب الدفعات)، ثم أرجِع الطلبية" : "غير متاح";
     if (!act.some(p => !partSupplied(order, p, true) && bucketPaidNotLegacy(order, !p.used))) return "";
     return elevated ? "في الطلبية قطع لم تصل بعد من نوع مسدّد مسبقًا — لا يمكن إرجاع الطلبية كاملة قبل اكتمال توريد هذا النوع. أرجِع القطع التي وصلت قطعةً قطعة، أو انتظر وصول الباقي" : "غير متاح";
 }
@@ -2593,7 +2595,8 @@ function ownerSupplyPendingFromAppData(kind) {
             order_number: o.orderNumber,
             order_label: orderDisplayLabel(o),
             pending: pending,
-            arrived: arrived
+            arrived: arrived,
+            pp: partialPaymentActive(o) && bucketRegime(o, wantUsed) !== "flag"
         });
     });
     rows.sort((a, b) => orderNumberSortKey({
@@ -2607,7 +2610,7 @@ function ownerSupplyPendingFromAppData(kind) {
 function supplyPendingBlockHtml(rows, kind, canOpen) {
     if (!rows || !rows.length) return "";
     const what = kind === "new" ? "من القطع الجديدة" : "من قطع التشليح";
-    return '<div class="section-block supply-pending-block">' + '<div class="section-head"><span class="section-title">بانتظار اكتمال التوريد</span><span class="num supply-pending-count">' + rows.length + "</span></div>" + rows.map(r => '<div class="supply-pending-line' + (canOpen ? " supply-pending-line-open" : "") + '"' + (canOpen ? ' data-open-order-scrapyard="' + escapeHtml(r.order_id) + '" title="فتح الطلبية"' : "") + ">" + '<span class="supply-pending-order">' + escapeHtml(r.order_number || "") + (r.order_label ? " — " + escapeHtml(r.order_label) : "") + "</span>" + '<span class="supply-pending-text">⏳ بانتظار توريد ' + supplyCountGen(r.pending) + " " + what + " — لا يظهر للسداد قبل اكتمال توريدها</span>" + "</div>").join("") + "</div>";
+    return '<div class="section-block supply-pending-block">' + '<div class="section-head"><span class="section-title">بانتظار اكتمال التوريد</span><span class="num supply-pending-count">' + rows.length + "</span></div>" + rows.map(r => '<div class="supply-pending-line' + (canOpen ? " supply-pending-line-open" : "") + '"' + (canOpen ? ' data-open-order-scrapyard="' + escapeHtml(r.order_id) + '" title="فتح الطلبية"' : "") + ">" + '<span class="supply-pending-order">' + escapeHtml(r.order_number || "") + (r.order_label ? " — " + escapeHtml(r.order_label) : "") + "</span>" + '<span class="supply-pending-text">⏳ بانتظار توريد ' + supplyCountGen(r.pending) + " " + what + (r.pp ? " — الواصل منها يظهر للسداد" : " — لا يظهر للسداد قبل اكتمال توريدها") + "</span>" + "</div>").join("") + "</div>";
 }
 
 function pricedSupplyTagHtml(row) {
@@ -2911,6 +2914,7 @@ function orderTotals(order) {
 
 function scrapyardCostSettled(order, t) {
     t = t || orderTotals(order);
+    if (orderHasPayStamps(order) && bucketRegime(order, true, t) === "stamps") return bucketPayInfo(order, true, t).fullyPaid;
     return t.costToScrapyard <= 0 || !!(order.paidToAmer || order.paidToOmar || order.paidToSupplier);
 }
 
@@ -2951,6 +2955,7 @@ function orderSingleBucket(t) {
 
 function newPartsCostSettled(order, t) {
     t = t || orderTotals(order);
+    if (orderHasPayStamps(order) && bucketRegime(order, false, t) === "stamps") return bucketPayInfo(order, false, t).fullyPaid;
     if (t.costToSupplier <= 0) return true;
     return !!bucketSettlement(order, t, "new").payer;
 }
@@ -2967,7 +2972,208 @@ function orderPurchaseSettled(order, t) {
 
 function partPurchaseCostSettled(order, part, t) {
     t = t || orderTotals(order);
+    if (part && partHasPayKey(part)) return !!partPayStamp(part);
+    if (part && orderHasPayStamps(order) && bucketRegime(order, !!part.used, t) === "stamps") return false;
     return part && part.used ? scrapyardCostSettled(order, t) : newPartsCostSettled(order, t);
+}
+
+const PAY_STAMP_KEYS = [ "paidTo", "paidAt", "paidAmount", "paidBatchId" ];
+
+const PAY_STAMP_PAYERS = [ "supplier", "amer", "omar" ];
+
+function partPayLine(p) {
+    const q = Number(p.qty) || 1, c = Number(p.costPrice) || 0;
+    return q < 0 || c < 0 ? 0 : q * c;
+}
+
+function partHasPayKey(p) {
+    return !!p && typeof p.paidTo === "string" && p.paidTo !== "";
+}
+
+function orderHasPayStamps(o) {
+    return !!o && Array.isArray(o.parts) && o.parts.some(p => partHasPayKey(p));
+}
+
+function partPayStamp(p) {
+    if (!partHasPayKey(p) || PAY_STAMP_PAYERS.indexOf(p.paidTo) < 0) return null;
+    if (typeof p.paidAmount !== "number" || !isFinite(p.paidAmount) || !(p.paidAmount > 0)) return null;
+    const ms = supplyTsMs(p.paidAt);
+    if (isNaN(ms)) return null;
+    return {
+        payer: p.paidTo,
+        atIso: p.paidAt,
+        atMs: ms,
+        amount: p.paidAmount,
+        batchId: typeof p.paidBatchId === "string" ? p.paidBatchId : ""
+    };
+}
+
+function partialPaymentActive(o) {
+    return partialPaymentEnabled() || orderHasPayStamps(o);
+}
+
+function bucketRegime(o, usedFlag, t) {
+    t = t || orderTotals(o);
+    if (usedFlag ? orderBucketSettled(o, false) : !!bucketSettlement(o, t, "new").payer) return "flag";
+    return (o.parts || []).some(p => partHasPayKey(p) && !!p.used === !!usedFlag) ? "stamps" : "none";
+}
+
+function partCashKept(o, p) {
+    return partIsIncludedInOrder(o, p) && partCostSellFlags(p).keepCost;
+}
+
+function stampSum(o, payer, usedFlag) {
+    let s = 0;
+    (o.parts || []).forEach(p => {
+        if (usedFlag !== undefined && !!p.used !== !!usedFlag) return;
+        const st = partPayStamp(p);
+        if (!st || st.payer !== payer || !partCashKept(o, p)) return;
+        s += st.amount;
+    });
+    return round2(s);
+}
+
+function bucketPayInfo(o, usedFlag, t, keyed) {
+    t = t || orderTotals(o);
+    if (keyed === undefined) keyed = orderHasSupplyKeys(o);
+    const regime = bucketRegime(o, usedFlag, t);
+    const cost = usedFlag ? t.costToScrapyard : t.costToSupplier;
+    const info = {
+        regime: regime,
+        cost: cost,
+        paidAmt: 0,
+        dueAmt: 0,
+        advAmt: 0,
+        dueIds: [],
+        advIds: [],
+        paidIds: [],
+        zeroIds: [],
+        fullyPaid: false
+    };
+    if (regime === "flag") {
+        info.paidAmt = cost;
+        info.fullyPaid = true;
+        return info;
+    }
+    (o.parts || []).forEach(p => {
+        if (!p || !!p.used !== !!usedFlag || !partIsIncludedInOrder(o, p)) return;
+        const st = partPayStamp(p);
+        if (st) {
+            info.paidIds.push(p.id);
+            if (partCostSellFlags(p).keepCost) info.paidAmt += st.amount;
+            return;
+        }
+        if (partHasPayKey(p) || !partCostSellFlags(p).keepCost) return;
+        const line = partPayLine(p);
+        if (!(line > 0)) {
+            if (!p.returned) info.zeroIds.push(p.id);
+            return;
+        }
+        if (p.returned || partSupplied(o, p, keyed)) {
+            info.dueAmt += line;
+            info.dueIds.push(p.id);
+        } else {
+            info.advAmt += line;
+            info.advIds.push(p.id);
+        }
+    });
+    info.paidAmt = round2(info.paidAmt);
+    info.fullyPaid = regime === "none" ? !(cost > 0) : !info.dueIds.length && !info.advIds.length;
+    return info;
+}
+
+function bucketDueNow(o, usedFlag, t) {
+    t = t || orderTotals(o);
+    if (partialPaymentActive(o)) {
+        const i = bucketPayInfo(o, usedFlag, t);
+        if (i.regime === "flag") return 0;
+        let held = 0;
+        (o.parts || []).forEach(p => {
+            if (!!p.used !== !!usedFlag || !p.returned || partHasPayKey(p) || !partIsIncludedInOrder(o, p) || !partCostSellFlags(p).keepCost) return;
+            const l = partPayLine(p);
+            if (l > 0) held += l;
+        });
+        return held ? round2(i.dueAmt - held + (supplyBucketComplete(o, usedFlag) ? held : 0)) : i.dueAmt;
+    }
+    const settled = usedFlag ? scrapyardCostSettled(o, t) : newPartsCostSettled(o, t);
+    const cost = usedFlag ? t.costToScrapyard : t.costToSupplier;
+    return !settled && cost > 0 && supplyBucketComplete(o, usedFlag) ? cost : 0;
+}
+
+function bucketPaidVolume(o, usedFlag, t) {
+    t = t || orderTotals(o);
+    if (orderHasPayStamps(o) && bucketRegime(o, usedFlag, t) === "stamps") return bucketPayInfo(o, usedFlag, t).paidAmt;
+    const settled = usedFlag ? scrapyardCostSettled(o, t) : newPartsCostSettled(o, t);
+    return settled ? usedFlag ? t.costToScrapyard : t.costToSupplier : 0;
+}
+
+function orderPayBatches(o, usedFlag) {
+    const byId = {};
+    (o.parts || []).forEach(p => {
+        if (usedFlag !== undefined && !!p.used !== !!usedFlag) return;
+        const st = partPayStamp(p);
+        if (!st) return;
+        const g = byId[st.batchId] || (byId[st.batchId] = {
+            batchId: st.batchId,
+            payer: st.payer,
+            atIso: st.atIso,
+            atMs: st.atMs,
+            amount: 0,
+            keptAmount: 0,
+            partIds: [],
+            used: !!p.used,
+            locked: false
+        });
+        g.amount += st.amount;
+        g.partIds.push(p.id);
+        if (partCashKept(o, p)) g.keptAmount += st.amount;
+        if (p.returned) g.locked = true;
+    });
+    return Object.keys(byId).map(k => {
+        const g = byId[k];
+        g.amount = round2(g.amount);
+        g.keptAmount = round2(g.keptAmount);
+        return g;
+    }).sort((a, b) => b.atMs - a.atMs);
+}
+
+function partPayBasisChanged(op, np, psel0, psel1) {
+    if (!np) return true;
+    const q = Number(np.qty) || 1, c = Number(np.costPrice) || 0;
+    const effNew = psel1 && np.included === false || np.returned && !np.returnHasReceivable ? 0 : q < 0 || c < 0 ? null : q * c;
+    if (effNew === null) return true;
+    const st = partPayStamp(op);
+    const anchor = st ? st.amount : psel0 && op.included === false || op.returned && !op.returnHasReceivable ? 0 : partPayLine(op);
+    if (Math.abs(anchor - effNew) > .005 + 1e-9) return true;
+    return !!op.used !== !!np.used;
+}
+
+function partPayResetPlan(base, draftOrder) {
+    const plan = {
+        partIds: [],
+        amount: 0,
+        labels: [],
+        advanceCount: 0,
+        blockReason: ""
+    };
+    if (!base || !draftOrder || !Array.isArray(base.parts)) return plan;
+    const psel0 = !!base.partsSelectionEnabled, psel1 = !!draftOrder.partsSelectionEnabled;
+    base.parts.forEach(op => {
+        const st = partPayStamp(op);
+        if (!st) return;
+        const np = (draftOrder.parts || []).find(x => x.id === op.id) || null;
+        if (!partPayBasisChanged(op, np, psel0, psel1)) return;
+        if (op.returned) {
+            plan.blockReason = op.returnCollected ? "لا يمكن تعديل قطعة مرتجعة سبق تحصيل مبلغها من المورد" : "لا يمكن تعديل سعر أو عدد أو نوع قطع هذه الطلبية الآن — فيها قطعة مرتجعة لم يُحصَّل مبلغها من المورد بعد. أعد القيم كما كانت، أو عدّلها بعد تحصيل المرتجع.";
+            return;
+        }
+        plan.partIds.push(op.id);
+        plan.amount += st.amount;
+        plan.labels.push(op.description || "قطعة");
+        if (!partSupplied(draftOrder, np || op, orderHasSupplyKeys(draftOrder))) plan.advanceCount++;
+    });
+    plan.amount = round2(plan.amount);
+    return plan;
 }
 
 function _pgBool(v, dflt) {
@@ -3001,7 +3207,7 @@ function orderBucketSettled(order, isNew) {
     return !!(order["paidToAmer" + s] || order["paidToOmar" + s] || order["paidToSupplier" + s]);
 }
 
-function settlementResetPlan(liveOrder, draftOrder) {
+function settlementResetPlanFlags(liveOrder, draftOrder) {
     const plan = {
         resetUsed: false,
         resetNew: false,
@@ -3044,6 +3250,22 @@ function settlementResetPlan(liveOrder, draftOrder) {
     return plan;
 }
 
+function settlementResetPlan(liveOrder, draftOrder) {
+    const plan = settlementResetPlanFlags(liveOrder, draftOrder);
+    const pp = partPayResetPlan(liveOrder, draftOrder);
+    if (pp.partIds.length || pp.blockReason) {
+        plan.resetPartIds = pp.partIds;
+        plan.resetPartAmount = pp.amount;
+        plan.resetPartLabels = pp.labels;
+        plan.resetPartAdvance = pp.advanceCount;
+        if (pp.blockReason && !plan.blockReason) {
+            plan.blockReason = pp.blockReason;
+            plan.blockedParts = true;
+        }
+    }
+    return plan;
+}
+
 function orderBucketLegacySettled(order, isNew) {
     if (!order) return false;
     const s = isNew ? "New" : "";
@@ -3074,16 +3296,25 @@ function settlementFlagsFrozenText(bucket) {
 }
 
 function settlementResetWarningText(plan) {
-    if (!plan || !plan.resetUsed && !plan.resetNew) return "";
+    if (!plan || !plan.resetUsed && !plan.resetNew) return partResetWarningText(plan);
     const bits = [];
     if (plan.resetUsed) bits.push("قطع التشليح من " + fmtMoney(plan.usedBefore) + " إلى " + fmtMoney(plan.usedAfter));
     if (plan.resetNew) bits.push("قطع الجديد من " + fmtMoney(plan.newBefore) + " إلى " + fmtMoney(plan.newAfter));
     const both = plan.resetUsed && plan.resetNew;
-    return "هذا التعديل يغيّر تكلفة " + bits.join(" و") + "، وقد سبق تسجيل " + (both ? "سدادهما" : "سدادها") + ". سيُلغى تسديد " + plan.label + " المسجّل (الجهة والتاريخ والمبلغ) ويعود المبلغ مستحقًا، وعليك تسجيل التسديد من جديد بالمبلغ الصحيح.";
+    return "هذا التعديل يغيّر تكلفة " + bits.join(" و") + "، وقد سبق تسجيل " + (both ? "سدادهما" : "سدادها") + ". سيُلغى تسديد " + plan.label + " المسجّل (الجهة والتاريخ والمبلغ) ويعود المبلغ مستحقًا، وعليك تسجيل التسديد من جديد بالمبلغ الصحيح." + (plan.resetPartIds && plan.resetPartIds.length ? " " + partResetWarningText(plan) : "");
+}
+
+function partResetWarningText(plan) {
+    const ids = plan && plan.resetPartIds;
+    if (!ids || !ids.length) return "";
+    const n = ids.length;
+    return "هذا التعديل يغيّر " + (n === 1 ? "قطعة" : n + " قطع") + " سبق تسجيل سدادها: «" + (plan.resetPartLabels || []).join("»، «") + "» (إجمالي " + fmtMoney(plan.resetPartAmount || 0) + "). " + "سيُلغى تسديدها هي فقط ويعود مبلغها (إلى الصندوق أو إلى عهدة عامر/عمر حسب جهة السداد)، وعليك تسجيل تسديدها من جديد إن لزم." + (plan.resetPartAdvance ? " منها " + supplyCountGen(plan.resetPartAdvance) + " لم تصل بعد: المبلغ ما زال عند المورد فعليًا، فتأكّد من استرداده منه — عودته للصندوق/العهدة هنا على الورق فقط." : "");
 }
 
 function settlementResetNoticeText(plan) {
-    if (!plan || !plan.resetUsed && !plan.resetNew) return "";
+    if (!plan || !plan.resetUsed && !plan.resetNew) {
+        return plan && plan.resetPartIds && plan.resetPartIds.length ? "حفظ هذا التعديل سيلغي تسديد " + supplyCountGen(plan.resetPartIds.length) + " (" + fmtMoney(plan.resetPartAmount || 0) + ") — ستحتاج تسجيل التسديد من جديد" : "";
+    }
     const both = plan.resetUsed && plan.resetNew;
     const bits = [];
     if (plan.resetUsed) bits.push((both ? "التشليح " : "التكلفة ") + "من " + fmtMoney(plan.usedBefore) + " إلى " + fmtMoney(plan.usedAfter));
@@ -3193,8 +3424,8 @@ function costSplitStatusLabel(order, bucket) {
 function orderStatusFlags(order) {
     const t = orderTotals(order);
     return Object.assign({}, t, {
-        waitingAmerPayment: order.confirmed && supplyBucketComplete(order, true) && t.costToScrapyard > 0 && !scrapyardCostSettled(order, t),
-        waitingSupplierPayment: order.confirmed && supplyBucketComplete(order, false) && t.costToSupplier > 0 && !newPartsCostSettled(order, t),
+        waitingAmerPayment: order.confirmed && (partialPaymentActive(order) ? bucketDueNow(order, true, t) > 0 : supplyBucketComplete(order, true) && t.costToScrapyard > 0 && !scrapyardCostSettled(order, t)),
+        waitingSupplierPayment: order.confirmed && (partialPaymentActive(order) ? bucketDueNow(order, false, t) > 0 : supplyBucketComplete(order, false) && t.costToSupplier > 0 && !newPartsCostSettled(order, t)),
         waitingSupply: order.confirmed && orderSupplyState(order) !== "full",
         waitingPricing: !t.fullyPriced && !t.allPartsReturned && !t.noActiveParts,
         waitingCustomerPayment: order.confirmed && order.supplied && t.hasChargeable && !t.customerFullyPaid,
@@ -3520,6 +3751,10 @@ function orderDirectPaidParts(o, t) {
             } else parts.new = t.costToSupplier;
         }
     }
+    if (orderHasPayStamps(o)) {
+        parts.used += stampSum(o, "supplier", true);
+        parts.new += stampSum(o, "supplier", false);
+    }
     return parts;
 }
 
@@ -3530,6 +3765,7 @@ function orderCustodyPaidAmount(o, t, who) {
     let amt = 0;
     if (o["paidTo" + K] && !o.paidToSupplier) amt += t.costToScrapyard;
     if (t.costToSupplier > 0 && bucketSettlement(o, t, "new").payer === who) amt += t.costToSupplier;
+    if (orderHasPayStamps(o)) amt += stampSum(o, who);
     return amt;
 }
 
@@ -3550,15 +3786,14 @@ function computeAggregateFinancials(matchPeriodFn) {
         }
         if (o.isQuote) return;
         if (!o.confirmed) return;
-        if (!scrapyardCostSettled(o, t)) {
-            if (t.costToScrapyard > 0 && supplyBucketComplete(o, true)) {
-                dueToScrapyard += t.costToScrapyard;
+        {
+            const dUsed = bucketDueNow(o, true, t), dNew = bucketDueNow(o, false, t);
+            if (dUsed > 0) {
+                dueToScrapyard += dUsed;
                 dueToScrapyardCount++;
             }
-        }
-        if (!newPartsCostSettled(o, t)) {
-            if (t.costToSupplier > 0 && supplyBucketComplete(o, false)) {
-                dueToSuppliers += t.costToSupplier;
+            if (dNew > 0) {
+                dueToSuppliers += dNew;
                 dueToSuppliersCount++;
             }
         }
@@ -3750,7 +3985,7 @@ function renderKPIs() {
         note: dueToScrapyardNet < 0 ? "رصيد المشتريات يغطي كل المستحق حاليًا" : null
     };
     const dueToSuppliersBreakdown = {
-        note: f.dueToSuppliersCount > 0 ? "مجموع المستحق على " + f.dueToSuppliersCount + " طلبية موردة لم يتم سدادها للمورد بعد" : "لا توجد طلبيات موردة عليها مبلغ مستحق للموردين حاليًا"
+        note: f.dueToSuppliersCount > 0 ? partialPaymentUiVisible() ? "مجموع المستحق على " + f.dueToSuppliersCount + " طلبية فيها قطع واصلة لم تُسدَّد للمورد بعد" : "مجموع المستحق على " + f.dueToSuppliersCount + " طلبية موردة لم يتم سدادها للمورد بعد" : partialPaymentUiVisible() ? "لا توجد طلبيات فيها قطع واصلة عليها مبلغ مستحق للموردين حاليًا" : "لا توجد طلبيات موردة عليها مبلغ مستحق للموردين حاليًا"
     };
     const dueFromCustomersBreakdown = {
         note: f.dueFromCustomersCount > 0 ? "مجموع المتبقي على " + f.dueFromCustomersCount + " طلبية مسلّمة لم يتم سدادها بالكامل بعد" : "لا توجد طلبيات مسلّمة عليها مبلغ متبقي حاليًا"
@@ -4764,7 +4999,7 @@ function rowHtml(order, precomputedTotals, markArchived) {
     const highlightClass = order.confirmed ? order.supplied ? "row-supplied" : "row-not-supplied" : "row-unconfirmed";
     const pendingCount = orderPendingProposalsCount(order.id);
     const archivedTag = markArchived && order.archived ? '<span class="stamp stamp-amber" style="margin-inline-start:8px;vertical-align:middle;">🗄️ مؤرشفة</span>' : "";
-    return '<tr class="' + highlightClass + '">' + '<td class="confirm-cell">' + (order.confirmed ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="' + escapeHtml(order.id) + '">✓ مؤكدة</button>' : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="' + escapeHtml(order.id) + '">تأكيد</button>') + "</td>" + '<td class="num cell-order">' + escapeHtml(order.orderNumber) + (orderDisplayLabel(order) ? '<span class="order-label-tag">' + escapeHtml(orderDisplayLabel(order)) + "</span>" : "") + archivedTag + orderSupplyBadgeHtml(order) + (pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">' + pendingCount + "</span>" : "") + "</td>" + "<td>" + ((order.customerPhone || "").trim() ? '<button type="button" class="icon-btn" data-contact-open="' + escapeHtml(order.id) + '" aria-label="تواصل">📞</button>' : '<span class="muted">—</span>') + "</td>" + '<td class="num">' + (t.hasChargeable ? '<span class="' + profitColorClass(t) + '">' + fmtMoney(t.sellTotal) + "</span>" : '<span class="muted">' + (t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد") + "</span>") + "</td>" + "<td>" + (hasElevatedAccess() && (scrapyardCostSettled(order, t) || supplyBucketComplete(order, true)) && t.costToScrapyard > 0 ? stampBadge(scrapyardCostSettled(order, t), "مسدد" + (order.paidToOmar ? " لعمر" : order.paidToAmer ? " لعامر" : order.paidToSupplier ? " مباشرة" : "") + " " + fmtMoney(t.costToScrapyard), "غير مسدد " + fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>') + "</td>" + "<td>" + (hasElevatedAccess() && (newPartsCostSettled(order, t) || supplyBucketComplete(order, false)) && t.costToSupplier > 0 ? stampBadge(newPartsCostSettled(order, t), "مسدد" + (bucketSettlement(order, t, "new").payer === "amer" ? " (عامر)" : bucketSettlement(order, t, "new").payer === "omar" ? " (عمر)" : "") + " " + fmtMoney(t.costToSupplier), "غير مسدد " + fmtMoney(t.costToSupplier)) : '<span class="muted">—</span>') + "</td>" + "<td>" + (order.confirmed ? customerPaymentCellHtml(t, true) : '<span class="muted">—</span>') + "</td>" + '<td class="row-actions">' + '<button class="icon-btn" data-open="' + escapeHtml(order.id) + '">فتح</button>' + (order.archived && !order.confirmed ? '<button class="icon-btn" data-unsuccessful-reason="' + escapeHtml(order.id) + '" title="سبب عدم النجاح">📋' + (order.unsuccessfulReason ? " " + unsuccessfulReasonLabel(order.unsuccessfulReason) : " سبب الفشل") + "</button>" : "") + (order.archived ? '<button class="icon-btn" data-restore="' + escapeHtml(order.id) + '">↩️ استعادة</button>' : '<button class="icon-btn" data-archive="' + escapeHtml(order.id) + '">🗄️ أرشفة</button>') + "</td>" + "</tr>";
+    return '<tr class="' + highlightClass + '">' + '<td class="confirm-cell">' + (order.confirmed ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="' + escapeHtml(order.id) + '">✓ مؤكدة</button>' : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="' + escapeHtml(order.id) + '">تأكيد</button>') + "</td>" + '<td class="num cell-order">' + escapeHtml(order.orderNumber) + (orderDisplayLabel(order) ? '<span class="order-label-tag">' + escapeHtml(orderDisplayLabel(order)) + "</span>" : "") + archivedTag + orderSupplyBadgeHtml(order) + (pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">' + pendingCount + "</span>" : "") + "</td>" + "<td>" + ((order.customerPhone || "").trim() ? '<button type="button" class="icon-btn" data-contact-open="' + escapeHtml(order.id) + '" aria-label="تواصل">📞</button>' : '<span class="muted">—</span>') + "</td>" + '<td class="num">' + (t.hasChargeable ? '<span class="' + profitColorClass(t) + '">' + fmtMoney(t.sellTotal) + "</span>" : '<span class="muted">' + (t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد") + "</span>") + "</td>" + "<td>" + (payBadgeNew(order, t, true, "row") || (hasElevatedAccess() && (scrapyardCostSettled(order, t) || supplyBucketComplete(order, true)) && t.costToScrapyard > 0 ? stampBadge(scrapyardCostSettled(order, t), "مسدد" + (order.paidToOmar ? " لعمر" : order.paidToAmer ? " لعامر" : order.paidToSupplier ? " مباشرة" : "") + " " + fmtMoney(t.costToScrapyard), "غير مسدد " + fmtMoney(t.costToScrapyard)) : '<span class="muted">—</span>')) + "</td>" + "<td>" + (payBadgeNew(order, t, false, "row") || (hasElevatedAccess() && (newPartsCostSettled(order, t) || supplyBucketComplete(order, false)) && t.costToSupplier > 0 ? stampBadge(newPartsCostSettled(order, t), "مسدد" + (bucketSettlement(order, t, "new").payer === "amer" ? " (عامر)" : bucketSettlement(order, t, "new").payer === "omar" ? " (عمر)" : "") + " " + fmtMoney(t.costToSupplier), "غير مسدد " + fmtMoney(t.costToSupplier)) : '<span class="muted">—</span>')) + "</td>" + "<td>" + (order.confirmed ? customerPaymentCellHtml(t, true) : '<span class="muted">—</span>') + "</td>" + '<td class="row-actions">' + '<button class="icon-btn" data-open="' + escapeHtml(order.id) + '">فتح</button>' + (order.archived && !order.confirmed ? '<button class="icon-btn" data-unsuccessful-reason="' + escapeHtml(order.id) + '" title="سبب عدم النجاح">📋' + (order.unsuccessfulReason ? " " + unsuccessfulReasonLabel(order.unsuccessfulReason) : " سبب الفشل") + "</button>" : "") + (order.archived ? '<button class="icon-btn" data-restore="' + escapeHtml(order.id) + '">↩️ استعادة</button>' : '<button class="icon-btn" data-archive="' + escapeHtml(order.id) + '">🗄️ أرشفة</button>') + "</td>" + "</tr>";
 }
 
 function cardHtml(order, precomputedTotals, markArchived) {
@@ -4772,7 +5007,7 @@ function cardHtml(order, precomputedTotals, markArchived) {
     const highlightClass = order.confirmed ? order.supplied ? "card-supplied" : "card-not-supplied" : "card-unconfirmed";
     const pendingCount = orderPendingProposalsCount(order.id);
     const archivedTag = markArchived && order.archived ? '<span class="stamp stamp-amber" style="margin-inline-start:8px;vertical-align:middle;">🗄️ مؤرشفة</span>' : "";
-    return '<div class="order-card ' + highlightClass + '">' + '<div class="order-card-head">' + '<span class="num cell-order">' + escapeHtml(order.orderNumber) + (orderDisplayLabel(order) ? ' <span class="order-label-tag">' + escapeHtml(orderDisplayLabel(order)) + "</span>" : "") + archivedTag + orderSupplyBadgeHtml(order) + (pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">' + pendingCount + "</span>" : "") + "</span>" + '<div class="order-card-head-actions">' + (order.confirmed ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="' + escapeHtml(order.id) + '">✓ مؤكدة</button>' : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="' + escapeHtml(order.id) + '">تأكيد</button>') + ((order.customerPhone || "").trim() ? '<button type="button" class="icon-btn" data-contact-open="' + escapeHtml(order.id) + '" aria-label="تواصل">📞</button>' : "") + "</div>" + "</div>" + '<div class="order-card-row"><span>إجمالي البيع</span><span class="num ' + (t.hasChargeable ? profitColorClass(t) : "") + '">' + (t.hasChargeable ? fmtMoney(t.sellTotal) : t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد") + "</span></div>" + '<div class="order-card-badges">' + (hasElevatedAccess() && (scrapyardCostSettled(order, t) || supplyBucketComplete(order, true)) && t.costToScrapyard > 0 ? stampBadge(scrapyardCostSettled(order, t), "مسدد للتشليح" + (order.paidToOmar ? " (عمر)" : order.paidToAmer ? " (عامر)" : order.paidToSupplier ? " (مباشرة)" : "") + " " + fmtMoney(t.costToScrapyard), "غير مسدد للتشليح " + fmtMoney(t.costToScrapyard)) : "") + (hasElevatedAccess() && (newPartsCostSettled(order, t) || supplyBucketComplete(order, false)) && t.costToSupplier > 0 ? stampBadge(newPartsCostSettled(order, t), "مسدد للمورد" + (bucketSettlement(order, t, "new").payer === "amer" ? " (عامر)" : bucketSettlement(order, t, "new").payer === "omar" ? " (عمر)" : "") + " " + fmtMoney(t.costToSupplier), "غير مسدد للمورد " + fmtMoney(t.costToSupplier)) : "") + (!t.fullyPriced && !t.allPartsReturned && !t.noActiveParts ? '<span class="stamp stamp-amber">بانتظار التسعير</span>' : order.confirmed ? customerPaymentCellHtml(t, false) : "") + "</div>" + '<div class="order-card-actions">' + '<button class="icon-btn" data-open="' + escapeHtml(order.id) + '">فتح</button>' + (order.archived && !order.confirmed ? '<button class="icon-btn" data-unsuccessful-reason="' + escapeHtml(order.id) + '" title="سبب عدم النجاح">📋' + (order.unsuccessfulReason ? " " + unsuccessfulReasonLabel(order.unsuccessfulReason) : " سبب الفشل") + "</button>" : "") + (order.archived ? '<button class="icon-btn" data-restore="' + escapeHtml(order.id) + '">↩️ استعادة</button>' : '<button class="icon-btn" data-archive="' + escapeHtml(order.id) + '">🗄️ أرشفة</button>') + "</div>" + "</div>";
+    return '<div class="order-card ' + highlightClass + '">' + '<div class="order-card-head">' + '<span class="num cell-order">' + escapeHtml(order.orderNumber) + (orderDisplayLabel(order) ? ' <span class="order-label-tag">' + escapeHtml(orderDisplayLabel(order)) + "</span>" : "") + archivedTag + orderSupplyBadgeHtml(order) + (pendingCount ? '<span class="inline-count-badge" title="طلبات تعديل معلّقة">' + pendingCount + "</span>" : "") + "</span>" + '<div class="order-card-head-actions">' + (order.confirmed ? '<button type="button" class="confirm-btn confirm-btn-on" data-confirm-toggle="' + escapeHtml(order.id) + '">✓ مؤكدة</button>' : '<button type="button" class="confirm-btn confirm-btn-off" data-confirm-toggle="' + escapeHtml(order.id) + '">تأكيد</button>') + ((order.customerPhone || "").trim() ? '<button type="button" class="icon-btn" data-contact-open="' + escapeHtml(order.id) + '" aria-label="تواصل">📞</button>' : "") + "</div>" + "</div>" + '<div class="order-card-row"><span>إجمالي البيع</span><span class="num ' + (t.hasChargeable ? profitColorClass(t) : "") + '">' + (t.hasChargeable ? fmtMoney(t.sellTotal) : t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد") + "</span></div>" + '<div class="order-card-badges">' + (payBadgeNew(order, t, true, "card") || (hasElevatedAccess() && (scrapyardCostSettled(order, t) || supplyBucketComplete(order, true)) && t.costToScrapyard > 0 ? stampBadge(scrapyardCostSettled(order, t), "مسدد للتشليح" + (order.paidToOmar ? " (عمر)" : order.paidToAmer ? " (عامر)" : order.paidToSupplier ? " (مباشرة)" : "") + " " + fmtMoney(t.costToScrapyard), "غير مسدد للتشليح " + fmtMoney(t.costToScrapyard)) : "")) + (payBadgeNew(order, t, false, "card") || (hasElevatedAccess() && (newPartsCostSettled(order, t) || supplyBucketComplete(order, false)) && t.costToSupplier > 0 ? stampBadge(newPartsCostSettled(order, t), "مسدد للمورد" + (bucketSettlement(order, t, "new").payer === "amer" ? " (عامر)" : bucketSettlement(order, t, "new").payer === "omar" ? " (عمر)" : "") + " " + fmtMoney(t.costToSupplier), "غير مسدد للمورد " + fmtMoney(t.costToSupplier)) : "")) + (!t.fullyPriced && !t.allPartsReturned && !t.noActiveParts ? '<span class="stamp stamp-amber">بانتظار التسعير</span>' : order.confirmed ? customerPaymentCellHtml(t, false) : "") + "</div>" + '<div class="order-card-actions">' + '<button class="icon-btn" data-open="' + escapeHtml(order.id) + '">فتح</button>' + (order.archived && !order.confirmed ? '<button class="icon-btn" data-unsuccessful-reason="' + escapeHtml(order.id) + '" title="سبب عدم النجاح">📋' + (order.unsuccessfulReason ? " " + unsuccessfulReasonLabel(order.unsuccessfulReason) : " سبب الفشل") + "</button>" : "") + (order.archived ? '<button class="icon-btn" data-restore="' + escapeHtml(order.id) + '">↩️ استعادة</button>' : '<button class="icon-btn" data-archive="' + escapeHtml(order.id) + '">🗄️ أرشفة</button>') + "</div>" + "</div>";
 }
 
 function orderNumberSortKey(order) {
@@ -5290,7 +5525,7 @@ function partRowHtml(p, i) {
     })), p.supplierId, p.used ? "— بدون تشليح —" : "— بدون مورد —");
     const excludeProposal = pendingPartActionProposal("part_exclude", p.id);
     const includeCheckHtml = !selectionOn ? "" : excludeProposal ? editProposalPendingHtml(excludeProposal) : '<input type="checkbox" class="part-include-check" ' + (included ? "checked" : "") + ' title="مشمولة بالطلبية">';
-    return '<div class="part-row' + (selectionOn && !included ? " part-row-excluded" : "") + '" data-part-id="' + escapeHtml(p.id) + '">' + includeCheckHtml + '<div class="part-desc-wrap">' + '<div class="part-desc-row">' + '<span class="part-index-badge">' + ((i != null ? i : 0) + 1) + "</span>" + descHtml + "</div>" + usedBadgeHtml + partConditionBadgeHtml(p) + (draft ? partSupplyStampHtml(draft, p) : "") + (draft ? mediaStripHtml(draft.id, p.id, "edit") : "") + "</div>" + '<div class="part-price-group">' + '<label class="mini-label">العدد' + qtyHtml + "</label>" + '<label class="mini-label mini-label-cost">سعر الشراء' + costHtml + "</label>" + '<label class="mini-label mini-label-sell">سعر البيع' + sellHtml + "</label>" + (hasElevatedAccess() ? '<label class="mini-label mini-label-supplier">' + (p.used ? "التشليح" : "المورد") + supplierFieldHtml + "</label>" : "") + partLeadFieldHtml(p, draft, hasElevatedAccess()) + "</div>" + '<button type="button" class="part-remove-btn" data-part-actions="' + escapeHtml(p.id) + '" aria-label="خيارات القطعة (حذف أو إرجاع)">⋯</button>' + "</div>";
+    return '<div class="part-row' + (selectionOn && !included ? " part-row-excluded" : "") + '" data-part-id="' + escapeHtml(p.id) + '">' + includeCheckHtml + '<div class="part-desc-wrap">' + '<div class="part-desc-row">' + '<span class="part-index-badge">' + ((i != null ? i : 0) + 1) + "</span>" + descHtml + "</div>" + usedBadgeHtml + partConditionBadgeHtml(p) + (draft ? partSupplyStampHtml(draft, p) : "") + (draft && hasElevatedAccess() ? partPayStampHtml(p) : "") + (draft ? mediaStripHtml(draft.id, p.id, "edit") : "") + "</div>" + '<div class="part-price-group">' + '<label class="mini-label">العدد' + qtyHtml + "</label>" + '<label class="mini-label mini-label-cost">سعر الشراء' + costHtml + "</label>" + '<label class="mini-label mini-label-sell">سعر البيع' + sellHtml + "</label>" + (hasElevatedAccess() ? '<label class="mini-label mini-label-supplier">' + (p.used ? "التشليح" : "المورد") + supplierFieldHtml + "</label>" : "") + partLeadFieldHtml(p, draft, hasElevatedAccess()) + "</div>" + '<button type="button" class="part-remove-btn" data-part-actions="' + escapeHtml(p.id) + '" aria-label="خيارات القطعة (حذف أو إرجاع)">⋯</button>' + "</div>";
 }
 
 function costSplitLockAttr(d, settled, supplyReason) {
@@ -5316,7 +5551,7 @@ function costSplitSupplyInfo(d, t, usedFlag, settled) {
     };
 }
 
-function costSplitButtonsHtml(d, t) {
+function costSplitButtonsHtmlLegacy(d, t) {
     if (!orderIsMixedPartType(t)) {
         const singleUsed = orderSingleBucket(t) !== "new";
         const sInfo = costSplitSupplyInfo(d, t, singleUsed, orderPurchaseSettled(d, t));
@@ -5325,6 +5560,21 @@ function costSplitButtonsHtml(d, t) {
     const uInfo = costSplitSupplyInfo(d, t, true, scrapyardCostSettled(d, t));
     const nInfo = costSplitSupplyInfo(d, t, false, newPartsCostSettled(d, t));
     return '<div class="cost-split-row">' + '<button type="button" class="cost-split-box' + (scrapyardCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-scrapyard"' + costSplitLockAttr(d, scrapyardCostSettled(d, t) && t.costToScrapyard > 0, uInfo.reason) + ">" + "<span>سداد التشليح</span>" + '<span class="num">' + fmtMoney(t.costToScrapyard) + "</span>" + '<span class="cost-split-status">' + (uInfo.status || costSplitStatusLabel(d)) + "</span>" + "</button>" + '<button type="button" class="cost-split-box' + (newPartsCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-new"' + costSplitLockAttr(d, newPartsCostSettled(d, t) && t.costToSupplier > 0, nInfo.reason) + ">" + "<span>سداد الجديد</span>" + '<span class="num">' + fmtMoney(t.costToSupplier) + "</span>" + '<span class="cost-split-status">' + (nInfo.status || costSplitStatusLabel(d, "new")) + "</span>" + "</button>" + "</div>";
+}
+
+function costSplitButtonsHtml(d, t) {
+    if (partialPaymentActive(d)) {
+        if (!orderIsMixedPartType(t)) {
+            const pi = bucketPayInfo(d, orderSingleBucket(t) !== "new", t);
+            if (pi.regime !== "flag") return '<div class="cost-split-row">' + costSplitPayBoxHtml(d, pi, "cost-split-btn", "المجموع للمورد") + "</div>";
+        } else {
+            const pu = bucketPayInfo(d, true, t), pn = bucketPayInfo(d, false, t);
+            if (pu.regime !== "flag" || pn.regime !== "flag") {
+                return '<div class="cost-split-row">' + (pu.regime !== "flag" ? costSplitPayBoxHtml(d, pu, "cost-split-btn-scrapyard", "سداد التشليح") : costSplitLegacyBoxHtml(d, t, true)) + (pn.regime !== "flag" ? costSplitPayBoxHtml(d, pn, "cost-split-btn-new", "سداد الجديد") : costSplitLegacyBoxHtml(d, t, false)) + "</div>";
+            }
+        }
+    }
+    return costSplitButtonsHtmlLegacy(d, t);
 }
 
 function normalizeVin(s) {
@@ -8477,6 +8727,7 @@ function friendlyErrorText(e) {
     if (code === "PT423" || e && e.hint === "legacy_settlement_frozen") return "هذه الطلبية قديمة ومقفلة حسابيًا — لا يمكن تعديل تكلفة أو كمية أو قطع منها. راجع الإدارة";
     if (code === "PT426" || e && e.hint === "settlement_bucket_not_supplied") return settlementSupplyBlockText("PT426", settlementWordingVisible());
     if (code === "PT427" || e && e.hint === "settlement_bucket_incomplete_edit") return settlementSupplyBlockText("PT427", settlementWordingVisible());
+    if ((code === "PT428" || code === "PT429" || code === "PT430" || code === "PT431" || code === "PT432") && msg) return msg;
     if (msg === "NO_DB") return "الاتصال بقاعدة البيانات غير متاح حاليًا";
     if (code === "PGRST202") return "نسخة التطبيق لديك قديمة — حدّث الصفحة وحاول مرة أخرى";
     if (/fetch|network|timeout/i.test(msg)) return "تحقق من اتصال الإنترنت وحاول مرة أخرى";
@@ -8639,6 +8890,10 @@ function bindCostSplitButtons() {
                 showToast("غير متاح", "error");
                 return;
             }
+            if (partialPaymentActive(draft) && bucketRegime(draftSettleBase || draft, bucket !== "new", orderTotals(draft)) !== "flag") {
+                openPartPaymentSheet(draft.id, bucket !== "new");
+                return;
+            }
             if (settlementBucketFrozen(draftSettleBase, bucket)) {
                 showToast(settlementFlagsFrozenText(bucket), "error");
                 return;
@@ -8703,7 +8958,7 @@ function bindCostSplitButtons() {
                     }
                     updateModalTotals();
                 };
-                if (!choice && orderSupplyState(draft) === "partial" && !supplyBucketComplete(draft, bucket !== "new")) {
+                if (!choice && !partialPaymentEnabled() && orderSupplyState(draft) === "partial" && !supplyBucketComplete(draft, bucket !== "new")) {
                     const unsettleRef = draft;
                     confirmAction({
                         title: "إلغاء التسديد؟",
@@ -8754,6 +9009,689 @@ function openSettlementChoiceModal(order, onChoose, bucket) {
         close();
         onChoose(null);
     });
+}
+
+const PARTIAL_PAYMENT_ENABLED = false;
+
+let partialPaymentDbReady = false;
+
+let partPayInFlight = false;
+
+function partialPaymentEnabled() {
+    return PARTIAL_PAYMENT_ENABLED && partialPaymentDbReady;
+}
+
+async function probePartialPaymentDb() {
+    const was = partialPaymentDbReady;
+    partialPaymentDbReady = false;
+    try {
+        const res = await withTimeout(sb.rpc("partial_payment_ready"), 6e3, "partial_payment_ready");
+        partialPaymentDbReady = !!(res && !res.error && res.data === true);
+    } catch (e) {
+        partialPaymentDbReady = false;
+    }
+    if (PARTIAL_PAYMENT_ENABLED && partialPaymentDbReady !== was) {
+        try {
+            renderKPIs();
+            renderTable();
+            if (draft) updateModalTotals();
+        } catch (e) {
+            console.error("probePartialPaymentDb(render):", e);
+        }
+    }
+}
+
+function partialPaymentUiVisible() {
+    return partialPaymentEnabled() || (appData.orders || []).some(o => orderHasPayStamps(o));
+}
+
+const PAY_PAYER_LABELS = {
+    supplier: "سداد مباشر",
+    amer: "من عهدة عامر",
+    omar: "من عهدة عمر"
+};
+
+function payerWord(payer) {
+    return payer === "supplier" ? "مباشرة" : payer === "amer" ? "عامر" : payer === "omar" ? "عمر" : "";
+}
+
+function partPayKindTitle(usedFlag, mixed) {
+    return mixed ? usedFlag ? "التشليح" : "الجديد" : "";
+}
+
+function costSplitPayStatusHtml(pi) {
+    const bits = [];
+    const chip = (cls, txt) => '<b class="' + cls + '" style="display:block;font-weight:700;">' + txt + "</b>";
+    if (pi.paidAmt > 0) bits.push(chip("text-green", "✓ مسدد " + fmtMoney(pi.paidAmt)));
+    if (pi.dueAmt > 0) bits.push(chip("text-amber", "مستحق الآن " + fmtMoney(pi.dueAmt)));
+    if (pi.advAmt > 0) bits.push(chip("muted supply-muted", (pi.dueAmt > 0 || pi.paidAmt > 0 ? "" : "⏳ ") + "لم يصل " + fmtMoney(pi.advAmt)));
+    return bits.length ? bits.join("") : "—";
+}
+
+function costSplitPayBoxHtml(d, pi, id, label) {
+    const single = id === "cost-split-btn";
+    const lock = !d.confirmed && !pi.paidIds.length ? ' disabled title="يجب تأكيد الطلبية أولًا قبل تسجيل السداد"' : "";
+    return '<button type="button" class="cost-split-box' + (pi.fullyPaid && pi.cost > 0 ? " cost-split-paid" : "") + '" id="' + id + '"' + lock + ">" + "<span>" + label + "</span>" + '<span class="num"' + (single ? ' id="cost-split-display"' : "") + ">" + fmtMoney(pi.cost) + "</span>" + '<span class="cost-split-status"' + (single ? ' id="cost-split-status"' : "") + ">" + costSplitPayStatusHtml(pi) + "</span>" + "</button>";
+}
+
+function costSplitLegacyBoxHtml(d, t, usedFlag) {
+    if (usedFlag) {
+        const uInfo = costSplitSupplyInfo(d, t, true, scrapyardCostSettled(d, t));
+        return '<button type="button" class="cost-split-box' + (scrapyardCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-scrapyard"' + costSplitLockAttr(d, scrapyardCostSettled(d, t) && t.costToScrapyard > 0, uInfo.reason) + ">" + "<span>سداد التشليح</span>" + '<span class="num">' + fmtMoney(t.costToScrapyard) + "</span>" + '<span class="cost-split-status">' + (uInfo.status || costSplitStatusLabel(d)) + "</span>" + "</button>";
+    }
+    const nInfo = costSplitSupplyInfo(d, t, false, newPartsCostSettled(d, t));
+    return '<button type="button" class="cost-split-box' + (newPartsCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-new"' + costSplitLockAttr(d, newPartsCostSettled(d, t) && t.costToSupplier > 0, nInfo.reason) + ">" + "<span>سداد الجديد</span>" + '<span class="num">' + fmtMoney(t.costToSupplier) + "</span>" + '<span class="cost-split-status">' + (nInfo.status || costSplitStatusLabel(d, "new")) + "</span>" + "</button>";
+}
+
+function payBadgeNew(order, t, usedFlag, style) {
+    if (!hasElevatedAccess() || !partialPaymentActive(order)) return "";
+    const pi = bucketPayInfo(order, usedFlag, t);
+    if (pi.regime === "flag" || !(pi.cost > 0)) return "";
+    const kindWord = style === "row" ? "" : usedFlag ? " للتشليح" : " للمورد";
+    if (pi.fullyPaid) return stampBadge(true, "مسدد" + kindWord + " " + fmtMoney(pi.paidAmt), "");
+    if (pi.paidAmt > 0) return '<span class="stamp stamp-amber">مسدد جزئيًا' + kindWord + " " + fmtMoney(pi.paidAmt) + " من " + fmtMoney(pi.cost) + "</span>";
+    if (pi.dueAmt > 0) return stampBadge(false, "", "غير مسدد" + kindWord + " " + fmtMoney(pi.dueAmt));
+    return "";
+}
+
+function partPayStampHtml(p) {
+    const st = partPayStamp(p);
+    if (!st) return "";
+    const d = fmtDayMonth(st.atIso);
+    const notArrived = draft && !p.returned && !partSupplied(draft, p);
+    return '<span class="stamp stamp-green part-supply-stamp" title="سُدِّدت ' + fmtMoney(st.amount) + '">💰 سُدّدت' + (d ? " " + d : "") + " · " + payerWord(st.payer) + (notArrived ? " · لم تصل" : "") + "</span>";
+}
+
+function adoptPayStampsFromParts(order, dbParts) {
+    const res = {
+        cancelled: [],
+        restored: []
+    };
+    if (!order || !Array.isArray(order.parts) || !Array.isArray(dbParts)) return res;
+    const byId = {};
+    dbParts.forEach(p => {
+        if (p && p.id !== undefined) byId[p.id] = p;
+    });
+    const val = (p, k) => p && p[k] !== undefined && p[k] !== null && p[k] !== "" ? p[k] : undefined;
+    order.parts.forEach(p => {
+        const d = byId[p.id];
+        if (!d) return;
+        const same = PAY_STAMP_KEYS.every(k => val(p, k) === val(d, k));
+        if (same) return;
+        const had = partHasPayKey(p);
+        PAY_STAMP_KEYS.forEach(k => {
+            if (val(d, k) !== undefined) p[k] = d[k]; else delete p[k];
+        });
+        if (had && !partHasPayKey(p)) res.cancelled.push(p.id); else res.restored.push(p.id);
+    });
+    return res;
+}
+
+function restorePayStampsFromLive(parts, live) {
+    if (!Array.isArray(parts) || !live || !Array.isArray(live.parts)) return;
+    const byId = {};
+    live.parts.forEach(p => {
+        if (p && p.id !== undefined) byId[p.id] = p;
+    });
+    parts.forEach(p => {
+        const d = byId[p.id];
+        PAY_STAMP_KEYS.forEach(k => {
+            if (d && d[k] !== undefined && d[k] !== null && d[k] !== "") p[k] = d[k]; else delete p[k];
+        });
+    });
+}
+
+function refreshPartPayChips() {
+    try {
+        if (draft && document.getElementById("parts-list") && !modalListFocused()) refreshPartsList();
+    } catch (e) {
+        console.error("refreshPartPayChips:", e);
+    }
+}
+
+function syncDraftPayStampsFromRemote(live) {
+    try {
+        if (!draft || draft.isNew || !live || draft.id !== live.id) return;
+        const a = adoptPayStampsFromParts(draft, live.parts);
+        if (draftSettleBase && Array.isArray(draftSettleBase.parts)) adoptPayStampsFromParts(draftSettleBase, live.parts);
+        if (a.cancelled.length || a.restored.length) {
+            updateModalTotals();
+            refreshPartPayChips();
+        }
+    } catch (e) {
+        console.error("syncDraftPayStampsFromRemote:", e);
+    }
+}
+
+function partPayErrorText(e) {
+    const code = e && e.code, hint = e && e.hint, msg = String(e && e.message || "");
+    if (msg === "غير متاح") return "غير متاح";
+    if (hint === "part_payment_amount_changed" && msg) return msg;
+    if (code === "PT409" || hint === "order_conflict") return "تغيّرت الطلبية أثناء العمل — راجع القطع ثم أعد التسجيل";
+    if (code === "PT404") return "الطلبية لم تعد موجودة — أغلق النافذة وحدّث الصفحة";
+    if (code === "PT432" || hint === "part_payment_disabled") return "ميزة السداد لكل قطعة غير مفعّلة بعد";
+    if (code === "PT430" || hint === "part_payment_regime_conflict") return "نظام تسديد هذا النوع تغيّر — حدّث الصفحة ثم أعد المحاولة";
+    if ((code === "PT428" || code === "PT429" || code === "PT431" || code === "PT424") && msg) return msg;
+    if (/fetch|network|timeout/i.test(msg)) return "لم يصل ردّ الخادم — قد تكون العملية سُجّلت. حدّث الصفحة وراجع الدفعات قبل المحاولة مجددًا";
+    return friendlyErrorText(e);
+}
+
+function partPaymentsResetToastText(info) {
+    const ids = info && info.partPaymentsReset;
+    return ids && ids.length ? "أُلغي تسديد " + supplyCountGen(ids.length) + " لهذه الطلبية — سجّل التسديد من جديد إن لزم" : "";
+}
+
+function resetEchoToastText(echo) {
+    if (!echo) return "";
+    const bits = [];
+    if (echo.used || echo.new) bits.push("أُلغي تسديد " + settlementResetLabel(echo) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح");
+    const pp = partPaymentsResetToastText(echo);
+    if (pp) bits.push(pp);
+    return bits.join(" · ");
+}
+
+function partPayExpectedAmount(o, ids) {
+    let s = 0;
+    ids.forEach(id => {
+        const p = (o.parts || []).find(x => x.id === id);
+        if (p) s += Math.round(Number((partPayLine(p) * 100).toPrecision(12))) / 100;
+    });
+    return round2(s);
+}
+
+async function payOrderPartsRpc(orderId, usedFlag, ids, payer, expectedAmount) {
+    const live = (appData.orders || []).find(o => o.id === orderId);
+    if (!sb) throw new Error("NO_DB");
+    const {data: data, error: error} = await withTimeout(sb.rpc("pay_order_parts", {
+        p_order_id: orderId,
+        p_bucket: usedFlag ? "used" : "new",
+        p_part_ids: ids,
+        p_payer: payer,
+        p_expected_amount: expectedAmount,
+        p_expected_updated_at: live ? live.updatedAt : null
+    }), 2e4, "pay_order_parts");
+    if (error) throw error;
+    return data;
+}
+
+async function cancelPartPaymentsRpc(orderId, opts) {
+    const live = (appData.orders || []).find(o => o.id === orderId);
+    if (!sb) throw new Error("NO_DB");
+    const {data: data, error: error} = await withTimeout(sb.rpc("cancel_part_payments", {
+        p_order_id: orderId,
+        p_part_ids: opts && opts.partIds || null,
+        p_batch_id: opts && opts.batchId || null,
+        p_expected_amount: opts ? opts.expectedAmount : null,
+        p_expected_updated_at: live ? live.updatedAt : null
+    }), 2e4, "cancel_part_payments");
+    if (error) throw error;
+    return data;
+}
+
+function adoptPayResult(orderId, res) {
+    const o = (appData.orders || []).find(x => x.id === orderId);
+    if (!o || !res) return;
+    const upd = res.updatedAt ? new Date(res.updatedAt).toISOString() : null;
+    const apply = target => {
+        if (!target || !Array.isArray(target.parts)) return;
+        (res.parts || []).forEach(rp => {
+            const p = target.parts.find(x => x.id === rp.id);
+            if (p) {
+                PAY_STAMP_KEYS.forEach(k => {
+                    if (rp[k] !== undefined && rp[k] !== null) p[k] = rp[k];
+                });
+            }
+        });
+        (res.cancelledIds || []).forEach(id => {
+            const p = target.parts.find(x => x.id === id);
+            if (p) PAY_STAMP_KEYS.forEach(k => {
+                delete p[k];
+            });
+        });
+    };
+    apply(o);
+    if (upd) o.updatedAt = upd;
+    if (draft && draft.id === orderId) {
+        apply(draft);
+        apply(draftSettleBase);
+        if (upd) {
+            draft.updatedAt = upd;
+            draftOpenedAtUpdatedAt = upd;
+        }
+        try {
+            updateModalTotals();
+            refreshPartPayChips();
+        } catch (e) {
+            console.error("adoptPayResult(modal):", e);
+        }
+    }
+    try {
+        renderKPIs();
+        renderTable();
+        if (typeof scrapyardCurrentScreen !== "undefined" && scrapyardCurrentScreen === "settlement" && document.getElementById("scrapyard-root") && document.getElementById("scrapyard-root").style.display !== "none") {
+            loadScrapyardData(scrapyardSharedState.activeKind).then(renderScrapyardView);
+        }
+    } catch (e) {
+        console.error("adoptPayResult(lists):", e);
+    }
+}
+
+function partPayViewOrder(orderId) {
+    const o = (appData.orders || []).find(x => x.id === orderId);
+    if (!o) return null;
+    if (draft && draft.id === orderId && !draft.isNew && draftSettleBase && Array.isArray(draftSettleBase.parts)) {
+        return Object.assign({}, o, {
+            parts: draftSettleBase.parts,
+            partsSelectionEnabled: !!draftSettleBase.partsSelectionEnabled
+        });
+    }
+    return o;
+}
+
+function partPayMoneyKey(p) {
+    return [ Number(p.qty) || 1, Number(p.costPrice) || 0, !!p.used, p.included !== false, !!p.returned ].join("|");
+}
+
+function partPayDraftBlockReason(orderId, ids) {
+    if (!draft || draft.id !== orderId) return "";
+    const saved = (appData.orders || []).find(o => o.id === orderId);
+    if (!saved) return "";
+    if (saved !== draft && draftOpenedAtUpdatedAt && saved.updatedAt && saved.updatedAt !== draftOpenedAtUpdatedAt) return "تغيّرت الطلبية من مكان آخر — أغلق النافذة وافتحها من جديد قبل التسديد";
+    const base = draftSettleBase && Array.isArray(draftSettleBase.parts) ? draftSettleBase : saved;
+    for (let i = 0; i < ids.length; i++) {
+        const s = (base.parts || []).find(x => x.id === ids[i]);
+        const dp = (draft.parts || []).find(x => x.id === ids[i]);
+        if (!s) return "قطعة محددة لم تُحفظ بعد — احفظ الطلبية أولًا ثم سدّد";
+        if (!dp) return "حُذفت قطعة محددة من المسودة — احفظ الطلبية أولًا ثم سدّد";
+        if (partPayMoneyKey(s) !== partPayMoneyKey(dp)) return "عدّلت سعر أو عدد أو نوع قطعة محددة ولم تحفظ — احفظ الطلبية أولًا ثم سدّد";
+    }
+    return "";
+}
+
+let partPaySheet = null;
+
+function partPayRowHtml(o, p, idx, kind, checked, detail) {
+    const disabled = kind !== "ready" && kind !== "advance";
+    const st = partPayStamp(p);
+    let stamp = "";
+    if (kind === "paid") {
+        const d = fmtDayMonth(st.atIso);
+        stamp = '<span class="stamp stamp-green supply-stamp">💰 سُدّدت' + (d ? " " + d : "") + " · " + payerWord(st.payer) + "</span>" + (p.returned ? '<span class="stamp supply-stamp">🔄 مرتجعة</span>' : !partSupplied(o, p, orderHasSupplyKeys(o)) ? '<span class="stamp stamp-amber supply-stamp">مدفوعة — لم تصل</span>' : "");
+    } else if (kind === "advance") {
+        stamp = '<span class="stamp stamp-amber supply-stamp">⏳ لم تصل بعد</span>';
+    } else if (kind === "zero") {
+        stamp = '<span class="stamp supply-stamp">بلا تكلفة — لا تحتاج سدادًا</span>';
+    } else if (kind === "retHeld") {
+        stamp = '<span class="stamp stamp-amber supply-stamp">🔄 مرتجعة بمستحق — حصّل المرتجع أو تراجع عن الإرجاع</span>';
+    } else {
+        stamp = '<span class="stamp stamp-green supply-stamp">✅ وصلت' + (partSuppliedAtIso(o, p) ? " " + fmtDayMonth(partSuppliedAtIso(o, p)) : "") + "</span>";
+    }
+    return '<label class="supply-pick-row" style="display:flex;align-items:flex-start;gap:8px;padding:6px 4px;border-bottom:1px solid var(--border);' + (disabled ? "opacity:.7;" : "cursor:pointer;") + '">' + '<input type="checkbox" data-pay-part="' + escapeHtml(p.id) + '" data-pay-kind="' + kind + '"' + (checked ? " checked" : "") + (disabled ? " disabled" : "") + ' style="margin-top:3px;">' + '<span class="part-index-badge">' + (idx + 1) + "</span>" + '<span style="flex:1;min-width:0;">' + '<span style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;">' + '<span style="min-width:0;overflow-wrap:anywhere;">' + escapeHtml(p.description || "قطعة") + '<span class="num" style="margin-inline-start:6px;white-space:nowrap;">× ' + escapeHtml(p.qty || 1) + "</span></span>" + '<span class="num" style="white-space:nowrap;font-weight:700;">' + fmtMoney(kind === "paid" ? st.amount : partPayLine(p)) + "</span>" + "</span>" + '<span class="supply-pick-meta" style="margin-top:2px;gap:4px 6px;"><span class="used-badge used-badge-off" style="cursor:default;">' + (p.used ? "مستعمل" : "جديد") + "</span>" + stamp + '<span class="muted supply-muted" style="font-size:11px;">' + escapeHtml(supplierGroupName(p.supplierId)) + "</span></span>" + "</span></label>";
+}
+
+function partPaySheetModel(o, usedFlag) {
+    const t = orderTotals(o), pi = bucketPayInfo(o, usedFlag, t), keyed = orderHasSupplyKeys(o);
+    const rows = {
+        ready: [],
+        advance: [],
+        paid: [],
+        zero: [],
+        retHeld: []
+    };
+    (o.parts || []).forEach((p, idx) => {
+        if (!!p.used !== !!usedFlag || !partIsIncludedInOrder(o, p)) return;
+        if (partPayStamp(p)) {
+            rows.paid.push({
+                p: p,
+                idx: idx
+            });
+            return;
+        }
+        if (partHasPayKey(p)) return;
+        if (p.returned) {
+            if (pi.regime !== "flag" && partCostSellFlags(p).keepCost && partPayLine(p) > 0) rows.retHeld.push({
+                p: p,
+                idx: idx
+            });
+            return;
+        }
+        if (!(partPayLine(p) > 0)) {
+            rows.zero.push({
+                p: p,
+                idx: idx
+            });
+            return;
+        }
+        (partSupplied(o, p, keyed) ? rows.ready : rows.advance).push({
+            p: p,
+            idx: idx
+        });
+    });
+    return {
+        t: t,
+        pi: pi,
+        rows: rows
+    };
+}
+
+function partPayPreviewHtml(o, ids, payer) {
+    if (!ids.length) return '<p class="modal-sub" style="margin:0;font-size:12px;">حدّد القطع التي تريد تسديدها ثم اختر جهة السداد</p>';
+    const sum = partPayExpectedAmount(o, ids);
+    let dest = "اختر جهة السداد";
+    let neg = false;
+    if (payer === "supplier") dest = "يُخصم من: الصندوق"; else if (payer === "amer" || payer === "omar") {
+        const after = round2((payer === "amer" ? amerCustodyBalance() : omarCustodyBalance()) - sum);
+        neg = after < 0;
+        dest = "يُخصم من: عهدة " + (payer === "amer" ? "عامر" : "عمر") + " (رصيدها بعد السداد " + fmtMoney(after) + ")" + (neg ? " — تنبيه: الرصيد سيصبح سالبًا" : "");
+    }
+    return '<div class="settlement-summary-card" style="padding:6px 12px;margin:0;gap:2px;">' + '<div class="settlement-summary-final"><span>' + supplyCountGen(ids.length) + '</span><span class="num" style="font-size:19px;">' + fmtMoney(sum) + "</span></div>" + '<p class="modal-sub" style="margin:0;font-size:12px;' + (neg ? "color:var(--amber);" : "") + '">' + escapeHtml(dest) + "</p></div>";
+}
+
+function partPayBatchesHtml(o, usedFlag) {
+    const batches = orderPayBatches(o, usedFlag);
+    if (!batches.length) return '<p class="modal-sub" style="margin:8px 0;">لا توجد دفعات مسجّلة لهذا النوع.</p>';
+    return batches.map(b => {
+        const names = b.partIds.map(id => {
+            const p = (o.parts || []).find(x => x.id === id);
+            return p ? p.description || "قطعة" : "";
+        }).filter(Boolean);
+        const d = fmtDayMonth(b.atIso);
+        const diff = Math.abs(b.keptAmount - b.amount) > .005 ? '<span class="muted supply-muted" style="flex:1 1 100%;font-size:11px;">منه ' + fmtMoney(b.amount - b.keptAmount) + " عاد بتحصيل مرتجع</span>" : "";
+        return '<div class="payment-row" style="margin-bottom:6px;">' + '<span class="num" style="white-space:nowrap;">' + fmtMoney(b.amount) + "</span>" + '<span class="payment-date-display" style="flex:1;min-width:110px;">' + (d ? d + " · " : "") + escapeHtml(PAY_PAYER_LABELS[b.payer] || "") + " · " + supplyCountGen(b.partIds.length) + "</span>" + (b.locked ? '<span class="muted supply-muted" style="font-size:11px;">فيها قطعة مرتجعة — لا تُلغى</span>' : '<button type="button" class="btn btn-sm btn-danger-ghost" data-pay-cancel-batch="' + escapeHtml(b.batchId) + '">إلغاء الدفعة</button>') + diff + '<span class="muted supply-muted" style="flex:1 1 100%;font-size:11px;overflow-wrap:anywhere;">' + escapeHtml(names.slice(0, 3).join("، ")) + (names.length > 3 ? " +" + (names.length - 3) : "") + "</span>" + "</div>";
+    }).join("");
+}
+
+function renderPartPaySheet() {
+    const st = partPaySheet;
+    const root = document.getElementById("confirm-root");
+    if (!st || !root) return;
+    const o = partPayViewOrder(st.orderId);
+    if (!o) {
+        closePartPaySheet();
+        return;
+    }
+    const m = partPaySheetModel(o, st.usedFlag);
+    const mixed = orderIsMixedPartType(m.t);
+    const enabled = partialPaymentEnabled();
+    const legacyCustody = !!o.custodyLegacy;
+    if (legacyCustody && (st.payer === "amer" || st.payer === "omar")) st.payer = null;
+    const payable = new Set(m.rows.ready.concat(m.rows.advance).map(r => r.p.id));
+    st.ticked = new Set(Array.from(st.ticked).filter(id => payable.has(id)));
+    const title = "سداد القطع" + (mixed ? " — " + partPayKindTitle(st.usedFlag, true) : "");
+    const sub = escapeHtml(o.orderNumber || "") + " · واصلة " + m.rows.ready.length + " · مسددة " + m.rows.paid.length + (m.rows.advance.length ? " · لم تصل " + m.rows.advance.length : "");
+    const hasBatches = m.pi.paidIds.length > 0;
+    const onBatches = st.tab === "batches" && hasBatches;
+    const tabs = hasBatches ? '<div class="filter-chips" style="margin:6px 0;"><button type="button" class="chip' + (st.tab === "pay" ? " chip-active" : "") + '" data-pay-tab="pay">سداد جديد</button><button type="button" class="chip' + (st.tab === "batches" ? " chip-active" : "") + '" data-pay-tab="batches">الدفعات (' + orderPayBatches(o, st.usedFlag).length + ")</button></div>" : "";
+    let body = "", preview = "";
+    if (onBatches) {
+        body = (st.busy ? '<p class="modal-sub" style="margin:6px 0;">جارٍ إلغاء الدفعة…</p>' : "") + partPayBatchesHtml(o, st.usedFlag);
+    } else {
+        const sec = (label, list, kind, checkedDefault) => list.length ? '<div class="field-label" style="margin-top:8px;">' + label + "</div>" + list.map(r => partPayRowHtml(o, r.p, r.idx, kind, kind === "paid" ? true : checkedDefault && st.ticked.has(r.p.id), "")).join("") : "";
+        body = partPayUnsavedSupplyNote(st.orderId) + (enabled ? "" : '<p class="modal-sub" style="margin:6px 0;">ميزة السداد لكل قطعة متوقفة حاليًا — يمكنك مراجعة الدفعات وإلغاؤها فقط.</p>') + '<div id="pay-list">' + (m.rows.ready.length ? '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;"><span class="field-label" style="margin:0;">قطع واصلة جاهزة للسداد</span>' + '<button type="button" class="chip" data-pay-all style="padding:4px 11px;font-size:11.5px;">' + partPayAllLabel(st.ticked, m.rows.ready.map(r => r.p.id)) + "</button></div>" + m.rows.ready.map(r => partPayRowHtml(o, r.p, r.idx, "ready", st.ticked.has(r.p.id), "")).join("") : "") + sec("قطع لم تصل بعد — دفع مقدّم (اختياري)", m.rows.advance, "advance", true) + sec("قطع مسددة", m.rows.paid, "paid", true) + sec("قطع مرتجعة بمستحق غير محصّل", m.rows.retHeld, "retHeld", false) + sec("قطع بلا تكلفة", m.rows.zero, "zero", false) + (!m.rows.ready.length && !m.rows.advance.length && !m.rows.paid.length ? '<p class="modal-sub" style="margin:8px 0;">لا توجد قطع قابلة للسداد في هذا النوع.</p>' : "") + "</div>" + '<div class="field-label" style="margin-top:8px;margin-bottom:4px;">جهة السداد' + (legacyCustody ? ' <span class="muted supply-muted" style="font-weight:400;">(طلبية بعهدة قديمة: سداد مباشر فقط)</span>' : "") + "</div>" + '<div class="filter-chips" style="gap:6px;">' + [ "supplier", "amer", "omar" ].map(k => {
+            const off = legacyCustody && k !== "supplier";
+            return '<button type="button" class="chip' + (st.payer === k ? " chip-active" : "") + '" data-pay-payer="' + k + '"' + (off ? ' data-pay-off disabled title="طلبية بعهدة قديمة: سداد مباشر فقط" style="padding:5px 11px;font-size:12px;opacity:.5;cursor:not-allowed;"' : ' style="padding:5px 11px;font-size:12px;"') + ">" + PAY_PAYER_LABELS[k] + "</button>";
+        }).join("") + "</div>";
+        preview = '<div id="pay-preview" style="margin-bottom:8px;">' + partPayPreviewHtml(o, Array.from(st.ticked), st.payer) + "</div>";
+    }
+    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true" style="max-height:92vh;display:flex;flex-direction:column;">' + '<div class="modal-title">' + escapeHtml(title) + "</div>" + '<p class="modal-sub" style="margin-bottom:4px;">' + sub + "</p>" + tabs + '<div id="pay-body" style="overflow-y:auto;min-height:0;flex:1 1 auto;">' + body + "</div>" + '<div id="pay-foot" style="flex:0 0 auto;margin-top:8px;padding-top:8px;border-top:1px solid var(--border-soft);">' + preview + '<div class="modal-footer-actions" style="justify-content:flex-end;flex-wrap:wrap;">' + '<button type="button" class="btn btn-ghost" data-pay-close>إغلاق</button>' + (onBatches ? "" : '<button type="button" class="btn btn-primary" id="pay-ok" data-pay-ok' + (!enabled || !st.ticked.size || !st.payer || st.busy ? " disabled" : "") + ">" + (st.busy ? "جارٍ التسجيل…" : "تسجيل السداد (" + st.ticked.size + ")") + "</button>") + "</div>" + "</div>" + "</div>" + "</div>";
+    root.classList.add("modal-open");
+    bindPartPaySheet();
+}
+
+function closePartPaySheet() {
+    partPaySheet = null;
+    const root = document.getElementById("confirm-root");
+    if (root) {
+        root.innerHTML = "";
+        root.classList.remove("modal-open");
+    }
+}
+
+function partPayResetSession() {
+    if (partPaySheet) closePartPaySheet();
+    partialPaymentDbReady = false;
+}
+
+function refreshPartPayPreview() {
+    const st = partPaySheet;
+    if (!st) return;
+    const o = partPayViewOrder(st.orderId);
+    if (!o) return;
+    const root = document.getElementById("confirm-root");
+    const prev = root && root.querySelector("#pay-preview");
+    if (prev) prev.innerHTML = partPayPreviewHtml(o, Array.from(st.ticked), st.payer);
+    const ok = root && root.querySelector("[data-pay-ok]");
+    if (ok) {
+        ok.textContent = st.busy ? "جارٍ التسجيل…" : "تسجيل السداد (" + st.ticked.size + ")";
+        ok.disabled = !partialPaymentEnabled() || !st.ticked.size || !st.payer || st.busy;
+    }
+    const allBtn = root && root.querySelector("[data-pay-all]");
+    if (allBtn) allBtn.textContent = partPayAllLabel(st.ticked, partPaySheetModel(o, st.usedFlag).rows.ready.map(r => r.p.id));
+    partPayApplyBusy(root, st);
+}
+
+function partPayAllLabel(ticked, readyIds) {
+    return ticked.size && readyIds.length && readyIds.every(id => ticked.has(id)) ? "إلغاء التحديد" : "تحديد الواصل";
+}
+
+function partPayApplyBusy(root, st) {
+    if (!root || !st) return;
+    [ 'input[data-pay-kind="ready"]', 'input[data-pay-kind="advance"]', "[data-pay-all]", "[data-pay-cancel-batch]", "[data-pay-payer]:not([data-pay-off])" ].forEach(sel => {
+        root.querySelectorAll(sel).forEach(el => {
+            el.disabled = !!st.busy;
+            el.style.opacity = st.busy ? ".5" : "";
+            el.style.cursor = st.busy ? "not-allowed" : "";
+        });
+    });
+}
+
+function partPayUnsavedSupplyNote(orderId) {
+    let dirty = false;
+    try {
+        dirty = !!(draft && draft.id === orderId && !draft.isNew && supplyDraftDirty());
+    } catch (e) {
+        dirty = false;
+    }
+    return dirty ? '<p class="modal-sub" style="margin:6px 0;color:var(--amber);">توريد غير محفوظ في الطلبية — احفظها أولًا ليظهر الواصل هنا</p>' : "";
+}
+
+function bindPartPaySheet() {
+    const root = document.getElementById("confirm-root");
+    const card = root && root.querySelector(".modal-card");
+    if (!card) return;
+    const st = partPaySheet;
+    root.querySelector("[data-close-confirm]").addEventListener("click", e => {
+        if (e.target.hasAttribute("data-close-confirm") && !st.busy) closePartPaySheet();
+    });
+    card.querySelectorAll("[data-pay-close]").forEach(b => b.addEventListener("click", () => {
+        if (!st.busy) closePartPaySheet();
+    }));
+    card.querySelectorAll("[data-pay-tab]").forEach(b => b.addEventListener("click", () => {
+        if (st.busy) return;
+        st.tab = b.getAttribute("data-pay-tab");
+        renderPartPaySheet();
+    }));
+    card.querySelectorAll("[data-pay-payer]:not([disabled])").forEach(b => b.addEventListener("click", () => {
+        if (st.busy) return;
+        st.payer = b.getAttribute("data-pay-payer");
+        card.querySelectorAll("[data-pay-payer]").forEach(x => x.classList.toggle("chip-active", x === b));
+        refreshPartPayPreview();
+    }));
+    card.querySelectorAll("input[data-pay-part]:not([disabled])").forEach(cb => cb.addEventListener("change", () => {
+        const id = cb.getAttribute("data-pay-part");
+        if (cb.checked) st.ticked.add(id); else st.ticked.delete(id);
+        refreshPartPayPreview();
+    }));
+    const all = card.querySelector("[data-pay-all]");
+    if (all) all.addEventListener("click", () => {
+        const o = partPayViewOrder(st.orderId);
+        if (!o) return;
+        const ready = partPaySheetModel(o, st.usedFlag).rows.ready.map(r => r.p.id);
+        const allOn = ready.length && ready.every(id => st.ticked.has(id));
+        ready.forEach(id => {
+            if (allOn) st.ticked.delete(id); else st.ticked.add(id);
+        });
+        card.querySelectorAll('input[data-pay-part][data-pay-kind="ready"]').forEach(cb => {
+            cb.checked = st.ticked.has(cb.getAttribute("data-pay-part"));
+        });
+        refreshPartPayPreview();
+    });
+    const ok = card.querySelector("[data-pay-ok]");
+    if (ok) ok.addEventListener("click", () => confirmPartPayment());
+    card.querySelectorAll("[data-pay-cancel-batch]").forEach(b => b.addEventListener("click", () => confirmCancelPartBatch(b.getAttribute("data-pay-cancel-batch"))));
+    partPayApplyBusy(root, st);
+}
+
+async function confirmPartPayment() {
+    const st = partPaySheet;
+    if (!st || st.busy || partPayInFlight) return;
+    if (!hasElevatedAccess()) {
+        showToast("غير متاح", "error");
+        return;
+    }
+    const ids = Array.from(st.ticked), payer = st.payer, orderId = st.orderId, usedFlag = st.usedFlag;
+    if (!ids.length || !payer) return;
+    const why = partPayDraftBlockReason(orderId, ids);
+    if (why) {
+        showToast(why, "error");
+        return;
+    }
+    const viewO = partPayViewOrder(orderId);
+    if (!viewO) {
+        showToast("الطلبية لم تعد موجودة — أغلق النافذة وحدّث الصفحة", "error");
+        return;
+    }
+    const expected = partPayExpectedAmount(viewO, ids);
+    const advance = ids.filter(id => {
+        const p = (viewO.parts || []).find(x => x.id === id);
+        return p && !partSupplied(viewO, p, orderHasSupplyKeys(viewO));
+    }).length;
+    st.busy = true;
+    partPayInFlight = true;
+    refreshPartPayPreview();
+    let res = null, failed = false;
+    try {
+        try {
+            res = await payOrderPartsRpc(orderId, usedFlag, ids, payer, expected);
+        } catch (e) {
+            failed = true;
+            showToast(partPayErrorText(e), "error");
+        }
+        if (!failed) {
+            adoptPayResult(orderId, res);
+            showToast("تم تسجيل سداد " + supplyCountGen(res && res.count || ids.length) + " بمبلغ " + fmtMoney(res && res.amount) + " (" + (PAY_PAYER_LABELS[payer] || "") + ")" + (advance ? " — منها " + supplyCountGen(advance) + " دفع مقدّم" : ""), "ok");
+        }
+    } catch (e2) {
+        console.error("confirmPartPayment(after rpc):", e2);
+    } finally {
+        st.busy = false;
+        partPayInFlight = false;
+    }
+    if (partPaySheet === st) {
+        if (!failed) {
+            st.ticked = new Set;
+            st.payer = null;
+            st.tab = "pay";
+        }
+        try {
+            renderPartPaySheet();
+        } catch (e3) {
+            console.error("confirmPartPayment(render):", e3);
+        }
+    }
+}
+
+function confirmCancelPartBatch(batchId) {
+    const st = partPaySheet;
+    if (!st || st.busy || partPayInFlight) return;
+    if (!hasElevatedAccess()) {
+        showToast("غير متاح", "error");
+        return;
+    }
+    const o = partPayViewOrder(st.orderId);
+    const b = o && orderPayBatches(o, st.usedFlag).find(x => x.batchId === batchId);
+    if (!b) return;
+    const dest = b.payer === "supplier" ? "إلى صافي الصندوق" : "إلى عهدة " + (b.payer === "amer" ? "عامر" : "عمر");
+    const advN = b.partIds.filter(id => {
+        const p = (o.parts || []).find(x => x.id === id);
+        return p && !p.returned && !partSupplied(o, p, orderHasSupplyKeys(o));
+    }).length;
+    confirmAction({
+        title: "إلغاء هذه الدفعة؟",
+        message: "ستعود " + supplyCountGen(b.partIds.length) + " إلى «غير مسددة» ويُعاد مبلغ " + fmtMoney(b.amount) + " " + dest + "." + (advN ? " منها " + supplyCountGen(advN) + " لم تصل بعد: المبلغ ما زال عند المورد فعليًا، فتأكّد من استرداده منه." : ""),
+        confirmLabel: "إلغاء الدفعة",
+        cancelLabel: "تراجع",
+        dangerous: true,
+        onConfirm: async () => {
+            if (!hasElevatedAccess()) {
+                showToast("غير متاح", "error");
+                if (partPaySheet === st) closePartPaySheet();
+                return;
+            }
+            const sheet = st;
+            sheet.busy = true;
+            partPayInFlight = true;
+            if (partPaySheet === sheet) renderPartPaySheet();
+            try {
+                const res = await cancelPartPaymentsRpc(sheet.orderId, {
+                    batchId: batchId,
+                    expectedAmount: b.amount
+                });
+                adoptPayResult(sheet.orderId, res);
+                showToast("أُلغيت الدفعة وعاد مبلغ " + fmtMoney(res && res.amount) + " " + dest, "ok");
+            } catch (e) {
+                showToast(partPayErrorText(e), "error");
+            } finally {
+                sheet.busy = false;
+                partPayInFlight = false;
+            }
+            if (partPaySheet === sheet) {
+                sheet.tab = "pay";
+                try {
+                    renderPartPaySheet();
+                } catch (e3) {
+                    console.error("confirmCancelPartBatch(render):", e3);
+                }
+            }
+        },
+        onCancel: () => {
+            if (partPaySheet === st) renderPartPaySheet();
+        }
+    });
+}
+
+function openPartPaymentSheet(orderId, usedFlag) {
+    if (!hasElevatedAccess()) {
+        showToast("غير متاح", "error");
+        return;
+    }
+    if (partPayInFlight) {
+        showToast("جارٍ تنفيذ عملية سداد — انتظر لحظة ثم أعد المحاولة", "error");
+        return;
+    }
+    const o = partPayViewOrder(orderId);
+    if (!o) {
+        showToast("احفظ الطلبية أولًا ثم سجّل السداد", "error");
+        return;
+    }
+    if (!o.confirmed && !orderHasPayStamps(o)) {
+        showToast("لا يمكن تسجيل السداد قبل تأكيد الطلبية", "error");
+        return;
+    }
+    const m = partPaySheetModel(o, usedFlag);
+    if (m.pi.regime === "flag") {
+        showToast("هذا النوع مسدد بالنظام القديم — يُدار من زر الصندوق في نافذة الطلبية", "error");
+        return;
+    }
+    partPaySheet = {
+        orderId: orderId,
+        usedFlag: !!usedFlag,
+        tab: "pay",
+        payer: null,
+        ticked: new Set(m.rows.ready.map(r => r.p.id)),
+        busy: false
+    };
+    renderPartPaySheet();
 }
 
 let draftSupplyBase = null;
@@ -9087,7 +10025,7 @@ function supplyPickerPreviewHtml(selectedIds) {
         const picked = chosen.filter(p => !!p.used === pair[0] && !partSupplied(draft, p)).length;
         if (cnt.remaining > 0 && picked === cnt.remaining) completes.push(pair[1]);
     });
-    return '<p class="modal-sub" style="margin:8px 0 0;font-size:12px;">سيُحتسب: ' + escapeHtml(bits.join(" · ")) + (completes.length ? "<br>✅ يكتمل توريد قطع " + escapeHtml(completes.join(" و")) + " فيصير قابلًا للتسديد" : "") + "</p>";
+    return '<p class="modal-sub" style="margin:8px 0 0;font-size:12px;">سيُحتسب: ' + escapeHtml(bits.join(" · ")) + (partialPaymentEnabled() ? chosen.some(p => !partSupplied(draft, p) && partPayLine(p) > 0 && !partHasPayKey(p)) ? "<br>✅ تصير قابلة للتسديد فور حفظ الطلبية" : "" : completes.length ? "<br>✅ يكتمل توريد قطع " + escapeHtml(completes.join(" و")) + " فيصير قابلًا للتسديد" : "") + "</p>";
 }
 
 function openSupplyPickerDialog() {
@@ -10107,7 +11045,7 @@ function updateModalTotals() {
             const livePl = settlementResetPlan(draftSettleBase, draft);
             if (livePl.blockReason) {
                 costSplitWrap.insertAdjacentHTML("beforeend", '<div class="settlement-reset-notice" id="settlement-reset-notice">⚠️ ' + escapeHtml(livePl.blockReason) + "</div>");
-            } else if (livePl.resetUsed || livePl.resetNew) {
+            } else if (livePl.resetUsed || livePl.resetNew || livePl.resetPartIds && livePl.resetPartIds.length) {
                 const liveSynced = Object.assign({}, draft);
                 syncOrderSupply(liveSynced);
                 const liveIncomplete = settlementResetIncompleteBucket(livePl, liveSynced);
@@ -10282,6 +11220,11 @@ async function onSaveOrder() {
             showToast("يجب تحديد طريقة الدفع (كاش/شبكة) لكل دفعة قبل الحفظ", "error");
             return false;
         }
+        if (!draft.isNew) {
+            const payLive = supplyLive || (appData.orders || []).find(o => o.id === draft.id);
+            restorePayStampsFromLive(cleanedParts, payLive);
+            if (payLive && draftSettleBase) adoptPayStampsFromParts(draftSettleBase, payLive.parts);
+        }
         const supplyMerged = Object.assign({}, draft, {
             parts: cleanedParts
         });
@@ -10319,11 +11262,15 @@ async function onSaveOrder() {
                 showToast(settlementFrozenText(resetPlan.frozenUsed, resetPlan.frozenNew, false), "error");
                 return false;
             }
+            if (!hasElevatedAccess() && resetPlan.resetPartIds && resetPlan.resetPartIds.length) {
+                showToast("غير متاح", "error");
+                return false;
+            }
             if (!resetPlan.blockReason && settlementResetIncompleteBucket(resetPlan, supplyMerged)) {
                 showToast(settlementSupplyBlockText("PT427", hasElevatedAccess()), "error");
                 return false;
             }
-            if (resetPlan.resetUsed || resetPlan.resetNew) {
+            if (resetPlan.resetUsed || resetPlan.resetNew || resetPlan.resetPartIds && resetPlan.resetPartIds.length) {
                 const resetDraftId = draft.id, resetDraftRef = draft;
                 const resetLive = appData.orders.find(o => o.id === resetDraftId);
                 const resetLiveStamp = resetLive ? resetLive.updatedAt || null : null;
@@ -10404,6 +11351,7 @@ async function onSaveOrder() {
         updateSuppliersBadge();
         showToast("تم حفظ الطلبية", "ok");
         if (saveInfo.settlementReset && hasElevatedAccess()) showToast("أُلغي تسديد " + settlementResetLabel(saveInfo.settlementReset) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح", "ok");
+        if (saveInfo.partPaymentsReset && hasElevatedAccess()) showToast(partPaymentsResetToastText(saveInfo), "ok");
         if (!orderModalStillOpen(draftId, savingOrder)) return true;
         draftOpenedAtUpdatedAt = draft.updatedAt;
         draftSettleBase = newSettleBase;
@@ -13889,6 +14837,7 @@ async function saveQuoteDraft(markSent) {
     }
     if (!quoteModalStillOpen(draftId, savingDraft)) {
         if (quoteSaveInfo.settlementReset && hasElevatedAccess()) showToast("أُلغي تسديد " + settlementResetLabel(quoteSaveInfo.settlementReset) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح", "ok");
+        if (quoteSaveInfo.partPaymentsReset && hasElevatedAccess()) showToast(partPaymentsResetToastText(quoteSaveInfo), "ok");
         return true;
     }
     delete quoteDraft.isNew;
@@ -13908,6 +14857,7 @@ async function saveQuoteDraft(markSent) {
     renderQuotesList();
     showToast(markSent ? "تم الحفظ والإرسال" : "تم الحفظ", "ok");
     if (quoteSaveInfo.settlementReset && hasElevatedAccess()) showToast("أُلغي تسديد " + settlementResetLabel(quoteSaveInfo.settlementReset) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح", "ok");
+    if (quoteSaveInfo.partPaymentsReset && hasElevatedAccess()) showToast(partPaymentsResetToastText(quoteSaveInfo), "ok");
     return true;
 }
 
@@ -14022,6 +14972,7 @@ async function onApproveQuote() {
     renderQuotesList();
     showToast("تم اعتماد طلب التسعير — أصبح طلبية " + approvedNumber, "ok");
     if (approveSaveInfo.settlementReset && hasElevatedAccess()) showToast("أُلغي تسديد " + settlementResetLabel(approveSaveInfo.settlementReset) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح", "ok");
+    if (approveSaveInfo.partPaymentsReset && hasElevatedAccess()) showToast(partPaymentsResetToastText(approveSaveInfo), "ok");
     if (!quoteModalStillOpen(approvedId, approvedDraft)) return;
     const pendingReturn = modalCloseCallback;
     modalCloseCallback = null;
@@ -14173,12 +15124,14 @@ async function handleScrapyardQuoteConflict(draftId) {
 
 async function adoptSettlementFromDb(order) {
     try {
-        if (!sb || !order || !orderHasSettlementFlag(order)) return null;
-        const {data: data, error: error} = await withTimeout(sb.from("orders").select("paid_to_amer,paid_to_omar,paid_to_supplier,paid_to_amer_new,paid_to_omar_new,paid_to_supplier_new").eq("id", order.id).maybeSingle(), 5e3, "adoptSettlementFromDb");
+        if (!sb || !order || !orderHasSettlementFlag(order) || typeof currentUserRole !== "undefined" && currentUserRole === "scrapyard") return null;
+        const {data: data, error: error} = await withTimeout(sb.from("orders").select("paid_to_amer,paid_to_omar,paid_to_supplier,paid_to_amer_new,paid_to_omar_new,paid_to_supplier_new,parts").eq("id", order.id).maybeSingle(), 5e3, "adoptSettlementFromDb");
         if (error || !data) return null;
+        const stampEcho = adoptPayStampsFromParts(order, data.parts);
         const echo = settlementEchoDetect(orderSettlementRowFlags(order), data);
-        if (!echo.used && !echo.new) return null;
-        applySettlementResetToOrder(order, echo);
+        if (!echo.used && !echo.new && !stampEcho.cancelled.length) return null;
+        if (echo.used || echo.new) applySettlementResetToOrder(order, echo);
+        if (stampEcho.cancelled.length) echo.partPaymentsReset = stampEcho.cancelled;
         return echo;
     } catch (e) {
         console.warn("adoptSettlementFromDb:", e);
@@ -14223,7 +15176,7 @@ async function onSaveQuotePricing() {
     const resetEcho = await adoptSettlementFromDb(savedDraft);
     const idx = appData.orders.findIndex(o => o.id === draftId);
     if (idx >= 0) appData.orders[idx] = savedDraft;
-    const resetToastText = resetEcho && hasElevatedAccess() ? "أُلغي تسديد " + settlementResetLabel(resetEcho) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح" : "";
+    const resetToastText = resetEcho && hasElevatedAccess() ? resetEchoToastText(resetEcho) : "";
     if (!quoteModalStillOpen(draftId)) {
         if (resetToastText) showToast(resetToastText, "ok");
         return;
@@ -14283,7 +15236,7 @@ async function onSaveAndSendQuotePricing() {
     if (idx >= 0) appData.orders[idx] = sentDraft;
     renderQuotesList();
     showToast("تم الحفظ والإرسال", "ok");
-    if (resetEcho && hasElevatedAccess()) showToast("أُلغي تسديد " + settlementResetLabel(resetEcho) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح", "ok");
+    if (resetEcho && hasElevatedAccess()) showToast(resetEchoToastText(resetEcho), "ok");
     if (!quoteModalStillOpen(draftId)) return;
     closeQuoteModal();
 }
@@ -14575,12 +15528,13 @@ function confirmAction(opts) {
 }
 
 function confirmSettlementResetOrAbort(plan, escFn) {
-    if (!plan || !plan.resetUsed && !plan.resetNew) return Promise.resolve(true);
+    const partsHit = !!(plan && plan.resetPartIds && plan.resetPartIds.length);
+    if (!plan || !plan.resetUsed && !plan.resetNew && !partsHit) return Promise.resolve(true);
     if (!hasElevatedAccess()) return Promise.resolve(true);
     document.removeEventListener("keydown", escFn);
     return new Promise(resolve => {
         confirmAction({
-            title: "سيُلغى تسديد " + plan.label + " لهذه الطلبية",
+            title: "سيُلغى تسديد " + (plan.resetUsed || plan.resetNew ? plan.label : supplyCountGen(plan.resetPartIds.length)) + " لهذه الطلبية",
             message: settlementResetWarningText(plan),
             confirmLabel: "احفظ وألغِ التسديد",
             cancelLabel: "عودة للتعديل",
@@ -14596,6 +15550,7 @@ function confirmSettlementResetOrAbort(plan, escFn) {
 
 function quotePricingSettlementBlockText(plan, elevated) {
     if (!plan) return "";
+    if (plan.resetPartIds && plan.resetPartIds.length && !elevated) return settlementWordingVisible() ? "لا يمكن تعديل سعر أو عدد أو نوع قطعة سبق تسجيل سدادها — اطلب من الإدارة إلغاء تسديدها أولًا" : "غير متاح";
     if (plan.frozenUsed || plan.frozenNew) return settlementFrozenText(!!plan.frozenUsed, !!plan.frozenNew, !!elevated);
     if (!plan.blockedUsed && !plan.blockedNew) return "";
     return elevated ? plan.blockReason : "لا يمكن تعديل سعر أو عدد أو نوع قطع هذه الطلبية الآن — فيها قطعة مرتجعة لم يُحصَّل مبلغها من المورد بعد. أعد القيم كما كانت، أو عدّلها بعد تحصيل المرتجع.";
@@ -14617,7 +15572,7 @@ async function quotePricingSettlementGate(cleanedParts) {
         showToast(why, "error");
         return false;
     }
-    if (!plan.resetUsed && !plan.resetNew) return true;
+    if (!plan.resetUsed && !plan.resetNew && !(plan.resetPartIds && plan.resetPartIds.length)) return true;
     const gAfter = Object.assign({}, quoteDraft, {
         parts: cleanedParts
     });
@@ -14709,7 +15664,7 @@ async function confirmDelete(orderId, knownMediaN) {
 const pendingConfirmToggleIds = new Set;
 
 function orderHasSettlementFlag(order) {
-    return !!(order && (order.paidToAmer || order.paidToOmar || order.paidToSupplier || order.paidToAmerNew || order.paidToOmarNew || order.paidToSupplierNew));
+    return !!(order && (order.paidToAmer || order.paidToOmar || order.paidToSupplier || order.paidToAmerNew || order.paidToOmarNew || order.paidToSupplierNew || orderHasPayStamps(order)));
 }
 
 function orderHasCashFootprint(order) {
@@ -14732,6 +15687,7 @@ function orderHasPendingCustomerRefund(order) {
 function orderUnconfirmBlockReason(order) {
     if (!hasElevatedAccess() && (anySupplied(order) || orderHasSettlementFlag(order))) return "غير متاح";
     if (orderBucketLegacySettled(order, false) || orderBucketLegacySettled(order, true)) return "لا يمكن إلغاء تأكيد هذه الطلبية: عليها تسديد قديم مقفل حسابيًا (قبل 26/09/2026 أو بلا تاريخ أو من عهدة قديمة). لا تعديل على القديم.";
+    if (orderHasPayStamps(order)) return "لا يمكن إلغاء تأكيد طلبية عليها تسديد لقطعها — ألغِ تسديد القطع أولًا (زر السداد ← الدفعات)";
     if (orderHasSettlementFlag(order)) return "لا يمكن إلغاء تأكيد طلبية عليها تسديد للمشتريات — ألغِ التسديد أولًا من نافذة الطلبية";
     if (orderHasPendingCustomerRefund(order)) return "لا يمكن إلغاء تأكيد طلبية فيها مبلغ مرتجع بانتظار ردّه للعميل — أكِّد الرد أولًا";
     return "";
@@ -16352,6 +17308,7 @@ function handleScrapyardProposalDecision(proposalId, accept) {
                 renderKPIs();
                 renderTable();
                 resetToastText = saveInfo.settlementReset ? "أُلغي تسديد " + settlementResetLabel(saveInfo.settlementReset) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح" : "";
+                if (saveInfo.partPaymentsReset) resetToastText = (resetToastText ? resetToastText + " · " : "") + partPaymentsResetToastText(saveInfo);
             }
             showToast(accept ? "تم القبول والتطبيق" : "تم رفض الاقتراح", "ok");
             if (resetToastText) showToast(resetToastText, "ok");
@@ -17411,7 +18368,7 @@ function proposalSettlementResetPreview(pr, keepFee) {
     const plan = settlementResetPlan(live, clone);
     syncOrderSupply(clone);
     if (!plan.blockReason && settlementResetIncompleteBucket(plan, clone)) plan.blockReason = settlementSupplyBlockText("PT427", true);
-    return plan.resetUsed || plan.resetNew || plan.blockReason ? plan : null;
+    return plan.resetUsed || plan.resetNew || plan.blockReason || plan.resetPartIds && plan.resetPartIds.length ? plan : null;
 }
 
 function scrapyardProposalSettlementResetPreview(pr) {
@@ -17429,7 +18386,7 @@ function scrapyardProposalSettlementResetPreview(pr) {
     const plan = settlementResetPlan(live, clone);
     syncOrderSupply(clone);
     if (!plan.blockReason && settlementResetIncompleteBucket(plan, clone)) plan.blockReason = settlementSupplyBlockText("PT427", true);
-    return plan.resetUsed || plan.resetNew || plan.blockReason ? plan : null;
+    return plan.resetUsed || plan.resetNew || plan.blockReason || plan.resetPartIds && plan.resetPartIds.length ? plan : null;
 }
 
 async function handleEditProposalDecision(proposalId, accept) {
@@ -17579,6 +18536,7 @@ function proceedEditProposalDecision(proposalId, accept, keepFee) {
                     const idx = appData.orders.findIndex(o => o.id === order.id);
                     if (idx >= 0) appData.orders[idx] = order; else appData.orders.push(order);
                     if (saveInfo.settlementReset) showToast("أُلغي تسديد " + settlementResetLabel(saveInfo.settlementReset) + " لهذه الطلبية — سجّل التسديد من جديد بالمبلغ الصحيح", "ok");
+                    if (saveInfo.partPaymentsReset) showToast(partPaymentsResetToastText(saveInfo), "ok");
                     if (claimed.kind === "part_delete" || claimed.kind === "part_return") {
                         await purgeEditProposalsForPart(order.id, claimed.part_id);
                     } else if (claimed.kind === "order_return") {
@@ -18349,6 +19307,25 @@ function accountsActivityForDate(isoDate, opts) {
             const amt = o.paidToOmarNewAmountSnapshot != null ? Number(o.paidToOmarNewAmountSnapshot) || 0 : orderTotals(o).costToSupplier;
             supplierPayments.push(payRow(amt, "جديد (عمر)", "new"));
         }
+        if (orderHasPayStamps(o)) {
+            const payGroups = {};
+            (o.parts || []).forEach(p => {
+                const st = partPayStamp(p);
+                if (!st) return;
+                const k = st.batchId + "|" + st.payer + "|" + (p.used ? "u" : "n");
+                (payGroups[k] = payGroups[k] || {
+                    st: st,
+                    used: !!p.used,
+                    amount: 0
+                }).amount += st.amount;
+            });
+            Object.keys(payGroups).forEach(k => {
+                const g = payGroups[k];
+                if (!matchIso(g.st.atIso)) return;
+                const kind = g.used ? g.st.payer === "supplier" ? "مورد" : g.st.payer === "amer" ? "تشليح (عامر)" : "تشليح (عمر)" : g.st.payer === "supplier" ? "مورد (جديد)" : g.st.payer === "amer" ? "جديد (عامر)" : "جديد (عمر)";
+                supplierPayments.push(payRow(round2(g.amount), kind, g.used ? "used" : "new"));
+            });
+        }
         if (o.deliveryCostPaid && deliveryOrderEligible(o) && matchIso(o.deliveryCostPaidAt)) {
             const agent = o.deliveryAgentId ? deliveryAgentById(o.deliveryAgentId) : null;
             deliveryPayments.push({
@@ -18588,8 +19565,8 @@ function computeTreasuryVolumes() {
     let costToSuppliersTotal = 0, costToScrapyardTotal = 0, sellTotalSum = 0;
     orders.forEach(o => {
         const t = orderTotals(o);
-        if (newPartsCostSettled(o, t)) paidToSuppliersTotal += t.costToSupplier;
-        if (scrapyardCostSettled(o, t)) paidToScrapyardTotal += t.costToScrapyard;
+        paidToSuppliersTotal += bucketPaidVolume(o, false, t);
+        paidToScrapyardTotal += bucketPaidVolume(o, true, t);
         costToSuppliersTotal += t.costToSupplier;
         costToScrapyardTotal += t.costToScrapyard;
         customerReceiptsTotal += t.customerPaidAmountForBox;
@@ -20047,7 +21024,32 @@ function sheetRowsSafe(rows) {
     });
 }
 
+function excelPartPayCells(o, p) {
+    const st = partPayStamp(p);
+    if (st) return {
+        "مسددة": "نعم",
+        "جهة السداد": PAY_PAYER_LABELS[st.payer] || "",
+        "تاريخ السداد": st.atIso,
+        "المبلغ المسدد": st.amount
+    };
+    const counts = partIsIncludedInOrder(o, p) && !p.returned && partPayLine(p) > 0 && bucketRegime(o, !!p.used) !== "flag";
+    return {
+        "مسددة": counts ? "لا" : "",
+        "جهة السداد": "",
+        "تاريخ السداد": "",
+        "المبلغ المسدد": ""
+    };
+}
+
+function excelPayCell(o, t, usedFlag) {
+    if (!orderHasPayStamps(o) || bucketRegime(o, usedFlag, t) !== "stamps") return "";
+    const pi = bucketPayInfo(o, usedFlag, t);
+    if (pi.fullyPaid) return "نعم";
+    return pi.paidIds.length ? "جزئي (" + fmtMoney(pi.paidAmt) + " من " + fmtMoney(pi.cost) + ")" : "لا";
+}
+
 async function exportAllDataToExcel() {
+    const payCols = partialPaymentUiVisible();
     const psCols = partialSupplyUiVisible();
     try {
         await ensureXLSX();
@@ -20111,7 +21113,8 @@ async function exportAllDataToExcel() {
                 "الربح": profit !== null ? profit : "",
                 "هامش الربح %": profit !== null && sellTotal > 0 ? round2(profit / sellTotal * 100) : "",
                 "مرتجعة": p.returned ? "نعم" : "لا",
-                "ضمن الطلبية": included ? "نعم" : "لا"
+                "ضمن الطلبية": included ? "نعم" : "لا",
+                ...payCols ? excelPartPayCells(o, p) : {}
             });
         });
     });
@@ -20137,9 +21140,9 @@ async function exportAllDataToExcel() {
             "إجمالي الشراء": t.costTotal,
             "منه مرتجع عند المورد (خارج الربح)": t.returnedReceivableCost || "",
             "مستحق للتشليح": t.costToScrapyard,
-            "مسدد للتشليح": t.costToScrapyard > 0 ? o.paidToAmer ? "نعم (عامر)" : o.paidToOmar ? "نعم (عمر)" : o.paidToSupplier ? "مسدد مباشرة" : "لا" : "",
+            "مسدد للتشليح": t.costToScrapyard > 0 ? excelPayCell(o, t, true) || (o.paidToAmer ? "نعم (عامر)" : o.paidToOmar ? "نعم (عمر)" : o.paidToSupplier ? "مسدد مباشرة" : "لا") : "",
             "مستحق للمورد": t.costToSupplier,
-            "مسدد للمورد": t.costToSupplier > 0 ? bucketSettlement(o, t, "new").payer === "supplier" ? "نعم" : newPartsCostSettled(o, t) ? "مسدد عن طريق العهدة" : "لا" : "",
+            "مسدد للمورد": t.costToSupplier > 0 ? excelPayCell(o, t, false) || (bucketSettlement(o, t, "new").payer === "supplier" ? "نعم" : newPartsCostSettled(o, t) ? "مسدد عن طريق العهدة" : "لا") : "",
             "مسعّرة بالكامل": t.fullyPriced ? "نعم" : "لا",
             "إجمالي البيع": t.hasChargeable ? t.sellTotal : "",
             "نسبة رسوم الخدمة %": t.feeEnabled ? t.feePercent : "",
@@ -20152,7 +21155,11 @@ async function exportAllDataToExcel() {
             "المدفوع من الزبون": t.customerPaidAmount,
             "المتبقي على الزبون": t.hasChargeable ? t.customerRemaining : "",
             "تاريخ الإنشاء": o.createdAt || "",
-            "آخر تحديث": o.updatedAt || ""
+            "آخر تحديث": o.updatedAt || "",
+            ...payCols ? {
+                "المسدد فعليًا للتشليح": bucketPayInfo(o, true, t).paidAmt,
+                "المسدد فعليًا للمورد": bucketPayInfo(o, false, t).paidAmt
+            } : {}
         };
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(ordersRows)), "الطلبيات");
@@ -20173,7 +21180,8 @@ async function exportAllDataToExcel() {
                 } : {},
                 "العدد": p.qty,
                 "سعر الشراء": p.costPrice,
-                "سعر البيع": p.sellPrice === null || p.sellPrice === undefined ? "" : p.sellPrice
+                "سعر البيع": p.sellPrice === null || p.sellPrice === undefined ? "" : p.sellPrice,
+                ...payCols ? excelPartPayCells(o, p) : {}
             });
         });
     });
@@ -20371,11 +21379,13 @@ function normalizeImportedOrder(o) {
 
 function confirmImportOverwrite(parsedData) {
     const orderCount = Array.isArray(parsedData.orders) ? parsedData.orders.length : 0;
+    const stampedInFile = (Array.isArray(parsedData.orders) ? parsedData.orders : []).reduce((n, o) => n + (o && Array.isArray(o.parts) ? o.parts.filter(p => partHasPayKey(p)).length : 0), 0);
+    const stampedNow = (appData && appData.orders || []).reduce((n, o) => n + (o && Array.isArray(o.parts) ? o.parts.filter(p => partHasPayKey(p)).length : 0), 0);
     const hasSuppliersInFile = Array.isArray(parsedData.suppliers);
     const hasCustomersInFile = Array.isArray(parsedData.customers);
     confirmAction({
         title: "استيراد البيانات؟",
-        message: "الملف يحتوي " + orderCount + " طلبية. سيتم استبدال كل البيانات الحالية (الطلبيات، الصندوق، المهام، الموردين، العملاء) بمحتوى هذا الملف — إجراء نهائي ولا يمكن التراجع عنه.",
+        message: "الملف يحتوي " + orderCount + " طلبية. سيتم استبدال كل البيانات الحالية (الطلبيات، الصندوق، المهام، الموردين، العملاء) بمحتوى هذا الملف — إجراء نهائي ولا يمكن التراجع عنه." + (stampedInFile || stampedNow ? " تنبيه: سداد القطع يُدار من القاعدة — الاستيراد لا ينشئ سداد القطع ولا يغيّره" + (stampedInFile ? " (الملف يحتوي سداد " + supplyCountGen(stampedInFile) + ")" : "") + (stampedNow ? " (المسجّل حاليًا سداد " + supplyCountGen(stampedNow) + ")" : "") + ": الطلبيات غير الموجودة في الملف تُحذف مع سدادها المسجّل، وتعديل سعر قطعة مسدّدة أو عددها أو نوعها في الملف يلغي سدادها تلقائيًا، والطلبيات الجديدة تدخل بلا سداد قطع. الاستعادة الكاملة لسداد القطع تتم من مسار الصيانة فقط." : ""),
         confirmLabel: "استبدال البيانات",
         dangerous: true,
         onConfirm: async () => {
@@ -20415,6 +21425,13 @@ function confirmImportOverwrite(parsedData) {
                 updateSuppliersBadge();
                 updateCustomersBadge();
                 return;
+            }
+            if (stampedInFile > 0 || (previousAppData.orders || []).some(o => orderHasPayStamps(o))) {
+                try {
+                    await loadData({
+                        preserveOnFailure: true
+                    });
+                } catch (e3) {}
             }
             if (document.getElementById("treasury-view").style.display !== "none") {
                 renderTreasuryView();
@@ -20851,6 +21868,7 @@ function applyRemoteOrderChange(payload) {
         const idx = appData.orders.findIndex(o => o.id === order.id);
         if (idx >= 0) appData.orders[idx] = order; else appData.orders.push(order);
         syncDraftSupplyFromRemote(order);
+        syncDraftPayStampsFromRemote(order);
         syncDraftSupplyRequestFromLive(order);
     }
     scheduleOrderRenderCascade();
@@ -20886,7 +21904,7 @@ async function persistOrder(order, isNew, outInfo) {
     try {
         if (!sb) throw new Error("NO_DB");
         const row = orderObjectToRow(order);
-        const {data: data, error: error} = isNew ? await withTimeout(sb.from("orders").insert(row).select("id"), 2e4, "persistOrder insert") : await withTimeout(sb.from("orders").update(row).eq("id", order.id).select("id,paid_to_amer,paid_to_omar,paid_to_supplier,paid_to_amer_new,paid_to_omar_new,paid_to_supplier_new"), 2e4, "persistOrder update");
+        const {data: data, error: error} = isNew ? await withTimeout(sb.from("orders").insert(row).select("id"), 2e4, "persistOrder insert") : await withTimeout(sb.from("orders").update(row).eq("id", order.id).select("id,paid_to_amer,paid_to_omar,paid_to_supplier,paid_to_amer_new,paid_to_omar_new,paid_to_supplier_new,parts"), 2e4, "persistOrder update");
         if (error) throw error;
         if (!data || !data.length) {
             showToast("تعذر حفظ الطلبية — يبدو أنه تم تعديلها أو حذفها من مكان آخر، أو ليست لديك صلاحية عليها. أغلق النافذة وافتحها من جديد", "error");
@@ -20898,12 +21916,14 @@ async function persistOrder(order, isNew, outInfo) {
                 applySettlementResetToOrder(order, echo);
                 if (outInfo) outInfo.settlementReset = echo;
             }
+            const stampEcho = adoptPayStampsFromParts(order, data[0].parts);
+            if (stampEcho.cancelled.length && outInfo) outInfo.partPaymentsReset = stampEcho.cancelled;
         }
         return true;
     } catch (e) {
         if (e && e.code === "23505") {
             showToast("رقم الطلبية " + order.orderNumber + " أصبح مستخدمًا لطلبية أخرى (على الأغلب تم حفظ طلبيتين في اللحظة نفسها) — أغلق النافذة وافتحها من جديد", "error");
-        } else if (e && !settlementWordingVisible() && (e.code === "PT426" || e.code === "PT427" || e.hint === "settlement_bucket_not_supplied" || e.hint === "settlement_bucket_incomplete_edit" || e.code === "PT424" || e.hint === "settled_bucket_return_block")) {
+        } else if (e && !settlementWordingVisible() && (e.code === "PT426" || e.code === "PT427" || e.hint === "settlement_bucket_not_supplied" || e.hint === "settlement_bucket_incomplete_edit" || e.code === "PT424" || e.hint === "settled_bucket_return_block" || e.code === "PT428" || e.code === "PT429" || e.code === "PT430" || e.code === "PT431" || e.code === "PT432")) {
             showToast("غير متاح", "error");
         } else if (e && e.message === "غير متاح" && !hasElevatedAccess()) {
             showToast("لم تُحفظ الطلبية: فيها تعديل على حقل مقفول لحسابك (دفعات الزبون، أو أسعار/قطع/نسب طلبية موردة) — أرسله كطلب تعديل ✏️ ليصل للإدارة", "error");
@@ -21722,11 +22742,15 @@ function supplierPricedHistory(supplierId) {
             map[o.id].amount = round2(map[o.id].amount + (Number(p.qty) || 1) * (Number(p.costPrice) || 0));
             map[o.id].count++;
             if (p.returned) map[o.id].returnedCount++;
+            if (!isQuote && partHasPayKey(p) && !p.returned && partIsIncludedInOrder(o, p) && !partSupplied(o, p)) {
+                const advSt = partPayStamp(p);
+                if (advSt) map[o.id].advanceHeld = round2((map[o.id].advanceHeld || 0) + advSt.amount);
+            }
             if (map[o.id].partsTotal !== undefined && !p.returned && partIsIncludedInOrder(o, p)) {
                 map[o.id].partsTotal++;
                 if (partSupplied(o, p)) {
                     map[o.id].partsDone++;
-                    if (!bucketFullySupplied(o, p.used ? "used" : "new")) map[o.id].held = true;
+                    if (!partialPaymentActive(o) && !bucketFullySupplied(o, p.used ? "used" : "new")) map[o.id].held = true;
                 }
             }
         });
@@ -21808,7 +22832,8 @@ function purchaseHistoryRowHtml(row) {
 function pricedHistoryRowHtml(row) {
     const statusTag = row.isQuote ? '<span class="stamp stamp-amber">تسعير</span>' : pricedSupplyTagHtml(row);
     const returnedTag = row.returnedCount ? '<span class="stamp stamp-rust">' + row.returnedCount + " مرتجعة</span>" : "";
-    return '<button type="button" class="purchase-history-row" data-open-priced="' + escapeHtml(row.orderId) + '" data-is-quote="' + (row.isQuote ? "1" : "") + '">' + '<div class="purchase-history-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(row.orderNumber || "") + (row.orderLabel ? " — " + escapeHtml(row.orderLabel) : "") + "</span>" + '<span class="num">' + fmtMoney(row.amount) + "</span>" + "</div>" + '<div class="purchase-history-row-sub">' + "<span>" + row.count + " قطعة</span>" + statusTag + returnedTag + (row.held ? '<span class="supply-held-note">بانتظار اكتمال توريد باقي القطع قبل السداد</span>' : "") + "<span>" + isoToDisplayDate(row.date) + "</span>" + "</div>" + "</button>";
+    const advanceTag = row.advanceHeld && hasElevatedAccess() ? '<span class="stamp stamp-amber">مدفوع مقدّمًا ' + fmtMoney(row.advanceHeld) + "</span>" : "";
+    return '<button type="button" class="purchase-history-row" data-open-priced="' + escapeHtml(row.orderId) + '" data-is-quote="' + (row.isQuote ? "1" : "") + '">' + '<div class="purchase-history-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(row.orderNumber || "") + (row.orderLabel ? " — " + escapeHtml(row.orderLabel) : "") + "</span>" + '<span class="num">' + fmtMoney(row.amount) + "</span>" + "</div>" + '<div class="purchase-history-row-sub">' + "<span>" + row.count + " قطعة</span>" + statusTag + returnedTag + advanceTag + (row.held ? '<span class="supply-held-note">بانتظار اكتمال توريد باقي القطع قبل السداد</span>' : "") + "<span>" + isoToDisplayDate(row.date) + "</span>" + "</div>" + "</button>";
 }
 
 function openSupplierHistoryModal(supplierId) {
@@ -21823,8 +22848,9 @@ function openSupplierHistoryModal(supplierId) {
     const {approved: approved, pending: pending} = supplierPricedHistory(supplierId);
     const approvedTotal = round2(approved.reduce((s, r) => s + r.amount, 0));
     const pendingTotal = round2(pending.reduce((s, r) => s + r.amount, 0));
+    const advanceHeldTotal = hasElevatedAccess() ? round2(approved.reduce((s, r) => s + (r.advanceHeld || 0), 0)) : 0;
     const root = document.getElementById("modal-root");
-    root.innerHTML = '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-header"><div class="modal-title">ملف المورد — ' + escapeHtml(label) + "</div>" + '<button type="button" class="icon-btn" id="supplier-history-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>المسعّر — معتمدة</span><span class="num">' + fmtMoney(approvedTotal) + "</span></div>" + (approved.length ? approved.map(pricedHistoryRowHtml).join("") : '<div class="expense-empty-hint">لا توجد قطع مسعّرة عنده في طلبيات معتمدة</div>') + "</div>" + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>المسعّر — غير معتمدة (طلبات تسعير)</span><span class="num">' + fmtMoney(pendingTotal) + "</span></div>" + (pending.length ? pending.map(pricedHistoryRowHtml).join("") : '<div class="expense-empty-hint">لا توجد طلبات تسعير معلّقة عنده</div>') + "</div>" + (receivables.length ? '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>مرتجعات بانتظار التحصيل</span><span class="num text-green">' + fmtMoney(receivablesTotal) + "</span></div>" + receivables.map(returnReceivableRowHtml).join("") + "</div>" : "") + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>جارية (غير مسددة)</span><span class="num text-rust">' + fmtMoney(ongoingTotal) + "</span></div>" + (ongoing.length ? ongoing.map(purchaseHistoryRowHtml).join("") : '<div class="expense-empty-hint">لا توجد مشتريات جارية</div>') + "</div>" + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>سابقة (مسددة)</span><span class="num text-green">' + fmtMoney(pastTotal) + "</span></div>" + (past.length ? past.map(purchaseHistoryRowHtml).join("") : '<div class="expense-empty-hint">لا توجد مشتريات سابقة</div>') + "</div>" + "</div>" + "</div>";
+    root.innerHTML = '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-header"><div class="modal-title">ملف المورد — ' + escapeHtml(label) + "</div>" + '<button type="button" class="icon-btn" id="supplier-history-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>المسعّر — معتمدة</span><span class="num">' + fmtMoney(approvedTotal) + "</span></div>" + (approved.length ? approved.map(pricedHistoryRowHtml).join("") : '<div class="expense-empty-hint">لا توجد قطع مسعّرة عنده في طلبيات معتمدة</div>') + "</div>" + (advanceHeldTotal > 0 ? '<div class="purchase-history-section"><div class="purchase-history-section-title"><span>دفعات مقدّمة لدى المورد (قطع لم تصل بعد)</span><span class="num text-amber">' + fmtMoney(advanceHeldTotal) + "</span></div></div>" : "") + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>المسعّر — غير معتمدة (طلبات تسعير)</span><span class="num">' + fmtMoney(pendingTotal) + "</span></div>" + (pending.length ? pending.map(pricedHistoryRowHtml).join("") : '<div class="expense-empty-hint">لا توجد طلبات تسعير معلّقة عنده</div>') + "</div>" + (receivables.length ? '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>مرتجعات بانتظار التحصيل</span><span class="num text-green">' + fmtMoney(receivablesTotal) + "</span></div>" + receivables.map(returnReceivableRowHtml).join("") + "</div>" : "") + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>جارية (غير مسددة)</span><span class="num text-rust">' + fmtMoney(ongoingTotal) + "</span></div>" + (ongoing.length ? ongoing.map(purchaseHistoryRowHtml).join("") : '<div class="expense-empty-hint">لا توجد مشتريات جارية</div>') + "</div>" + '<div class="purchase-history-section">' + '<div class="purchase-history-section-title"><span>سابقة (مسددة)</span><span class="num text-green">' + fmtMoney(pastTotal) + "</span></div>" + (past.length ? past.map(purchaseHistoryRowHtml).join("") : '<div class="expense-empty-hint">لا توجد مشتريات سابقة</div>') + "</div>" + "</div>" + "</div>";
     root.classList.add("modal-open");
     const close = () => {
         root.innerHTML = "";
@@ -25614,6 +26640,7 @@ function showAuthGate(msg, msgType) {
     if (scrapRoot) scrapRoot.style.display = "none";
     hideLocationGate();
     teardownPresenceAndLocationResources();
+    partPayResetSession();
     shownForEmail = null;
     scrapyardSharedState.canManage = false;
     currentUserIsElevated = false;
@@ -25681,6 +26708,7 @@ async function showAppIfAllowed(session) {
         mediaResetState();
         partsCatReset();
         opsKpiReset();
+        partPayResetSession();
         if (role === "scrapyard") {
             document.getElementById("app-root").style.display = "none";
             document.getElementById("scrapyard-root").style.display = "";
@@ -25696,6 +26724,7 @@ async function showAppIfAllowed(session) {
         subscribeAnnouncementRealtime();
         subscribeOrderMediaRealtime();
         opsKpiStart();
+        probePartialPaymentDb();
         probePartialSupplyDb();
         const treasuryBtn = document.getElementById("btn-open-treasury");
         if (treasuryBtn) treasuryBtn.style.display = currentUserIsElevated ? "" : "none";
@@ -25846,26 +26875,38 @@ function ownerScrapyardPartsFromAppData(kind) {
     const list = [];
     const isPaid = SETTLEMENT_KINDS[kind].isPaid;
     const wantUsed = kind === "used";
-    appData.orders.filter(o => !o.isQuote && !isPaid(o) && supplyBucketComplete(o, wantUsed)).forEach(o => {
+    appData.orders.filter(o => !o.isQuote).forEach(o => {
+        const pp = partialPaymentActive(o);
+        if (!pp && (isPaid(o) || !supplyBucketComplete(o, wantUsed))) return;
         const keyedSupply = orderHasSupplyKeys(o);
+        let info = null;
+        if (pp) {
+            info = bucketPayInfo(o, wantUsed, orderTotals(o), keyedSupply);
+            if (info.regime === "flag") return;
+            if (!info.paidIds.length && !(info.cost > 0)) return;
+        }
         (o.parts || []).forEach(p => {
             if (p.returned) return;
             if (!partIsIncludedInOrder(o, p)) return;
-            if (!!p.used === wantUsed) {
-                list.push({
-                    order_id: o.id,
-                    order_number: o.orderNumber,
-                    order_label: orderDisplayLabel(o),
-                    supplied_at: partSuppliedAtIso(o, p, keyedSupply),
-                    part_id: p.id,
-                    description: p.description,
-                    qty: p.qty,
-                    cost_price: p.costPrice,
-                    supplier_id: p.supplierId || null,
-                    note: p.scrapyardNote || "",
-                    condition: p.condition || null
-                });
+            if (!!p.used !== wantUsed) return;
+            if (pp) {
+                if (partHasPayKey(p)) return;
+                if (!partSupplied(o, p, keyedSupply)) return;
+                if (info.paidIds.length && !(partPayLine(p) > 0) && !info.dueIds.length) return;
             }
+            list.push({
+                order_id: o.id,
+                order_number: o.orderNumber,
+                order_label: orderDisplayLabel(o),
+                supplied_at: partSuppliedAtIso(o, p, keyedSupply),
+                part_id: p.id,
+                description: p.description,
+                qty: p.qty,
+                cost_price: p.costPrice,
+                supplier_id: p.supplierId || null,
+                note: p.scrapyardNote || "",
+                condition: p.condition || null
+            });
         });
     });
     const grpKey = {}, grpFirst = {};
@@ -26410,6 +27451,15 @@ function confirmedAmountIsStale(confirmedAmount, currentAmount) {
     return Math.abs(round2(confirmedAmount) - round2(currentAmount)) > .01;
 }
 
+function scrapyardPaidTickStale(conf, group) {
+    const at = conf && conf.paid_at ? Date.parse(conf.paid_at) : NaN;
+    if (isNaN(at)) return false;
+    return (group.parts || []).some(p => {
+        const ms = p.supplied_at ? Date.parse(p.supplied_at) : NaN;
+        return !isNaN(ms) && ms > at;
+    });
+}
+
 function scrapyardOrderGroupHtml(group, canManage) {
     const subtotal = group.parts.reduce((s, p) => s + (Number(p.cost_price) || 0) * (Number(p.qty) || 1), 0);
     const proposedSubtotal = scrapyardGroupProposedSubtotal(group);
@@ -26419,7 +27469,7 @@ function scrapyardOrderGroupHtml(group, canManage) {
     const confirmedAmount = confirmation && confirmation.confirmed_amount != null ? Number(confirmation.confirmed_amount) : null;
     const confirmationStale = confirmedAmountIsStale(confirmedAmount, subtotal);
     const isConfirmed = confirmedAmount != null;
-    const isPaid = !!(confirmation && confirmation.paid);
+    const isPaid = !!(confirmation && confirmation.paid) && !scrapyardPaidTickStale(confirmation, group);
     const canOpenOrderFromHere = canManage || scrapyardSharedState.viewerOnly;
     return '<div class="scrapyard-order-group' + (isPaid ? " scrapyard-order-group-paid" : "") + '">' + '<div class="scrapyard-order-header' + (canOpenOrderFromHere ? " scrapyard-order-header-clickable" : "") + '"' + (canOpenOrderFromHere ? ' data-open-order-scrapyard="' + escapeHtml(group.order_id) + '" title="فتح الطلبية"' : "") + ">" + escapeHtml(group.order_number || "") + (group.order_label ? " — " + escapeHtml(group.order_label) : "") + (isConfirmed && canManage ? confirmationStale ? '<span class="scrapyard-confirmed-check" title="أكّدها عامر على مبلغ ' + fmtMoney(confirmedAmount) + ' — المبلغ تغيّر بعدها">⚠️</span>' : '<span class="scrapyard-confirmed-check" title="أكّدها عامر">✅</span>' : "") + (isPaid && canManage ? '<span class="scrapyard-confirmed-check" title="سدّدها عامر">💰</span>' : "") + scrapyardDaysSinceSupplyBadgeHtml(group.supplied_at) + "</div>" + group.parts.map(p => scrapyardPartRowHtml(p, canManage)).join("") + addProposals.map(pr => scrapyardAddProposalInlineHtml(pr, canManage)).join("") + (addDraft ? scrapyardAddDraftRowHtml(group.order_id, addDraft) : "") + '<div class="scrapyard-order-subtotal">' + '<span class="scrapyard-subtotal-label">مجموع الطلبية</span>' + '<span class="scrapyard-qty-slot" aria-hidden="true"></span>' + '<div class="scrapyard-subtotal-values" id="scrapyard-subtotal-values-' + group.order_id + '">' + scrapyardSubtotalValuesHtml(subtotal, proposedSubtotal) + "</div>" + '<span class="scrapyard-mgmt-actions" aria-hidden="true"></span>' + "</div>" + (!canManage && !scrapyardSharedState.viewerOnly ? '<div class="scrapyard-order-actions">' + (addDraft ? "" : '<button type="button" class="btn btn-ghost btn-sm" data-add-part-order="' + escapeHtml(group.order_id) + '">+ اقتراح قطعة جديدة</button>') + (isConfirmed && !confirmationStale ? '<button type="button" class="btn btn-sm btn-confirmed-green" data-unconfirm-order="' + escapeHtml(group.order_id) + '" title="اضغط للتراجع عن التأكيد">✅ تم تأكيد المبلغ</button>' : isConfirmed ? '<button type="button" class="btn btn-amber btn-sm" data-confirm-order="' + escapeHtml(group.order_id) + '" title="أكّدت ' + fmtMoney(confirmedAmount) + ' والمبلغ تغيّر بعدها">⚠️ المبلغ تغيّر — أكّد من جديد</button>' : '<button type="button" class="btn btn-ghost btn-sm" data-confirm-order="' + escapeHtml(group.order_id) + '">تأكيد المبلغ</button>') + (isPaid ? '<button type="button" class="btn btn-sm btn-confirmed-green" data-unmark-paid-order="' + escapeHtml(group.order_id) + '" title="اضغط للتراجع عن السداد">✅ تم السداد</button>' : '<button type="button" class="btn btn-ghost btn-sm" data-mark-paid-order="' + escapeHtml(group.order_id) + '">💰 تم السداد</button>') + "</div>" : "") + "</div>";
 }
