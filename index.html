@@ -941,6 +941,8 @@
   .pn-search-num{direction:ltr;unicode-bidi:plaintext;font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:800;font-size:13px;color:var(--green);white-space:nowrap;}
   .pn-search-name{direction:ltr;unicode-bidi:plaintext;font-size:12px;color:var(--text-dim);text-align:end;overflow-wrap:anywhere;}
   .pn-search-row-hist .pn-search-num{color:var(--amber);}
+  .pn-search-row-epc{border-color:var(--green-line);}
+  .pn-search-row-epc .pn-search-num{color:var(--green);}
   .part-notes-readonly{font-size:12.5px;color:var(--rust);font-weight:800;padding:2px 2px;}
   .used-badge{align-self:flex-start;font-size:10px;font-weight:700;color:var(--amber);background:var(--amber-dim);border:1px solid var(--amber-line);border-radius:4px;padding:1px 8px;cursor:pointer;font-family:'Tajawal',sans-serif;}
   .used-badge:hover{filter:brightness(1.1);}
@@ -3011,6 +3013,12 @@ function partNumberBindDelegationOnce() {
     });
     document.addEventListener("change", e => {
         const t = e.target;
+        if (t && t.id === "pn-file-input") {
+            const f = t.files && t.files[0];
+            t.value = "";
+            if (f) partNumberSearchFile(f);
+            return;
+        }
         if (!t || !t.classList || !t.classList.contains("part-pn-input")) return;
         const c = partNumberContext(t);
         if (!c) return;
@@ -3028,6 +3036,13 @@ function partNumberBindDelegationOnce() {
                 e.preventDefault();
                 partNumberSearchOpen(cf);
             }
+            return;
+        }
+        el = t.closest("[data-pn-file]");
+        if (el) {
+            e.preventDefault();
+            const fi = document.getElementById("pn-file-input");
+            if (fi && fi.click) fi.click();
             return;
         }
         el = t.closest("[data-pn-pick]");
@@ -3229,14 +3244,124 @@ function partNumberSearchTerms(q, extraIgnore) {
     };
 }
 
+function epcCsvSplit(line) {
+    const out = [];
+    let cur = "", q = false;
+    const s = String(line || "");
+    for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        if (q) {
+            if (ch === '"') {
+                if (s[i + 1] === '"') {
+                    cur += '"';
+                    i++;
+                } else q = false;
+            } else cur += ch;
+        } else if (ch === '"') q = true; else if (ch === ",") {
+            out.push(cur);
+            cur = "";
+        } else cur += ch;
+    }
+    out.push(cur);
+    return out.map(x => x.trim());
+}
+
+function epcFormatPartNumber(raw) {
+    const s = String(raw == null ? "" : raw).toUpperCase().replace(/[^A-Z0-9]/g, "");
+    return /^[0-9A-Z]{10,12}$/.test(s) ? s.slice(0, 5) + "-" + s.slice(5) : s;
+}
+
+function epcInterfaceParse(text) {
+    const lines = String(text || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (lines.length < 2) return null;
+    const v = epcCsvSplit(lines[0]);
+    if (v.length < 4 || !/^[A-Z0-9]{8,17}$/i.test(v[0] || "")) return null;
+    const pd = /^[0-9]{6}$/.test(v[3] || "") ? v[3].slice(0, 4) + "/" + v[3].slice(4) : v[3] || "";
+    const vehicle = {
+        vin: (v[0] || "").toUpperCase(),
+        model: v[1] || "",
+        catalog: v[2] || "",
+        prodDate: pd,
+        frameNo: [ v[4], v[5] ].filter(Boolean).join("-"),
+        color: v[6] || "",
+        trim: v[7] || ""
+    };
+    const parts = [], seen = new Set;
+    lines.slice(1).forEach(l => {
+        const c = epcCsvSplit(l);
+        const num = epcFormatPartNumber(c[0]);
+        if (!/^[0-9A-Z]{5}-[0-9A-Z]{3,7}$/.test(num) || num.replace(/[^0-9]/g, "").length < 6 || seen.has(num)) return;
+        seen.add(num);
+        const q = parseInt(c[1], 10);
+        parts.push({
+            num: num,
+            qty: isFinite(q) && q > 0 ? q : 1,
+            name: ""
+        });
+    });
+    return parts.length ? {
+        vehicle: vehicle,
+        parts: parts
+    } : null;
+}
+
+function epcVehicleText(v) {
+    if (!v) return "";
+    return [ v.model, v.prodDate, v.vin ].filter(Boolean).join(" · ");
+}
+
+async function partNumberSearchFile(file) {
+    const st = pnSearch;
+    if (!st || !file) return;
+    let parsed = null;
+    try {
+        const text = await (file.text ? file.text() : new Promise((res, rej) => {
+            const fr = new FileReader;
+            fr.onload = () => res(String(fr.result || ""));
+            fr.onerror = () => rej(fr.error);
+            fr.readAsText(file);
+        }));
+        parsed = epcInterfaceParse(text);
+    } catch (e) {
+        parsed = null;
+    }
+    if (pnSearch !== st) return;
+    if (!parsed) {
+        st.file = null;
+        partNumberSearchRefreshList();
+        showToast("الملف ليس بصيغة ملف برنامج تويوتا (gcsavd_intf.csv) أو لا يحتوي قطعًا — اضغط F6 بشاشة النتائج ثم أعد المحاولة", "error");
+        return;
+    }
+    parsed.parts = parsed.parts.slice(0, 40);
+    st.file = parsed;
+    partNumberSearchRefreshList();
+    await Promise.all(parsed.parts.slice(0, 12).map(async p => {
+        try {
+            const r = await sb.rpc("get_catalog_item", {
+                p_key: partNumberKey(p.num)
+            });
+            if (r && !r.error && Array.isArray(r.data) && r.data[0]) p.name = String(r.data[0].name || "");
+        } catch (e) {}
+    }));
+    if (pnSearch !== st || st.file !== parsed) return;
+    partNumberSearchRefreshList();
+}
+
 function partNumberSearchRowHtml(num, name, hist) {
-    return '<button type="button" class="pn-search-row' + (hist ? " pn-search-row-hist" : "") + '" data-pn-pick="' + escapeHtml(num) + '">' + '<span class="pn-search-num">' + escapeHtml(num) + '</span><span class="pn-search-name">' + escapeHtml(name || "") + "</span></button>";
+    return '<button type="button" class="pn-search-row' + (hist === "epc" ? " pn-search-row-epc" : hist ? " pn-search-row-hist" : "") + '" data-pn-pick="' + escapeHtml(num) + '">' + '<span class="pn-search-num">' + escapeHtml(num) + '</span><span class="pn-search-name">' + escapeHtml(name || "") + "</span></button>";
 }
 
 function partNumberSearchListHtml() {
     const st = pnSearch;
     if (!st) return "";
     let h = "";
+    if (st.file) {
+        const vin = String(st.file.vehicle.vin || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+        const ov = String(st.orderVin || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+        h += '<div class="pn-search-sec">📂 من برنامج تويوتا — ' + escapeHtml(epcVehicleText(st.file.vehicle)) + "</div>";
+        if (ov && vin && ov !== vin) h += '<div class="modal-sub" style="color:var(--amber);margin:0;">⚠️ رقم الهيكل بالملف يختلف عن رقم هيكل الطلبية — تأكد أنها نفس السيارة</div>';
+        h += st.file.parts.map(p => partNumberSearchRowHtml(p.num, (p.name || "") + (p.qty > 1 ? " ×" + p.qty : ""), "epc")).join("");
+    }
     if (st.hist && st.hist.length) {
         h += '<div class="pn-search-sec">🕘 أرقام استُخدمت لنفس السيارة وقطعة مشابهة</div>' + st.hist.map(s => partNumberSearchRowHtml(s.num, "من طلبية سابقة" + (s.from ? " — " + s.from : "") + (s.count > 1 ? " (×" + s.count + ")" : ""), true)).join("");
     }
@@ -3266,7 +3391,7 @@ function partNumberSearchRefreshList() {
 function partNumberSearchRender() {
     const root = document.getElementById("confirm-root");
     if (!root || !pnSearch) return;
-    root.innerHTML = '<div class="modal-backdrop pn-search-backdrop">' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true" style="max-height:92vh;display:flex;flex-direction:column;">' + '<div class="modal-title">🔎 بحث عن رقم القطعة</div>' + '<input type="text" id="pn-search-input" class="search-input" style="width:100%;min-width:0;margin-top:8px;" autocomplete="off" placeholder="اسم القطعة (عربي أو إنجليزي)" value="' + escapeHtml(pnSearch.q) + '">' + '<div id="pn-search-hint" class="modal-sub" style="margin:6px 0 0;"></div>' + '<div id="pn-search-list" class="pn-search-list"></div>' + '<div class="modal-footer-actions" style="margin-top:10px;justify-content:flex-end;"><button type="button" class="btn btn-ghost" data-pn-search-close>إغلاق</button></div>' + "</div>" + "</div>";
+    root.innerHTML = '<div class="modal-backdrop pn-search-backdrop">' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true" style="max-height:92vh;display:flex;flex-direction:column;">' + '<div class="modal-title">🔎 بحث عن رقم القطعة</div>' + '<input type="text" id="pn-search-input" class="search-input" style="width:100%;min-width:0;margin-top:8px;" autocomplete="off" placeholder="اسم القطعة (عربي أو إنجليزي)" value="' + escapeHtml(pnSearch.q) + '">' + '<div style="margin-top:8px;"><button type="button" class="btn btn-ghost btn-sm" data-pn-file>📂 من ملف برنامج تويوتا (gcsavd_intf.csv)</button>' + '<input type="file" id="pn-file-input" accept=".csv,.txt" style="display:none;"></div>' + '<div id="pn-search-hint" class="modal-sub" style="margin:6px 0 0;"></div>' + '<div id="pn-search-list" class="pn-search-list"></div>' + '<div class="modal-footer-actions" style="margin-top:10px;justify-content:flex-end;"><button type="button" class="btn btn-ghost" data-pn-search-close>إغلاق</button></div>' + "</div>" + "</div>";
     root.classList.add("modal-open");
     partNumberSearchRefreshList();
     const inp = document.getElementById("pn-search-input");
@@ -3341,7 +3466,9 @@ function partNumberSearchOpen(c) {
         rows: null,
         relaxed: false,
         err: "",
-        busy: false
+        busy: false,
+        file: null,
+        orderVin: String(c.order && c.order.vin || "")
     };
     partNumberSearchRender();
     partNumberSearchRun();
