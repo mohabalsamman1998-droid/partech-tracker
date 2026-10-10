@@ -920,6 +920,18 @@
     padding:6px 10px;border-radius:6px;font-size:12.5px;font-family:'Tajawal',sans-serif;
   }
   .part-purchasing-notes-input{border-color:var(--amber-line);}
+  /* رقم القطعة (part.partNumber): سطر تحت الوصف — رقم OEM ltr + اقتراحات من التاريخ + بدائل */
+  .part-pn-block{display:flex;flex-direction:column;gap:4px;}
+  .part-pn-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .part-pn-label{font-size:11px;font-weight:700;color:var(--text-dim);white-space:nowrap;}
+  .part-pn-input{flex:1 1 150px;min-width:0;direction:ltr;text-align:left;background:var(--bg);border:1px solid var(--border-soft);color:var(--green);font-weight:800;padding:5px 9px;border-radius:6px;font-size:12.5px;font-family:ui-monospace,Menlo,Consolas,monospace;}
+  .part-pn-input::placeholder{color:var(--text-faint);font-weight:500;font-family:'Tajawal',sans-serif;direction:rtl;}
+  .part-pn-input:focus{outline:none;border-color:var(--green-line);}
+  .part-pn-chips,.part-pn-alts{display:flex;flex-wrap:wrap;align-items:center;gap:4px;}
+  .part-pn-chip,.part-pn-alt{direction:ltr;unicode-bidi:plaintext;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;font-weight:700;border-radius:999px;padding:2px 9px;cursor:pointer;background:var(--surface-2);}
+  .part-pn-chip{color:var(--amber);border:1px dashed var(--amber-line);}
+  .part-pn-alt{color:var(--text-dim);border:1px solid var(--border-soft);}
+  .part-pn-alts-label{font-size:10.5px;font-weight:700;color:var(--text-faint);}
   .part-notes-readonly{font-size:12.5px;color:var(--rust);font-weight:800;padding:2px 2px;}
   .used-badge{align-self:flex-start;font-size:10px;font-weight:700;color:var(--amber);background:var(--amber-dim);border:1px solid var(--amber-line);border-radius:4px;padding:1px 8px;cursor:pointer;font-family:'Tajawal',sans-serif;}
   .used-badge:hover{filter:brightness(1.1);}
@@ -2800,6 +2812,221 @@ function bindPartLeadInput(input, part) {
     input.addEventListener("blur", e => {
         const v = normalizeLeadDays(e.target.value);
         e.target.value = v == null ? "" : String(v);
+    });
+}
+
+const PN_SIDE_WORDS = [ "يمين", "يسار", "امامي", "خلفي" ];
+
+const PN_NOISE_WORDS = [ "اصلي", "اصلى", "اصليه", "جديد", "مستعمل", "تجاري", "وكاله" ];
+
+const partNumberAltsCache = new Map;
+
+const partNumberDescMemo = new Map;
+
+let partNumberDelegationBound = false;
+
+function normalizePartNumber(v) {
+    if (v === null || v === undefined || typeof v === "boolean" || typeof v === "object") return "";
+    return String(v).replace(/[\u0660-\u0669]/g, d => String(d.charCodeAt(0) - 1632)).replace(/[\u06F0-\u06F9]/g, d => String(d.charCodeAt(0) - 1776)).replace(/\s+/g, " ").trim().slice(0, 64);
+}
+
+function partNumberKey(v) {
+    return normalizePartNumber(v).toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function partNumberDescInfo(desc) {
+    const k = String(desc == null ? "" : desc);
+    let info = partNumberDescMemo.get(k);
+    if (info) return info;
+    const words = normalizeArabicSearch(k).replace(/[\u064B-\u065F\u0670\u0640]/g, "").replace(/[^a-z0-9\u0600-\u06FF\s]/g, " ").split(/\s+/).map(w => w.replace(/^ال(?=.{2})/, "")).filter(w => w.length >= 2);
+    const sides = PN_SIDE_WORDS.filter(w => words.indexOf(w) >= 0).join(",");
+    const tokens = new Set(words.filter(w => PN_SIDE_WORDS.indexOf(w) < 0 && PN_NOISE_WORDS.indexOf(w) < 0));
+    info = {
+        tokens: tokens,
+        sides: sides
+    };
+    if (partNumberDescMemo.size > 3e3) partNumberDescMemo.clear();
+    partNumberDescMemo.set(k, info);
+    return info;
+}
+
+function partNumberSuggestions(order, part) {
+    const out = [];
+    try {
+        if (!order || !part || !appData || !Array.isArray(appData.orders)) return out;
+        const mine = partNumberDescInfo(part.description);
+        if (!mine.tokens.size) return out;
+        const car = normalizeCar(order.car) || {};
+        const lc = s => String(s || "").trim().toLowerCase();
+        const make = lc(car.make), model = lc(car.model);
+        const byKey = new Map;
+        appData.orders.forEach(o => {
+            if (!o || o.id === order.id || !Array.isArray(o.parts)) return;
+            const oc = normalizeCar(o.car) || {};
+            if (make && lc(oc.make) !== make) return;
+            if (model && oc.model && lc(oc.model) !== model) return;
+            o.parts.forEach(p => {
+                if (!p || p.returned) return;
+                const key = partNumberKey(p.partNumber);
+                if (key.length < 5) return;
+                const info = partNumberDescInfo(p.description);
+                if (info.sides !== mine.sides || !info.tokens.size) return;
+                let inter = 0;
+                info.tokens.forEach(w => {
+                    if (mine.tokens.has(w)) inter++;
+                });
+                const uni = mine.tokens.size + info.tokens.size - inter;
+                if (!inter || inter / uni < .6) return;
+                const e = byKey.get(key) || {
+                    num: normalizePartNumber(p.partNumber),
+                    count: 0,
+                    from: carLabelText(oc)
+                };
+                e.count++;
+                byKey.set(key, e);
+            });
+        });
+        byKey.forEach(e => out.push(e));
+        out.sort((a, b) => b.count - a.count);
+    } catch (e) {}
+    return out.slice(0, 3);
+}
+
+function partNumberAltsHtml(key) {
+    if (!key) return "";
+    const c = partNumberAltsCache.get(key);
+    const head = '<div class="part-pn-alts" data-pn-key="' + escapeHtml(key) + '">';
+    if (!c || c.state !== "done" || !c.list.length) return head + "</div>";
+    const chips = list => list.slice(0, 8).map(x => '<button type="button" class="part-pn-alt" data-pn-copy="' + escapeHtml(x.num) + '" title="اضغط لنسخ الرقم">' + escapeHtml(x.num) + "</button>").join("");
+    const alt = c.list.filter(x => x.kind === "alt"), orig = c.list.filter(x => x.kind === "orig");
+    return head + (alt.length ? '<span class="part-pn-alts-label">بدائل</span>' + chips(alt) : "") + (orig.length ? '<span class="part-pn-alts-label">بديل عن</span>' + chips(orig) : "") + "</div>";
+}
+
+function partNumberAltsEnsure(key) {
+    try {
+        if (!key || key.length < 5 || key.length > 40) return;
+        const c = partNumberAltsCache.get(key);
+        if (c && (c.state === "pending" || c.state === "done" || c.state === "error" && Date.now() - c.at < 6e4)) return;
+        if (typeof sb === "undefined" || !sb || typeof sb.rpc !== "function") return;
+        partNumberAltsCache.set(key, {
+            state: "pending",
+            list: []
+        });
+        Promise.resolve().then(() => sb.rpc("get_oem_alternatives", {
+            p_key: key
+        })).then(res => {
+            if (!res || res.error || !Array.isArray(res.data)) {
+                partNumberAltsCache.set(key, {
+                    state: "error",
+                    list: [],
+                    at: Date.now()
+                });
+                return;
+            }
+            const seen = new Set, list = [];
+            res.data.forEach(r => {
+                const num = String(r && r.num || "");
+                const kind = r && r.kind === "orig" ? "orig" : "alt";
+                if (num && !seen.has(kind + num)) {
+                    seen.add(kind + num);
+                    list.push({
+                        num: num,
+                        kind: kind
+                    });
+                }
+            });
+            partNumberAltsCache.set(key, {
+                state: "done",
+                list: list
+            });
+            if (!list.length) return;
+            document.querySelectorAll('.part-pn-alts[data-pn-key="' + key + '"]').forEach(el => {
+                el.outerHTML = partNumberAltsHtml(key);
+            });
+        }).catch(() => {
+            partNumberAltsCache.set(key, {
+                state: "error",
+                list: [],
+                at: Date.now()
+            });
+        });
+    } catch (e) {}
+}
+
+function partNumberRowHtml(p, order) {
+    if (!p) return "";
+    partNumberBindDelegationOnce();
+    const val = normalizePartNumber(p.partNumber);
+    const key = partNumberKey(val);
+    if (key) partNumberAltsEnsure(key);
+    const sug = key ? [] : partNumberSuggestions(order, p);
+    return '<div class="part-pn-block">' + '<div class="part-pn-row">' + '<span class="part-pn-label">رقم القطعة</span>' + '<input type="text" class="part-pn-input" dir="ltr" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="64" placeholder="رقم OEM (اختياري)" value="' + escapeHtml(val) + '">' + (sug.length ? '<span class="part-pn-chips">' + sug.map(s => '<button type="button" class="part-pn-chip" data-pn-suggest="' + escapeHtml(s.num) + '" title="' + escapeHtml("من طلبية سابقة" + (s.from ? " — " + s.from : "") + (s.count > 1 ? " (×" + s.count + ")" : "")) + '">' + escapeHtml(s.num) + (s.count > 1 ? " ×" + s.count : "") + "</button>").join("") + "</span>" : "") + "</div>" + partNumberAltsHtml(key) + "</div>";
+}
+
+function partNumberContext(el) {
+    const row = el && el.closest ? el.closest(".part-row") : null;
+    if (!row) return null;
+    const inQuote = !!(row.closest && row.closest("#quote-parts-list"));
+    const order = inQuote ? typeof quoteDraft !== "undefined" ? quoteDraft : null : typeof draft !== "undefined" ? draft : null;
+    const pid = row.getAttribute("data-part-id");
+    const part = order && Array.isArray(order.parts) ? order.parts.find(x => x.id === pid) : null;
+    return part ? {
+        row: row,
+        part: part,
+        order: order
+    } : null;
+}
+
+function partNumberRerenderBlock(c) {
+    const blk = c.row.querySelector(".part-pn-block");
+    if (blk) blk.outerHTML = partNumberRowHtml(c.part, c.order);
+}
+
+function partNumberBindDelegationOnce() {
+    if (partNumberDelegationBound || typeof document === "undefined" || !document.addEventListener) return;
+    partNumberDelegationBound = true;
+    document.addEventListener("input", e => {
+        const t = e.target;
+        if (!t || !t.classList || !t.classList.contains("part-pn-input")) return;
+        const c = partNumberContext(t);
+        if (c) c.part.partNumber = t.value;
+    });
+    document.addEventListener("change", e => {
+        const t = e.target;
+        if (!t || !t.classList || !t.classList.contains("part-pn-input")) return;
+        const c = partNumberContext(t);
+        if (!c) return;
+        const v = normalizePartNumber(t.value);
+        if (v) c.part.partNumber = v; else delete c.part.partNumber;
+        partNumberRerenderBlock(c);
+    });
+    document.addEventListener("click", e => {
+        const t = e.target;
+        if (!t || !t.closest) return;
+        let el = t.closest("[data-pn-suggest]");
+        if (el) {
+            const c = partNumberContext(el);
+            if (!c) return;
+            e.preventDefault();
+            const v = normalizePartNumber(el.getAttribute("data-pn-suggest"));
+            if (v) {
+                c.part.partNumber = v;
+                partNumberRerenderBlock(c);
+            }
+            return;
+        }
+        el = t.closest("[data-pn-copy]");
+        if (el) {
+            e.preventDefault();
+            const txt = el.getAttribute("data-pn-copy") || "";
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(txt).then(() => showToast("نُسخ الرقم: " + txt, "ok"), () => showToast(txt, "ok"));
+                    return;
+                }
+            } catch (err) {}
+            showToast(txt, "ok");
+        }
     });
 }
 
@@ -5569,7 +5796,7 @@ function partRowHtml(p, i) {
     })), p.supplierId, p.used ? "— بدون تشليح —" : "— بدون مورد —");
     const excludeProposal = pendingPartActionProposal("part_exclude", p.id);
     const includeCheckHtml = !selectionOn ? "" : excludeProposal ? editProposalPendingHtml(excludeProposal) : '<input type="checkbox" class="part-include-check" ' + (included ? "checked" : "") + ' title="مشمولة بالطلبية">';
-    return '<div class="part-row' + (selectionOn && !included ? " part-row-excluded" : "") + '" data-part-id="' + escapeHtml(p.id) + '">' + includeCheckHtml + '<div class="part-desc-wrap">' + '<div class="part-desc-row">' + '<span class="part-index-badge">' + ((i != null ? i : 0) + 1) + "</span>" + descHtml + "</div>" + usedBadgeHtml + partConditionBadgeHtml(p) + (draft ? partSupplyStampHtml(draft, p) : "") + (draft && hasElevatedAccess() ? partPayStampHtml(p) : "") + (draft ? mediaStripHtml(draft.id, p.id, "edit") : "") + "</div>" + '<div class="part-price-group">' + '<label class="mini-label">العدد' + qtyHtml + "</label>" + '<label class="mini-label mini-label-cost">سعر الشراء' + costHtml + "</label>" + '<label class="mini-label mini-label-sell">سعر البيع' + sellHtml + "</label>" + (hasElevatedAccess() ? '<label class="mini-label mini-label-supplier">' + (p.used ? "التشليح" : "المورد") + supplierFieldHtml + "</label>" : "") + partLeadFieldHtml(p, draft, hasElevatedAccess()) + "</div>" + '<button type="button" class="part-remove-btn" data-part-actions="' + escapeHtml(p.id) + '" aria-label="خيارات القطعة (حذف أو إرجاع)">⋯</button>' + "</div>";
+    return '<div class="part-row' + (selectionOn && !included ? " part-row-excluded" : "") + '" data-part-id="' + escapeHtml(p.id) + '">' + includeCheckHtml + '<div class="part-desc-wrap">' + '<div class="part-desc-row">' + '<span class="part-index-badge">' + ((i != null ? i : 0) + 1) + "</span>" + descHtml + "</div>" + (typeof partNumberRowHtml === "function" ? partNumberRowHtml(p, draft) : "") + usedBadgeHtml + partConditionBadgeHtml(p) + (draft ? partSupplyStampHtml(draft, p) : "") + (draft && hasElevatedAccess() ? partPayStampHtml(p) : "") + (draft ? mediaStripHtml(draft.id, p.id, "edit") : "") + "</div>" + '<div class="part-price-group">' + '<label class="mini-label">العدد' + qtyHtml + "</label>" + '<label class="mini-label mini-label-cost">سعر الشراء' + costHtml + "</label>" + '<label class="mini-label mini-label-sell">سعر البيع' + sellHtml + "</label>" + (hasElevatedAccess() ? '<label class="mini-label mini-label-supplier">' + (p.used ? "التشليح" : "المورد") + supplierFieldHtml + "</label>" : "") + partLeadFieldHtml(p, draft, hasElevatedAccess()) + "</div>" + '<button type="button" class="part-remove-btn" data-part-actions="' + escapeHtml(p.id) + '" aria-label="خيارات القطعة (حذف أو إرجاع)">⋯</button>' + "</div>";
 }
 
 function costSplitLockAttr(d, settled, supplyReason) {
@@ -14515,7 +14742,7 @@ function quotePartRowHtml(p, i) {
     const conditionBadgeForSalesHtml = readOnly ? "" : partConditionBadgeHtml(p);
     const salesNotesHtml = readOnly ? p.notes ? '<div class="part-notes-readonly">' + escapeHtml(p.notes) + "</div>" : "" : '<input type="text" class="part-notes-input" placeholder="ملاحظات (اختياري)" value="' + escapeHtml(p.notes || "") + '">';
     const purchasingNotesHtml = readOnly ? '<input type="text" class="part-purchasing-notes-input" placeholder="ملاحظاتك (اختياري)" value="' + escapeHtml(p.purchasingNotes || "") + '">' : p.purchasingNotes ? '<div class="part-notes-readonly">' + escapeHtml(p.purchasingNotes) + "</div>" : "";
-    return '<div class="part-row" data-part-id="' + escapeHtml(p.id) + '">' + '<div class="part-desc-wrap">' + '<div class="part-desc-row">' + '<span class="part-index-badge">' + ((i != null ? i : 0) + 1) + "</span>" + '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="' + escapeHtml(p.description) + '">' + "</div>" + salesNotesHtml + purchasingNotesHtml + usedBadgeHtml + conditionBadgeForSalesHtml + (quoteDraft ? mediaStripHtml(quoteDraft.id, p.id, "edit") : "") + "</div>" + '<div class="part-price-group">' + '<label class="mini-label">العدد<input type="number" min="1" step="1" class="part-qty-input num" value="' + escapeHtml(qtyVal) + '"' + (locked ? " disabled" : "") + "></label>" + '<label class="mini-label mini-label-cost">سعر الشراء<input type="number" min="0" step="0.01" class="part-cost-input num" value="' + escapeHtml(costVal) + '"' + (locked ? " disabled" : "") + "></label>" + supplierFieldHtml + partLeadFieldHtml(p, quoteDraft, readOnly) + conditionFieldHtml + "</div>" + (quoteDraft ? mediaPartAddButtonHtml("quote", quoteDraft.id, p.id, "btn btn-sm part-media-btn") : "") + (locked ? "" : '<button type="button" class="part-remove-btn" data-remove-quote-part="' + escapeHtml(p.id) + '" aria-label="حذف القطعة">✕</button>') + "</div>";
+    return '<div class="part-row" data-part-id="' + escapeHtml(p.id) + '">' + '<div class="part-desc-wrap">' + '<div class="part-desc-row">' + '<span class="part-index-badge">' + ((i != null ? i : 0) + 1) + "</span>" + '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="' + escapeHtml(p.description) + '">' + "</div>" + (typeof partNumberRowHtml === "function" ? partNumberRowHtml(p, quoteDraft) : "") + salesNotesHtml + purchasingNotesHtml + usedBadgeHtml + conditionBadgeForSalesHtml + (quoteDraft ? mediaStripHtml(quoteDraft.id, p.id, "edit") : "") + "</div>" + '<div class="part-price-group">' + '<label class="mini-label">العدد<input type="number" min="1" step="1" class="part-qty-input num" value="' + escapeHtml(qtyVal) + '"' + (locked ? " disabled" : "") + "></label>" + '<label class="mini-label mini-label-cost">سعر الشراء<input type="number" min="0" step="0.01" class="part-cost-input num" value="' + escapeHtml(costVal) + '"' + (locked ? " disabled" : "") + "></label>" + supplierFieldHtml + partLeadFieldHtml(p, quoteDraft, readOnly) + conditionFieldHtml + "</div>" + (quoteDraft ? mediaPartAddButtonHtml("quote", quoteDraft.id, p.id, "btn btn-sm part-media-btn") : "") + (locked ? "" : '<button type="button" class="part-remove-btn" data-remove-quote-part="' + escapeHtml(p.id) + '" aria-label="حذف القطعة">✕</button>') + "</div>";
 }
 
 function bindQuotePartRowEvents() {
@@ -15174,7 +15401,8 @@ function scrapyardQuotePricingRpcParams(order, quoteReady, expectedUpdatedAt) {
             purchasingNotes: p.purchasingNotes || "",
             used: p.used === null ? null : !!p.used,
             condition: p.condition || null,
-            leadDays: normalizeLeadDays(p.leadDays)
+            leadDays: normalizeLeadDays(p.leadDays),
+            partNumber: normalizePartNumber(p.partNumber)
         })),
         p_quote_ready: !!quoteReady,
         p_order_label: order.orderLabel || "",
