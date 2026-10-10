@@ -2827,7 +2827,7 @@ let partNumberDelegationBound = false;
 
 function normalizePartNumber(v) {
     if (v === null || v === undefined || typeof v === "boolean" || typeof v === "object") return "";
-    return String(v).replace(/[\u0660-\u0669]/g, d => String(d.charCodeAt(0) - 1632)).replace(/[\u06F0-\u06F9]/g, d => String(d.charCodeAt(0) - 1776)).replace(/\s+/g, " ").trim().slice(0, 64);
+    return String(v).replace(/[\u0660-\u0669]/g, d => String(d.charCodeAt(0) - 1632)).replace(/[\u06F0-\u06F9]/g, d => String(d.charCodeAt(0) - 1776)).replace(/\s+/g, " ").trim().slice(0, 64).toUpperCase();
 }
 
 function partNumberKey(v) {
@@ -3026,6 +3026,126 @@ function partNumberBindDelegationOnce() {
                 }
             } catch (err) {}
             showToast(txt, "ok");
+        }
+    });
+}
+
+let oemAltImportBusy = false;
+
+function oemAltImportStatus(text) {
+    const el = document.getElementById("oem-alt-import-status");
+    if (el) el.textContent = text || "";
+}
+
+function oemAltImportRow(line) {
+    const cols = String(line || "").split("\t");
+    if (cols.length < 2) return null;
+    const a = normalizePartNumber(cols[0]), b = normalizePartNumber(cols[1]);
+    const ka = partNumberKey(a), kb = partNumberKey(b);
+    if (!/^[A-Z0-9]{3,40}$/.test(ka) || !/^[A-Z0-9]{3,40}$/.test(kb) || ka === kb) return null;
+    if (a.length < 3 || a.length > 48 || b.length < 3 || b.length > 48) return null;
+    return {
+        oem_key: ka,
+        alt_key: kb,
+        oem_disp: a,
+        alt_disp: b
+    };
+}
+
+async function oemAltImportSend(rows) {
+    let lastErr = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            const {error: error} = await sb.from("oem_alternatives").upsert(rows, {
+                onConflict: "oem_key,alt_key",
+                ignoreDuplicates: true
+            });
+            if (!error) return null;
+            lastErr = error;
+            if (error.code === "42501" || error.code === "PGRST301") break;
+        } catch (e) {
+            lastErr = e;
+        }
+        await new Promise(r => setTimeout(r, 800 * (attempt + 1)));
+    }
+    return lastErr;
+}
+
+async function runOemAlternativesImport(file) {
+    oemAltImportBusy = true;
+    let sent = 0, skipped = 0, failed = null;
+    try {
+        let stream = file.stream();
+        if (/\.gz$/i.test(file.name)) {
+            if (typeof DecompressionStream === "undefined") {
+                showToast("هذا المتصفح لا يدعم فك الضغط — استعمل الملف غير المضغوط (.tsv)", "error");
+                return;
+            }
+            stream = stream.pipeThrough(new DecompressionStream("gzip"));
+        }
+        const reader = stream.pipeThrough(new TextDecoderStream("utf-8")).getReader();
+        let carry = "", batch = [], inBatch = new Set;
+        const flush = async () => {
+            if (!batch.length) return;
+            const err = await oemAltImportSend(batch);
+            if (err) {
+                failed = err;
+                throw err;
+            }
+            sent += batch.length;
+            batch = [];
+            inBatch = new Set;
+            oemAltImportStatus("⏳ جارٍ الاستيراد… " + sent.toLocaleString("en-US") + " زوجًا");
+        };
+        const take = async line => {
+            if (!line) return;
+            const row = oemAltImportRow(line);
+            if (!row) {
+                skipped++;
+                return;
+            }
+            const k = row.oem_key + "|" + row.alt_key;
+            if (inBatch.has(k)) return;
+            inBatch.add(k);
+            batch.push(row);
+            if (batch.length >= 1500) await flush();
+        };
+        for (;;) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            const parts = (carry + chunk.value).split("\n");
+            carry = parts.pop();
+            for (const ln of parts) await take(ln.replace(/\r$/, ""));
+        }
+        if (carry) await take(carry.replace(/\r$/, ""));
+        await flush();
+        partNumberAltsCache.clear();
+        oemAltImportStatus("✅ اكتمل: " + sent.toLocaleString("en-US") + " زوجًا (متجاهَل " + skipped + " سطرًا غير صالح)");
+        showToast("اكتمل استيراد الأرقام البديلة: " + sent.toLocaleString("en-US") + " زوجًا", "ok");
+    } catch (e) {
+        console.error("importOemAlternatives:", e);
+        oemAltImportStatus("❌ توقّف بعد " + sent.toLocaleString("en-US") + " زوجًا — أعد التشغيل (المكتوب سابقًا يُتجاهل)");
+        showToast(failed && failed.code === "42501" ? "غير متاح" : "فشل استيراد الأرقام البديلة — أعد المحاولة", "error");
+    } finally {
+        oemAltImportBusy = false;
+    }
+}
+
+function importOemAlternativesFile(file) {
+    if (!hasElevatedAccess()) {
+        showToast("غير متاح", "error");
+        return;
+    }
+    if (oemAltImportBusy) {
+        showToast("الاستيراد جارٍ — انتظر اكتماله", "error");
+        return;
+    }
+    confirmAction({
+        title: "استيراد الأرقام البديلة؟",
+        message: "سيُقرأ الملف «" + file.name + "» ويُضاف إلى جدول الأرقام البديلة. لا يُحذف أو يُعدَّل شيء والمكرر يُتجاهل، وقد يستغرق دقائق — أبقِ الصفحة مفتوحة.",
+        confirmLabel: "ابدأ الاستيراد",
+        onConfirm: () => {
+            runOemAlternativesImport(file);
         }
     });
 }
@@ -20222,7 +20342,7 @@ function bindAccountsActivityModalEvents() {
 function renderTreasuryView() {
     const el = document.getElementById("treasury-view");
     const t = treasuryTotals();
-    el.innerHTML = '<div class="treasury-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders">→ رجوع للطلبيات</button>' + '<div class="treasury-title">📦 الصندوق</div>' + "</div>" + '<div class="treasury-chip-row" style="margin-bottom:10px;">' + '<button type="button" id="btn-toggle-extra-indicators" class="chip" aria-expanded="' + (extraIndicatorsOpen ? "true" : "false") + '">📊 مؤشرات إضافية</button>' + '<button type="button" id="btn-toggle-expenses-block" class="chip" aria-expanded="' + (expensesBlockOpen ? "true" : "false") + '">💰 المصاريف</button>' + '<button type="button" id="btn-toggle-suppliers-settlement" class="chip" aria-expanded="' + (suppliersSettlementMenuOpen ? "true" : "false") + '">🧾 سداد الموردين' + (scrapyardMgmtState.proposals.length ? '<span class="inline-count-badge">' + scrapyardMgmtState.proposals.length + "</span>" : "") + "</button>" + '<button type="button" id="btn-open-accounts-activity" class="chip">📜 حركة الحسابات</button>' + '<button type="button" id="btn-open-edit-proposals" class="chip btn-with-badge">📋 طلبات التعديل<span id="edit-proposals-badge" class="tasks-badge" style="' + (editProposals.length ? "display:flex;" : "display:none;") + '">' + (editProposals.length || "") + "</span></button>" + "</div>" + '<div id="suppliers-settlement-wrap" class="treasury-chip-row" style="' + (suppliersSettlementMenuOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + scrapyardEntryBlockHtml("used") + scrapyardEntryBlockHtml("new") + "</div>" + '<div id="extra-indicators-wrap" style="' + (extraIndicatorsOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + '<button type="button" id="btn-toggle-extra-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر' + (extraIndicatorsPeriod === "customMonth" ? " (" + arabicMonthLabel(extraIndicatorsCustomMonth) + ")" : extraIndicatorsPeriod === "customRange" ? " (" + formatDateDMY(extraIndicatorsRangeFrom) + " → " + formatDateDMY(extraIndicatorsRangeTo) + ")" : extraIndicatorsPeriod !== "all" ? " (" + (TREASURY_PERIODS.find(p => p.key === extraIndicatorsPeriod) || {}).label + ")" : "") + "</button>" + '<div class="treasury-period-filter" id="extra-indicators-period-filter" style="' + (extraIndicatorsFilterOpen ? "" : "display:none;") + ' margin-bottom:14px;">' + TREASURY_PERIODS.map(p => '<button type="button" class="chip ' + (extraIndicatorsPeriod === p.key ? "chip-active" : "") + '" data-extra-period="' + escapeHtml(p.key) + '">' + p.label + "</button>").join("") + '<input type="month" id="extra-indicators-month-input" class="extra-indicators-month-input" value="' + (extraIndicatorsPeriod === "customMonth" ? extraIndicatorsCustomMonth : "") + '">' + '<label class="mini-label" style="margin:0;">من<input type="date" id="extra-indicators-range-from" class="extra-indicators-month-input" value="' + escapeHtml(extraIndicatorsRangeFrom || "") + '"></label>' + '<label class="mini-label" style="margin:0;">إلى<input type="date" id="extra-indicators-range-to" class="extra-indicators-month-input" value="' + escapeHtml(extraIndicatorsRangeTo || "") + '"></label>' + "</div>" + '<div class="extra-indicators-row" id="extra-indicators-row">' + treasuryCardHtml("purchaseVolume", "حجم الشراء", '<span class="treasury-profit-value">' + fmtMoney(t.purchaseVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم سداد منه: <span class="num">' + fmtMoney(t.purchaseVolumePaid) + "</span></div>", t.breakdowns.purchaseVolume) + treasuryCardHtml("salesVolume", "حجم عمليات البيع", '<span class="treasury-profit-value">' + fmtMoney(t.salesVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل: <span class="num">' + fmtMoney(t.salesVolumePaid) + "</span></div>", t.breakdowns.salesVolume) + treasuryCardHtml("profitVolume", "حجم صافي العمليات", '<span class="treasury-profit-value">' + fmtMoney(t.profitVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل: <span class="num">' + fmtMoney(t.profitVolumePaid) + "</span></div>", t.breakdowns.profitVolume) + treasuryCardHtml("expensesVolume", "حجم المصاريف", '<span class="treasury-profit-value text-rust">' + fmtMoney(t.expensesVolume) + "</span>", null, t.breakdowns.expensesVolume) + treasuryCardHtml("netProfitVolumeAfterSettlement", "صافي الأرباح", '<span class="treasury-profit-value ' + (t.netProfitVolumeAfterSettlement < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(t.netProfitVolumeAfterSettlement) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل منه: <span class="num">' + fmtMoney(t.netProfitVolume) + "</span></div>", t.breakdowns.netProfitVolumeAfterSettlement) + "</div>" + "</div>" + '<div id="expenses-block-wrap" style="' + (expensesBlockOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + '<div class="treasury-block">' + '<div class="treasury-block-head">' + '<div class="treasury-block-title">المصاريف — كل مبلغ بتاريخه على حدة</div>' + '<button type="button" id="btn-open-add-expense" class="btn btn-primary btn-sm">➕ إضافة مصاريف</button>' + "</div>" + '<button type="button" id="btn-toggle-treasury-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر' + (treasuryPeriodFilter !== "all" ? " (" + (TREASURY_PERIODS.find(p => p.key === treasuryPeriodFilter) || {}).label + ")" : "") + "</button>" + '<div class="treasury-period-filter" id="treasury-period-filter" style="' + (treasuryFilterOpen ? "" : "display:none;") + '">' + TREASURY_PERIODS.map(p => '<button type="button" class="chip ' + (treasuryPeriodFilter === p.key ? "chip-active" : "") + '" data-period="' + escapeHtml(p.key) + '">' + p.label + "</button>").join("") + "</div>" + '<div class="expense-categories">' + EXPENSE_CATEGORIES.map(expenseCategoryRowHtml).join("") + treasurySupportRowHtml() + "</div>" + '<div class="treasury-summary">' + '<div class="treasury-summary-row"><span>إجمالي المصاريف</span><span class="num text-rust" id="treasury-total-expenses">' + fmtMoney(t.totalExpenses) + "</span></div>" + '<div class="treasury-summary-row"><span>إجمالي الدعم الخارجي</span><span class="num text-green" id="treasury-total-support">+' + fmtMoney(t.totalSupport) + "</span></div>" + "</div>" + "</div>" + "</div>" + treasuryCardHtml("net", "الصندوق حاليًا", '<span class="treasury-profit-value ' + (t.net < 0 ? "text-rust" : "") + '" id="treasury-net">' + fmtMoney(t.net) + "</span>", null, t.breakdowns.net, "treasury-profit-card-primary") + treasuryCardHtml("netAfterSettlement", "الصندوق بافتراض انتهاء التحصيل والسداد", '<span class="treasury-profit-value ' + (t.netAfterSettlement < 0 ? "text-rust" : "") + '">' + fmtMoney(t.netAfterSettlement) + "</span>", null, t.breakdowns.netAfterSettlement) + treasuryCardHtml("uncollectedProfit", "الربح غير المحصّل", '<span class="treasury-profit-value">' + fmtMoney(t.uncollectedProfit) + "</span>", null, t.breakdowns.uncollectedProfit) + treasuryCardHtml("debtsToSuppliers", "الديون للموردين", '<span class="treasury-profit-value text-rust">' + fmtMoney(t.debtsToSuppliers) + "</span>", null, t.breakdowns.debtsToSuppliers) + treasuryCardHtml("purchasingCustodyBalance", "رصيد المشتريات", '<span class="treasury-profit-value ' + (t.purchasingCustodyBalance < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(t.purchasingCustodyBalance) + "</span>", t.purchasingCustodyDeficit > 0 ? '<div class="kpi-sub" style="color:var(--rust);">عليك سداد ' + fmtMoney(t.purchasingCustodyDeficit) + " لعهدة المشتريات (عامر وعمر)</div>" : null, t.breakdowns.purchasingCustodyBalance) + treasuryCardHtml("dueFromCustomers", "مستحق من الزبائن", '<span class="treasury-profit-value">' + fmtMoney(t.dueFromCustomers) + "</span>", null, t.breakdowns.dueFromCustomers) + '<div class="data-mgmt-row">' + '<span class="data-mgmt-label">إدارة البيانات</span>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-export-excel">⬇️ تصدير Excel</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-excel">⬆️ استيراد Excel</button>' + '<input type="file" id="excel-import-input" accept=".xlsx" style="display:none;">' + "</div>";
+    el.innerHTML = '<div class="treasury-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders">→ رجوع للطلبيات</button>' + '<div class="treasury-title">📦 الصندوق</div>' + "</div>" + '<div class="treasury-chip-row" style="margin-bottom:10px;">' + '<button type="button" id="btn-toggle-extra-indicators" class="chip" aria-expanded="' + (extraIndicatorsOpen ? "true" : "false") + '">📊 مؤشرات إضافية</button>' + '<button type="button" id="btn-toggle-expenses-block" class="chip" aria-expanded="' + (expensesBlockOpen ? "true" : "false") + '">💰 المصاريف</button>' + '<button type="button" id="btn-toggle-suppliers-settlement" class="chip" aria-expanded="' + (suppliersSettlementMenuOpen ? "true" : "false") + '">🧾 سداد الموردين' + (scrapyardMgmtState.proposals.length ? '<span class="inline-count-badge">' + scrapyardMgmtState.proposals.length + "</span>" : "") + "</button>" + '<button type="button" id="btn-open-accounts-activity" class="chip">📜 حركة الحسابات</button>' + '<button type="button" id="btn-open-edit-proposals" class="chip btn-with-badge">📋 طلبات التعديل<span id="edit-proposals-badge" class="tasks-badge" style="' + (editProposals.length ? "display:flex;" : "display:none;") + '">' + (editProposals.length || "") + "</span></button>" + "</div>" + '<div id="suppliers-settlement-wrap" class="treasury-chip-row" style="' + (suppliersSettlementMenuOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + scrapyardEntryBlockHtml("used") + scrapyardEntryBlockHtml("new") + "</div>" + '<div id="extra-indicators-wrap" style="' + (extraIndicatorsOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + '<button type="button" id="btn-toggle-extra-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر' + (extraIndicatorsPeriod === "customMonth" ? " (" + arabicMonthLabel(extraIndicatorsCustomMonth) + ")" : extraIndicatorsPeriod === "customRange" ? " (" + formatDateDMY(extraIndicatorsRangeFrom) + " → " + formatDateDMY(extraIndicatorsRangeTo) + ")" : extraIndicatorsPeriod !== "all" ? " (" + (TREASURY_PERIODS.find(p => p.key === extraIndicatorsPeriod) || {}).label + ")" : "") + "</button>" + '<div class="treasury-period-filter" id="extra-indicators-period-filter" style="' + (extraIndicatorsFilterOpen ? "" : "display:none;") + ' margin-bottom:14px;">' + TREASURY_PERIODS.map(p => '<button type="button" class="chip ' + (extraIndicatorsPeriod === p.key ? "chip-active" : "") + '" data-extra-period="' + escapeHtml(p.key) + '">' + p.label + "</button>").join("") + '<input type="month" id="extra-indicators-month-input" class="extra-indicators-month-input" value="' + (extraIndicatorsPeriod === "customMonth" ? extraIndicatorsCustomMonth : "") + '">' + '<label class="mini-label" style="margin:0;">من<input type="date" id="extra-indicators-range-from" class="extra-indicators-month-input" value="' + escapeHtml(extraIndicatorsRangeFrom || "") + '"></label>' + '<label class="mini-label" style="margin:0;">إلى<input type="date" id="extra-indicators-range-to" class="extra-indicators-month-input" value="' + escapeHtml(extraIndicatorsRangeTo || "") + '"></label>' + "</div>" + '<div class="extra-indicators-row" id="extra-indicators-row">' + treasuryCardHtml("purchaseVolume", "حجم الشراء", '<span class="treasury-profit-value">' + fmtMoney(t.purchaseVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم سداد منه: <span class="num">' + fmtMoney(t.purchaseVolumePaid) + "</span></div>", t.breakdowns.purchaseVolume) + treasuryCardHtml("salesVolume", "حجم عمليات البيع", '<span class="treasury-profit-value">' + fmtMoney(t.salesVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل: <span class="num">' + fmtMoney(t.salesVolumePaid) + "</span></div>", t.breakdowns.salesVolume) + treasuryCardHtml("profitVolume", "حجم صافي العمليات", '<span class="treasury-profit-value">' + fmtMoney(t.profitVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل: <span class="num">' + fmtMoney(t.profitVolumePaid) + "</span></div>", t.breakdowns.profitVolume) + treasuryCardHtml("expensesVolume", "حجم المصاريف", '<span class="treasury-profit-value text-rust">' + fmtMoney(t.expensesVolume) + "</span>", null, t.breakdowns.expensesVolume) + treasuryCardHtml("netProfitVolumeAfterSettlement", "صافي الأرباح", '<span class="treasury-profit-value ' + (t.netProfitVolumeAfterSettlement < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(t.netProfitVolumeAfterSettlement) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل منه: <span class="num">' + fmtMoney(t.netProfitVolume) + "</span></div>", t.breakdowns.netProfitVolumeAfterSettlement) + "</div>" + "</div>" + '<div id="expenses-block-wrap" style="' + (expensesBlockOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + '<div class="treasury-block">' + '<div class="treasury-block-head">' + '<div class="treasury-block-title">المصاريف — كل مبلغ بتاريخه على حدة</div>' + '<button type="button" id="btn-open-add-expense" class="btn btn-primary btn-sm">➕ إضافة مصاريف</button>' + "</div>" + '<button type="button" id="btn-toggle-treasury-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر' + (treasuryPeriodFilter !== "all" ? " (" + (TREASURY_PERIODS.find(p => p.key === treasuryPeriodFilter) || {}).label + ")" : "") + "</button>" + '<div class="treasury-period-filter" id="treasury-period-filter" style="' + (treasuryFilterOpen ? "" : "display:none;") + '">' + TREASURY_PERIODS.map(p => '<button type="button" class="chip ' + (treasuryPeriodFilter === p.key ? "chip-active" : "") + '" data-period="' + escapeHtml(p.key) + '">' + p.label + "</button>").join("") + "</div>" + '<div class="expense-categories">' + EXPENSE_CATEGORIES.map(expenseCategoryRowHtml).join("") + treasurySupportRowHtml() + "</div>" + '<div class="treasury-summary">' + '<div class="treasury-summary-row"><span>إجمالي المصاريف</span><span class="num text-rust" id="treasury-total-expenses">' + fmtMoney(t.totalExpenses) + "</span></div>" + '<div class="treasury-summary-row"><span>إجمالي الدعم الخارجي</span><span class="num text-green" id="treasury-total-support">+' + fmtMoney(t.totalSupport) + "</span></div>" + "</div>" + "</div>" + "</div>" + treasuryCardHtml("net", "الصندوق حاليًا", '<span class="treasury-profit-value ' + (t.net < 0 ? "text-rust" : "") + '" id="treasury-net">' + fmtMoney(t.net) + "</span>", null, t.breakdowns.net, "treasury-profit-card-primary") + treasuryCardHtml("netAfterSettlement", "الصندوق بافتراض انتهاء التحصيل والسداد", '<span class="treasury-profit-value ' + (t.netAfterSettlement < 0 ? "text-rust" : "") + '">' + fmtMoney(t.netAfterSettlement) + "</span>", null, t.breakdowns.netAfterSettlement) + treasuryCardHtml("uncollectedProfit", "الربح غير المحصّل", '<span class="treasury-profit-value">' + fmtMoney(t.uncollectedProfit) + "</span>", null, t.breakdowns.uncollectedProfit) + treasuryCardHtml("debtsToSuppliers", "الديون للموردين", '<span class="treasury-profit-value text-rust">' + fmtMoney(t.debtsToSuppliers) + "</span>", null, t.breakdowns.debtsToSuppliers) + treasuryCardHtml("purchasingCustodyBalance", "رصيد المشتريات", '<span class="treasury-profit-value ' + (t.purchasingCustodyBalance < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(t.purchasingCustodyBalance) + "</span>", t.purchasingCustodyDeficit > 0 ? '<div class="kpi-sub" style="color:var(--rust);">عليك سداد ' + fmtMoney(t.purchasingCustodyDeficit) + " لعهدة المشتريات (عامر وعمر)</div>" : null, t.breakdowns.purchasingCustodyBalance) + treasuryCardHtml("dueFromCustomers", "مستحق من الزبائن", '<span class="treasury-profit-value">' + fmtMoney(t.dueFromCustomers) + "</span>", null, t.breakdowns.dueFromCustomers) + '<div class="data-mgmt-row">' + '<span class="data-mgmt-label">إدارة البيانات</span>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-export-excel">⬇️ تصدير Excel</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-excel">⬆️ استيراد Excel</button>' + '<input type="file" id="excel-import-input" accept=".xlsx" style="display:none;">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-oem-alts">📥 أرقام بديلة</button>' + '<input type="file" id="oem-alt-import-input" accept=".gz,.tsv,.txt" style="display:none;">' + '<span id="oem-alt-import-status" class="kpi-sub"></span>' + "</div>";
     document.getElementById("btn-back-to-orders").addEventListener("click", closeTreasuryView);
     bindBusyButton(document.getElementById("btn-export-excel"), async () => {
         const btn = document.getElementById("btn-export-excel");
@@ -20240,6 +20360,14 @@ function renderTreasuryView() {
     document.getElementById("excel-import-input").addEventListener("change", e => {
         const file = e.target.files[0];
         if (file) importDataFromExcelFile(file);
+        e.target.value = "";
+    });
+    document.getElementById("btn-import-oem-alts").addEventListener("click", () => {
+        document.getElementById("oem-alt-import-input").click();
+    });
+    document.getElementById("oem-alt-import-input").addEventListener("change", e => {
+        const file = e.target.files[0];
+        if (file) importOemAlternativesFile(file);
         e.target.value = "";
     });
     document.getElementById("btn-open-add-expense").addEventListener("click", openAddExpenseModal);
