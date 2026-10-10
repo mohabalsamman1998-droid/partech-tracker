@@ -3339,8 +3339,8 @@ function settlementResetNoticeText(plan) {
     }
     const both = plan.resetUsed && plan.resetNew;
     const bits = [];
-    if (plan.resetUsed) bits.push((both ? "التشليح " : "التكلفة ") + "من " + fmtMoney(plan.usedBefore) + " إلى " + fmtMoney(plan.usedAfter));
-    if (plan.resetNew) bits.push((both ? "الجديد " : "التكلفة ") + "من " + fmtMoney(plan.newBefore) + " إلى " + fmtMoney(plan.newAfter));
+    if (plan.resetUsed) bits.push((both ? "التشليح " : "التكلفة ") + "من " + modalMoney(plan.usedBefore) + " إلى " + modalMoney(plan.usedAfter));
+    if (plan.resetNew) bits.push((both ? "الجديد " : "التكلفة ") + "من " + modalMoney(plan.newBefore) + " إلى " + modalMoney(plan.newAfter));
     return "حفظ هذا التعديل سيلغي تسديد " + plan.label + " (" + bits.join("، ") + ") — ستحتاج تسجيل التسديد من جديد";
 }
 
@@ -5118,22 +5118,22 @@ let pendingPartProposalPurges = new Set;
 function paymentRowHtml(p) {
     const amountVal = p.amount === "" || p.amount == null ? "" : p.amount;
     if (p.returnAdjustment) {
-        return '<div class="payment-row payment-row-return" data-payment-id="' + escapeHtml(p.id) + '">' + '<span class="payment-return-label">' + fmtMoney(Number(p.amount) || 0) + " مرتجع</span>" + '<span class="payment-date-display">' + escapeHtml(p.date || "") + "</span>" + "</div>";
+        return '<div class="payment-row payment-row-return" data-payment-id="' + escapeHtml(p.id) + '">' + '<span class="payment-return-label">' + modalMoney(Number(p.amount) || 0) + " مرتجع</span>" + '<span class="payment-date-display">' + escapeHtml(p.date || "") + "</span>" + "</div>";
     }
     const pendingProposal = pendingPaymentEditOrDeleteProposal(p.id);
     if (pendingProposal) {
-        return '<div class="payment-row" data-payment-id="' + escapeHtml(p.id) + '">' + '<span class="num">' + fmtMoney(Number(amountVal) || 0) + "</span>" + '<span class="payment-date-display">' + escapeHtml(paymentMethodLabel(p.method)) + "</span>" + '<span class="payment-date-display">' + escapeHtml(p.date || "") + "</span>" + editProposalPendingHtml(pendingProposal) + "</div>";
+        return '<div class="payment-row" data-payment-id="' + escapeHtml(p.id) + '">' + '<span class="num">' + modalMoney(Number(amountVal) || 0) + "</span>" + '<span class="payment-date-display">' + escapeHtml(paymentMethodLabel(p.method)) + "</span>" + '<span class="payment-date-display">' + escapeHtml(p.date || "") + "</span>" + editProposalPendingHtml(pendingProposal) + "</div>";
     }
     const elevated = hasElevatedAccess();
     if (!editingPayments[p.id]) {
-        return '<div class="payment-row" data-payment-id="' + escapeHtml(p.id) + '">' + '<span class="num">' + fmtMoney(Number(amountVal) || 0) + "</span>" + '<span class="payment-date-display">' + escapeHtml(paymentMethodLabel(p.method)) + "</span>" + '<span class="payment-date-display">' + escapeHtml(p.date || "") + "</span>" + (elevated ? '<button type="button" class="icon-btn payment-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' : '<button type="button" class="icon-btn payment-request-edit-btn" title="طلب تعديل" aria-label="طلب تعديل">✏️ طلب تعديل</button>' + '<button type="button" class="icon-btn payment-request-delete-btn" title="طلب حذف" aria-label="طلب حذف">🗑️</button>') + "</div>";
+        return '<div class="payment-row" data-payment-id="' + escapeHtml(p.id) + '">' + '<span class="num">' + modalMoney(Number(amountVal) || 0) + "</span>" + '<span class="payment-date-display">' + escapeHtml(paymentMethodLabel(p.method)) + "</span>" + '<span class="payment-date-display">' + escapeHtml(p.date || "") + "</span>" + (elevated ? '<button type="button" class="icon-btn payment-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' : '<button type="button" class="icon-btn payment-request-edit-btn" title="طلب تعديل" aria-label="طلب تعديل">✏️ طلب تعديل</button>' + '<button type="button" class="icon-btn payment-request-delete-btn" title="طلب حذف" aria-label="طلب حذف">🗑️</button>') + "</div>";
     }
     return '<div class="payment-row" data-payment-id="' + escapeHtml(p.id) + '">' + '<input type="number" min="0" step="0.01" class="payment-amount-input num" placeholder="المبلغ" value="' + escapeHtml(amountVal) + '">' + '<select class="payment-method-select">' + '<option value=""' + (!p.method ? " selected" : "") + ">اختر الطريقة *</option>" + '<option value="cash"' + (p.method === "cash" ? " selected" : "") + ">كاش</option>" + '<option value="card"' + (p.method === "card" ? " selected" : "") + ">شبكة</option>" + "</select>" + '<span class="payment-date-display">' + escapeHtml(p.date || "") + "</span>" + (elevated ? '<button type="button" class="btn btn-sm expense-add-entry-btn payment-save-btn">💾 حفظ</button>' + '<button type="button" class="payment-remove-btn" data-remove-payment="' + escapeHtml(p.id) + '" aria-label="حذف الدفعة">✕</button>' : '<button type="button" class="icon-btn payment-send-edit-request-btn" title="إرسال طلب التعديل">📨</button>' + '<button type="button" class="payment-remove-btn payment-cancel-edit-btn" aria-label="إلغاء">✕</button>') + "</div>";
 }
 
 function pendingPaymentAddRowHtml(pr) {
     const pv = pr.proposed_value || {};
-    return '<div class="payment-row payment-row-pending-add" data-proposal-id="' + escapeHtml(pr.id) + '">' + '<span class="num">' + fmtMoney(Number(pv.amount) || 0) + "</span>" + '<span class="payment-date-display">' + escapeHtml(paymentMethodLabel(pv.method)) + "</span>" + '<span class="payment-date-display">' + escapeHtml(pv.date || "") + "</span>" + editProposalPendingHtml(pr) + "</div>";
+    return '<div class="payment-row payment-row-pending-add" data-proposal-id="' + escapeHtml(pr.id) + '">' + '<span class="num">' + modalMoney(Number(pv.amount) || 0) + "</span>" + '<span class="payment-date-display">' + escapeHtml(paymentMethodLabel(pv.method)) + "</span>" + '<span class="payment-date-display">' + escapeHtml(pv.date || "") + "</span>" + editProposalPendingHtml(pr) + "</div>";
 }
 
 function paymentAddDraftRowHtml(key, d) {
@@ -5335,11 +5335,11 @@ function feeFieldRowHtml(d) {
     const feePercentInputHtml = feePercentUi != null ? feePercentUi : '<input type="number" min="0" step="0.1" id="order-fee-percent-input" class="num" value="' + escapeHtml(d.feePercent ? d.feePercent : "") + '" placeholder="0">';
     const serviceFeePercentUi = fieldRequestUiHtml("serviceFeePercent", null, d.serviceFeePercent, '<span class="field-readonly-value num">' + (d.serviceFeePercent ? d.serviceFeePercent : 0) + "%</span>");
     const serviceFeePercentInputHtml = serviceFeePercentUi != null ? serviceFeePercentUi : '<input type="number" min="0" step="0.1" id="order-service-fee-percent-input" class="num" value="' + escapeHtml(d.serviceFeePercent ? d.serviceFeePercent : "") + '" placeholder="0">';
-    const deliveryFeeUi = fieldRequestUiHtml("deliveryFeeAmount", null, d.deliveryFeeAmount, '<span class="field-readonly-value num">' + fmtMoney(Number(d.deliveryFeeAmount) || 0) + "</span>");
+    const deliveryFeeUi = fieldRequestUiHtml("deliveryFeeAmount", null, d.deliveryFeeAmount, '<span class="field-readonly-value num">' + modalMoney(Number(d.deliveryFeeAmount) || 0) + "</span>");
     const deliveryFeeInputHtml = deliveryFeeUi != null ? deliveryFeeUi : '<input type="number" min="0" step="0.5" id="order-delivery-fee-input" class="num" value="' + escapeHtml(d.deliveryFeeAmount ? d.deliveryFeeAmount : "") + '" placeholder="0">';
     const deliveryPaidLock = !!d.deliveryCostPaid;
-    const deliveryCostUi = fieldRequestUiHtml("deliveryCost", null, d.deliveryCost, '<span class="field-readonly-value num">' + fmtMoney(Number(d.deliveryCost) || 0) + "</span>");
-    const deliveryCostInputHtml = deliveryPaidLock ? '<span class="field-readonly-value num">' + fmtMoney(Number(d.deliveryCost) || 0) + "</span>" : deliveryCostUi != null ? deliveryCostUi : '<input type="number" min="0" step="0.5" id="order-delivery-cost-input" class="num" value="' + escapeHtml(d.deliveryCost ? d.deliveryCost : "") + '" placeholder="0">';
+    const deliveryCostUi = fieldRequestUiHtml("deliveryCost", null, d.deliveryCost, '<span class="field-readonly-value num">' + modalMoney(Number(d.deliveryCost) || 0) + "</span>");
+    const deliveryCostInputHtml = deliveryPaidLock ? '<span class="field-readonly-value num">' + modalMoney(Number(d.deliveryCost) || 0) + "</span>" : deliveryCostUi != null ? deliveryCostUi : '<input type="number" min="0" step="0.5" id="order-delivery-cost-input" class="num" value="' + escapeHtml(d.deliveryCost ? d.deliveryCost : "") + '" placeholder="0">';
     const agentsForSelect = (appData.deliveryAgents || []).filter(a => a.active || a.id === d.deliveryAgentId);
     const deliveryAgentSelectHtml = '<select id="order-delivery-agent-select" class="num"' + (deliveryPaidLock ? " disabled" : "") + ">" + '<option value="">— اختر مندوب —</option>' + agentsForSelect.map(a => '<option value="' + escapeHtml(a.id) + '"' + (d.deliveryAgentId === a.id ? " selected" : "") + ">" + escapeHtml(a.name) + "</option>").join("") + "</select>";
     const feeEnabledUi = fieldRequestUiHtml("feeEnabled", null, d.feeEnabled, '<span class="field-readonly-value">' + (d.feeEnabled ? "✓ مفعّلة" : "غير مفعّلة") + "</span>");
@@ -5527,13 +5527,13 @@ function partRowHtml(p, i) {
         const statusLabel = p.returnHasReceivable ? p.returnCollected ? "✅ مرتجعة — تم تحصيل المبلغ من المورد" + (hasElevatedAccess() && p.returnCollectedAt && fmtDateShort(p.returnCollectedAt) ? " (" + fmtDateShort(p.returnCollectedAt) + ")" : "") : "🔄 مرتجعة — بانتظار تحصيل المبلغ من المورد" : "🔄 مرتجعة";
         const refundDone = !!p.customerRefundConfirmed;
         const canUndo = !p.returnCollected && !refundDone;
-        return '<div class="part-row part-row-returned" data-part-id="' + escapeHtml(p.id) + '">' + '<div class="part-desc-wrap">' + '<div class="part-desc-row"><span class="part-index-badge">' + ((i != null ? i : 0) + 1) + '</span><span class="part-desc-returned">' + escapeHtml(p.description) + "</span></div>" + '<span class="used-badge used-badge-off">' + statusLabel + (refundDone ? " · ✅ تم رد المبلغ للزبون" + (p.customerRefundConfirmedAt && fmtDateShort(p.customerRefundConfirmedAt) ? " (" + fmtDateShort(p.customerRefundConfirmedAt) + ")" : "") : "") + "</span>" + (draft ? mediaStripHtml(draft.id, p.id, "view") : "") + "</div>" + '<div class="part-price-group">' + '<span class="num">' + escapeHtml(qtyVal) + " × " + fmtMoney(Number(costVal) || 0) + "</span>" + "</div>" + (canUndo ? '<button type="button" class="icon-btn" data-undo-return-part="' + escapeHtml(p.id) + '" title="تراجع عن الإرجاع" aria-label="تراجع عن الإرجاع">↩️</button>' : "") + "</div>";
+        return '<div class="part-row part-row-returned" data-part-id="' + escapeHtml(p.id) + '">' + '<div class="part-desc-wrap">' + '<div class="part-desc-row"><span class="part-index-badge">' + ((i != null ? i : 0) + 1) + '</span><span class="part-desc-returned">' + escapeHtml(p.description) + "</span></div>" + '<span class="used-badge used-badge-off">' + statusLabel + (refundDone ? " · ✅ تم رد المبلغ للزبون" + (p.customerRefundConfirmedAt && fmtDateShort(p.customerRefundConfirmedAt) ? " (" + fmtDateShort(p.customerRefundConfirmedAt) + ")" : "") : "") + "</span>" + (draft ? mediaStripHtml(draft.id, p.id, "view") : "") + "</div>" + '<div class="part-price-group">' + '<span class="num">' + escapeHtml(qtyVal) + " × " + modalMoney(Number(costVal) || 0) + "</span>" + "</div>" + (canUndo ? '<button type="button" class="icon-btn" data-undo-return-part="' + escapeHtml(p.id) + '" title="تراجع عن الإرجاع" aria-label="تراجع عن الإرجاع">↩️</button>' : "") + "</div>";
     }
     const descFieldUi = fieldRequestUiHtml("description", p.id, p.description, '<span class="field-readonly-value field-readonly-desc">' + escapeHtml(p.description || "") + "</span>");
     const descHtml = descFieldUi != null ? descFieldUi : '<input type="text" class="part-desc-input" placeholder="وصف القطعة" value="' + escapeHtml(p.description) + '">';
-    const costFieldUi = fieldRequestUiHtml("costPrice", p.id, costVal, '<span class="field-readonly-value num">' + fmtMoney(Number(costVal) || 0) + "</span>");
+    const costFieldUi = fieldRequestUiHtml("costPrice", p.id, costVal, '<span class="field-readonly-value num">' + modalMoney(Number(costVal) || 0) + "</span>");
     const costHtml = costFieldUi != null ? costFieldUi : '<input type="number" min="0" step="0.01" class="part-cost-input num" value="' + escapeHtml(costVal) + '">';
-    const sellFieldUi = fieldRequestUiHtml("sellPrice", p.id, sellVal, '<span class="field-readonly-value num">' + (sellVal === "" ? "—" : fmtMoney(Number(sellVal) || 0)) + "</span>");
+    const sellFieldUi = fieldRequestUiHtml("sellPrice", p.id, sellVal, '<span class="field-readonly-value num">' + (sellVal === "" ? "—" : modalMoney(Number(sellVal) || 0)) + "</span>");
     const sellHtml = sellFieldUi != null ? sellFieldUi : '<input type="number" min="0" step="0.01" class="part-sell-input num" placeholder="—" value="' + escapeHtml(sellVal) + '">';
     const qtyFieldUi = fieldRequestUiHtml("qty", p.id, qtyVal, '<span class="field-readonly-value num">' + escapeHtml(qtyVal) + "</span>");
     const qtyHtml = qtyFieldUi != null ? qtyFieldUi : '<input type="number" min="1" step="1" class="part-qty-input num" value="' + escapeHtml(qtyVal) + '">';
@@ -5577,11 +5577,11 @@ function costSplitButtonsHtmlLegacy(d, t) {
     if (!orderIsMixedPartType(t)) {
         const singleUsed = orderSingleBucket(t) !== "new";
         const sInfo = costSplitSupplyInfo(d, t, singleUsed, orderPurchaseSettled(d, t));
-        return '<div class="cost-split-row">' + '<button type="button" class="cost-split-box' + (orderPurchaseSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn"' + costSplitLockAttr(d, orderPurchaseSettled(d, t), sInfo.reason) + ">" + "<span>المجموع للمورد</span>" + '<span class="num" id="cost-split-display">' + fmtMoney(t.costTotal) + "</span>" + '<span class="cost-split-status" id="cost-split-status">' + (sInfo.status || costSplitStatusLabel(d, orderSingleBucket(t))) + "</span>" + "</button>" + "</div>";
+        return '<div class="cost-split-row">' + '<button type="button" class="cost-split-box' + (orderPurchaseSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn"' + costSplitLockAttr(d, orderPurchaseSettled(d, t), sInfo.reason) + ">" + "<span>المجموع للمورد</span>" + '<span class="num" id="cost-split-display">' + modalMoney(t.costTotal) + "</span>" + '<span class="cost-split-status" id="cost-split-status">' + (sInfo.status || costSplitStatusLabel(d, orderSingleBucket(t))) + "</span>" + "</button>" + "</div>";
     }
     const uInfo = costSplitSupplyInfo(d, t, true, scrapyardCostSettled(d, t));
     const nInfo = costSplitSupplyInfo(d, t, false, newPartsCostSettled(d, t));
-    return '<div class="cost-split-row">' + '<button type="button" class="cost-split-box' + (scrapyardCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-scrapyard"' + costSplitLockAttr(d, scrapyardCostSettled(d, t) && t.costToScrapyard > 0, uInfo.reason) + ">" + "<span>سداد التشليح</span>" + '<span class="num">' + fmtMoney(t.costToScrapyard) + "</span>" + '<span class="cost-split-status">' + (uInfo.status || costSplitStatusLabel(d)) + "</span>" + "</button>" + '<button type="button" class="cost-split-box' + (newPartsCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-new"' + costSplitLockAttr(d, newPartsCostSettled(d, t) && t.costToSupplier > 0, nInfo.reason) + ">" + "<span>سداد الجديد</span>" + '<span class="num">' + fmtMoney(t.costToSupplier) + "</span>" + '<span class="cost-split-status">' + (nInfo.status || costSplitStatusLabel(d, "new")) + "</span>" + "</button>" + "</div>";
+    return '<div class="cost-split-row">' + '<button type="button" class="cost-split-box' + (scrapyardCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-scrapyard"' + costSplitLockAttr(d, scrapyardCostSettled(d, t) && t.costToScrapyard > 0, uInfo.reason) + ">" + "<span>سداد التشليح</span>" + '<span class="num">' + modalMoney(t.costToScrapyard) + "</span>" + '<span class="cost-split-status">' + (uInfo.status || costSplitStatusLabel(d)) + "</span>" + "</button>" + '<button type="button" class="cost-split-box' + (newPartsCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-new"' + costSplitLockAttr(d, newPartsCostSettled(d, t) && t.costToSupplier > 0, nInfo.reason) + ">" + "<span>سداد الجديد</span>" + '<span class="num">' + modalMoney(t.costToSupplier) + "</span>" + '<span class="cost-split-status">' + (nInfo.status || costSplitStatusLabel(d, "new")) + "</span>" + "</button>" + "</div>";
 }
 
 function costSplitButtonsHtml(d, t) {
@@ -9167,10 +9167,10 @@ function costSplitPayBoxHtml(d, pi, id, label) {
 function costSplitLegacyBoxHtml(d, t, usedFlag) {
     if (usedFlag) {
         const uInfo = costSplitSupplyInfo(d, t, true, scrapyardCostSettled(d, t));
-        return '<button type="button" class="cost-split-box' + (scrapyardCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-scrapyard"' + costSplitLockAttr(d, scrapyardCostSettled(d, t) && t.costToScrapyard > 0, uInfo.reason) + ">" + "<span>سداد التشليح</span>" + '<span class="num">' + fmtMoney(t.costToScrapyard) + "</span>" + '<span class="cost-split-status">' + (uInfo.status || costSplitStatusLabel(d)) + "</span>" + "</button>";
+        return '<button type="button" class="cost-split-box' + (scrapyardCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-scrapyard"' + costSplitLockAttr(d, scrapyardCostSettled(d, t) && t.costToScrapyard > 0, uInfo.reason) + ">" + "<span>سداد التشليح</span>" + '<span class="num">' + modalMoney(t.costToScrapyard) + "</span>" + '<span class="cost-split-status">' + (uInfo.status || costSplitStatusLabel(d)) + "</span>" + "</button>";
     }
     const nInfo = costSplitSupplyInfo(d, t, false, newPartsCostSettled(d, t));
-    return '<button type="button" class="cost-split-box' + (newPartsCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-new"' + costSplitLockAttr(d, newPartsCostSettled(d, t) && t.costToSupplier > 0, nInfo.reason) + ">" + "<span>سداد الجديد</span>" + '<span class="num">' + fmtMoney(t.costToSupplier) + "</span>" + '<span class="cost-split-status">' + (nInfo.status || costSplitStatusLabel(d, "new")) + "</span>" + "</button>";
+    return '<button type="button" class="cost-split-box' + (newPartsCostSettled(d, t) ? " cost-split-paid" : "") + '" id="cost-split-btn-new"' + costSplitLockAttr(d, newPartsCostSettled(d, t) && t.costToSupplier > 0, nInfo.reason) + ">" + "<span>سداد الجديد</span>" + '<span class="num">' + modalMoney(t.costToSupplier) + "</span>" + '<span class="cost-split-status">' + (nInfo.status || costSplitStatusLabel(d, "new")) + "</span>" + "</button>";
 }
 
 function payBadgeNew(order, t, usedFlag, style) {
@@ -9297,6 +9297,10 @@ function partPayMoney(n) {
     const c = Math.round(Number((a * 100).toPrecision(a < 1e9 ? 12 : 15)));
     if (c % 100 === 0) return fmtMoney(v);
     return (v < 0 ? "-" : "") + Math.floor(c / 100).toLocaleString("en-US") + "." + String(c % 100).padStart(2, "0") + " ر.س";
+}
+
+function modalMoney(n) {
+    return partPayMoney(n);
 }
 
 function partPayBucketView(o, pi) {
@@ -11173,8 +11177,8 @@ function refreshPaymentsList() {
 
 function updateModalTotals() {
     const t = orderTotals(draft);
-    document.getElementById("total-cost-display").textContent = fmtMoney(t.costTotal);
-    document.getElementById("total-sell-display").textContent = t.hasChargeable ? fmtMoney(t.sellTotal) : t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد";
+    document.getElementById("total-cost-display").textContent = modalMoney(t.costTotal);
+    document.getElementById("total-sell-display").textContent = t.hasChargeable ? modalMoney(t.sellTotal) : t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد";
     const costSplitWrap = document.getElementById("cost-split-row-wrap");
     if (costSplitWrap) {
         costSplitWrap.innerHTML = costSplitButtonsHtml(draft, t);
@@ -11193,14 +11197,14 @@ function updateModalTotals() {
     }
     const feePreviewEl = document.getElementById("fee-amount-preview");
     if (feePreviewEl) {
-        feePreviewEl.textContent = t.feeEnabled && t.feeAmount > 0 ? "= " + fmtMoney(t.feeAmount) : "";
+        feePreviewEl.textContent = t.feeEnabled && t.feeAmount > 0 ? "= " + modalMoney(t.feeAmount) : "";
     }
     const serviceFeePreviewEl = document.getElementById("service-fee-amount-preview");
     if (serviceFeePreviewEl) {
-        serviceFeePreviewEl.textContent = t.serviceFeeEnabled && t.serviceFeeAmount > 0 ? "= " + fmtMoney(t.serviceFeeAmount) : "";
+        serviceFeePreviewEl.textContent = t.serviceFeeEnabled && t.serviceFeeAmount > 0 ? "= " + modalMoney(t.serviceFeeAmount) : "";
     }
     const profitEl = document.getElementById("total-profit-display");
-    profitEl.textContent = t.profitCounted ? fmtMoney(t.profit) : "—";
+    profitEl.textContent = t.profitCounted ? modalMoney(t.profit) : "—";
     profitEl.classList.remove("text-green", "text-rust", "text-amber");
     if (t.profitCounted) {
         if (t.profit < 0) profitEl.classList.add("text-rust"); else if (t.hasChargeable) profitEl.classList.add(t.customerFullyPaid ? "text-green" : "text-amber");
@@ -11209,10 +11213,10 @@ function updateModalTotals() {
     if (profitSubEl) {
         let subHtml = "";
         if (t.hasChargeable && t.profit > 0 && t.customerPaidAmount > 0 && !t.customerFullyPaid) {
-            subHtml = 'محصّل <span class="text-green">' + fmtMoney(t.collectedProfit) + '</span> · متبقي <span class="text-amber">' + fmtMoney(t.uncollectedProfit) + "</span>";
+            subHtml = 'محصّل <span class="text-green">' + modalMoney(t.collectedProfit) + '</span> · متبقي <span class="text-amber">' + modalMoney(t.uncollectedProfit) + "</span>";
         }
         if (t.returnedReceivableCost > 0 && hasElevatedAccess()) {
-            subHtml += (subHtml ? "<br>" : "") + '<span class="muted">دون ' + fmtMoney(t.returnedReceivableCost) + " مرتجعة عند المورد</span>";
+            subHtml += (subHtml ? "<br>" : "") + '<span class="muted">دون ' + modalMoney(t.returnedReceivableCost) + " مرتجعة عند المورد</span>";
         }
         profitSubEl.innerHTML = subHtml;
     }
@@ -11221,13 +11225,13 @@ function updateModalTotals() {
     if (remainEl) {
         const isExcess = t.hasChargeable && t.customerRemaining < -CUSTOMER_REMAINING_TOLERANCE;
         if (remainLabelEl) remainLabelEl.textContent = isExcess ? "زيادة" : "المتبقي عليه";
-        remainEl.textContent = t.hasChargeable ? fmtMoney(isExcess ? Math.abs(t.customerRemaining) : Math.max(t.customerRemaining, 0)) : t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد";
+        remainEl.textContent = t.hasChargeable ? modalMoney(isExcess ? Math.abs(t.customerRemaining) : t.customerFullyPaid ? Math.round(Math.max(t.customerRemaining, 0)) : Math.max(t.customerRemaining, 0)) : t.allPartsReturned ? "مرتجعة" : t.noActiveParts ? "بدون قطع محددة" : "لم يُسعّر بعد";
         remainEl.classList.remove("text-green", "text-amber");
         remainEl.classList.toggle("text-green", t.hasChargeable && t.customerFullyPaid && !isExcess);
         remainEl.classList.toggle("text-amber", t.hasChargeable && (!t.customerFullyPaid || isExcess));
     }
     const paidEl = document.getElementById("total-paid-display");
-    if (paidEl) paidEl.textContent = fmtMoney(t.customerPaidAmount);
+    if (paidEl) paidEl.textContent = modalMoney(t.customerPaidAmount);
     const refundStatusWrap = document.getElementById("customer-refund-status-wrap");
     if (refundStatusWrap) {
         refundStatusWrap.innerHTML = orderCustomerRefundStatusHtml(draft);
@@ -11273,7 +11277,7 @@ function orderCustomerRefundStatusHtml(order) {
     confirmedTotal = round2(confirmedTotal);
     if (pendingTotal <= 0 && confirmedTotal <= 0) return "";
     const confirmBtn = pendingTotal > 0 && hasElevatedAccess() ? '<button type="button" class="btn btn-sm btn-danger-ghost" id="order-confirm-refund-btn">تم رد المبلغ للزبون</button>' : "";
-    return (pendingTotal > 0 ? '<div class="customer-refund-status customer-refund-status-pending">يجب إرجاع ' + fmtMoney(pendingTotal) + " للزبون " + confirmBtn + "</div>" : "") + (confirmedTotal > 0 ? '<div class="customer-refund-status customer-refund-status-done">✅ تم إرجاع ' + fmtMoney(confirmedTotal) + " للزبون</div>" : "");
+    return (pendingTotal > 0 ? '<div class="customer-refund-status customer-refund-status-pending">يجب إرجاع ' + modalMoney(pendingTotal) + " للزبون " + confirmBtn + "</div>" : "") + (confirmedTotal > 0 ? '<div class="customer-refund-status customer-refund-status-done">✅ تم إرجاع ' + modalMoney(confirmedTotal) + " للزبون</div>" : "");
 }
 
 async function checkOrderSaveConflict(baseline) {
