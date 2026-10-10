@@ -932,6 +932,15 @@
   .part-pn-chip{color:var(--amber);border:1px dashed var(--amber-line);}
   .part-pn-alt{color:var(--text-dim);border:1px solid var(--border-soft);}
   .part-pn-alts-label{font-size:10.5px;font-weight:700;color:var(--text-faint);}
+  .part-pn-find{flex:0 0 auto;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:6px;padding:3px 8px;font-size:13px;cursor:pointer;line-height:1.2;}
+  .part-pn-itemname{direction:ltr;unicode-bidi:plaintext;font-size:11px;font-weight:700;color:var(--green);background:var(--green-dim);border:1px solid var(--green-line);border-radius:999px;padding:1px 8px;}
+  .pn-search-list{display:flex;flex-direction:column;gap:5px;max-height:46vh;overflow-y:auto;margin-top:8px;}
+  .pn-search-sec{font-size:11px;font-weight:800;color:var(--text-faint);margin-top:4px;}
+  .pn-search-row{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:start;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:8px;padding:8px 10px;cursor:pointer;color:var(--text);font-family:'Tajawal',sans-serif;}
+  .pn-search-row:hover{border-color:var(--green-line);}
+  .pn-search-num{direction:ltr;unicode-bidi:plaintext;font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:800;font-size:13px;color:var(--green);white-space:nowrap;}
+  .pn-search-name{direction:ltr;unicode-bidi:plaintext;font-size:12px;color:var(--text-dim);text-align:end;overflow-wrap:anywhere;}
+  .pn-search-row-hist .pn-search-num{color:var(--amber);}
   .part-notes-readonly{font-size:12.5px;color:var(--rust);font-weight:800;padding:2px 2px;}
   .used-badge{align-self:flex-start;font-size:10px;font-weight:700;color:var(--amber);background:var(--amber-dim);border:1px solid var(--amber-line);border-radius:4px;padding:1px 8px;cursor:pointer;font-family:'Tajawal',sans-serif;}
   .used-badge:hover{filter:brightness(1.1);}
@@ -2896,10 +2905,10 @@ function partNumberAltsHtml(key) {
     if (!key) return "";
     const c = partNumberAltsCache.get(key);
     const head = '<div class="part-pn-alts" data-pn-key="' + escapeHtml(key) + '">';
-    if (!c || c.state !== "done" || !c.list.length) return head + "</div>";
+    if (!c || c.state !== "done" || !c.list.length && !c.name) return head + "</div>";
     const chips = list => list.slice(0, 8).map(x => '<button type="button" class="part-pn-alt" data-pn-copy="' + escapeHtml(x.num) + '" title="اضغط لنسخ الرقم">' + escapeHtml(x.num) + "</button>").join("");
     const alt = c.list.filter(x => x.kind === "alt"), orig = c.list.filter(x => x.kind === "orig");
-    return head + (alt.length ? '<span class="part-pn-alts-label">بدائل</span>' + chips(alt) : "") + (orig.length ? '<span class="part-pn-alts-label">بديل عن</span>' + chips(orig) : "") + "</div>";
+    return head + (c.name ? '<span class="part-pn-itemname" title="اسم هذا الرقم بالكتالوج — تأكد أنه يطابق القطعة">' + escapeHtml(c.name) + "</span>" : "") + (alt.length ? '<span class="part-pn-alts-label">بدائل</span>' + chips(alt) : "") + (orig.length ? '<span class="part-pn-alts-label">بديل عن</span>' + chips(orig) : "") + "</div>";
 }
 
 function partNumberAltsEnsure(key) {
@@ -2912,9 +2921,12 @@ function partNumberAltsEnsure(key) {
             state: "pending",
             list: []
         });
-        Promise.resolve().then(() => sb.rpc("get_oem_alternatives", {
+        Promise.resolve().then(() => Promise.all([ sb.rpc("get_oem_alternatives", {
             p_key: key
-        })).then(res => {
+        }), sb.rpc("get_catalog_item", {
+            p_key: key
+        }) ])).then(rs => {
+            const res = rs && rs[0], itm = rs && rs[1];
             if (!res || res.error || !Array.isArray(res.data)) {
                 partNumberAltsCache.set(key, {
                     state: "error",
@@ -2923,6 +2935,7 @@ function partNumberAltsEnsure(key) {
                 });
                 return;
             }
+            const nm = itm && !itm.error && Array.isArray(itm.data) && itm.data[0] ? String(itm.data[0].name || "") : "";
             const seen = new Set, list = [];
             res.data.forEach(r => {
                 const num = String(r && r.num || "");
@@ -2937,9 +2950,10 @@ function partNumberAltsEnsure(key) {
             });
             partNumberAltsCache.set(key, {
                 state: "done",
-                list: list
+                list: list,
+                name: nm
             });
-            if (!list.length) return;
+            if (!list.length && !nm) return;
             document.querySelectorAll('.part-pn-alts[data-pn-key="' + key + '"]').forEach(el => {
                 el.outerHTML = partNumberAltsHtml(key);
             });
@@ -2960,7 +2974,7 @@ function partNumberRowHtml(p, order) {
     const key = partNumberKey(val);
     if (key) partNumberAltsEnsure(key);
     const sug = key ? [] : partNumberSuggestions(order, p);
-    return '<div class="part-pn-block">' + '<div class="part-pn-row">' + '<span class="part-pn-label">رقم القطعة</span>' + '<input type="text" class="part-pn-input" dir="ltr" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="64" placeholder="رقم OEM (اختياري)" value="' + escapeHtml(val) + '">' + (sug.length ? '<span class="part-pn-chips">' + sug.map(s => '<button type="button" class="part-pn-chip" data-pn-suggest="' + escapeHtml(s.num) + '" title="' + escapeHtml("من طلبية سابقة" + (s.from ? " — " + s.from : "") + (s.count > 1 ? " (×" + s.count + ")" : "")) + '">' + escapeHtml(s.num) + (s.count > 1 ? " ×" + s.count : "") + "</button>").join("") + "</span>" : "") + "</div>" + partNumberAltsHtml(key) + "</div>";
+    return '<div class="part-pn-block">' + '<div class="part-pn-row">' + '<span class="part-pn-label">رقم القطعة</span>' + '<input type="text" class="part-pn-input" dir="ltr" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="64" placeholder="رقم OEM (اختياري)" value="' + escapeHtml(val) + '">' + '<button type="button" class="part-pn-find" data-pn-find title="بحث ذكي عن رقم القطعة بالاسم" aria-label="بحث عن رقم القطعة">🔎</button>' + (sug.length ? '<span class="part-pn-chips">' + sug.map(s => '<button type="button" class="part-pn-chip" data-pn-suggest="' + escapeHtml(s.num) + '" title="' + escapeHtml("من طلبية سابقة" + (s.from ? " — " + s.from : "") + (s.count > 1 ? " (×" + s.count + ")" : "")) + '">' + escapeHtml(s.num) + (s.count > 1 ? " ×" + s.count : "") + "</button>").join("") + "</span>" : "") + "</div>" + partNumberAltsHtml(key) + "</div>";
 }
 
 function partNumberContext(el) {
@@ -2987,6 +3001,10 @@ function partNumberBindDelegationOnce() {
     partNumberDelegationBound = true;
     document.addEventListener("input", e => {
         const t = e.target;
+        if (t && t.id === "pn-search-input") {
+            partNumberSearchOnInput(t.value);
+            return;
+        }
         if (!t || !t.classList || !t.classList.contains("part-pn-input")) return;
         const c = partNumberContext(t);
         if (c) c.part.partNumber = t.value;
@@ -3003,7 +3021,27 @@ function partNumberBindDelegationOnce() {
     document.addEventListener("click", e => {
         const t = e.target;
         if (!t || !t.closest) return;
-        let el = t.closest("[data-pn-suggest]");
+        let el = t.closest("[data-pn-find]");
+        if (el) {
+            const cf = partNumberContext(el);
+            if (cf) {
+                e.preventDefault();
+                partNumberSearchOpen(cf);
+            }
+            return;
+        }
+        el = t.closest("[data-pn-pick]");
+        if (el) {
+            e.preventDefault();
+            partNumberSearchPick(el.getAttribute("data-pn-pick"));
+            return;
+        }
+        if (t.closest("[data-pn-search-close]") || t.classList && t.classList.contains("pn-search-backdrop")) {
+            e.preventDefault();
+            partNumberSearchClose();
+            return;
+        }
+        el = t.closest("[data-pn-suggest]");
         if (el) {
             const c = partNumberContext(el);
             if (!c) return;
@@ -3030,6 +3068,316 @@ function partNumberBindDelegationOnce() {
     });
 }
 
+const PN_AR_TERMS = {
+    "صدام": "m:BUMPER|صدام",
+    "بمبر": "m:BUMPER",
+    "مصد": "m:BUMPER",
+    "امامي": "s:FR|FRONT|امامي",
+    "اماميه": "s:FR|FRONT|امامي",
+    "قدام": "s:FR|FRONT",
+    "خلفي": "s:RR|REAR|BACK|خلفي",
+    "خلفيه": "s:RR|REAR|BACK|خلفي",
+    "خلف": "s:RR|REAR|BACK",
+    "يمين": "m:RH|يمين",
+    "يمنى": "m:RH|يمين",
+    "يميني": "m:RH|يمين",
+    "يسار": "m:LH|يسار",
+    "يسرى": "m:LH|يسار",
+    "يساري": "m:LH|يسار",
+    "كشاف": "m:HEAD|كشاف,m:LAMP|LIGHT|كشاف",
+    "فانوس": "m:LAMP|LIGHT|فانوس",
+    "ضو": "m:LAMP|LIGHT",
+    "ستوب": "m:LAMP|ستوب,s:TAIL|COMBINATION|REAR",
+    "سبوت": "m:FOG,m:LAMP|LIGHT",
+    "ضباب": "m:FOG",
+    "لمبه": "m:BULB|LAMP|لمبه",
+    "عاكس": "m:REFLECTOR",
+    "عكاس": "m:REFLECTOR",
+    "مرايه": "m:MIRROR|مرايه",
+    "مراه": "m:MIRROR|مرايه",
+    "مرايا": "m:MIRROR|مرايه",
+    "باب": "m:DOOR|باب",
+    "رفرف": "m:FENDER|رفرف",
+    "كبوت": "m:HOOD|كبوت",
+    "شنطه": "m:LUGGAGE|TRUNK|BACK DOOR|شنطه",
+    "شبك": "m:GRILLE|GRILL|شبك",
+    "شبكه": "m:GRILLE|GRILL|شبك",
+    "جريل": "m:GRILLE|GRILL",
+    "زجاج": "m:GLASS|زجاج",
+    "ازاز": "m:GLASS|زجاج",
+    "مساحه": "m:WIPER|مساحه",
+    "مساحات": "m:WIPER|مساحه",
+    "راديتر": "m:RADIATOR|راديتر",
+    "رديتر": "m:RADIATOR|رديتر",
+    "ردياتر": "m:RADIATOR",
+    "ثلاجه": "m:RADIATOR|CONDENSER|ثلاجه",
+    "كندنسر": "m:CONDENSER",
+    "مروحه": "m:FAN|مروحه",
+    "كمبروسر": "m:COMPRESSOR|كمبروسر",
+    "كمبرسور": "m:COMPRESSOR",
+    "دينمو": "m:ALTERNATOR|GENERATOR|دينمو",
+    "مارش": "m:STARTER|مارش",
+    "بطاريه": "m:BATTERY|بطاريه",
+    "فلتر": "m:FILTER|ELEMENT|CLEANER|فلتر",
+    "زيت": "m:OIL|زيت",
+    "هواء": "m:AIR|هواء",
+    "هوا": "m:AIR|هواء",
+    "بنزين": "m:FUEL|بنزين",
+    "مكينه": "m:ENGINE|مكينه",
+    "محرك": "m:ENGINE|محرك",
+    "جيربكس": "m:TRANSMISSION|TRANSAXLE|جيربكس",
+    "قير": "m:TRANSMISSION|TRANSAXLE|قير",
+    "فرامل": "m:BRAKE|فرامل",
+    "تيل": "m:PAD|SHOE|LINING|تيل",
+    "فحمات": "m:PAD|SHOE|فحمات",
+    "قماش": "m:PAD|SHOE|LINING|قماش",
+    "ديسك": "m:DISC|ROTOR|ديسك",
+    "قرص": "m:DISC|ROTOR",
+    "طنبور": "m:DRUM|طنبور",
+    "مساعد": "m:ABSORBER|SHOCK|مساعد",
+    "مخمد": "m:ABSORBER|SHOCK",
+    "ممتص": "m:ABSORBER|SHOCK",
+    "ياي": "m:SPRING|ياي",
+    "سست": "m:SPRING|سست",
+    "مقص": "m:ARM|مقص",
+    "كرنك": "m:CRANKSHAFT|CRANK",
+    "بلي": "m:BEARING|بلي",
+    "رولمان": "m:BEARING|رولمان",
+    "حساس": "m:SENSOR|حساس",
+    "سلك": "m:WIRE|HARNESS|سلك",
+    "مفتاح": "m:SWITCH|KEY|مفتاح",
+    "قفل": "m:LOCK|قفل",
+    "مقبض": "m:HANDLE|مقبض",
+    "جنط": "m:WHEEL|جنط",
+    "رنج": "m:WHEEL",
+    "سير": "m:BELT|سير",
+    "سيور": "m:BELT|سير",
+    "خرطوم": "m:HOSE|خرطوم",
+    "بخاخ": "m:INJECTOR|NOZZLE|بخاخ",
+    "رشاش": "m:INJECTOR|NOZZLE",
+    "طرمبه": "m:PUMP|طرمبه",
+    "مضخه": "m:PUMP|مضخه",
+    "ثيرموستات": "m:THERMOSTAT",
+    "ترموستات": "m:THERMOSTAT",
+    "مقعد": "m:SEAT|مقعد",
+    "كرسي": "m:SEAT|كرسي",
+    "سقف": "m:ROOF|سقف",
+    "ارضيه": "m:FLOOR|ارضيه",
+    "دعاسه": "m:MAT|دعاسه",
+    "تابلو": "m:INSTRUMENT|PANEL|تابلو",
+    "دركسيون": "m:STEERING|دركسيون",
+    "ايرباج": "m:AIR BAG|AIRBAG|ايرباج",
+    "شكمان": "m:MUFFLER|EXHAUST|شكمان",
+    "عادم": "m:EXHAUST|عادم",
+    "كتاليزر": "m:CONVERTER|CATALYTIC",
+    "جوان": "m:GASKET|جوان",
+    "غطاء": "m:COVER|غطاء",
+    "غطا": "m:COVER",
+    "لوحه": "m:PLATE|PANEL|لوحه",
+    "حامل": "m:BRACKET|SUPPORT|حامل",
+    "كتف": "m:BRACKET|SUPPORT|كتف"
+};
+
+const PN_EN_TERMS = {
+    front: "s:FR|FRONT",
+    fr: "s:FR|FRONT",
+    rear: "s:RR|REAR|BACK",
+    rr: "s:RR|REAR|BACK",
+    back: "s:RR|REAR|BACK",
+    right: "m:RH",
+    rh: "m:RH",
+    left: "m:LH",
+    lh: "m:LH",
+    headlight: "m:HEAD,m:LAMP|LIGHT",
+    headlamp: "m:HEAD,m:LAMP|LIGHT"
+};
+
+const PN_IGNORE_WORDS = [ "تويوتا", "لكزس", "كامري", "كورولا", "يارس", "هايلوكس", "لاندكروزر", "برادو", "فورتشنر", "افالون", "هايس", "راف", "سيارة", "سياره", "قطعة", "قطعه", "قطع", "اصلي", "اصليه", "جديد", "مستعمل", "تجاري", "وكاله", "من", "في", "على", "و" ];
+
+let pnSearch = null, pnSearchSeq = 0, pnSearchTimer = null;
+
+function partNumberSearchTerms(q, extraIgnore) {
+    const raw = normalizeArabicSearch(String(q || "")).replace(/[\u064B-\u065F\u0670\u0640]/g, "");
+    const words = raw.split(/[^a-z0-9\u0600-\u06FF]+/).filter(Boolean).map(w => w.replace(/^ال(?=.{2})/, ""));
+    const ign = new Set(PN_IGNORE_WORDS.concat((extraIgnore || []).map(x => normalizeArabicSearch(String(x || "")).replace(/^ال(?=.{2})/, ""))));
+    const known = [], soft = [], unknown = [];
+    const add = def => String(def).split(",").forEach(part => {
+        const m = /^([ms]):(.+)$/.exec(part);
+        if (!m) return;
+        const arr = m[1] === "m" ? known : soft;
+        if (arr.indexOf(m[2]) < 0) arr.push(m[2]);
+    });
+    words.forEach(w => {
+        if (/^[0-9]{4}$/.test(w) || ign.has(w)) return;
+        const def = PN_AR_TERMS[w] || (w.length > 4 && /ات$/.test(w) ? PN_AR_TERMS[w.slice(0, -2)] : "") || PN_EN_TERMS[w];
+        if (def) {
+            add(def);
+            return;
+        }
+        const g = /^[a-z0-9]+$/.test(w) ? w.toUpperCase() : w;
+        if (g.length >= 2 && unknown.indexOf(g) < 0) unknown.push(g);
+    });
+    const must = known.concat(unknown).slice(0, 6);
+    const first = g => g.split("|")[0];
+    return {
+        must: must,
+        soft: soft.slice(0, 4),
+        known: known,
+        unknown: unknown,
+        shownMust: must.map(first),
+        shownSoft: soft.slice(0, 4).map(first)
+    };
+}
+
+function partNumberSearchRowHtml(num, name, hist) {
+    return '<button type="button" class="pn-search-row' + (hist ? " pn-search-row-hist" : "") + '" data-pn-pick="' + escapeHtml(num) + '">' + '<span class="pn-search-num">' + escapeHtml(num) + '</span><span class="pn-search-name">' + escapeHtml(name || "") + "</span></button>";
+}
+
+function partNumberSearchListHtml() {
+    const st = pnSearch;
+    if (!st) return "";
+    let h = "";
+    if (st.hist && st.hist.length) {
+        h += '<div class="pn-search-sec">🕘 أرقام استُخدمت لنفس السيارة وقطعة مشابهة</div>' + st.hist.map(s => partNumberSearchRowHtml(s.num, "من طلبية سابقة" + (s.from ? " — " + s.from : "") + (s.count > 1 ? " (×" + s.count + ")" : ""), true)).join("");
+    }
+    if (st.busy) h += '<div class="modal-sub">⏳ جارٍ البحث…</div>'; else if (st.err) h += '<div class="modal-sub" style="color:var(--rust);">' + escapeHtml(st.err) + "</div>"; else if (st.rows) {
+        if (!st.rows.length) h += '<div class="modal-sub">لا نتائج — جرّب كلمة أبسط (مثلًا «صدام» فقط) أو اكتب الاسم بالإنجليزي.</div>'; else h += '<div class="pn-search-sec">من كتالوج الأسماء — ' + st.rows.length + " نتيجة (الأقصر اسمًا أولًا). تأكد أن الرقم لسيارتك قبل الاختيار.</div>" + st.rows.map(r => partNumberSearchRowHtml(String(r.pn || ""), String(r.name || ""), false)).join("");
+    }
+    return h;
+}
+
+function partNumberSearchHintText() {
+    const st = pnSearch;
+    if (!st || !st.terms) return "";
+    const tm = st.terms;
+    if (!tm.must.length) return "اكتب اسم القطعة (مثلًا: صدام أمامي، مرايا يسار، فلتر زيت)";
+    let s = "يبحث عن: " + (st.relaxed ? tm.known : tm.must).map(g => g.split("|")[0]).join(" + ");
+    if (tm.soft.length) s += " (يُفضَّل: " + tm.shownSoft.join("، ") + ")";
+    if (st.relaxed && tm.unknown.length) s += " — تجاهلتُ: " + tm.unknown.join("، ");
+    return s;
+}
+
+function partNumberSearchRefreshList() {
+    const list = document.getElementById("pn-search-list"), hint = document.getElementById("pn-search-hint");
+    if (list) list.innerHTML = partNumberSearchListHtml();
+    if (hint) hint.textContent = partNumberSearchHintText();
+}
+
+function partNumberSearchRender() {
+    const root = document.getElementById("confirm-root");
+    if (!root || !pnSearch) return;
+    root.innerHTML = '<div class="modal-backdrop pn-search-backdrop">' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true" style="max-height:92vh;display:flex;flex-direction:column;">' + '<div class="modal-title">🔎 بحث عن رقم القطعة</div>' + '<input type="text" id="pn-search-input" class="search-input" style="width:100%;min-width:0;margin-top:8px;" autocomplete="off" placeholder="اسم القطعة (عربي أو إنجليزي)" value="' + escapeHtml(pnSearch.q) + '">' + '<div id="pn-search-hint" class="modal-sub" style="margin:6px 0 0;"></div>' + '<div id="pn-search-list" class="pn-search-list"></div>' + '<div class="modal-footer-actions" style="margin-top:10px;justify-content:flex-end;"><button type="button" class="btn btn-ghost" data-pn-search-close>إغلاق</button></div>' + "</div>" + "</div>";
+    root.classList.add("modal-open");
+    partNumberSearchRefreshList();
+    const inp = document.getElementById("pn-search-input");
+    if (inp && inp.focus) inp.focus();
+}
+
+async function partNumberSearchRun() {
+    const st = pnSearch;
+    if (!st) return;
+    const seq = ++pnSearchSeq;
+    const terms = partNumberSearchTerms(st.q, st.ignore);
+    st.terms = terms;
+    st.relaxed = false;
+    st.err = "";
+    if (!terms.must.length) {
+        st.rows = null;
+        st.busy = false;
+        partNumberSearchRefreshList();
+        return;
+    }
+    st.busy = true;
+    partNumberSearchRefreshList();
+    let rows = [], relaxed = false, err = "";
+    try {
+        const call = async must => {
+            const r = await sb.rpc("search_catalog_items", {
+                p_groups: must,
+                p_soft: terms.soft,
+                p_limit: 40
+            });
+            if (!r || r.error) throw r && r.error || new Error("NO_RESULT");
+            return Array.isArray(r.data) ? r.data : [];
+        };
+        rows = await call(terms.must);
+        if (!rows.length && terms.unknown.length && terms.known.length) {
+            rows = await call(terms.known);
+            relaxed = true;
+        }
+    } catch (e) {
+        err = "تعذّر البحث الآن — تأكد من الاتصال وأعد المحاولة";
+        rows = [];
+    }
+    if (seq !== pnSearchSeq || pnSearch !== st) return;
+    st.rows = rows;
+    st.relaxed = relaxed;
+    st.err = err;
+    st.busy = false;
+    partNumberSearchRefreshList();
+}
+
+function partNumberSearchOnInput(v) {
+    if (!pnSearch) return;
+    pnSearch.q = String(v || "");
+    if (pnSearchTimer) clearTimeout(pnSearchTimer);
+    pnSearchTimer = setTimeout(() => {
+        pnSearchTimer = null;
+        partNumberSearchRun();
+    }, 300);
+}
+
+function partNumberSearchOpen(c) {
+    if (!c || !c.part) return;
+    const car = normalizeCar(c.order && c.order.car) || {};
+    pnSearch = {
+        partId: c.part.id,
+        orderId: c.order ? c.order.id : "",
+        inQuote: !!(c.row && c.row.closest && c.row.closest("#quote-parts-list")),
+        q: String(c.part.description || "").trim(),
+        ignore: [ car.make, car.model, car.trim ].filter(Boolean),
+        hist: partNumberSuggestions(c.order, c.part),
+        terms: null,
+        rows: null,
+        relaxed: false,
+        err: "",
+        busy: false
+    };
+    partNumberSearchRender();
+    partNumberSearchRun();
+}
+
+function partNumberSearchClose() {
+    pnSearch = null;
+    pnSearchSeq++;
+    if (pnSearchTimer) {
+        clearTimeout(pnSearchTimer);
+        pnSearchTimer = null;
+    }
+    const root = document.getElementById("confirm-root");
+    if (root) {
+        root.innerHTML = "";
+        root.classList.remove("modal-open");
+    }
+}
+
+function partNumberSearchPick(num) {
+    const st = pnSearch;
+    if (!st) return;
+    const v = normalizePartNumber(num);
+    const order = st.inQuote ? typeof quoteDraft !== "undefined" ? quoteDraft : null : typeof draft !== "undefined" ? draft : null;
+    const part = order && Array.isArray(order.parts) ? order.parts.find(x => x.id === st.partId) : null;
+    const inQuote = st.inQuote;
+    partNumberSearchClose();
+    if (!part || !v) return;
+    part.partNumber = v;
+    const list = document.getElementById(inQuote ? "quote-parts-list" : "parts-list");
+    const row = list ? Array.from(list.querySelectorAll(".part-row")).find(r => r.getAttribute("data-part-id") === part.id) : null;
+    const blk = row ? row.querySelector(".part-pn-block") : null;
+    if (blk) blk.outerHTML = partNumberRowHtml(part, order);
+    showToast("تم اختيار الرقم " + v, "ok");
+}
+
 let oemAltImportBusy = false;
 
 function oemAltImportStatus(text) {
@@ -3052,12 +3400,50 @@ function oemAltImportRow(line) {
     };
 }
 
-async function oemAltImportSend(rows) {
+function catalogItemImportRow(line) {
+    const s = String(line || "");
+    const i = s.indexOf("\t");
+    if (i < 0) return null;
+    const pn = normalizePartNumber(s.slice(0, i)), key = partNumberKey(pn);
+    let name = s.slice(i + 1).replace(/\s+/g, " ").trim();
+    if (!/^[A-Z0-9]{3,40}$/.test(key) || pn.length < 3 || pn.length > 48 || !name || /^X+$/i.test(name)) return null;
+    if (name.length > 120) name = name.slice(0, 120);
+    return {
+        pn_key: key,
+        pn_disp: pn,
+        name: name
+    };
+}
+
+function oemImportSpec(fileName) {
+    const n = String(fileName || "");
+    if (/^catalog-items/i.test(n)) return {
+        kind: "items",
+        table: "catalog_items",
+        conflict: "pn_key",
+        row: catalogItemImportRow,
+        keyOf: r => r.pn_key,
+        label: "كتالوج الأسماء",
+        unit: "رقمًا"
+    };
+    if (/^oem-alternatives/i.test(n)) return {
+        kind: "alts",
+        table: "oem_alternatives",
+        conflict: "oem_key,alt_key",
+        row: oemAltImportRow,
+        keyOf: r => r.oem_key + "|" + r.alt_key,
+        label: "الأرقام البديلة",
+        unit: "زوجًا"
+    };
+    return null;
+}
+
+async function oemAltImportSend(rows, spec) {
     let lastErr = null;
     for (let attempt = 0; attempt < 3; attempt++) {
         try {
-            const {error: error} = await sb.from("oem_alternatives").upsert(rows, {
-                onConflict: "oem_key,alt_key",
+            const {error: error} = await sb.from(spec.table).upsert(rows, {
+                onConflict: spec.conflict,
                 ignoreDuplicates: true
             });
             if (!error) return null;
@@ -3072,6 +3458,11 @@ async function oemAltImportSend(rows) {
 }
 
 async function runOemAlternativesImport(file) {
+    const spec = oemImportSpec(file.name);
+    if (!spec) {
+        showToast("اسم الملف غير معروف — يجب أن يبدأ بـ oem-alternatives أو catalog-items", "error");
+        return;
+    }
     oemAltImportBusy = true;
     let sent = 0, skipped = 0, failed = null;
     try {
@@ -3087,7 +3478,7 @@ async function runOemAlternativesImport(file) {
         let carry = "", batch = [], inBatch = new Set;
         const flush = async () => {
             if (!batch.length) return;
-            const err = await oemAltImportSend(batch);
+            const err = await oemAltImportSend(batch, spec);
             if (err) {
                 failed = err;
                 throw err;
@@ -3095,16 +3486,16 @@ async function runOemAlternativesImport(file) {
             sent += batch.length;
             batch = [];
             inBatch = new Set;
-            oemAltImportStatus("⏳ جارٍ الاستيراد… " + sent.toLocaleString("en-US") + " زوجًا");
+            oemAltImportStatus("⏳ جارٍ الاستيراد… " + sent.toLocaleString("en-US") + " " + spec.unit);
         };
         const take = async line => {
             if (!line) return;
-            const row = oemAltImportRow(line);
+            const row = spec.row(line);
             if (!row) {
                 skipped++;
                 return;
             }
-            const k = row.oem_key + "|" + row.alt_key;
+            const k = spec.keyOf(row);
             if (inBatch.has(k)) return;
             inBatch.add(k);
             batch.push(row);
@@ -3120,12 +3511,12 @@ async function runOemAlternativesImport(file) {
         if (carry) await take(carry.replace(/\r$/, ""));
         await flush();
         partNumberAltsCache.clear();
-        oemAltImportStatus("✅ اكتمل: " + sent.toLocaleString("en-US") + " زوجًا (متجاهَل " + skipped + " سطرًا غير صالح)");
-        showToast("اكتمل استيراد الأرقام البديلة: " + sent.toLocaleString("en-US") + " زوجًا", "ok");
+        oemAltImportStatus("✅ اكتمل: " + sent.toLocaleString("en-US") + " " + spec.unit + " (متجاهَل " + skipped + " سطرًا غير صالح)");
+        showToast("اكتمل استيراد " + spec.label + ": " + sent.toLocaleString("en-US") + " " + spec.unit, "ok");
     } catch (e) {
         console.error("importOemAlternatives:", e);
-        oemAltImportStatus("❌ توقّف بعد " + sent.toLocaleString("en-US") + " زوجًا — أعد التشغيل (المكتوب سابقًا يُتجاهل)");
-        showToast(failed && failed.code === "42501" ? "غير متاح" : "فشل استيراد الأرقام البديلة — أعد المحاولة", "error");
+        oemAltImportStatus("❌ توقّف بعد " + sent.toLocaleString("en-US") + " " + spec.unit + " — أعد التشغيل (المكتوب سابقًا يُتجاهل)");
+        showToast(failed && failed.code === "42501" ? "غير متاح" : "فشل استيراد " + spec.label + " — أعد المحاولة", "error");
     } finally {
         oemAltImportBusy = false;
     }
@@ -3140,9 +3531,14 @@ function importOemAlternativesFile(file) {
         showToast("الاستيراد جارٍ — انتظر اكتماله", "error");
         return;
     }
+    const spec = oemImportSpec(file.name);
+    if (!spec) {
+        showToast("اسم الملف غير معروف — يجب أن يبدأ بـ oem-alternatives أو catalog-items", "error");
+        return;
+    }
     confirmAction({
-        title: "استيراد الأرقام البديلة؟",
-        message: "سيُقرأ الملف «" + file.name + "» ويُضاف إلى جدول الأرقام البديلة. لا يُحذف أو يُعدَّل شيء والمكرر يُتجاهل، وقد يستغرق دقائق — أبقِ الصفحة مفتوحة.",
+        title: "استيراد " + spec.label + "؟",
+        message: "سيُقرأ الملف «" + file.name + "» ويُضاف إلى " + spec.label + ". لا يُحذف أو يُعدَّل شيء والمكرر يُتجاهل، وقد يستغرق دقائق — أبقِ الصفحة مفتوحة.",
         confirmLabel: "ابدأ الاستيراد",
         onConfirm: () => {
             runOemAlternativesImport(file);
@@ -20342,7 +20738,7 @@ function bindAccountsActivityModalEvents() {
 function renderTreasuryView() {
     const el = document.getElementById("treasury-view");
     const t = treasuryTotals();
-    el.innerHTML = '<div class="treasury-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders">→ رجوع للطلبيات</button>' + '<div class="treasury-title">📦 الصندوق</div>' + "</div>" + '<div class="treasury-chip-row" style="margin-bottom:10px;">' + '<button type="button" id="btn-toggle-extra-indicators" class="chip" aria-expanded="' + (extraIndicatorsOpen ? "true" : "false") + '">📊 مؤشرات إضافية</button>' + '<button type="button" id="btn-toggle-expenses-block" class="chip" aria-expanded="' + (expensesBlockOpen ? "true" : "false") + '">💰 المصاريف</button>' + '<button type="button" id="btn-toggle-suppliers-settlement" class="chip" aria-expanded="' + (suppliersSettlementMenuOpen ? "true" : "false") + '">🧾 سداد الموردين' + (scrapyardMgmtState.proposals.length ? '<span class="inline-count-badge">' + scrapyardMgmtState.proposals.length + "</span>" : "") + "</button>" + '<button type="button" id="btn-open-accounts-activity" class="chip">📜 حركة الحسابات</button>' + '<button type="button" id="btn-open-edit-proposals" class="chip btn-with-badge">📋 طلبات التعديل<span id="edit-proposals-badge" class="tasks-badge" style="' + (editProposals.length ? "display:flex;" : "display:none;") + '">' + (editProposals.length || "") + "</span></button>" + "</div>" + '<div id="suppliers-settlement-wrap" class="treasury-chip-row" style="' + (suppliersSettlementMenuOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + scrapyardEntryBlockHtml("used") + scrapyardEntryBlockHtml("new") + "</div>" + '<div id="extra-indicators-wrap" style="' + (extraIndicatorsOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + '<button type="button" id="btn-toggle-extra-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر' + (extraIndicatorsPeriod === "customMonth" ? " (" + arabicMonthLabel(extraIndicatorsCustomMonth) + ")" : extraIndicatorsPeriod === "customRange" ? " (" + formatDateDMY(extraIndicatorsRangeFrom) + " → " + formatDateDMY(extraIndicatorsRangeTo) + ")" : extraIndicatorsPeriod !== "all" ? " (" + (TREASURY_PERIODS.find(p => p.key === extraIndicatorsPeriod) || {}).label + ")" : "") + "</button>" + '<div class="treasury-period-filter" id="extra-indicators-period-filter" style="' + (extraIndicatorsFilterOpen ? "" : "display:none;") + ' margin-bottom:14px;">' + TREASURY_PERIODS.map(p => '<button type="button" class="chip ' + (extraIndicatorsPeriod === p.key ? "chip-active" : "") + '" data-extra-period="' + escapeHtml(p.key) + '">' + p.label + "</button>").join("") + '<input type="month" id="extra-indicators-month-input" class="extra-indicators-month-input" value="' + (extraIndicatorsPeriod === "customMonth" ? extraIndicatorsCustomMonth : "") + '">' + '<label class="mini-label" style="margin:0;">من<input type="date" id="extra-indicators-range-from" class="extra-indicators-month-input" value="' + escapeHtml(extraIndicatorsRangeFrom || "") + '"></label>' + '<label class="mini-label" style="margin:0;">إلى<input type="date" id="extra-indicators-range-to" class="extra-indicators-month-input" value="' + escapeHtml(extraIndicatorsRangeTo || "") + '"></label>' + "</div>" + '<div class="extra-indicators-row" id="extra-indicators-row">' + treasuryCardHtml("purchaseVolume", "حجم الشراء", '<span class="treasury-profit-value">' + fmtMoney(t.purchaseVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم سداد منه: <span class="num">' + fmtMoney(t.purchaseVolumePaid) + "</span></div>", t.breakdowns.purchaseVolume) + treasuryCardHtml("salesVolume", "حجم عمليات البيع", '<span class="treasury-profit-value">' + fmtMoney(t.salesVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل: <span class="num">' + fmtMoney(t.salesVolumePaid) + "</span></div>", t.breakdowns.salesVolume) + treasuryCardHtml("profitVolume", "حجم صافي العمليات", '<span class="treasury-profit-value">' + fmtMoney(t.profitVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل: <span class="num">' + fmtMoney(t.profitVolumePaid) + "</span></div>", t.breakdowns.profitVolume) + treasuryCardHtml("expensesVolume", "حجم المصاريف", '<span class="treasury-profit-value text-rust">' + fmtMoney(t.expensesVolume) + "</span>", null, t.breakdowns.expensesVolume) + treasuryCardHtml("netProfitVolumeAfterSettlement", "صافي الأرباح", '<span class="treasury-profit-value ' + (t.netProfitVolumeAfterSettlement < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(t.netProfitVolumeAfterSettlement) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل منه: <span class="num">' + fmtMoney(t.netProfitVolume) + "</span></div>", t.breakdowns.netProfitVolumeAfterSettlement) + "</div>" + "</div>" + '<div id="expenses-block-wrap" style="' + (expensesBlockOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + '<div class="treasury-block">' + '<div class="treasury-block-head">' + '<div class="treasury-block-title">المصاريف — كل مبلغ بتاريخه على حدة</div>' + '<button type="button" id="btn-open-add-expense" class="btn btn-primary btn-sm">➕ إضافة مصاريف</button>' + "</div>" + '<button type="button" id="btn-toggle-treasury-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر' + (treasuryPeriodFilter !== "all" ? " (" + (TREASURY_PERIODS.find(p => p.key === treasuryPeriodFilter) || {}).label + ")" : "") + "</button>" + '<div class="treasury-period-filter" id="treasury-period-filter" style="' + (treasuryFilterOpen ? "" : "display:none;") + '">' + TREASURY_PERIODS.map(p => '<button type="button" class="chip ' + (treasuryPeriodFilter === p.key ? "chip-active" : "") + '" data-period="' + escapeHtml(p.key) + '">' + p.label + "</button>").join("") + "</div>" + '<div class="expense-categories">' + EXPENSE_CATEGORIES.map(expenseCategoryRowHtml).join("") + treasurySupportRowHtml() + "</div>" + '<div class="treasury-summary">' + '<div class="treasury-summary-row"><span>إجمالي المصاريف</span><span class="num text-rust" id="treasury-total-expenses">' + fmtMoney(t.totalExpenses) + "</span></div>" + '<div class="treasury-summary-row"><span>إجمالي الدعم الخارجي</span><span class="num text-green" id="treasury-total-support">+' + fmtMoney(t.totalSupport) + "</span></div>" + "</div>" + "</div>" + "</div>" + treasuryCardHtml("net", "الصندوق حاليًا", '<span class="treasury-profit-value ' + (t.net < 0 ? "text-rust" : "") + '" id="treasury-net">' + fmtMoney(t.net) + "</span>", null, t.breakdowns.net, "treasury-profit-card-primary") + treasuryCardHtml("netAfterSettlement", "الصندوق بافتراض انتهاء التحصيل والسداد", '<span class="treasury-profit-value ' + (t.netAfterSettlement < 0 ? "text-rust" : "") + '">' + fmtMoney(t.netAfterSettlement) + "</span>", null, t.breakdowns.netAfterSettlement) + treasuryCardHtml("uncollectedProfit", "الربح غير المحصّل", '<span class="treasury-profit-value">' + fmtMoney(t.uncollectedProfit) + "</span>", null, t.breakdowns.uncollectedProfit) + treasuryCardHtml("debtsToSuppliers", "الديون للموردين", '<span class="treasury-profit-value text-rust">' + fmtMoney(t.debtsToSuppliers) + "</span>", null, t.breakdowns.debtsToSuppliers) + treasuryCardHtml("purchasingCustodyBalance", "رصيد المشتريات", '<span class="treasury-profit-value ' + (t.purchasingCustodyBalance < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(t.purchasingCustodyBalance) + "</span>", t.purchasingCustodyDeficit > 0 ? '<div class="kpi-sub" style="color:var(--rust);">عليك سداد ' + fmtMoney(t.purchasingCustodyDeficit) + " لعهدة المشتريات (عامر وعمر)</div>" : null, t.breakdowns.purchasingCustodyBalance) + treasuryCardHtml("dueFromCustomers", "مستحق من الزبائن", '<span class="treasury-profit-value">' + fmtMoney(t.dueFromCustomers) + "</span>", null, t.breakdowns.dueFromCustomers) + '<div class="data-mgmt-row">' + '<span class="data-mgmt-label">إدارة البيانات</span>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-export-excel">⬇️ تصدير Excel</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-excel">⬆️ استيراد Excel</button>' + '<input type="file" id="excel-import-input" accept=".xlsx" style="display:none;">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-oem-alts">📥 أرقام بديلة</button>' + '<input type="file" id="oem-alt-import-input" accept=".gz,.tsv,.txt" style="display:none;">' + '<span id="oem-alt-import-status" class="kpi-sub"></span>' + "</div>";
+    el.innerHTML = '<div class="treasury-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders">→ رجوع للطلبيات</button>' + '<div class="treasury-title">📦 الصندوق</div>' + "</div>" + '<div class="treasury-chip-row" style="margin-bottom:10px;">' + '<button type="button" id="btn-toggle-extra-indicators" class="chip" aria-expanded="' + (extraIndicatorsOpen ? "true" : "false") + '">📊 مؤشرات إضافية</button>' + '<button type="button" id="btn-toggle-expenses-block" class="chip" aria-expanded="' + (expensesBlockOpen ? "true" : "false") + '">💰 المصاريف</button>' + '<button type="button" id="btn-toggle-suppliers-settlement" class="chip" aria-expanded="' + (suppliersSettlementMenuOpen ? "true" : "false") + '">🧾 سداد الموردين' + (scrapyardMgmtState.proposals.length ? '<span class="inline-count-badge">' + scrapyardMgmtState.proposals.length + "</span>" : "") + "</button>" + '<button type="button" id="btn-open-accounts-activity" class="chip">📜 حركة الحسابات</button>' + '<button type="button" id="btn-open-edit-proposals" class="chip btn-with-badge">📋 طلبات التعديل<span id="edit-proposals-badge" class="tasks-badge" style="' + (editProposals.length ? "display:flex;" : "display:none;") + '">' + (editProposals.length || "") + "</span></button>" + "</div>" + '<div id="suppliers-settlement-wrap" class="treasury-chip-row" style="' + (suppliersSettlementMenuOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + scrapyardEntryBlockHtml("used") + scrapyardEntryBlockHtml("new") + "</div>" + '<div id="extra-indicators-wrap" style="' + (extraIndicatorsOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + '<button type="button" id="btn-toggle-extra-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر' + (extraIndicatorsPeriod === "customMonth" ? " (" + arabicMonthLabel(extraIndicatorsCustomMonth) + ")" : extraIndicatorsPeriod === "customRange" ? " (" + formatDateDMY(extraIndicatorsRangeFrom) + " → " + formatDateDMY(extraIndicatorsRangeTo) + ")" : extraIndicatorsPeriod !== "all" ? " (" + (TREASURY_PERIODS.find(p => p.key === extraIndicatorsPeriod) || {}).label + ")" : "") + "</button>" + '<div class="treasury-period-filter" id="extra-indicators-period-filter" style="' + (extraIndicatorsFilterOpen ? "" : "display:none;") + ' margin-bottom:14px;">' + TREASURY_PERIODS.map(p => '<button type="button" class="chip ' + (extraIndicatorsPeriod === p.key ? "chip-active" : "") + '" data-extra-period="' + escapeHtml(p.key) + '">' + p.label + "</button>").join("") + '<input type="month" id="extra-indicators-month-input" class="extra-indicators-month-input" value="' + (extraIndicatorsPeriod === "customMonth" ? extraIndicatorsCustomMonth : "") + '">' + '<label class="mini-label" style="margin:0;">من<input type="date" id="extra-indicators-range-from" class="extra-indicators-month-input" value="' + escapeHtml(extraIndicatorsRangeFrom || "") + '"></label>' + '<label class="mini-label" style="margin:0;">إلى<input type="date" id="extra-indicators-range-to" class="extra-indicators-month-input" value="' + escapeHtml(extraIndicatorsRangeTo || "") + '"></label>' + "</div>" + '<div class="extra-indicators-row" id="extra-indicators-row">' + treasuryCardHtml("purchaseVolume", "حجم الشراء", '<span class="treasury-profit-value">' + fmtMoney(t.purchaseVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم سداد منه: <span class="num">' + fmtMoney(t.purchaseVolumePaid) + "</span></div>", t.breakdowns.purchaseVolume) + treasuryCardHtml("salesVolume", "حجم عمليات البيع", '<span class="treasury-profit-value">' + fmtMoney(t.salesVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل: <span class="num">' + fmtMoney(t.salesVolumePaid) + "</span></div>", t.breakdowns.salesVolume) + treasuryCardHtml("profitVolume", "حجم صافي العمليات", '<span class="treasury-profit-value">' + fmtMoney(t.profitVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل: <span class="num">' + fmtMoney(t.profitVolumePaid) + "</span></div>", t.breakdowns.profitVolume) + treasuryCardHtml("expensesVolume", "حجم المصاريف", '<span class="treasury-profit-value text-rust">' + fmtMoney(t.expensesVolume) + "</span>", null, t.breakdowns.expensesVolume) + treasuryCardHtml("netProfitVolumeAfterSettlement", "صافي الأرباح", '<span class="treasury-profit-value ' + (t.netProfitVolumeAfterSettlement < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(t.netProfitVolumeAfterSettlement) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل منه: <span class="num">' + fmtMoney(t.netProfitVolume) + "</span></div>", t.breakdowns.netProfitVolumeAfterSettlement) + "</div>" + "</div>" + '<div id="expenses-block-wrap" style="' + (expensesBlockOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + '<div class="treasury-block">' + '<div class="treasury-block-head">' + '<div class="treasury-block-title">المصاريف — كل مبلغ بتاريخه على حدة</div>' + '<button type="button" id="btn-open-add-expense" class="btn btn-primary btn-sm">➕ إضافة مصاريف</button>' + "</div>" + '<button type="button" id="btn-toggle-treasury-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر' + (treasuryPeriodFilter !== "all" ? " (" + (TREASURY_PERIODS.find(p => p.key === treasuryPeriodFilter) || {}).label + ")" : "") + "</button>" + '<div class="treasury-period-filter" id="treasury-period-filter" style="' + (treasuryFilterOpen ? "" : "display:none;") + '">' + TREASURY_PERIODS.map(p => '<button type="button" class="chip ' + (treasuryPeriodFilter === p.key ? "chip-active" : "") + '" data-period="' + escapeHtml(p.key) + '">' + p.label + "</button>").join("") + "</div>" + '<div class="expense-categories">' + EXPENSE_CATEGORIES.map(expenseCategoryRowHtml).join("") + treasurySupportRowHtml() + "</div>" + '<div class="treasury-summary">' + '<div class="treasury-summary-row"><span>إجمالي المصاريف</span><span class="num text-rust" id="treasury-total-expenses">' + fmtMoney(t.totalExpenses) + "</span></div>" + '<div class="treasury-summary-row"><span>إجمالي الدعم الخارجي</span><span class="num text-green" id="treasury-total-support">+' + fmtMoney(t.totalSupport) + "</span></div>" + "</div>" + "</div>" + "</div>" + treasuryCardHtml("net", "الصندوق حاليًا", '<span class="treasury-profit-value ' + (t.net < 0 ? "text-rust" : "") + '" id="treasury-net">' + fmtMoney(t.net) + "</span>", null, t.breakdowns.net, "treasury-profit-card-primary") + treasuryCardHtml("netAfterSettlement", "الصندوق بافتراض انتهاء التحصيل والسداد", '<span class="treasury-profit-value ' + (t.netAfterSettlement < 0 ? "text-rust" : "") + '">' + fmtMoney(t.netAfterSettlement) + "</span>", null, t.breakdowns.netAfterSettlement) + treasuryCardHtml("uncollectedProfit", "الربح غير المحصّل", '<span class="treasury-profit-value">' + fmtMoney(t.uncollectedProfit) + "</span>", null, t.breakdowns.uncollectedProfit) + treasuryCardHtml("debtsToSuppliers", "الديون للموردين", '<span class="treasury-profit-value text-rust">' + fmtMoney(t.debtsToSuppliers) + "</span>", null, t.breakdowns.debtsToSuppliers) + treasuryCardHtml("purchasingCustodyBalance", "رصيد المشتريات", '<span class="treasury-profit-value ' + (t.purchasingCustodyBalance < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(t.purchasingCustodyBalance) + "</span>", t.purchasingCustodyDeficit > 0 ? '<div class="kpi-sub" style="color:var(--rust);">عليك سداد ' + fmtMoney(t.purchasingCustodyDeficit) + " لعهدة المشتريات (عامر وعمر)</div>" : null, t.breakdowns.purchasingCustodyBalance) + treasuryCardHtml("dueFromCustomers", "مستحق من الزبائن", '<span class="treasury-profit-value">' + fmtMoney(t.dueFromCustomers) + "</span>", null, t.breakdowns.dueFromCustomers) + '<div class="data-mgmt-row">' + '<span class="data-mgmt-label">إدارة البيانات</span>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-export-excel">⬇️ تصدير Excel</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-excel">⬆️ استيراد Excel</button>' + '<input type="file" id="excel-import-input" accept=".xlsx" style="display:none;">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-oem-alts">📥 كتالوج الأرقام</button>' + '<input type="file" id="oem-alt-import-input" accept=".gz,.tsv,.txt" style="display:none;">' + '<span id="oem-alt-import-status" class="kpi-sub"></span>' + "</div>";
     document.getElementById("btn-back-to-orders").addEventListener("click", closeTreasuryView);
     bindBusyButton(document.getElementById("btn-export-excel"), async () => {
         const btn = document.getElementById("btn-export-excel");
