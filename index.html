@@ -609,6 +609,29 @@
   }
   .quote-priority-btn:hover{border-color:var(--amber-line);color:var(--amber);}
   .quote-priority-btn:disabled{opacity:.35;cursor:not-allowed;}
+  /* ROUTING BEGIN css */
+  /* ===== وجهة طلب التسعير (ROUTING): غير موجّه / عامر / عمر / الجميع =====
+     كل المحدِّدات بنطاق .qr- أو .quote-row.qr-row؛ ألوان من متغيّرات التطبيق فقط (تتبدّل مع الوضع النهاري/الليلي). */
+  .quote-row.qr-row{flex-wrap:wrap;row-gap:8px;}
+  .quote-row.qr-row .quote-row-label{flex:1 1 0;}
+  .qr-strip{order:20;flex:1 0 100%;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding-top:8px;border-top:1px dashed var(--border-soft);cursor:default;}
+  .qr-field .qr-strip{order:0;flex:0 0 auto;padding-top:0;border-top:0;}
+  .qr-dest{min-height:34px;max-width:100%;padding:3px 14px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-family:'Cairo',system-ui,sans-serif;font-size:13px;font-weight:700;cursor:pointer;}
+  .qr-dest:disabled{opacity:.6;cursor:not-allowed;}
+  .qr-dest-none{background:var(--amber-dim);border-color:var(--amber-line);color:var(--amber);}
+  .qr-dest-on{background:var(--green-dim);border-color:var(--green-line);color:var(--green);}
+  /* نافذة الطلب: الاختيار الاختياري «وجّهه لـ» */
+  .qr-field{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;}
+  .qr-radios{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;}
+  .qr-radio{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:6px 16px;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--text);font-family:'Cairo',system-ui,sans-serif;font-size:14px;font-weight:700;cursor:pointer;}
+  .qr-radio input{width:18px;height:18px;accent-color:var(--green);margin:0;cursor:pointer;}
+  .qr-radio-on{background:var(--green-dim);border-color:var(--green-line);color:var(--green);}
+  .qr-note{margin-top:4px;font-size:12px;color:var(--text-faint);line-height:1.7;}
+  @media (max-width:520px){
+    .qr-radio{flex:1 1 auto;justify-content:center;}
+    .qr-dest{width:100%;}
+  }
+  /* ROUTING END css */
   .activity-log-row{cursor:pointer;}
   .activity-log-row:hover{border-color:var(--text-faint);}
   .doc-history-row{cursor:pointer;}
@@ -5136,8 +5159,9 @@ function opsKpiCompute(orders, readyMap, range, kindsMap) {
             if (opsKpiInRange(qMs, range)) {
                 const b = buckets[opsKpiBucketOf(qMs, range)];
                 b.pricedAny++;
-                if (!isNaN(cMs) && qMs >= cMs) {
-                    b.timeSum += businessMinutesBetween(cMs, qMs, SALES_KPI_BUSINESS_START_HOUR, SALES_KPI_BUSINESS_END_HOUR, BUSINESS_HOLIDAY_WEEKDAY);
+                const sMs = typeof qrouteKpiStart === "function" ? qrouteKpiStart(o, cMs, readyMap.get(o.id)) : cMs;
+                if (!isNaN(sMs) && qMs >= sMs) {
+                    b.timeSum += businessMinutesBetween(sMs, qMs, SALES_KPI_BUSINESS_START_HOUR, SALES_KPI_BUSINESS_END_HOUR, BUSINESS_HOLIDAY_WEEKDAY);
                     b.timeCount++;
                 }
             }
@@ -5563,7 +5587,7 @@ function opsKpiOnChange(e) {
 }
 
 async function fetchQuoteReadyFirstMap() {
-    const {data: data, error: error} = await fetchAllRows((from, to) => sb.from("activity_events").select("order_id,created_at").eq("kind", "order_quote_ready").order("created_at", {
+    const {data: data, error: error} = await fetchAllRows((from, to) => sb.from("activity_events").select("order_id,created_at,actor_email").eq("kind", "order_quote_ready").order("created_at", {
         ascending: true
     }).order("id", {
         ascending: true
@@ -5571,7 +5595,10 @@ async function fetchQuoteReadyFirstMap() {
     if (error) throw error;
     const map = new Map;
     (data || []).forEach(ev => {
-        if (ev.order_id && !map.has(ev.order_id)) map.set(ev.order_id, ev.created_at);
+        if (ev.order_id && !map.has(ev.order_id)) {
+            map.set(ev.order_id, ev.created_at);
+            if (typeof qrouteNoteReadyBy === "function") qrouteNoteReadyBy(ev);
+        }
     });
     return map;
 }
@@ -5637,6 +5664,7 @@ async function opsKpiLoadReady(force) {
 }
 
 function opsKpiNoteReady(ev) {
+    if (typeof qrouteNoteReadyBy === "function") qrouteNoteReadyBy(ev);
     if (currentUserRole !== "full" || !ev || !ev.order_id || !ev.created_at) return;
     if (opsKpiLoadInFlight && opsKpiPendingReady.length < 500) opsKpiPendingReady.push({
         order_id: ev.order_id,
@@ -5692,7 +5720,11 @@ function opsKpiBuildScrapData(d) {
         suppliedAt: o.suppliedAt,
         confirmed: !!o.confirmed,
         supplied: !!o.supplied,
-        isQuote: !!o.isQuote
+        isQuote: !!o.isQuote,
+        ...o.startAt !== undefined ? {
+            startAt: o.startAt,
+            startExcluded: !!o.startExcluded
+        } : {}
     }));
     return {
         orders: orders,
@@ -5716,7 +5748,7 @@ async function opsKpiLoadScrapyard(force) {
         }), 2e4, "ops_kpi_scrapyard");
         if (res.error) throw res.error;
         if (gen !== opsKpiLoadGen) return;
-        opsKpiScrap = opsKpiBuildScrapData(res.data);
+        opsKpiScrap = opsKpiBuildScrapData(typeof qrouteMergeStarts === "function" ? await qrouteMergeStarts(res.data) : res.data);
         opsKpiScrapState = "ok";
     } catch (e) {
         if (gen !== opsKpiLoadGen) return;
@@ -14848,6 +14880,364 @@ mediaBindDelegationOnce();
 
 let quoteOriginalSnapshot = null;
 
+const QROUTE_RECIPIENTS = [ "amerpartech@gmail.com", "iomar.aljohnii@gmail.com" ];
+
+const QROUTE_TIMEOUT_MS = 2e4;
+
+let qrouteDb = "unknown";
+
+let qrouteProbing = false;
+
+let qrouteProbeRetryAt = 0;
+
+let qrouteBusy = false;
+
+let qrouteCreate = null;
+
+const qrouteReadyBy = new Map;
+
+let qrouteBound = false;
+
+function qrouteName(email) {
+    return displayNameForEmail(email) || String(email || "").split("@")[0];
+}
+
+function qrouteMs(iso) {
+    return iso ? new Date(iso).getTime() : NaN;
+}
+
+function qrouteNorm(o) {
+    const r = o && o.route;
+    if (!r || typeof r !== "object" || Array.isArray(r) || !Array.isArray(r.to)) return null;
+    if (!r.since || typeof r.since !== "object" || Array.isArray(r.since)) return null;
+    return {
+        to: r.to.filter(x => typeof x === "string"),
+        since: r.since
+    };
+}
+
+function qrouteTo(o) {
+    const n = qrouteNorm(o);
+    return n ? n.to : QROUTE_RECIPIENTS.slice();
+}
+
+function qrouteDestOf(to) {
+    if (!to.length) return "none";
+    if (QROUTE_RECIPIENTS.every(e => to.indexOf(e) >= 0)) return "both";
+    return to[0];
+}
+
+function qrouteDestEmails(v) {
+    return v === "none" ? [] : v === "both" ? QROUTE_RECIPIENTS.slice() : [ v ];
+}
+
+function qrouteDestLabel(v) {
+    return v === "none" ? "غير موجّه" : v === "both" ? "الجميع" : qrouteName(v);
+}
+
+function qrouteCanChange(o) {
+    return !!o && o.isQuote === true && !o.pendingReturnToQuote && currentUserRole === "full";
+}
+
+function qrouteInert() {
+    return qrouteDb === "missing";
+}
+
+function qrouteStartIso(o) {
+    if (!o) return "";
+    if (qrouteInert()) return o.createdAt || "";
+    if (currentUserRole === "scrapyard") {
+        if (o.routeMe && typeof o.routeMe === "object") return o.routeMe.since || o.createdAt || "";
+        const m = qrouteNorm(o);
+        return m ? m.since[presenceEmail] || o.createdAt || "" : o.createdAt || "";
+    }
+    const n = qrouteNorm(o);
+    if (!n) return o.createdAt || "";
+    let best = "", bestMs = Infinity;
+    n.to.forEach(e => {
+        const t = qrouteMs(n.since[e]);
+        if (!isNaN(t) && t < bestMs) {
+            bestMs = t;
+            best = n.since[e];
+        }
+    });
+    return best;
+}
+
+function qrouteStatsStartMs(o, readyIso) {
+    const created = new Date(o.createdAt).getTime();
+    const n = qrouteNorm(o);
+    if (!n || qrouteInert()) return created;
+    let cut = readyIso ? qrouteMs(readyIso) : NaN;
+    if (isNaN(cut)) cut = o.suppliedAt ? qrouteMs(o.suppliedAt) : Infinity;
+    if (isNaN(cut)) cut = Infinity;
+    const by = qrouteReadyBy.get(o.id) || "";
+    if (by && Object.prototype.hasOwnProperty.call(n.since, by)) {
+        const t = qrouteMs(n.since[by]);
+        return !isNaN(t) && t <= cut ? t : NaN;
+    }
+    let best = NaN;
+    Object.keys(n.since).forEach(k => {
+        const t = qrouteMs(n.since[k]);
+        if (!isNaN(t) && t <= cut && (isNaN(best) || t < best)) best = t;
+    });
+    return best;
+}
+
+function qrouteKpiStart(o, cMs, readyIso) {
+    if (o && o.startExcluded) return NaN;
+    if (o && o.startAt) {
+        const t = qrouteMs(o.startAt);
+        return isNaN(t) ? cMs : t;
+    }
+    if (o && o.route && qrouteNorm(o)) return qrouteStatsStartMs(o, readyIso);
+    return cMs;
+}
+
+function qrouteNoteReadyBy(ev) {
+    if (ev && ev.order_id && ev.actor_email && !qrouteReadyBy.has(ev.order_id)) qrouteReadyBy.set(ev.order_id, ev.actor_email);
+}
+
+async function qrouteMergeStarts(d) {
+    try {
+        if (!sb || !d || !Array.isArray(d.orders)) return d;
+        const {data: data, error: error} = await withTimeout(sb.rpc("get_quote_route_starts", {
+            p_days: 8
+        }), 15e3, "get_quote_route_starts");
+        if (error || !Array.isArray(data)) return d;
+        const m = new Map;
+        data.forEach(r => {
+            if (r && r.order_id) m.set(r.order_id, r);
+        });
+        d.orders = d.orders.filter(o => {
+            const r = o && m.get(o.id);
+            return !(r && r.visible === false);
+        });
+        d.orders.forEach(o => {
+            const r = m.get(o.id);
+            if (r) {
+                o.startAt = r.start_at || null;
+                o.startExcluded = !!r.excluded;
+            }
+        });
+    } catch (e) {}
+    return d;
+}
+
+async function qrouteProbe() {
+    if (qrouteProbing || qrouteDb !== "unknown" || !sb || currentUserRole !== "full") return;
+    if (Date.now() < qrouteProbeRetryAt) return;
+    qrouteProbing = true;
+    try {
+        const res = await withTimeout(sb.rpc("quote_routing_ready"), 1e4, "quote_routing_ready");
+        if (res && !res.error) qrouteDb = res.data === true ? "ready" : "missing"; else if (res && res.error && (res.error.code === "PGRST202" || res.error.code === "42883")) qrouteDb = "missing"; else qrouteProbeRetryAt = Date.now() + 3e4;
+    } catch (e) {
+        qrouteProbeRetryAt = Date.now() + 3e4;
+    }
+    qrouteProbing = false;
+    if (qrouteDb === "ready") {
+        try {
+            renderQuotesList();
+        } catch (e) {}
+        try {
+            qrouteRefreshModalBlock();
+        } catch (e) {}
+    }
+}
+
+function qrouteUiOn() {
+    if (currentUserRole !== "full") return false;
+    if (qrouteDb === "unknown") {
+        qrouteProbe();
+        return false;
+    }
+    return qrouteDb === "ready";
+}
+
+function qrouteSelectHtml(o) {
+    const cur = qrouteDestOf(qrouteTo(o));
+    const opt = (val, lbl) => '<option value="' + escapeHtml(val) + '"' + (val === cur ? " selected" : "") + ">" + escapeHtml(lbl) + "</option>";
+    return '<select class="qr-dest qr-dest-' + (cur === "none" ? "none" : "on") + '" data-qr-dest="' + escapeHtml(o.id) + '" aria-label="وجهة الطلب"' + (qrouteCanChange(o) ? "" : " disabled") + ">" + opt("none", "غير موجّه") + QROUTE_RECIPIENTS.map(e => opt(e, "موجّه إلى: " + qrouteName(e))).join("") + opt("both", "موجّه إلى: الجميع") + "</select>";
+}
+
+function qrouteRowClass(o) {
+    return qrouteUiOn() ? " qr-row" : "";
+}
+
+function qrouteRowChipsHtml(o) {
+    if (!qrouteUiOn()) return "";
+    qrouteBindOnce();
+    return '<div class="qr-strip" data-qr-strip>' + qrouteSelectHtml(o) + "</div>";
+}
+
+function qrouteRadiosHtml(cur) {
+    const opt = (val, lbl) => '<label class="qr-radio' + (cur === val ? " qr-radio-on" : "") + '"><input type="radio" name="qr-dest-new" value="' + escapeHtml(val) + '"' + (cur === val ? " checked" : "") + "> " + escapeHtml(lbl) + "</label>";
+    return '<div class="qr-radios" role="radiogroup" aria-label="وجّهه لـ">' + opt("none", "لاحقًا") + QROUTE_RECIPIENTS.map(e => opt(e, qrouteName(e))).join("") + opt("both", "الجميع") + "</div>";
+}
+
+function qrouteModalFieldHtml(d, isPurchasing) {
+    if (isPurchasing || currentUserRole !== "full") return "";
+    qrouteBindOnce();
+    const on = qrouteUiOn();
+    let inner = "";
+    if (on && d && d.isNew) {
+        if (!qrouteCreate || qrouteCreate.id !== d.id) qrouteCreate = {
+            id: d.id,
+            to: []
+        };
+        inner = '<span class="field-label">وجّهه لـ</span>' + qrouteRadiosHtml(qrouteDestOf(qrouteCreate.to)) + '<div class="qr-note">لا يظهر لعامر وعمر إلا بعد التوجيه — وجّهه الآن أو لاحقًا من قائمة طلبات التسعير.</div>';
+    } else if (on && d && d.isQuote === true && !d.pendingReturnToQuote) {
+        inner = '<span class="field-label">وجهة الطلب</span><div class="qr-strip" data-qr-strip>' + qrouteSelectHtml(d) + "</div>";
+    }
+    return '<div class="field qr-field" id="qr-modal-field"' + (inner ? "" : ' style="display:none;"') + ">" + inner + "</div>";
+}
+
+function qrouteRefreshModalBlock() {
+    const el = document.getElementById("qr-modal-field");
+    if (!el || typeof quoteDraft === "undefined" || !quoteDraft) return;
+    el.outerHTML = qrouteModalFieldHtml(quoteDraft, quoteModalRole === "purchasing");
+}
+
+function qrouteErrText(e) {
+    const code = e && e.code;
+    if (code === "PGRST202" || code === "42883") return "ميزة التوجيه غير مفعّلة بعد على القاعدة";
+    if (code === "PT404" || code === "PT434" || code === "PT435") return String(e && e.message || "غير متاح");
+    if (e && e.message === "غير متاح") return "غير متاح";
+    return friendlyErrorText(e);
+}
+
+async function qrouteCall(id, to) {
+    if (qrouteBusy || !id) return null;
+    if (!sb) {
+        showToast("الاتصال بقاعدة البيانات غير متاح حاليًا", "error");
+        return null;
+    }
+    qrouteBusy = true;
+    let res = null;
+    try {
+        const r = await withTimeout(sb.rpc("set_quote_destination", {
+            p_order_id: id,
+            p_to: to
+        }), QROUTE_TIMEOUT_MS, "set_quote_destination");
+        if (r.error) throw r.error;
+        res = r.data || {};
+    } catch (e) {
+        qrouteBusy = false;
+        showToast("تعذّر تغيير الوجهة: " + qrouteErrText(e), "error");
+        try {
+            renderQuotesList();
+        } catch (x) {}
+        return null;
+    }
+    qrouteBusy = false;
+    const live = (appData.orders || []).find(x => x.id === res.id);
+    if (live) {
+        if (res.route) live.route = res.route;
+        if (res.updatedAt) live.updatedAt = res.updatedAt;
+    }
+    if (typeof quoteDraft !== "undefined" && quoteDraft && quoteDraft.id === res.id) {
+        if (res.route) quoteDraft.route = res.route;
+        if (res.updatedAt) {
+            quoteDraft.updatedAt = res.updatedAt;
+            quoteOpenedAtUpdatedAt = res.updatedAt;
+        }
+    }
+    try {
+        renderQuotesList();
+    } catch (x) {}
+    try {
+        qrouteRefreshModalBlock();
+    } catch (x) {}
+    return res;
+}
+
+async function qrouteSetDest(id, dest) {
+    const o = (appData.orders || []).find(x => x.id === id) || (typeof quoteDraft !== "undefined" && quoteDraft && quoteDraft.id === id ? quoteDraft : null);
+    if (!o || !qrouteCanChange(o)) return;
+    if (qrouteBusy) {
+        try {
+            renderQuotesList();
+        } catch (e) {}
+        return;
+    }
+    const r = await qrouteCall(id, qrouteDestEmails(dest));
+    if (r && r.changed) {
+        showToast(dest === "none" ? "تم سحب الطلب من المشتريات" : "تم توجيه الطلب إلى " + qrouteDestLabel(dest), "ok");
+    }
+}
+
+async function qrouteAfterSave(saved, wasNew, markSent) {
+    if (!saved || !qrouteUiOn() || !(wasNew || markSent)) return false;
+    if (wasNew) {
+        const pick = qrouteCreate && qrouteCreate.id === saved.id ? qrouteCreate.to.slice() : [];
+        qrouteCreate = null;
+        saved.route = {
+            v: 2,
+            to: [],
+            since: {},
+            by: presenceEmail,
+            at: (new Date).toISOString()
+        };
+        if (!pick.length) {
+            showToast("تم حفظ الطلب — غير موجّه بعد، لن يظهر للمشتريات حتى توجّهه", "ok");
+            return true;
+        }
+        const r = await qrouteCall(saved.id, pick);
+        if (!r) showToast("تم حفظ الطلب لكن تعذّر توجيهه — وجّهه من قائمة طلبات التسعير", "error");
+        return true;
+    }
+    const n = qrouteNorm(saved);
+    if (!n) return false;
+    if (!n.to.length) {
+        showToast("الطلب غير موجّه — وجّهه حتى يظهر للمشتريات", "ok");
+        return true;
+    }
+    try {
+        const ref = "#" + saved.orderNumber + (orderDisplayLabel(saved) ? " — " + orderDisplayLabel(saved) : "");
+        const rows = n.to.map(e => ({
+            kind: "order_needs_pricing",
+            order_id: saved.id,
+            order_ref: ref,
+            actor_email: presenceEmail,
+            target_email: e,
+            message: "طلبية جديدة تحتاج تسعير: " + ref
+        }));
+        const {error: error} = await withTimeout(sb.from("activity_events").insert(rows), QROUTE_TIMEOUT_MS, "quote reminder");
+        if (error) throw error;
+    } catch (e) {
+        showToast("تم الحفظ لكن تعذّر إرسال التذكير — أعد الضغط على «حفظ و اعادة طلب»", "error");
+    }
+    return true;
+}
+
+function qrouteBindOnce() {
+    if (qrouteBound) return;
+    qrouteBound = true;
+    document.addEventListener("click", qrouteOnClick, true);
+    document.addEventListener("change", qrouteOnChange, false);
+}
+
+function qrouteOnClick(e) {
+    const t = e.target;
+    if (!t || !t.closest) return;
+    if (t.closest("[data-qr-strip]")) e.stopPropagation();
+}
+
+function qrouteOnChange(e) {
+    const t = e.target;
+    if (!t) return;
+    if (t.hasAttribute && t.hasAttribute("data-qr-dest")) {
+        qrouteSetDest(t.getAttribute("data-qr-dest"), t.value);
+        return;
+    }
+    if (t.name === "qr-dest-new" && qrouteCreate) {
+        qrouteCreate.to = qrouteDestEmails(t.value);
+        document.querySelectorAll('input[name="qr-dest-new"]').forEach(r => {
+            if (r.parentNode && r.parentNode.classList) r.parentNode.classList.toggle("qr-radio-on", r.checked);
+        });
+    }
+}
+
 function quotesMatchingList() {
     return (appData.orders || []).filter(o => o.isQuote).sort((a, b) => {
         const ap = Number.isFinite(a.priority), bp = Number.isFinite(b.priority);
@@ -14910,7 +15300,7 @@ const QUOTE_ROW_LATE_MINUTES = 60;
 function quoteRowColorState(o, nowMs) {
     if (o.quoteReady) return "ready";
     if (!o.createdAt) return "";
-    return quoteBusinessMinutesElapsed(o.createdAt, nowMs) >= QUOTE_ROW_LATE_MINUTES ? "critical" : "";
+    return quoteBusinessMinutesElapsed(typeof qrouteStartIso === "function" ? qrouteStartIso(o) : o.createdAt, nowMs) >= QUOTE_ROW_LATE_MINUTES ? "critical" : "";
 }
 
 function quoteRowCashChipHtml(o, role) {
@@ -14919,12 +15309,12 @@ function quoteRowCashChipHtml(o, role) {
 }
 
 function quoteRowHtml(o, idx, total) {
-    const elapsed = o.createdAt ? quoteElapsedLabel(o.createdAt) : "";
-    const badgeSeverity = quoteElapsedSeverity(o.createdAt);
+    const qrStart = typeof qrouteStartIso === "function" ? qrouteStartIso(o) : o.createdAt, elapsed = qrStart ? quoteElapsedLabel(qrStart) : "";
+    const badgeSeverity = quoteElapsedSeverity(qrStart);
     const rowState = quoteRowColorState(o);
     const priorityControls = canReorderQuotePriority() ? '<div class="quote-priority-controls">' + '<button type="button" class="quote-priority-btn" data-priority-move="up"' + (idx === 0 ? " disabled" : "") + ' title="رفع الأولوية">▲</button>' + '<button type="button" class="quote-priority-btn" data-priority-move="down"' + (idx === total - 1 ? " disabled" : "") + ' title="خفض الأولوية">▼</button>' + "</div>" : "";
     const priceSelfBtn = currentUserRole === "full" && currentUserIsElevated ? '<button type="button" class="icon-btn" data-quote-price-self="' + escapeHtml(o.id) + '" title="سعّر هذه الطلبية بنفسك" aria-label="سعّر بنفسك">💰</button>' : "";
-    return '<div class="task-item-row quote-row' + (rowState ? " quote-row-" + rowState : "") + '" data-quote-id="' + escapeHtml(o.id) + '">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(orderDisplayLabel(o) || "—") + "</span>" + quoteRowCashChipHtml(o, currentUserRole) + (elapsed ? '<span class="quote-row-elapsed' + (badgeSeverity ? " quote-row-elapsed-" + badgeSeverity : "") + '" data-created-at="' + escapeHtml(o.createdAt) + '">⏱ ' + escapeHtml(elapsed) + "</span>" : "") + priceSelfBtn + priorityControls + "</div>";
+    return '<div class="task-item-row quote-row' + (rowState ? " quote-row-" + rowState : "") + (typeof qrouteRowClass === "function" ? qrouteRowClass(o) : "") + '" data-quote-id="' + escapeHtml(o.id) + '">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(orderDisplayLabel(o) || "—") + "</span>" + quoteRowCashChipHtml(o, currentUserRole) + (typeof qrouteRowChipsHtml === "function" ? qrouteRowChipsHtml(o) : "") + (elapsed ? '<span class="quote-row-elapsed' + (badgeSeverity ? " quote-row-elapsed-" + badgeSeverity : "") + '" data-created-at="' + escapeHtml(qrStart) + '">⏱ ' + escapeHtml(elapsed) + "</span>" : "") + priceSelfBtn + priorityControls + "</div>";
 }
 
 function quotesListHtml() {
@@ -15489,7 +15879,7 @@ function quoteModalHtml(d) {
     const partsControlsHtml = '<div id="quote-part-type-gate-wrap">' + quotePartAddControlsHtml() + "</div>" + (isPurchasing ? '<button type="button" class="btn btn-accent-ghost btn-sm" id="quote-supplier-search-btn" style="width:100%;margin-top:10px;">🔍 بحث عن مورد</button>' : "") + '<button type="button" class="btn btn-ghost btn-sm" id="quote-parts-catalog-btn" style="width:100%;margin-top:10px;">📚 كتالوج القطع</button>';
     const footerUtilityHtml = !isPurchasing && !d.isNew ? '<button type="button" class="btn btn-sm btn-danger-ghost" id="quote-delete-btn">🗑️ حذف طلب التسعير</button>' : "";
     const footerActionsHtml = isPurchasing ? '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-ghost" id="quote-save-btn">حفظ</button>' + '<button type="button" class="btn btn-primary" id="quote-save-send-btn">حفظ و إرسال</button>' : '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-ghost" id="quote-save-btn">💾 حفظ</button>' + '<button type="button" class="btn btn-ghost" id="quote-send-btn">حفظ و اعادة طلب</button>' + '<button type="button" class="btn btn-primary" id="quote-approve-btn">✅ اعتماد</button>';
-    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلب تسعير جديد" : "تعديل طلب التسعير") + '</div><div class="modal-sub">البيانات تُحفظ عند الضغط على حفظ</div></div>' + '<button class="icon-btn" id="quote-modal-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + '<label class="field"><span class="field-label">رقم التسعيرة (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + customerFieldHtml + carFieldHtml(d, isPurchasing ? "readonly" : "edit", "quote") + labelFieldHtml + vinFieldHtml(d, isPurchasing ? "readonly" : "edit", "quote") + mediaOrderBlockHtml(d.id, "quote", !isPurchasing) + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span>' + (isPurchasing ? '<button type="button" class="btn btn-ghost btn-sm" id="quote-add-supplier-btn">➕ مورد جديد</button>' : orderMultiSourceHintHtml(d)) + "</div>" + '<div id="quote-parts-list" class="parts-list">' + quotePartsListHtml(d.parts) + "</div>" + partsControlsHtml + "</div>" + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">ملخص التكلفة</span></div>' + '<div class="totals-row" style="grid-template-columns:1fr;">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="quote-total-cost-display">0 ر.س</span></div>' + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + footerUtilityHtml + "</div>" + "<span></span>" + '<div class="modal-footer-actions">' + footerActionsHtml + "</div>" + "</div>" + "</div>" + "</div>";
+    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلب تسعير جديد" : "تعديل طلب التسعير") + '</div><div class="modal-sub">البيانات تُحفظ عند الضغط على حفظ</div></div>' + '<button class="icon-btn" id="quote-modal-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + '<label class="field"><span class="field-label">رقم التسعيرة (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + customerFieldHtml + carFieldHtml(d, isPurchasing ? "readonly" : "edit", "quote") + labelFieldHtml + vinFieldHtml(d, isPurchasing ? "readonly" : "edit", "quote") + (typeof qrouteModalFieldHtml === "function" ? qrouteModalFieldHtml(d, isPurchasing) : "") + mediaOrderBlockHtml(d.id, "quote", !isPurchasing) + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span>' + (isPurchasing ? '<button type="button" class="btn btn-ghost btn-sm" id="quote-add-supplier-btn">➕ مورد جديد</button>' : orderMultiSourceHintHtml(d)) + "</div>" + '<div id="quote-parts-list" class="parts-list">' + quotePartsListHtml(d.parts) + "</div>" + partsControlsHtml + "</div>" + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">ملخص التكلفة</span></div>' + '<div class="totals-row" style="grid-template-columns:1fr;">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="quote-total-cost-display">0 ر.س</span></div>' + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + footerUtilityHtml + "</div>" + "<span></span>" + '<div class="modal-footer-actions">' + footerActionsHtml + "</div>" + "</div>" + "</div>" + "</div>";
 }
 
 function quoteContentSnapshot(d) {
@@ -15869,7 +16259,8 @@ async function saveQuoteDraft(markSent) {
     syncOrderSupply(savingDraft);
     const newQuoteSettleBase = captureSettleBase(savingDraft);
     mediaAfterSaveSuccess(draftId, mediaSnap, cleanedParts);
-    if (markSent || quoteWasNew) {
+    const qrouteHandled = typeof qrouteAfterSave === "function" ? await qrouteAfterSave(savingDraft, quoteWasNew, markSent) : false;
+    if ((markSent || quoteWasNew) && !qrouteHandled) {
         const orderRef = "#" + savingDraft.orderNumber + (orderDisplayLabel(savingDraft) ? " — " + orderDisplayLabel(savingDraft) : "");
         try {
             const {error: notifyErr} = await sb.from("activity_events").insert({
@@ -16154,7 +16545,7 @@ async function handleScrapyardQuoteConflict(draftId) {
     closeQuoteModal();
     modalCloseCallback = pendingReturn;
     if (!appData.orders.some(o => o.id === draftId && o.isQuote)) {
-        showToast("هذه التسعيرة لم تعد متاحة للتسعير — ربما اعتمدتها المبيعات أو حذفتها", "error");
+        showToast("هذه التسعيرة لم تعد متاحة للتسعير — ربما اعتمدتها المبيعات أو حذفتها أو تغيّرت وجهتها", "error");
         mediaRestoreStagedSnapshot(mediaSnap);
         if (modalCloseCallback) {
             const cb = modalCloseCallback;
@@ -25368,7 +25759,7 @@ function stepTimingAverages(periodKey, customMonth) {
     (appData.orders || []).forEach(o => {
         if (!o.createdAt) return;
         if (!dateMatchesPeriod(periodDateOf(o.createdAt), periodKey, customMonth)) return;
-        const createdMs = new Date(o.createdAt).getTime();
+        const createdMs = typeof qrouteStatsStartMs === "function" ? qrouteStatsStartMs(o, quoteReadyFirstByOrderId.get(o.id)) : new Date(o.createdAt).getTime();
         const quoteReadyIso = quoteReadyFirstByOrderId.get(o.id);
         const quoteMs = quoteReadyIso ? new Date(quoteReadyIso).getTime() : NaN;
         const approvedMs = o.quoteApprovedAt ? new Date(o.quoteApprovedAt).getTime() : NaN;
