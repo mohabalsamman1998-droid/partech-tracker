@@ -22260,7 +22260,7 @@ function taxinvSheetHtml(inv, o) {
     const coRows = [ '<div class="taxinv-co-name">' + e(m.seller.nameAr) + "</div>", m.seller.nameEn ? '<div class="taxinv-co-en">' + e(m.seller.nameEn) + "</div>" : "", m.seller.vat ? "<div>" + L.seller.vat + ": " + ltr(m.seller.vat) + "</div>" : "", m.seller.cr ? "<div>" + e(m.seller.idLabel || L.seller.cr) + ": " + ltr(m.seller.cr) + "</div>" : "", m.seller.address ? '<div class="taxinv-co-wide">' + L.seller.address + ": " + e(m.seller.address) + "</div>" : "", m.seller.phone ? "<div>" + L.seller.phone + ": " + ltr(m.seller.phone) + "</div>" : "", m.seller.email ? "<div>" + ltr(m.seller.email) + "</div>" : "" ].join("");
     const idRow = (label, val) => '<div class="doc-identity-row"><span class="doc-identity-label">' + label + '</span><span class="taxinv-idv">' + val + "</span></div>";
     const preview = !!o.preview;
-    const metaRows = idRow(L.meta.number, preview ? '<span style="font-weight:500">يُخصَّص عند الإصدار</span>' : ltr(m.docNumber)) + idRow(L.meta.issued, preview ? '<span style="font-weight:500">يُسجَّل لحظة الإصدار</span>' : ltr(m.issuedDate + " " + m.issuedTime)) + (m.supplyDate ? idRow(L.meta.supply, ltr(m.supplyDate)) : "") + (m.isNote && inv.original_doc_number ? idRow(L.meta.original, ltr(inv.original_doc_number)) : "") + (m.isNote && m.reason ? idRow(L.meta.reason, e(m.reason) + (m.reasonText ? " — " + e(m.reasonText) : "")) : "");
+    const metaRows = idRow(L.meta.number, preview ? '<span style="font-weight:500">يُخصَّص عند الإصدار</span>' : ltr(m.docNumber)) + idRow(L.meta.issued, preview ? '<span style="font-weight:500">يُسجَّل لحظة الإصدار</span>' : ltr(m.issuedDate + " " + m.issuedTime)) + (taxinvShowSupplyDate(m, preview) ? idRow(L.meta.supply, ltr(m.supplyDate)) : "") + (m.isNote && inv.original_doc_number ? idRow(L.meta.original, ltr(inv.original_doc_number)) : "") + (m.isNote && m.reason ? idRow(L.meta.reason, e(m.reason) + (m.reasonText ? " — " + e(m.reasonText) : "")) : "");
     const field = (label, val, extraCls) => '<div class="doc-meta-field' + (extraCls ? " " + extraCls : "") + '"><span>' + label + '</span><span class="taxinv-mv">' + val + "</span></div>";
     const buyerExtra = (m.buyer.otherId ? field(e(m.buyer.otherIdLabel || L.buyer.otherId), ltr(m.buyer.otherId)) : "") + (m.buyer.address ? field(L.buyer.address, e(m.buyer.address)) : "") + (m.buyer.phone ? field(L.buyer.phone, ltr(m.buyer.phone)) : "");
     const buyerBlock = m.buyer.show ? '<div class="doc-billto"><span class="doc-billto-label">' + L.buyer.title + "</span>" + (m.buyer.name ? '<div class="doc-customer-name-input taxinv-buyer-name">' + e(m.buyer.name) + "</div>" : "") + (m.buyer.vat ? field(L.buyer.vat, ltr(m.buyer.vat), "doc-cr-line") : "") + (buyerExtra ? '<div class="doc-billto-extra">' + buyerExtra + "</div>" : "") + "</div>" : "";
@@ -22272,13 +22272,19 @@ function taxinvSheetHtml(inv, o) {
     return '<div class="doc-sheet taxinv-sheet" id="doc-sheet">' + (preview ? '<div class="taxinv-watermark">' + e(L.previewTitle) + "</div>" : "") + '<div class="doc-header-band">' + '<div class="doc-brand-col"><img class="doc-logo-img" src="' + e(PARTECH_LOGO_DATA_URI) + '" alt="PARTECH">' + '<div class="doc-co-info taxinv-co">' + coRows + "</div></div>" + '<div class="doc-identity-col"><div class="doc-type-badge">' + e(m.titleAr) + '</div><div class="doc-type-badge-en">' + e(m.titleEn) + "</div>" + metaRows + "</div>" + "</div>" + buyerBlock + '<div class="taxinv-table-wrap"><table class="doc-table taxinv-table"><thead>' + head + "</thead><tbody>" + body + "</tbody></table></div>" + foot + "</div>";
 }
 
+function taxinvShowSupplyDate(m, preview) {
+    if (!m || m.kind !== "standard" || !m.supplyDate) return false;
+    const issued = preview ? PTX_TAXINV.time.todayRiyadh(new Date) : m.issuedDate;
+    return !!issued && String(m.supplyDate) !== String(issued);
+}
+
 function taxinvWhatsAppText(inv) {
     const m = PTX_TAXINV.sheetModel(inv, {});
     const L = PTX_TAXINV.labels;
     const lines = [];
     lines.push(m.titleAr + " رقم " + m.docNumber);
     lines.push("التاريخ: " + m.issuedDate + " " + m.issuedTime);
-    if (m.supplyDate) lines.push("تاريخ التوريد: " + m.supplyDate);
+    if (taxinvShowSupplyDate(m, false)) lines.push("تاريخ التوريد: " + m.supplyDate);
     lines.push("البائع: " + m.seller.nameAr);
     if (m.seller.vat) lines.push("الرقم الضريبي: " + m.seller.vat);
     if (m.seller.cr) lines.push((m.seller.idLabel || L.seller.cr) + ": " + m.seller.cr);
@@ -22566,6 +22572,11 @@ function taxinvMount() {
     root.innerHTML = st.mode === "preview" ? taxinvPreviewShellHtml(st) : st.mode === "register" ? taxinvRegisterShellHtml() : taxinvIssuedShellHtml(st);
     root.classList.add("doc-open");
     taxinvPostRender(root);
+    if (st.mode === "issued" && taxinvIsIos() && typeof ensureHtml2pdf === "function") {
+        try {
+            Promise.resolve(ensureHtml2pdf()).catch(() => {});
+        } catch (e) {}
+    }
     if (st.mode === "preview") taxinvUpdatePreview({});
     if (st.mode === "register") taxinvRegRefresh();
     taxinvSyncEsc();
@@ -23693,49 +23704,86 @@ async function taxinvCopyText() {
     if (ok) taxinvLogEvent(inv.id, "copied");
 }
 
+let taxinvShareCache = null;
+
+function taxinvIsIos() {
+    try {
+        const ua = String(navigator.userAgent || "");
+        return /iP(hone|ad|od)/.test(ua) || navigator.platform === "MacIntel" && Number(navigator.maxTouchPoints) > 1;
+    } catch (e) {
+        return false;
+    }
+}
+
+function taxinvShareKey(inv) {
+    const sh = document.getElementById("doc-sheet");
+    return String(inv && inv.id) + "|" + (sh && sh.querySelector && sh.querySelector(".taxinv-copy-badge") ? "copy" : "orig");
+}
+
+function taxinvShareFileNow(inv, file, title) {
+    let p;
+    try {
+        p = navigator.share({
+            files: [ file ],
+            title: title,
+            text: title
+        });
+    } catch (e) {
+        p = Promise.reject(e);
+    }
+    return withTimeout(p, NATIVE_SHARE_TIMEOUT_MS, "navigator.share files").then(() => {
+        taxinvLogEvent(inv.id, "shared");
+        return true;
+    }, err => !!(err && err.name === "AbortError"));
+}
+
 async function taxinvShare() {
     const st = taxinvState, inv = taxinvCurrentDoc();
     if (!st || !inv || st.busy) return;
     const btn = document.getElementById("taxinv-share-btn");
+    const m = PTX_TAXINV.sheetModel(inv, {});
+    const title = "PARTECH — " + m.titleAr + " " + m.docNumber;
+    const text = taxinvWhatsAppText(inv);
+    const key = taxinvShareKey(inv);
+    let readyTap = false;
     st.busy = true;
     if (btn) {
         btn.disabled = true;
         btn.textContent = "جاري التجهيز…";
     }
-    const m = PTX_TAXINV.sheetModel(inv, {});
-    const title = "PARTECH — " + m.titleAr + " " + m.docNumber;
-    const text = taxinvWhatsAppText(inv);
     try {
-        let fileOk = false;
-        if (navigator.share && navigator.canShare) {
-            try {
-                fileOk = navigator.canShare({
-                    files: [ new File([ "%PDF" ], "test.pdf", {
-                        type: "application/pdf"
-                    }) ]
-                });
-            } catch (e) {
-                fileOk = false;
+        let file = taxinvShareCache && taxinvShareCache.key === key ? taxinvShareCache.file : null;
+        if (file) {
+            if (await taxinvShareFileNow(inv, file, title)) return;
+        } else {
+            let fileOk = false;
+            if (navigator.share && navigator.canShare) {
+                try {
+                    fileOk = navigator.canShare({
+                        files: [ new File([ "%PDF" ], "test.pdf", {
+                            type: "application/pdf"
+                        }) ]
+                    });
+                } catch (e) {
+                    fileOk = false;
+                }
             }
-        }
-        let blob = null;
-        if (fileOk) {
-            blob = await buildDocPdfBlob().catch(() => null);
-        }
-        if (fileOk && blob) {
-            try {
-                const file = new File([ blob ], taxinvPdfName(inv), {
+            const blob = fileOk ? await buildDocPdfBlob().catch(() => null) : null;
+            if (fileOk && blob) {
+                file = new File([ blob ], taxinvPdfName(inv), {
                     type: "application/pdf"
                 });
-                await withTimeout(navigator.share({
-                    files: [ file ],
-                    title: title,
-                    text: title
-                }), NATIVE_SHARE_TIMEOUT_MS, "navigator.share files");
-                taxinvLogEvent(inv.id, "shared");
-                return;
-            } catch (errFile) {
-                if (errFile && errFile.name === "AbortError") return;
+                taxinvShareCache = {
+                    key: key,
+                    file: file
+                };
+                const fresh = !!(navigator.userActivation && navigator.userActivation.isActive);
+                if (taxinvIsIos() && !fresh) {
+                    readyTap = true;
+                    showToast("ملف PDF جاهز — اضغط «مشاركة» مرة أخرى لإرساله", "ok");
+                    return;
+                }
+                if (await taxinvShareFileNow(inv, file, title)) return;
             }
         }
         if (btn) {
@@ -23766,9 +23814,10 @@ async function taxinvShare() {
         showToast("حدث خطأ أثناء محاولة المشاركة", "error");
     } finally {
         st.busy = false;
-        if (btn) {
-            btn.disabled = false;
-            btn.textContent = "📤 مشاركة";
+        const b2 = document.getElementById("taxinv-share-btn");
+        if (b2) {
+            b2.disabled = false;
+            b2.textContent = readyTap ? "📤 اضغط للإرسال" : "📤 مشاركة";
         }
     }
 }
