@@ -602,6 +602,19 @@
   .supply-req-row .quote-row-number,.supply-req-row .quote-row-elapsed{color:var(--text-dim);}
   :root[data-theme="light"] .supply-req-progress{color:#7A5200;}
   .supply-req-view .purchase-history-row-sub,.supply-req-view .supplier-group.sg-none .sg-count{color:var(--text-dim);}
+/* SMX BEGIN css */
+  /* SMX (2026-10-15، طلب مهاب «لازم تطلع الطلبيات اللي عليها طلب توريد للمشتريات وللمدراء»): نفس الأزرق --supply-req المعرَّف أعلاه — شارة بالقائمة، شارة على زر «الطلبيات»، بطاقة مؤشر (المدراء/المبيعات + المشتريات) */
+  .stamp.supply-req-stamp{margin-inline-start:6px;font-size:10px;padding:1px 7px;vertical-align:middle;white-space:nowrap;color:var(--supply-req);border-color:var(--supply-req-line);background:var(--supply-req-dim);}
+  .kpi-row.smx-supply-kpi{grid-template-columns:1fr;}
+  .kpi-card.kpi-supply-req{border-color:var(--supply-req-line);background:var(--supply-req-dim);}
+  .kpi-card.kpi-supply-req:hover{border-color:var(--supply-req);}
+  .kpi-supply-req .kpi-value{color:var(--supply-req);}
+  .kpi-supply-req .kpi-sub{color:var(--text-dim);}
+  .kpi-supply-req:focus-visible{outline:2px solid var(--supply-req);outline-offset:2px;}
+  .kpi-row .kpi-supply-req-wide{grid-column:1 / -1;}
+  .tasks-badge.supply-req-badge{background:var(--supply-req);color:#04121F;}
+  :root[data-theme="light"] .tasks-badge.supply-req-badge{color:#fff;}
+/* SMX END css */
   .quote-priority-controls{display:flex;flex-direction:column;gap:2px;flex-shrink:0;}
   .quote-priority-btn{
     background:transparent;border:1px solid var(--border);color:var(--text-faint);
@@ -3400,6 +3413,283 @@ function supplyRequestRpcMissing(err) {
     if (!err || typeof err !== "object") return false;
     const code = String(err.code || "");
     return code === "PGRST202" || code === "42883" || /could not find the function/i.test(String(err.message || ""));
+}
+
+function smxSupplySummary(orders) {
+    const list = scrapyardSupplyRequestsSorted(orders);
+    const oldest = list.length ? supplyTsMs(list[list.length - 1].supplyRequestedAt) : NaN;
+    return {
+        list: list,
+        count: list.length,
+        oldestMs: oldest
+    };
+}
+
+function smxSupplyNums(list) {
+    const l = list || [];
+    const nums = l.slice(0, 4).map(o => String(o.orderNumber || "")).filter(Boolean);
+    return nums.join(" · ") + (l.length > 4 ? " · +" + (l.length - 4) : "");
+}
+
+function smxSupplyKpiHtml(sum, wide, label) {
+    if (!sum || !sum.count) return "";
+    const nums = smxSupplyNums(sum.list);
+    const age = !isNaN(sum.oldestMs) ? "الأقدم: " + arabicRelativeTime(sum.oldestMs) : "";
+    return '<div class="kpi-card kpi-supply-req treasury-card-clickable' + (wide ? " kpi-supply-req-wide" : "") + '" data-supply-req-open="1" role="button" tabindex="0">' + '<span class="kpi-label">' + escapeHtml(label || "📦 طلبات توريد قائمة") + "</span>" + '<div class="kpi-value num">' + sum.count + "</div>" + (nums ? '<div class="kpi-sub">' + escapeHtml(nums) + "</div>" : "") + (age ? '<div class="kpi-sub">' + escapeHtml(age) + "</div>" : "") + "</div>";
+}
+
+function smxSupplyBadgeHtml(order) {
+    const who = order && order.supplyRequestedBy ? displayNameForEmail(order.supplyRequestedBy) : "";
+    const ms = order ? supplyTsMs(order.supplyRequestedAt) : NaN;
+    const title = "طلب توريد للمشتريات" + (who ? " — طلبه " + who : "") + (!isNaN(ms) ? " " + arabicRelativeTime(ms) : "");
+    return '<span class="stamp supply-req-stamp" data-smx-supply="1" title="' + escapeHtml(title) + '">📦 طلب توريد</span>';
+}
+
+function smxDecorateRows(el) {
+    try {
+        if (!el || !el.querySelectorAll) return;
+        const sum = smxSupplySummary(appData.orders);
+        if (!sum.count) return;
+        const byId = new Map(sum.list.map(o => [ o.id, o ]));
+        el.querySelectorAll("[data-open]").forEach(btn => {
+            const o = byId.get(btn.getAttribute("data-open"));
+            if (!o) return;
+            const host = btn.closest("tr") || btn.closest(".order-card");
+            const cell = host && host.querySelector(".cell-order");
+            if (cell && !cell.querySelector("[data-smx-supply]")) cell.insertAdjacentHTML("beforeend", smxSupplyBadgeHtml(o));
+        });
+    } catch (e) {
+        console.warn("smxDecorateRows:", e);
+    }
+}
+
+function smxKpiHost() {
+    let host = document.getElementById("smx-supply-kpi");
+    if (host) return host;
+    const anchor = document.getElementById("ops-kpi");
+    if (!anchor || !anchor.parentNode) return null;
+    host = document.createElement("section");
+    host.id = "smx-supply-kpi";
+    host.className = "kpi-row smx-supply-kpi";
+    host.setAttribute("aria-label", "طلبات التوريد القائمة");
+    host.style.display = "none";
+    anchor.parentNode.insertBefore(host, anchor);
+    host.addEventListener("click", e => {
+        if (e.target && e.target.closest && e.target.closest("[data-supply-req-open]")) smxOpenSupplyList();
+    });
+    host.addEventListener("keydown", e => {
+        if ((e.key === "Enter" || e.key === " ") && e.target && e.target.closest && e.target.closest("[data-supply-req-open]")) {
+            e.preventDefault();
+            smxOpenSupplyList();
+        }
+    });
+    return host;
+}
+
+function smxChipLabel(count) {
+    return "📦 طلب توريد (" + count + ")";
+}
+
+function smxAddFilterChip(el) {
+    try {
+        if (!el || !el.querySelector) return;
+        const count = smxSupplySummary(appData.orders).count;
+        if (!(count > 0 || currentFilter === "supplyRequested")) return;
+        const html = '<button type="button" class="chip ' + (currentFilter === "supplyRequested" ? "chip-active" : "") + '" data-filter="supplyRequested">' + escapeHtml(smxChipLabel(count)) + "</button>";
+        const first = el.querySelector(".chip");
+        if (first) first.insertAdjacentHTML("afterend", html); else el.insertAdjacentHTML("afterbegin", html);
+    } catch (e) {
+        console.warn("smxAddFilterChip:", e);
+    }
+}
+
+function smxBeforeOrdersRender() {
+    try {
+        const sum = smxSupplySummary(appData.orders);
+        const host = smxKpiHost();
+        if (host) {
+            host.innerHTML = smxSupplyKpiHtml(sum, false, "📦 طلبات توريد قائمة");
+            host.style.display = sum.count ? "" : "none";
+        }
+        const toggle = document.getElementById("btn-toggle-orders-list");
+        if (toggle) {
+            let badge = document.getElementById("orders-supply-badge");
+            if (!badge) {
+                badge = document.createElement("span");
+                badge.id = "orders-supply-badge";
+                badge.className = "tasks-badge supply-req-badge";
+                badge.title = "طلبات توريد قائمة";
+                toggle.classList.add("btn-with-badge");
+                toggle.appendChild(badge);
+            }
+            badge.textContent = sum.count > 0 ? String(sum.count) : "";
+            badge.style.display = sum.count > 0 ? "flex" : "none";
+        }
+        const chips = document.getElementById("filter-buttons");
+        if (chips && chips.querySelector) {
+            const chip = chips.querySelector('[data-filter="supplyRequested"]');
+            const want = sum.count > 0 || currentFilter === "supplyRequested";
+            if (!!chip !== want || chip && chip.textContent !== smxChipLabel(sum.count)) renderFilterButtons();
+        }
+    } catch (e) {
+        console.warn("smxBeforeOrdersRender:", e);
+    }
+}
+
+function smxOpenSupplyList() {
+    try {
+        currentFilter = "supplyRequested";
+        currentSearch = "";
+        const searchEl = document.getElementById("search-input");
+        if (searchEl) searchEl.value = "";
+        const section = document.getElementById("orders-list-section");
+        if (section && section.style.display === "none") {
+            closeOrdersAndQuotesSections();
+            section.style.display = "";
+            const toggle = document.getElementById("btn-toggle-orders-list");
+            if (toggle) toggle.setAttribute("aria-expanded", "true");
+        }
+        const chipsEl = document.getElementById("filter-buttons");
+        if (chipsEl && chipsEl.style.display === "none") {
+            chipsEl.style.display = "flex";
+            const ft = document.getElementById("btn-toggle-filters");
+            if (ft) ft.setAttribute("aria-expanded", "true");
+        }
+        renderFilterButtons();
+        renderTable();
+        const tc = document.getElementById("table-container");
+        if (tc && typeof tc.scrollIntoView === "function") {
+            try {
+                tc.scrollIntoView({
+                    behavior: "smooth",
+                    block: "start"
+                });
+            } catch (e2) {}
+        }
+    } catch (e) {
+        console.warn("smxOpenSupplyList:", e);
+    }
+}
+
+function smxEventKind(kind) {
+    return kind === "supply_requested" || kind === "supply_request_cancelled";
+}
+
+function smxEventAudience(ev) {
+    if (!ev || ev.audience_role !== "scrapyard" || !smxEventKind(ev.kind)) return null;
+    if (!(currentUserIsElevated && currentUserRole === "full")) return null;
+    return !ev.actor_email || ev.actor_email !== presenceEmail;
+}
+
+async function smxActivityRows(rows) {
+    const base = Array.isArray(rows) ? rows : [];
+    try {
+        if (!(currentUserIsElevated && currentUserRole === "full") || !sb) return base;
+        const sr = await sb.from("activity_events").select("*").eq("audience_role", "scrapyard").in("kind", [ "supply_requested", "supply_request_cancelled" ]).order("created_at", {
+            ascending: false
+        }).limit(50);
+        if (!sr || sr.error || !Array.isArray(sr.data) || !sr.data.length) return base;
+        const seen = new Set(base.map(r => r.id));
+        return base.concat(sr.data.filter(r => !seen.has(r.id))).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    } catch (e) {
+        console.warn("smxActivityRows:", e);
+        return base;
+    }
+}
+
+function smxScrapAfterHome(root) {
+    try {
+        if (!root || !root.querySelector) return;
+        const sum = smxSupplySummary(scrapyardSharedState.supplyRequests);
+        if (!sum.count) return;
+        const row = root.querySelector(".scrapyard-kpi-row");
+        if (!row) return;
+        row.insertAdjacentHTML("beforeend", smxSupplyKpiHtml(sum, true, "📦 طلبات توريد معلّقة"));
+        const card = row.querySelector("[data-supply-req-open]");
+        if (!card) return;
+        const open = () => {
+            scrapyardHomeOpenSection = "quotes";
+            renderScrapyardHomeView();
+            if (typeof refreshScrapyardHomeQuotes === "function") refreshScrapyardHomeQuotes();
+        };
+        card.addEventListener("click", open);
+        card.addEventListener("keydown", e => {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                open();
+            }
+        });
+    } catch (e) {
+        console.warn("smxScrapAfterHome:", e);
+    }
+}
+
+function smxScrapAutoOpen() {
+    try {
+        if (scrapyardHomeOpenSection === null && smxSupplySummary(scrapyardSharedState.supplyRequests).count > 0) scrapyardHomeOpenSection = "quotes";
+    } catch (e) {
+        console.warn("smxScrapAutoOpen:", e);
+    }
+}
+
+function smxVideoMaxSec() {
+    return 40;
+}
+
+function smxVideoCbrFirst() {
+    return true;
+}
+
+function smxVideoPlan(src, presetName, maxSec) {
+    const eco = presetName === "eco";
+    const p = eco ? {
+        name: "eco",
+        shortSide: 320,
+        fps: 12,
+        kfi: 4,
+        vbps: 24e4,
+        abps: 24e3
+    } : {
+        name: "std",
+        shortSide: 480,
+        fps: 24,
+        kfi: 4,
+        vbps: 4e5,
+        abps: 24e3
+    };
+    const cap = Math.min(40, Math.max(1, Number(maxSec) || 15));
+    const dur = Math.max(0, Number(src && src.durSec) || 0);
+    const trimEnd = dur > cap ? cap : null;
+    const outSec = trimEnd != null ? trimEnd : dur;
+    const long = !eco && outSec > 15;
+    const d = mediaFitDims(src && src.w, src && src.h, long ? 352 : p.shortSide);
+    const fps = long ? 15 : p.fps;
+    const budgetAbps = Number(src && src.copiedAbps) > 0 ? Number(src.copiedAbps) : p.abps;
+    const avg = Number(src && src.avgBps) || 0;
+    let vbps = avg > 0 ? Math.round(Math.min(p.vbps, Math.max(15e4, .8 * avg))) : p.vbps;
+    const clipBudget = eco ? 6e5 : 8e5;
+    if (outSec > 0) vbps = Math.min(vbps, Math.max(8e4, Math.floor(clipBudget * 8 / outSec) - budgetAbps));
+    return {
+        preset: p.name,
+        W: d.W,
+        H: d.H,
+        fps: fps,
+        kfi: p.kfi,
+        vbps: vbps,
+        abps: p.abps,
+        trimEnd: trimEnd,
+        outSec: outSec,
+        budgetBytes: Math.round((vbps + budgetAbps) * outSec / 8)
+    };
+}
+
+function smxPhotoSpec() {
+    return {
+        mainSide: 1280,
+        mainQ: .7,
+        fallbackSide: 1024,
+        fallbackQ: .6
+    };
 }
 
 function supplyFirstAtIso(o) {
@@ -6632,6 +6922,7 @@ const FILTERS = [ {
 function renderFilterButtons() {
     const el = document.getElementById("filter-buttons");
     el.innerHTML = FILTERS.filter(f => f.id !== "partial" || partialSupplyUiVisible()).map(f => '<button type="button" class="chip ' + (currentFilter === f.id ? "chip-active" : "") + '" data-filter="' + escapeHtml(f.id) + '">' + f.label + "</button>").join("");
+    if (typeof smxAddFilterChip === "function") smxAddFilterChip(el);
     el.querySelectorAll(".chip").forEach(btn => {
         btn.addEventListener("click", () => {
             currentFilter = btn.getAttribute("data-filter");
@@ -6650,6 +6941,7 @@ function orderMatchesFilterAndSearch(order, filter, search, customerIndex) {
     if (filter === "unconfirmed" && order.confirmed) return false;
     if (filter === "confirmed" && !order.confirmed) return false;
     if (filter === "waitingSupply" && !f.waitingSupply) return false;
+    if (filter === "supplyRequested" && !supplyRequestActive(order)) return false;
     if (filter === "partial" && !(order.confirmed && orderSupplyState(order) === "partial")) return false;
     if (filter === "supplied" && !order.supplied) return false;
     if (filter === "waitingPricing" && !f.waitingPricing) return false;
@@ -6741,6 +7033,7 @@ function ordersTableAndCardsHtml(orders, markArchived) {
 function renderTable() {
     const el = document.getElementById("table-container");
     try {
+        if (typeof smxBeforeOrdersRender === "function") smxBeforeOrdersRender();
         const custIdx = buildCustomerByIdIndex();
         const includeArchived = currentFilter !== "all" || (currentSearch || "").trim() !== "";
         const orders = appData.orders.filter(o => !o.isQuote).filter(o => includeArchived || !o.archived).filter(o => orderMatchesFilterAndSearch(o, currentFilter, currentSearch, custIdx)).sort((a, b) => orderNumberSortKey(b) - orderNumberSortKey(a));
@@ -6749,6 +7042,7 @@ function renderTable() {
             return;
         }
         el.innerHTML = ordersTableAndCardsHtml(orders, includeArchived);
+        if (typeof smxDecorateRows === "function") smxDecorateRows(el);
         el.querySelectorAll("[data-open]").forEach(b => {
             b.addEventListener("click", () => openModal("edit", b.getAttribute("data-open")));
         });
@@ -13370,6 +13664,7 @@ function mediaVideoPreset(name) {
 }
 
 function mediaVideoPlan(src, presetName, maxSec) {
+    if (typeof smxVideoPlan === "function") return smxVideoPlan(src, presetName, maxSec);
     const p = mediaVideoPreset(presetName);
     const d = mediaFitDims(src && src.w, src && src.h, p.shortSide);
     const avg = Number(src && src.avgBps) || 0;
@@ -13593,7 +13888,7 @@ function mediaResetState() {
 
 function mediaMaxSeconds() {
     const n = Number(mediaConfig && mediaConfig.video_max_seconds);
-    return n >= 5 && n <= 30 ? n : 15;
+    return n >= 5 && n <= (typeof smxVideoMaxSec === "function" ? smxVideoMaxSec() : 30) ? n : 15;
 }
 
 function loadMediaConfig() {
@@ -14786,8 +15081,9 @@ async function compressPhotoFile(file) {
         }
         const w0 = img.naturalWidth, h0 = img.naturalHeight;
         if (!w0 || !h0) throw mediaErr("decode");
-        let full = await mediaCanvasJpeg(img, w0, h0, 1600, .75);
-        if (full.blob.size > 19e5) full = await mediaCanvasJpeg(img, w0, h0, 1280, .6);
+        const smxSp = typeof smxPhotoSpec === "function" ? smxPhotoSpec() : null;
+        let full = await mediaCanvasJpeg(img, w0, h0, smxSp ? smxSp.mainSide : 1600, smxSp ? smxSp.mainQ : .75);
+        if (full.blob.size > 19e5) full = await mediaCanvasJpeg(img, w0, h0, smxSp ? smxSp.fallbackSide : 1280, smxSp ? smxSp.fallbackQ : .6);
         if (full.blob.size > 2e6) throw mediaErr("too_big_photo");
         const thumb = await mediaCanvasJpeg(img, w0, h0, 320, .7);
         return {
@@ -15125,7 +15421,7 @@ async function mediaProbeVideoOutput(MB, blob, maxSec) {
         }
         const durationMs = Math.round(await input.computeDuration() * 1e3);
         if (!(durationMs >= 300)) throw mediaErr("too_short");
-        if (durationMs > Math.min(31e3, (Number(maxSec) + .5) * 1e3)) throw mediaErr("too_long");
+        if (durationMs > Math.min(typeof smxVideoMaxSec === "function" ? (smxVideoMaxSec() + 1) * 1e3 : 31e3, (Number(maxSec) + .5) * 1e3)) throw mediaErr("too_long");
         return {
             w: w,
             h: h,
@@ -15269,7 +15565,10 @@ async function compressVideoFile(file, o) {
             return null;
         }
     };
-    let res = canTranscode ? await attempt(plan, "transcode") : null;
+    let res = canTranscode ? await attempt(plan, "transcode", typeof smxVideoCbrFirst === "function" && smxVideoCbrFirst() ? {
+        cbr: true
+    } : undefined) : null;
+    if (!res && canTranscode && typeof smxVideoCbrFirst === "function" && smxVideoCbrFirst()) res = await attempt(plan, "transcode");
     if (res && plan.preset === "std") {
         const budget = res.audio === "copied" && src.abps > 0 ? mediaVideoPlan(Object.assign({
             copiedAbps: src.abps
@@ -46605,6 +46904,10 @@ let activityLogModalOpen = false;
 function activityEventMatchesAudience(ev) {
     if (ev.target_email) return ev.target_email === presenceEmail;
     if (ev.elevated_only) return currentUserIsElevated;
+    if (typeof smxEventAudience === "function") {
+        const smxA = smxEventAudience(ev);
+        if (smxA !== null) return smxA;
+    }
     if (ev.audience_role) return ev.audience_role === currentUserRole;
     return true;
 }
@@ -46618,7 +46921,7 @@ async function refreshActivityEvents() {
             ascending: false
         }).limit(200);
         if (error) throw error;
-        activityEvents = (data || []).filter(activityEventMatchesAudience);
+        activityEvents = (typeof smxActivityRows === "function" ? await smxActivityRows(data || []) : data || []).filter(activityEventMatchesAudience);
     } catch (e) {
         console.error("refreshActivityEvents:", e);
         return;
@@ -54704,6 +55007,7 @@ async function initScrapyardView(email) {
         renderScrapyardView();
     } else {
         await loadScrapyardHomeTotals();
+        if (typeof smxScrapAutoOpen === "function") smxScrapAutoOpen();
         renderScrapyardHomeView();
     }
     const openedFromUrl = consumeNotifUrlParam();
@@ -55189,6 +55493,7 @@ function renderScrapyardHomeView() {
     const quotesBadge = pendingQuotes + pendingSupplyReqs;
     const settlementUnseen = scrapyardCustodyUnseenCount() + scrapyardPartsUnseenCount();
     root.innerHTML = '<div class="app-top-utility-row">' + '<div class="app-top-logo-row"><span class="app-welcome-greeting">اهلا ' + escapeHtml(displayNameForEmail(presenceEmail)) + '</span><img class="app-corner-logo" src="' + PARTECH_LOGO_DATA_URI + '" id="scrapyard-home-logo-img" alt="PARTECH" title="الصفحة الرئيسية"></div>' + '<div class="corner-mini-bar">' + scrapyardThemeToggleHtml() + '<button id="btn-activity-log-scrapyard" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge-scrapyard" class="tasks-badge"></span></button></div>' + "</div>" + '<div class="app-top-divider"></div>' + announcementBannerHtml() + '<div class="app-top-divider"></div>' + '<header class="topbar" style="justify-content:space-between;"><div class="brand">قسم المشتريات</div>' + '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-suppliers">🏭 الموردين</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-statistics">📊 الإحصائيات</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-part-price-log">➕ إدخال بيانات</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-parts-catalog">📚 الكتالوج</button>' + "</div></header>" + '<section id="ops-kpi-scrapyard" class="ops-kpi" aria-label="مؤشر الأداء اليومي"></section>' + '<section class="kpi-row scrapyard-kpi-row">' + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للتشليح</div><div class="kpi-value num">' + fmtMoney(usedTotal) + "</div></div>" + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للموردين</div><div class="kpi-value num">' + fmtMoney(newTotal) + "</div></div>" + '<div class="kpi-card' + (pendingTasks > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">مهام معلّقة</div><div class="kpi-value num">' + pendingTasks + "</div></div>" + '<div class="kpi-card' + (pendingQuotes > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">طلبات تسعير معلّقة</div><div class="kpi-value num">' + pendingQuotes + "</div></div>" + "</section>" + '<div class="new-order-btn-row top-toggle-row">' + '<button type="button" class="btn btn-primary btn-with-badge" id="btn-toggle-scrapyard-settlement" aria-expanded="' + (scrapyardHomeOpenSection === "settlement" ? "true" : "false") + '">السداد<span class="tasks-badge" style="' + (settlementUnseen > 0 ? "display:flex;" : "display:none;") + '">' + (settlementUnseen > 0 ? settlementUnseen : "") + "</span></button>" + '<button type="button" class="btn btn-amber btn-with-badge" id="btn-toggle-scrapyard-quotes" aria-expanded="' + (scrapyardHomeOpenSection === "quotes" ? "true" : "false") + '">طلبات التسعير<span class="tasks-badge" style="' + (quotesBadge > 0 ? "display:flex;" : "display:none;") + '">' + (quotesBadge > 0 ? quotesBadge : "") + "</span></button>" + '<button type="button" class="btn btn-ghost" id="btn-toggle-scrapyard-approved" aria-expanded="' + (scrapyardHomeOpenSection === "approved" ? "true" : "false") + '">✅ التسعيرات المعتمدة</button>' + '<button type="button" class="btn btn-ghost btn-with-badge" id="btn-toggle-scrapyard-tasks" aria-expanded="' + (scrapyardHomeOpenSection === "tasks" ? "true" : "false") + '">المهام<span class="tasks-badge" style="' + (pendingTasks > 0 ? "display:flex;" : "display:none;") + '">' + (pendingTasks > 0 ? pendingTasks : "") + "</span></button>" + "</div>" + '<div id="scrapyard-home-settlement-section" style="' + (scrapyardHomeOpenSection === "settlement" ? "" : "display:none;") + '">' + '<div class="new-order-btn-row">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-settlement">' + SETTLEMENT_KINDS.used.homeLabel + " — " + fmtMoney(usedTotal) + "</button>" + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-new-parts-settlement">' + SETTLEMENT_KINDS.new.homeLabel + " — " + fmtMoney(newTotal) + "</button>" + "</div>" + "</div>" + '<div id="scrapyard-home-quotes-section" style="' + (scrapyardHomeOpenSection === "quotes" ? "" : "display:none;") + '">' + '<div class="task-items-list" id="scrapyard-quotes-items-list">' + scrapyardQuotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-approved-section" style="' + (scrapyardHomeOpenSection === "approved" ? "" : "display:none;") + '">' + '<input type="text" id="approved-quotes-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث برقم الطلبية أو وصف القطعة..." value="' + escapeHtml(approvedQuotesSearchQuery) + '">' + '<div class="task-items-list" id="scrapyard-approved-quotes-items-list">' + approvedQuotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-tasks-section" style="' + (scrapyardHomeOpenSection === "tasks" ? "" : "display:none;") + '">' + '<div class="task-items-list">' + purchasesTasksListHtml() + "</div>" + "</div>";
+    if (typeof smxScrapAfterHome === "function") smxScrapAfterHome(root);
     const logo = document.getElementById("scrapyard-home-logo-img");
     if (logo) logo.addEventListener("click", goToScrapyardHome);
     bindScrapyardThemeToggle();
