@@ -39786,6 +39786,8 @@ const ACCT2_PAGE_SIZE = 50;
 
 const ACCT2_RETAKE_MS = 6e5;
 
+const ACCT2_REPROBE_GAP_MS = 1e4;
+
 const ACCT2_EXP_KEYS = [ "delivery", "transport", "unexpectedLosses", "salaries", "hr", "other" ];
 
 const ACCT2_SLOT_TYPES = [ "pur", "dlv", "exp", "rfd", "srt" ];
@@ -40784,6 +40786,34 @@ function acct2Pick(key, source) {
     return ok;
 }
 
+function acct2PickChecked(st, io, ctx, source) {
+    let r = null;
+    try {
+        r = acct2PickIo(io, ctx, source);
+    } catch (e) {
+        r = false;
+    }
+    if (r !== false) return true;
+    acct2Toast(ACCT2_TXT.toasts.paused, "error");
+    acct2ReprobeSoon(st, io);
+    return false;
+}
+
+function acct2ReprobeSoon(st, io) {
+    try {
+        if (!st || !io || typeof io.probe !== "function") return false;
+        const now = Date.now();
+        const since = now - (Number(st.probeAt) || 0);
+        if (st.probeAt && since >= 0 && since < ACCT2_REPROBE_GAP_MS) return false;
+        st.probeAt = now;
+        const p = io.probe();
+        if (p && typeof p.catch === "function") p.catch(function() {});
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
 function acct2LayerParts() {
     const layer = typeof document !== "undefined" ? document.getElementById("acct2-layer") : null;
     if (!layer) return null;
@@ -41747,6 +41777,7 @@ function acct2NewState(gen, role, email) {
         savedHint: 0,
         retake: null,
         fabPending: 0,
+        probeAt: 0,
         loadTimer: null,
         refreshTimer: null,
         lastVis: 0,
@@ -42337,31 +42368,18 @@ function acct2OnClick(e) {
             }
 
           case "fab":
-            {
-                const io = acct2Io();
-                if (io && typeof io.pick === "function") {
-                    st.fabPending = Date.now();
-                    acct2PickIo(io, {
-                        facts: {
-                            kind: "other",
-                            evidence: "unknown"
-                        }
-                    }, "camera");
-                }
-                break;
-            }
-
           case "new-doc":
             {
                 const io = acct2Io();
                 if (io && typeof io.pick === "function") {
+                    const was = st.fabPending;
                     st.fabPending = Date.now();
-                    acct2PickIo(io, {
+                    if (!acct2PickChecked(st, io, {
                         facts: {
                             kind: "other",
                             evidence: "unknown"
                         }
-                    }, "camera");
+                    }, "camera")) st.fabPending = was;
                 }
                 break;
             }
