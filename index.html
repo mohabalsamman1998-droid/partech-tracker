@@ -603,17 +603,17 @@
   :root[data-theme="light"] .supply-req-progress{color:#7A5200;}
   .supply-req-view .purchase-history-row-sub,.supply-req-view .supplier-group.sg-none .sg-count{color:var(--text-dim);}
 /* SMX BEGIN css */
-  /* SMX (2026-10-15، طلب مهاب «لازم تطلع الطلبيات اللي عليها طلب توريد للمشتريات وللمدراء»): نفس الأزرق --supply-req المعرَّف أعلاه — شارة بالقائمة، شارة على زر «الطلبيات»، بطاقة مؤشر (المدراء/المبيعات + المشتريات) */
+  /* SMX (2026-10-15، طلبات مهاب «لازم تطلع الطلبيات اللي عليها طلب توريد للمشتريات وللمدراء» ثم «خليه داخل طلبات التسعير»): نفس الأزرق --supply-req المعرَّف أعلاه —
+     شارة بقائمة الطلبيات، عدد أزرق على زر «طلبات التسعير» (بالزاوية السفلية تحت عدّاد «جاهزة» فلا يتراكبان ولا يبدو تابعًا لزر «الطلبيات»)، وكتلة الصفوف الزرقاء داخل قسم «طلبات التسعير» */
   .stamp.supply-req-stamp{margin-inline-start:6px;font-size:10px;padding:1px 7px;vertical-align:middle;white-space:nowrap;color:var(--supply-req);border-color:var(--supply-req-line);background:var(--supply-req-dim);}
-  .kpi-row.smx-supply-kpi{grid-template-columns:1fr;}
-  .kpi-card.kpi-supply-req{border-color:var(--supply-req-line);background:var(--supply-req-dim);}
-  .kpi-card.kpi-supply-req:hover{border-color:var(--supply-req);}
-  .kpi-supply-req .kpi-value{color:var(--supply-req);}
-  .kpi-supply-req .kpi-sub{color:var(--text-dim);}
-  .kpi-supply-req:focus-visible{outline:2px solid var(--supply-req);outline-offset:2px;}
-  .kpi-row .kpi-supply-req-wide{grid-column:1 / -1;}
   .tasks-badge.supply-req-badge{background:var(--supply-req);color:#04121F;}
   :root[data-theme="light"] .tasks-badge.supply-req-badge{color:#fff;}
+  .tasks-badge.smx-badge-low{top:auto;bottom:-7px;}
+  .smx-supply-block{margin:0 0 16px;}
+  .smx-supply-head{display:flex;align-items:center;gap:8px;margin:0 2px 8px;font-size:14px;font-weight:800;color:var(--supply-req);}
+  .smx-supply-count{min-width:22px;padding:1px 7px;border-radius:999px;background:var(--supply-req);color:#04121F;font-size:12px;font-weight:800;text-align:center;}
+  :root[data-theme="light"] .smx-supply-count{color:#fff;}
+  .smx-supply-list .smx-supply-row:focus-visible{outline:2px solid var(--supply-req);outline-offset:2px;}
 /* SMX END css */
   .quote-priority-controls{display:flex;flex-direction:column;gap:2px;flex-shrink:0;}
   .quote-priority-btn{
@@ -3425,19 +3425,6 @@ function smxSupplySummary(orders) {
     };
 }
 
-function smxSupplyNums(list) {
-    const l = list || [];
-    const nums = l.slice(0, 4).map(o => String(o.orderNumber || "")).filter(Boolean);
-    return nums.join(" · ") + (l.length > 4 ? " · +" + (l.length - 4) : "");
-}
-
-function smxSupplyKpiHtml(sum, wide, label) {
-    if (!sum || !sum.count) return "";
-    const nums = smxSupplyNums(sum.list);
-    const age = !isNaN(sum.oldestMs) ? "الأقدم: " + arabicRelativeTime(sum.oldestMs) : "";
-    return '<div class="kpi-card kpi-supply-req treasury-card-clickable' + (wide ? " kpi-supply-req-wide" : "") + '" data-supply-req-open="1" role="button" tabindex="0">' + '<span class="kpi-label">' + escapeHtml(label || "📦 طلبات توريد قائمة") + "</span>" + '<div class="kpi-value num">' + sum.count + "</div>" + (nums ? '<div class="kpi-sub">' + escapeHtml(nums) + "</div>" : "") + (age ? '<div class="kpi-sub">' + escapeHtml(age) + "</div>" : "") + "</div>";
-}
-
 function smxSupplyBadgeHtml(order) {
     const who = order && order.supplyRequestedBy ? displayNameForEmail(order.supplyRequestedBy) : "";
     const ms = order ? supplyTsMs(order.supplyRequestedAt) : NaN;
@@ -3463,24 +3450,53 @@ function smxDecorateRows(el) {
     }
 }
 
-function smxKpiHost() {
-    let host = document.getElementById("smx-supply-kpi");
+function smxSupplyRowHtml(o) {
+    const c = orderSupplyCounts(o);
+    const ms = supplyTsMs(o.supplyRequestedAt);
+    const who = o.supplyRequestedBy ? displayNameForEmail(o.supplyRequestedBy) : "";
+    return '<div class="task-item-row quote-row supply-req-row smx-supply-row" data-smx-supply-open="' + escapeHtml(o.id) + '" role="button" tabindex="0">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(orderDisplayLabel(o) || "—") + "</span>" + '<span class="supply-req-chip">📦 طلب توريد</span>' + (c.state === "partial" ? '<span class="supply-req-progress" title="' + escapeHtml(orderSupplyProgressLabel(o)) + '">🚚 ' + c.done + "/" + c.total + "</span>" : "") + (who ? '<span class="quote-row-elapsed">طلبه ' + escapeHtml(who) + "</span>" : "") + (!isNaN(ms) ? '<span class="quote-row-elapsed">' + escapeHtml(arabicRelativeTime(ms)) + "</span>" : "") + "</div>";
+}
+
+function smxSupplyBlockHtml(sum) {
+    if (!sum || !sum.count) return "";
+    return '<div class="smx-supply-head"><span class="smx-supply-title">📦 طلبات التوريد القائمة</span><span class="smx-supply-count num">' + sum.count + "</span></div>" + '<div class="task-items-list smx-supply-list">' + sum.list.map(smxSupplyRowHtml).join("") + "</div>";
+}
+
+function smxSupplyRowTarget(e) {
+    const t = e && e.target;
+    return t && t.closest ? t.closest("[data-smx-supply-open]") : null;
+}
+
+function smxOpenSupplyOrder(id) {
+    try {
+        if (!id || typeof openModal !== "function") return;
+        openModal("edit", id);
+    } catch (e) {
+        console.warn("smxOpenSupplyOrder:", e);
+    }
+}
+
+function smxSupplyBlockHost() {
+    let host = document.getElementById("smx-supply-block");
     if (host) return host;
-    const anchor = document.getElementById("ops-kpi");
-    if (!anchor || !anchor.parentNode) return null;
+    const table = document.getElementById("quotes-table-container");
+    if (!table || !table.parentNode) return null;
     host = document.createElement("section");
-    host.id = "smx-supply-kpi";
-    host.className = "kpi-row smx-supply-kpi";
+    host.id = "smx-supply-block";
+    host.className = "smx-supply-block";
     host.setAttribute("aria-label", "طلبات التوريد القائمة");
     host.style.display = "none";
-    anchor.parentNode.insertBefore(host, anchor);
+    table.parentNode.insertBefore(host, table);
     host.addEventListener("click", e => {
-        if (e.target && e.target.closest && e.target.closest("[data-supply-req-open]")) smxOpenSupplyList();
+        const row = smxSupplyRowTarget(e);
+        if (row) smxOpenSupplyOrder(row.getAttribute("data-smx-supply-open"));
     });
     host.addEventListener("keydown", e => {
-        if ((e.key === "Enter" || e.key === " ") && e.target && e.target.closest && e.target.closest("[data-supply-req-open]")) {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        const row = smxSupplyRowTarget(e);
+        if (row) {
             e.preventDefault();
-            smxOpenSupplyList();
+            smxOpenSupplyOrder(row.getAttribute("data-smx-supply-open"));
         }
     });
     return host;
@@ -3506,18 +3522,22 @@ function smxAddFilterChip(el) {
 function smxBeforeOrdersRender() {
     try {
         const sum = smxSupplySummary(appData.orders);
-        const host = smxKpiHost();
+        const host = smxSupplyBlockHost();
         if (host) {
-            host.innerHTML = smxSupplyKpiHtml(sum, false, "📦 طلبات توريد قائمة");
+            const html = smxSupplyBlockHtml(sum);
+            if (host._smxHtml !== html) {
+                host.innerHTML = html;
+                host._smxHtml = html;
+            }
             host.style.display = sum.count ? "" : "none";
         }
-        const toggle = document.getElementById("btn-toggle-orders-list");
+        const toggle = document.getElementById("btn-toggle-quotes-list");
         if (toggle) {
-            let badge = document.getElementById("orders-supply-badge");
+            let badge = document.getElementById("quotes-supply-badge");
             if (!badge) {
                 badge = document.createElement("span");
-                badge.id = "orders-supply-badge";
-                badge.className = "tasks-badge supply-req-badge";
+                badge.id = "quotes-supply-badge";
+                badge.className = "tasks-badge supply-req-badge smx-badge-low";
                 badge.title = "طلبات توريد قائمة";
                 toggle.classList.add("btn-with-badge");
                 toggle.appendChild(badge);
@@ -3533,41 +3553,6 @@ function smxBeforeOrdersRender() {
         }
     } catch (e) {
         console.warn("smxBeforeOrdersRender:", e);
-    }
-}
-
-function smxOpenSupplyList() {
-    try {
-        currentFilter = "supplyRequested";
-        currentSearch = "";
-        const searchEl = document.getElementById("search-input");
-        if (searchEl) searchEl.value = "";
-        const section = document.getElementById("orders-list-section");
-        if (section && section.style.display === "none") {
-            closeOrdersAndQuotesSections();
-            section.style.display = "";
-            const toggle = document.getElementById("btn-toggle-orders-list");
-            if (toggle) toggle.setAttribute("aria-expanded", "true");
-        }
-        const chipsEl = document.getElementById("filter-buttons");
-        if (chipsEl && chipsEl.style.display === "none") {
-            chipsEl.style.display = "flex";
-            const ft = document.getElementById("btn-toggle-filters");
-            if (ft) ft.setAttribute("aria-expanded", "true");
-        }
-        renderFilterButtons();
-        renderTable();
-        const tc = document.getElementById("table-container");
-        if (tc && typeof tc.scrollIntoView === "function") {
-            try {
-                tc.scrollIntoView({
-                    behavior: "smooth",
-                    block: "start"
-                });
-            } catch (e2) {}
-        }
-    } catch (e) {
-        console.warn("smxOpenSupplyList:", e);
     }
 }
 
@@ -3597,39 +3582,94 @@ async function smxActivityRows(rows) {
     }
 }
 
-function smxScrapAfterHome(root) {
-    try {
-        if (!root || !root.querySelector) return;
-        const sum = smxSupplySummary(scrapyardSharedState.supplyRequests);
-        if (!sum.count) return;
-        const row = root.querySelector(".scrapyard-kpi-row");
-        if (!row) return;
-        row.insertAdjacentHTML("beforeend", smxSupplyKpiHtml(sum, true, "📦 طلبات توريد معلّقة"));
-        const card = row.querySelector("[data-supply-req-open]");
-        if (!card) return;
-        const open = () => {
-            scrapyardHomeOpenSection = "quotes";
-            renderScrapyardHomeView();
-            if (typeof refreshScrapyardHomeQuotes === "function") refreshScrapyardHomeQuotes();
-        };
-        card.addEventListener("click", open);
-        card.addEventListener("keydown", e => {
-            if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                open();
-            }
-        });
-    } catch (e) {
-        console.warn("smxScrapAfterHome:", e);
-    }
-}
-
 function smxScrapAutoOpen() {
     try {
         if (scrapyardHomeOpenSection === null && smxSupplySummary(scrapyardSharedState.supplyRequests).count > 0) scrapyardHomeOpenSection = "quotes";
     } catch (e) {
         console.warn("smxScrapAutoOpen:", e);
     }
+}
+
+function smxKpiStore() {
+    if (!smxKpiStore.s) smxKpiStore.s = {
+        first: null,
+        buf: null
+    };
+    return smxKpiStore.s;
+}
+
+function smxKpiAddSupply(map, ev) {
+    if (!map || !ev || !ev.order_id || !ev.created_at) return false;
+    const t = new Date(ev.created_at).getTime();
+    if (isNaN(t)) return false;
+    const had = map.get(ev.order_id);
+    if (had !== undefined && new Date(had).getTime() <= t) return false;
+    map.set(ev.order_id, ev.created_at);
+    return true;
+}
+
+async function smxKpiLoadSupplyFirst() {
+    const st = smxKpiStore();
+    const gen = opsKpiLoadGen;
+    try {
+        if (!sb || currentUserRole !== "full") return null;
+        st.buf = [];
+        const res = await withTimeout(fetchAllRows((from, to) => sb.from("activity_events").select("order_id,created_at").eq("kind", "order_supplied").order("created_at", {
+            ascending: true
+        }).order("id", {
+            ascending: true
+        }).range(from, to)), 15e3, "smx_supply_first");
+        if (!res || res.error) throw res && res.error || new Error("smx_supply_first: no response");
+        if (gen !== opsKpiLoadGen) return null;
+        const map = new Map;
+        (res.data || []).forEach(ev => smxKpiAddSupply(map, ev));
+        (st.buf || []).forEach(ev => smxKpiAddSupply(map, ev));
+        st.first = map;
+        return map;
+    } catch (e) {
+        console.warn("smxKpiLoadSupplyFirst:", e);
+        return null;
+    } finally {
+        if (gen === opsKpiLoadGen) st.buf = null;
+    }
+}
+
+function smxKpiNoteSupplied(ev) {
+    try {
+        if (currentUserRole !== "full" || !ev || ev.kind !== "order_supplied" || !ev.order_id || !ev.created_at) return;
+        const st = smxKpiStore();
+        if (st.buf && st.buf.length < 500) st.buf.push({
+            order_id: ev.order_id,
+            created_at: ev.created_at
+        });
+        if (!st.first) return;
+        if (smxKpiAddSupply(st.first, ev) && typeof scheduleOpsKpiRender === "function") scheduleOpsKpiRender();
+    } catch (e) {
+        console.warn("smxKpiNoteSupplied:", e);
+    }
+}
+
+function smxKpiSuppliedMs(o) {
+    const cur = opsKpiMs(o.suppliedAt);
+    try {
+        const first = smxKpiStore().first;
+        if (!first) return cur;
+        const f = opsKpiMs(first.get(o.id));
+        if (isNaN(f)) return cur;
+        return isNaN(cur) ? f : Math.min(cur, f);
+    } catch (e) {
+        return cur;
+    }
+}
+
+function smxKpiReset() {
+    const st = smxKpiStore();
+    st.first = null;
+    st.buf = null;
+}
+
+function smxKpiFootNote() {
+    return "، والنجاح يوم توريدها لأول مرة (وتشمل الطلبيات الموردة دون المرور بمسار التسعير؛ إلغاء التوريد يُخرجها من المؤشر، وإعادته تُرجعها بتاريخ أول توريد)";
 }
 
 function smxVideoMaxSec() {
@@ -6203,7 +6243,7 @@ function opsKpiCompute(orders, readyMap, range, kindsMap) {
         const cMs = opsKpiMs(o.createdAt);
         if (opsKpiInRange(cMs, range)) buckets[opsKpiBucketOf(cMs, range)].created++;
         if (o.confirmed && o.supplied && !o.isQuote) {
-            const sMs = opsKpiMs(o.suppliedAt);
+            const sMs = typeof smxKpiSuppliedMs === "function" ? smxKpiSuppliedMs(o) : opsKpiMs(o.suppliedAt);
             if (opsKpiInRange(sMs, range)) buckets[opsKpiBucketOf(sMs, range)].success++;
         }
         if (ready) {
@@ -6374,7 +6414,7 @@ function opsKpiChartHtml(metric, data, range, loadState, showSuccess) {
     const dataMissing = isTime ? !data.ready : (metric.id === "pricedNew" || metric.id === "pricedUsed") && !data.kindsReady;
     const topLbl = isTime ? opsKpiShortDuration(top) : String(top);
     const caption = dataMissing ? loadState === "error" ? "تعذر تحميل بيانات التسعير" : "جاري تحميل بيانات التسعير…" : empty ? "لا توجد حركة بهذه الفترة" : "اضغط على عمود لعرض تفاصيله";
-    return '<div class="ops-chart-box">' + '<div class="ops-chart-title"><span class="ops-dot" style="background:' + metric.color + ';"></span>' + escapeHtml(metric.label) + " — " + escapeHtml(range.hourly ? "حسب الساعة" : "حسب اليوم") + "</div>" + '<div class="ops-plot" style="--c:' + metric.color + ';">' + '<div class="ops-grid" style="bottom:50%;"></div>' + '<div class="ops-grid" style="bottom:100%;"><span class="ops-grid-lbl num">' + escapeHtml(topLbl) + "</span></div>" + cols + "</div>" + '<div class="ops-xaxis">' + xs + "</div>" + '<div class="ops-caption" id="ops-chart-caption" aria-live="polite">' + caption + "</div>" + '<div class="ops-foot">كل مؤشر يُحتسب في يوم حدوثه الفعلي لا بتاريخ الطلبية: الإنشاء يوم إنشاء الطلبية، والتسعير يوم اكتمال تسعيرها لأول مرة' + (showSuccess === false ? "" : "، والنجاح يوم توريدها (وتشمل الطلبيات الموردة دون المرور بمسار التسعير)") + ". نوع التسعير (جديد/مستخدم) يُثبَّت وقت حدوثه: إذا تغيّر تصنيف قطعة بعد تسعيرها تبقى الطلبية محسوبة للنوع الأول بيوم تسعيرها، وتُحتسب للنوع الآخر أيضًا بيوم تسعيره. الطلبية المختلطة تُحتسب في الفئتين. متوسط الوقت يخص الطلبيات المسعّرة بالفترة فقط، بساعات الدوام (9 ص – 6 م) دون يوم الجمعة.</div>" + "</div>";
+    return '<div class="ops-chart-box">' + '<div class="ops-chart-title"><span class="ops-dot" style="background:' + metric.color + ';"></span>' + escapeHtml(metric.label) + " — " + escapeHtml(range.hourly ? "حسب الساعة" : "حسب اليوم") + "</div>" + '<div class="ops-plot" style="--c:' + metric.color + ';">' + '<div class="ops-grid" style="bottom:50%;"></div>' + '<div class="ops-grid" style="bottom:100%;"><span class="ops-grid-lbl num">' + escapeHtml(topLbl) + "</span></div>" + cols + "</div>" + '<div class="ops-xaxis">' + xs + "</div>" + '<div class="ops-caption" id="ops-chart-caption" aria-live="polite">' + caption + "</div>" + '<div class="ops-foot">كل مؤشر يُحتسب في يوم حدوثه الفعلي لا بتاريخ الطلبية: الإنشاء يوم إنشاء الطلبية، والتسعير يوم اكتمال تسعيرها لأول مرة' + (showSuccess === false ? "" : typeof smxKpiFootNote === "function" ? smxKpiFootNote() : "، والنجاح يوم توريدها (وتشمل الطلبيات الموردة دون المرور بمسار التسعير)") + ". نوع التسعير (جديد/مستخدم) يُثبَّت وقت حدوثه: إذا تغيّر تصنيف قطعة بعد تسعيرها تبقى الطلبية محسوبة للنوع الأول بيوم تسعيرها، وتُحتسب للنوع الآخر أيضًا بيوم تسعيره. الطلبية المختلطة تُحتسب في الفئتين. متوسط الوقت يخص الطلبيات المسعّرة بالفترة فقط، بساعات الدوام (9 ص – 6 م) دون يوم الجمعة.</div>" + "</div>";
 }
 
 function opsKpiParts(st) {
@@ -6688,7 +6728,7 @@ async function opsKpiLoadReady(force) {
     opsKpiPendingReady = [];
     opsKpiPendingKinds = [];
     try {
-        const res = await withTimeout(Promise.all([ fetchQuoteReadyFirstMap(), fetchPricingKindsMap() ]), 25e3, "ops_kpi_ready");
+        const res = await withTimeout(Promise.all([ fetchQuoteReadyFirstMap(), fetchPricingKindsMap(), typeof smxKpiLoadSupplyFirst === "function" ? smxKpiLoadSupplyFirst() : null ]), 25e3, "ops_kpi_ready");
         if (gen !== opsKpiLoadGen) return;
         const map = res[0], kinds = res[1];
         opsKpiPendingReady.forEach(ev => {
@@ -6839,6 +6879,7 @@ function opsKpiStart() {
 function opsKpiReset() {
     opsKpiLoadGen++;
     opsKpiReadyFirst = null;
+    if (typeof smxKpiReset === "function") smxKpiReset();
     opsKpiKinds = null;
     opsKpiLoadState = "idle";
     opsKpiPendingReady = [];
@@ -46981,6 +47022,7 @@ function subscribeActivityEventsRealtime() {
             refreshScrapyardHomeQuotes();
         }
         if (ev && ev.kind === "order_quote_ready") opsKpiNoteReady(ev);
+        if (typeof smxKpiNoteSupplied === "function") smxKpiNoteSupplied(ev);
     }).subscribe();
 }
 
@@ -55493,7 +55535,6 @@ function renderScrapyardHomeView() {
     const quotesBadge = pendingQuotes + pendingSupplyReqs;
     const settlementUnseen = scrapyardCustodyUnseenCount() + scrapyardPartsUnseenCount();
     root.innerHTML = '<div class="app-top-utility-row">' + '<div class="app-top-logo-row"><span class="app-welcome-greeting">اهلا ' + escapeHtml(displayNameForEmail(presenceEmail)) + '</span><img class="app-corner-logo" src="' + PARTECH_LOGO_DATA_URI + '" id="scrapyard-home-logo-img" alt="PARTECH" title="الصفحة الرئيسية"></div>' + '<div class="corner-mini-bar">' + scrapyardThemeToggleHtml() + '<button id="btn-activity-log-scrapyard" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge-scrapyard" class="tasks-badge"></span></button></div>' + "</div>" + '<div class="app-top-divider"></div>' + announcementBannerHtml() + '<div class="app-top-divider"></div>' + '<header class="topbar" style="justify-content:space-between;"><div class="brand">قسم المشتريات</div>' + '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-suppliers">🏭 الموردين</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-statistics">📊 الإحصائيات</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-part-price-log">➕ إدخال بيانات</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-parts-catalog">📚 الكتالوج</button>' + "</div></header>" + '<section id="ops-kpi-scrapyard" class="ops-kpi" aria-label="مؤشر الأداء اليومي"></section>' + '<section class="kpi-row scrapyard-kpi-row">' + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للتشليح</div><div class="kpi-value num">' + fmtMoney(usedTotal) + "</div></div>" + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للموردين</div><div class="kpi-value num">' + fmtMoney(newTotal) + "</div></div>" + '<div class="kpi-card' + (pendingTasks > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">مهام معلّقة</div><div class="kpi-value num">' + pendingTasks + "</div></div>" + '<div class="kpi-card' + (pendingQuotes > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">طلبات تسعير معلّقة</div><div class="kpi-value num">' + pendingQuotes + "</div></div>" + "</section>" + '<div class="new-order-btn-row top-toggle-row">' + '<button type="button" class="btn btn-primary btn-with-badge" id="btn-toggle-scrapyard-settlement" aria-expanded="' + (scrapyardHomeOpenSection === "settlement" ? "true" : "false") + '">السداد<span class="tasks-badge" style="' + (settlementUnseen > 0 ? "display:flex;" : "display:none;") + '">' + (settlementUnseen > 0 ? settlementUnseen : "") + "</span></button>" + '<button type="button" class="btn btn-amber btn-with-badge" id="btn-toggle-scrapyard-quotes" aria-expanded="' + (scrapyardHomeOpenSection === "quotes" ? "true" : "false") + '">طلبات التسعير<span class="tasks-badge" style="' + (quotesBadge > 0 ? "display:flex;" : "display:none;") + '">' + (quotesBadge > 0 ? quotesBadge : "") + "</span></button>" + '<button type="button" class="btn btn-ghost" id="btn-toggle-scrapyard-approved" aria-expanded="' + (scrapyardHomeOpenSection === "approved" ? "true" : "false") + '">✅ التسعيرات المعتمدة</button>' + '<button type="button" class="btn btn-ghost btn-with-badge" id="btn-toggle-scrapyard-tasks" aria-expanded="' + (scrapyardHomeOpenSection === "tasks" ? "true" : "false") + '">المهام<span class="tasks-badge" style="' + (pendingTasks > 0 ? "display:flex;" : "display:none;") + '">' + (pendingTasks > 0 ? pendingTasks : "") + "</span></button>" + "</div>" + '<div id="scrapyard-home-settlement-section" style="' + (scrapyardHomeOpenSection === "settlement" ? "" : "display:none;") + '">' + '<div class="new-order-btn-row">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-settlement">' + SETTLEMENT_KINDS.used.homeLabel + " — " + fmtMoney(usedTotal) + "</button>" + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-new-parts-settlement">' + SETTLEMENT_KINDS.new.homeLabel + " — " + fmtMoney(newTotal) + "</button>" + "</div>" + "</div>" + '<div id="scrapyard-home-quotes-section" style="' + (scrapyardHomeOpenSection === "quotes" ? "" : "display:none;") + '">' + '<div class="task-items-list" id="scrapyard-quotes-items-list">' + scrapyardQuotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-approved-section" style="' + (scrapyardHomeOpenSection === "approved" ? "" : "display:none;") + '">' + '<input type="text" id="approved-quotes-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث برقم الطلبية أو وصف القطعة..." value="' + escapeHtml(approvedQuotesSearchQuery) + '">' + '<div class="task-items-list" id="scrapyard-approved-quotes-items-list">' + approvedQuotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-tasks-section" style="' + (scrapyardHomeOpenSection === "tasks" ? "" : "display:none;") + '">' + '<div class="task-items-list">' + purchasesTasksListHtml() + "</div>" + "</div>";
-    if (typeof smxScrapAfterHome === "function") smxScrapAfterHome(root);
     const logo = document.getElementById("scrapyard-home-logo-img");
     if (logo) logo.addEventListener("click", goToScrapyardHome);
     bindScrapyardThemeToggle();
