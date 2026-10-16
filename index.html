@@ -58923,6 +58923,7 @@ function epcLookupStripBody(part, order, st) {
 function epcLookupRowHtml(p, order) {
     if (!p || !epcLookupEnabled()) return "";
     epcLookupBindOnce();
+    if (!epcLookupOrderCovered(order)) return "";
     if (epcLookupState.online === null) {
         epcLookupProbe(false);
         return "";
@@ -59000,6 +59001,11 @@ async function epcLookupRun(partId, mode) {
     if (!st || !epcLookupEnabled()) return;
     let f = epcLookupFindPart(partId, st.inQuote);
     if (!f) return;
+    if (!epcLookupOrderCovered(f.order)) {
+        st.status = "idle";
+        st.model = null;
+        return;
+    }
     const key = typeof partNumberKey === "function" ? partNumberKey(f.part.partNumber) : "";
     const m = mode || (key.length >= 5 ? "number" : "name");
     const q = m === "number" ? key : epcLookupClean(f.part.description);
@@ -59189,10 +59195,17 @@ function epcLookupStatusHtml() {
     return '<div class="epcl-status">⏳ كتالوج EPC محلي: جارٍ الفحص… <span class="epcl-dim">(إن ظهر طلب إذن من المتصفح فاختر «السماح»)</span></div>';
 }
 
+function epcLookupOrderCovered(order) {
+    try {
+        return !(order && epcLookupVehicleOf(order).off);
+    } catch (e) {
+        return true;
+    }
+}
+
 function epcLookupOverlayCovered(st) {
     try {
-        const order = epcLookupOrderOfOverlay(st);
-        return !(order && epcLookupVehicleOf(order).off);
+        return epcLookupOrderCovered(epcLookupOrderOfOverlay(st));
     } catch (e) {
         return true;
     }
@@ -59542,7 +59555,10 @@ function epcLookupBindOnce() {
     document.addEventListener("focusin", e => {
         const t = e.target;
         if (!t || !t.classList || !epcLookupEnabled()) return;
-        if (t.classList.contains("part-desc-input") || t.classList.contains("part-pn-input")) epcLookupProbe(false);
+        if (t.classList.contains("part-desc-input") || t.classList.contains("part-pn-input")) {
+            const c = ctxOf(t), f = c ? epcLookupFindPart(c.partId, c.inQuote) : null;
+            if (!f || epcLookupOrderCovered(f.order)) epcLookupProbe(false);
+        }
     });
     document.addEventListener("click", e => {
         const t = e.target;
