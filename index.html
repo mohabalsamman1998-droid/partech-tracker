@@ -4088,7 +4088,7 @@ function partNumberRowHtml(p, order) {
     const key = partNumberKey(val);
     if (key) partNumberAltsEnsure(key);
     const sug = key ? [] : partNumberSuggestions(order, p);
-    return '<div class="part-pn-block">' + '<div class="part-pn-row">' + '<span class="part-pn-label">رقم القطعة</span>' + '<input type="text" class="part-pn-input" dir="ltr" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="64" placeholder="رقم OEM (اختياري)" value="' + escapeHtml(val) + '">' + '<button type="button" class="part-pn-find" data-pn-find title="بحث ذكي عن رقم القطعة بالاسم" aria-label="بحث عن رقم القطعة">🔎</button>' + (sug.length ? '<span class="part-pn-chips">' + sug.map(s => '<button type="button" class="part-pn-chip" data-pn-suggest="' + escapeHtml(s.num) + '" title="' + escapeHtml("من طلبية سابقة" + (s.from ? " — " + s.from : "") + (s.count > 1 ? " (×" + s.count + ")" : "")) + '">' + escapeHtml(s.num) + (s.count > 1 ? " ×" + s.count : "") + "</button>").join("") + "</span>" : "") + "</div>" + partNumberAltsHtml(key) + (typeof epcLookupRowHtml === "function" ? epcLookupRowHtml(p, order) : "") + "</div>";
+    return '<div class="part-pn-block">' + '<div class="part-pn-row">' + '<span class="part-pn-label">رقم القطعة</span>' + '<input type="text" class="part-pn-input" dir="ltr" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="64" placeholder="رقم OEM (اختياري)" value="' + escapeHtml(val) + '">' + (partNumberFindOk(order) ? '<button type="button" class="part-pn-find" data-pn-find title="بحث ذكي عن رقم القطعة بالاسم" aria-label="بحث عن رقم القطعة">🔎</button>' : "") + (sug.length ? '<span class="part-pn-chips">' + sug.map(s => '<button type="button" class="part-pn-chip" data-pn-suggest="' + escapeHtml(s.num) + '" title="' + escapeHtml("من طلبية سابقة" + (s.from ? " — " + s.from : "") + (s.count > 1 ? " (×" + s.count + ")" : "")) + '">' + escapeHtml(s.num) + (s.count > 1 ? " ×" + s.count : "") + "</button>").join("") + "</span>" : "") + "</div>" + partNumberAltsHtml(key) + (typeof epcLookupRowHtml === "function" ? epcLookupRowHtml(p, order) : "") + "</div>";
 }
 
 function partNumberContext(el) {
@@ -4108,6 +4108,26 @@ function partNumberContext(el) {
 function partNumberRerenderBlock(c) {
     const blk = c.row.querySelector(".part-pn-block");
     if (blk) blk.outerHTML = partNumberRowHtml(c.part, c.order);
+}
+
+function partNumberFindOk(order) {
+    try {
+        const car = normalizeCar(order && order.car) || {};
+        const make = normalizeArabicSearch(String(car.make || "").trim());
+        return !make || /تويوتا|toyota|لكزس|lexus|لكسز|لكسس/.test(make);
+    } catch (e) {
+        return true;
+    }
+}
+
+function partNumberRefreshBlocks() {
+    try {
+        if (typeof document === "undefined" || !document.querySelectorAll) return;
+        document.querySelectorAll(".part-pn-block").forEach(blk => {
+            const c = partNumberContext(blk);
+            if (c) partNumberRerenderBlock(c);
+        });
+    } catch (e) {}
 }
 
 function partNumberBindDelegationOnce() {
@@ -4568,6 +4588,10 @@ function partNumberSearchOnInput(v) {
 
 function partNumberSearchOpen(c) {
     if (!c || !c.part) return;
+    if (!partNumberFindOk(c.order)) {
+        showToast("بحث الرقم بالاسم لسيارات تويوتا/لكزس فقط — اكتب الرقم بالخانة", "error");
+        return;
+    }
     const car = normalizeCar(c.order && c.order.car) || {};
     pnSearch = {
         partId: c.part.id,
@@ -10586,6 +10610,7 @@ function refreshCarField(prefix, d) {
     if (!field || !d) return;
     field.outerHTML = carFieldHtml(d, "edit", prefix);
     bindCarField(prefix);
+    partNumberRefreshBlocks();
 }
 
 function bindCarField(prefix) {
