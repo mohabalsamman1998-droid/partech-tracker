@@ -57650,9 +57650,13 @@ window.addEventListener("online", refreshOnResume);
 
 const EPC_LOOKUP_DEFAULT_BASE = "http://127.0.0.1:8765";
 
+const EPC_LOOKUP_MOBIS_BASE = "http://127.0.0.1:8766";
+
 const EPC_LOOKUP_LS_ENABLED = "epcLookupEnabled";
 
 const EPC_LOOKUP_LS_BASE = "epcLookupBase";
+
+const EPC_LOOKUP_LS_BASE_MOBIS = "epcLookupBaseMobis";
 
 const EPC_LOOKUP_LS_AUTO = "epcAutoFill";
 
@@ -57679,6 +57683,44 @@ const EPC_LOOKUP_AUTO_MIN_SCORE = 114;
 const EPC_LOOKUP_AUTO_MARGIN = 5;
 
 const EPC_LOOKUP_START_HINT = "service\\start-service.bat";
+
+const EPC_LOOKUP_MOBIS_START_HINT = "microcat-bridge\\start-bridge.bat";
+
+const EPC_LOOKUP_MOBIS_STALE_MONTHS = 6;
+
+const EPC_LOOKUP_SECTIONS_AR = {
+    "FRONT BUMPER": "الصدام الأمامي",
+    "REAR BUMPER": "الصدام الخلفي",
+    "CRASH PAD": "التابلوه",
+    "HOOD TRIM": "تجليد الكبوت",
+    "TRUNK LID TRIM": "تجليد غطاء الصندوق",
+    "FRONT DOOR TRIM": "تجليد الباب الأمامي",
+    "REAR DOOR TRIM": "تجليد الباب الخلفي",
+    "INTERIOR SIDE TRIM": "تجليد الجوانب الداخلية",
+    "FRONT SEAT": "المقعد الأمامي",
+    "2ND SEAT": "المقعد الثاني",
+    "FRONT SEATBELT": "حزام الأمان الأمامي",
+    "REAR SEATBELT": "حزام الأمان الخلفي",
+    "STEERING WHEEL": "المقود",
+    "AIRBAG SYSTEM": "الوسائد الهوائية",
+    SUNROOF: "فتحة السقف",
+    CONSOLE: "الكونسول",
+    "FLOOR COVERING": "فرش الأرضية",
+    "LUGGAGE COMPARTMENT": "صندوق الأمتعة",
+    "REAR PACKAGE TRAY": "رف الشنطة الخلفي",
+    "SUNVISOR & HEAD LINING": "مظلة الشمس وسقف السيارة",
+    AUDIO: "الصوتيات",
+    ANTENNA: "الهوائي",
+    "ROOM LAMP": "إضاءة المقصورة",
+    SWITCH: "المفاتيح",
+    "RELAY & MODULE": "الريليهات والوحدات",
+    "INFORMATION SYSTEM": "أنظمة المعلومات",
+    "MIRROR-OUTSIDE REAR VIEW": "المرآة الخارجية",
+    "PARKING BRAKE SYSTEM": "فرامل اليد",
+    "SHIFT LEVER CONTROL (ATM)": "ذراع القير الأوتوماتيك",
+    "HEATER SYSTEM - HEATER CONTROL": "تحكم التدفئة",
+    "HEATER SYSTEM - DUCT & HOSE": "مجاري ومواسير التدفئة"
+};
 
 const EPC_LOOKUP_CAVEATS = {
     spec: "مواصفة السيارة",
@@ -57734,7 +57776,15 @@ const epcLookupState = {
     cache: new Map,
     mute: false,
     bound: false,
-    lb: null
+    lb: null,
+    mobis: {
+        online: null,
+        why: "",
+        probeAt: 0,
+        probing: null,
+        health: null
+    },
+    warm: new Set
 };
 
 function epcLookupLs(key) {
@@ -57767,9 +57817,23 @@ function epcLookupSetAutoFill(on) {
     } catch (e) {}
 }
 
-function epcLookupBase() {
-    const raw = String(epcLookupLs(EPC_LOOKUP_LS_BASE) || "").trim().replace(/\/+$/, "");
-    return /^http:\/\/(localhost|127(\.[0-9]{1,3}){3}|\[::1\])(:[0-9]{1,5})?$/i.test(raw) ? raw : EPC_LOOKUP_DEFAULT_BASE;
+function epcLookupBase(backend) {
+    const mobis = backend === "mobis";
+    const raw = String(epcLookupLs(mobis ? EPC_LOOKUP_LS_BASE_MOBIS : EPC_LOOKUP_LS_BASE) || "").trim().replace(/\/+$/, "");
+    return /^http:\/\/(localhost|127(\.[0-9]{1,3}){3}|\[::1\])(:[0-9]{1,5})?$/i.test(raw) ? raw : mobis ? EPC_LOOKUP_MOBIS_BASE : EPC_LOOKUP_DEFAULT_BASE;
+}
+
+function epcLookupBk(backend) {
+    return backend === "mobis" ? epcLookupState.mobis : epcLookupState;
+}
+
+function epcLookupBackendOf(order) {
+    try {
+        const v = epcLookupVehicleOf(order);
+        return v.off ? "" : v.backend === "mobis" ? "mobis" : "toyota";
+    } catch (e) {
+        return "toyota";
+    }
 }
 
 function epcLookupError(message, offline, status, code, aborted) {
@@ -57807,7 +57871,7 @@ async function epcLookupGet(path, params, o) {
         if (v === undefined || v === null || v === "") return;
         parts.push(encodeURIComponent(k) + "=" + encodeURIComponent(String(v)));
     });
-    const url = epcLookupBase() + path + (parts.length ? "?" + parts.join("&") : "");
+    const url = epcLookupBase(o.backend) + path + (parts.length ? "?" + parts.join("&") : "");
     const once = async () => {
         const ctrl = typeof AbortController === "function" ? new AbortController : null;
         let timedOut = false;
@@ -57869,16 +57933,17 @@ async function epcLookupGet(path, params, o) {
     return body;
 }
 
-function epcLookupProbe(force) {
+function epcLookupProbe(force, backend) {
     if (!epcLookupEnabled()) return Promise.resolve(false);
-    const st = epcLookupState;
+    const st = epcLookupBk(backend);
     if (!force && st.online !== null && Date.now() - st.probeAt < EPC_LOOKUP_PROBE_TTL_MS) return Promise.resolve(st.online);
     if (st.probing) return st.probing;
     st.probing = (async () => {
         let ok = false, why = "";
         try {
             const h = await epcLookupGet("/api/health", null, {
-                timeoutMs: epcLookupIsLoopbackPage() ? EPC_LOOKUP_PROBE_LOCAL_MS : EPC_LOOKUP_PROBE_WAIT_MS
+                timeoutMs: epcLookupIsLoopbackPage() ? EPC_LOOKUP_PROBE_LOCAL_MS : EPC_LOOKUP_PROBE_WAIT_MS,
+                backend: backend
             });
             ok = !!(h && h.ok);
             st.health = ok ? h : null;
@@ -57927,14 +57992,27 @@ async function epcLookupWhyOffline() {
     return "unknown";
 }
 
-function epcLookupErrText(e) {
-    if (e && e.offline) return "الخدمة المحلية غير متصلة الآن — شغّل " + EPC_LOOKUP_START_HINT + " ثم أعد المحاولة";
+function epcLookupMicrocatDownText(msg) {
+    const s = String(msg || "");
+    const kia = /\bKia\b/i.test(s), hy = /Hyundai|Genesis/i.test(s);
+    return "برنامج كتالوج " + (kia && !hy ? "كيا" : hy && !kia ? "هيونداي / جينيسيس" : "هيونداي / كيا") + " (Microcat) غير مفتوح على هذا الجهاز — افتحه من اختصاره بسطح المكتب ثم أعد المحاولة";
+}
+
+function epcLookupErrText(e, backend) {
+    const mobis = backend === "mobis";
+    if (e && e.offline) return mobis ? "جسر هيونداي/كيا المحلي غير متصل الآن — شغّل " + EPC_LOOKUP_MOBIS_START_HINT + " ثم أعد المحاولة" : "الخدمة المحلية غير متصلة الآن — شغّل " + EPC_LOOKUP_START_HINT + " ثم أعد المحاولة";
     if (e && (e.busy || e.status === 429)) return "⏳ الخدمة المحلية مشغولة لحظات — أعد المحاولة بعد قليل";
+    if (mobis && e && e.code === "microcat-down") return epcLookupMicrocatDownText(e.message);
+    if (mobis && e && e.code === "microcat-timeout") return "برنامج Microcat لم يردّ في الوقت المناسب (قد يكون مشغولًا) — أعد المحاولة بعد قليل";
     return "تعذّر البحث بالكتالوج" + (e && e.code ? " (" + e.code + ")" : "");
 }
 
 function epcLookupClean(text) {
     return String(text == null ? "" : text).replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
+function epcLookupIsMobisMake(makeKey) {
+    return /(^|[^a-z0-9\u0600-\u06ff])(هيونداي|هونداي|هيوندا|هيوندي|hyundai|hundai|كيا|كييا|kia|جينيسيس|جنيسس|جينسس|جنسس|genesis)($|[^a-z0-9\u0600-\u06ff])/.test(String(makeKey || ""));
 }
 
 function epcLookupVehicleOf(order) {
@@ -57949,18 +58027,32 @@ function epcLookupVehicleOf(order) {
     const make = String(car.make || "").trim();
     const makeKey = typeof normalizeArabicSearch === "function" ? normalizeArabicSearch(make) : make.toLowerCase();
     const toyota = /تويوتا|toyota|لكزس|lexus|لكسز|لكسس/.test(makeKey);
-    if (make && !toyota) return {
+    const mobis = !toyota && epcLookupIsMobisMake(makeKey);
+    if (make && !toyota && !mobis) return {
         type: "off",
         param: "",
         label: make,
         off: true
     };
     const vin = String(typeof normalizeVin === "function" ? normalizeVin(order.vin) : order.vin || "").replace(/\s+/g, "").toUpperCase();
-    if (/^[A-HJ-NPR-Z0-9]{17}$/.test(vin) && /[A-Z]/.test(vin) && /[0-9]/.test(vin)) return {
+    if (/^[A-HJ-NPR-Z0-9]{17}$/.test(vin) && /[A-Z]/.test(vin) && /[0-9]/.test(vin)) return mobis ? {
+        type: "vin",
+        param: vin,
+        label: "VIN " + vin,
+        off: false,
+        backend: "mobis"
+    } : {
         type: "vin",
         param: vin,
         label: "VIN " + vin,
         off: false
+    };
+    if (mobis) return {
+        type: "novin",
+        param: "",
+        label: vin,
+        off: false,
+        backend: "mobis"
     };
     const fm = /^([A-Z0-9#]{2,7})-([A-Z0-9@]{5,7}|[0-9]{8,10})$/.exec(vin);
     if (fm && /[A-Z]/.test(fm[1]) && /[0-9]/.test(fm[1])) return {
@@ -58008,12 +58100,16 @@ function epcLookupCachePut(key, v) {
     });
 }
 
+function epcLookupIsMobisPlate(path) {
+    return /^\/api\/plate\.png\?(?:[^#]*&)?b=(?:hyw|kia)(?:&|$)/.test(String(path || ""));
+}
+
 function epcLookupPlateUrl(path, crop) {
     const p = String(path || "");
     if (!/^\/api\/plate\.png\?[A-Za-z0-9=&._,%-]+$/.test(p)) return "";
     let u = p.replace(/&?(scale|crop)=[^&]*/g, "");
     if (crop) u += "&crop=1";
-    return epcLookupBase() + u;
+    return epcLookupBase(epcLookupIsMobisPlate(p) ? "mobis" : "toyota") + u;
 }
 
 function epcLookupTagOf(part) {
@@ -58252,11 +58348,40 @@ function epcLookupVehicleExtras(rv) {
     return out;
 }
 
+function epcLookupNoticesOf(r) {
+    return (r && Array.isArray(r.notices) ? r.notices : []).map(n => ({
+        code: String(n && n.code || ""),
+        message: String(n && n.message || ""),
+        sections: Array.isArray(n && n.sections) ? n.sections.map(String) : []
+    })).filter(n => n.code);
+}
+
+function epcLookupDataOf(rv) {
+    const s = rv && rv.summary ? rv.summary : null;
+    if (!s || !s.dataRelease) return null;
+    const cv = s.coverage && typeof s.coverage === "object" ? s.coverage : null;
+    return {
+        release: String(s.dataRelease),
+        ageMonths: Number(s.dataAgeMonths) || 0,
+        brand: String(s.brand || ""),
+        sections: cv ? Number(cv.sections) || 0 : 0,
+        unreadable: cv ? Number(cv.unreadable) || 0 : 0
+    };
+}
+
+function epcLookupMobisExtras(r) {
+    return {
+        backend: "mobis",
+        notices: epcLookupNoticesOf(r),
+        data: epcLookupDataOf(r && r.vehicle)
+    };
+}
+
 function epcLookupModelSearch(r, veh) {
     if (r && (r.mode === "part" || r.mode === "part-prefix")) return epcLookupModelPart(r, veh);
     const rv = r && r.vehicle ? r.vehicle : null;
     const cat = rv && Array.isArray(rv.catalogs) && rv.catalogs[0] ? rv.catalogs[0] : null;
-    return {
+    const model = {
         mode: "name",
         query: String(r && r.query || ""),
         status: epcLookupStatusOf(r),
@@ -58284,6 +58409,8 @@ function epcLookupModelSearch(r, veh) {
         } : null,
         items: (r && r.results || []).map(epcLookupItemFrom)
     };
+    if (veh && veh.backend === "mobis") Object.assign(model, epcLookupMobisExtras(r));
+    return model;
 }
 
 function epcLookupAutoFillCheck(model) {
@@ -58297,6 +58424,7 @@ function epcLookupAutoFillCheck(model) {
         gap: null
     }, extra || {});
     if (!model || model.mode !== "name") return no("mode");
+    if (model.backend === "mobis") return no("mobis");
     if (model.status && model.status.code) return no("status");
     if (model.partial) return no("partial");
     const v = model.vehicle || {};
@@ -58387,7 +58515,7 @@ function epcLookupModelPart(r, veh) {
     const newer = Array.isArray(sup.newer) && sup.newer[0] ? sup.newer[0] : null;
     const nh = r.nameHint && typeof r.nameHint === "object" ? r.nameHint : null;
     const chain = epcLookupChainOf(r.partNo, sup);
-    return {
+    const model = {
         mode: "part",
         partNo: String(r.partNo || ""),
         found: !!r.found,
@@ -58435,6 +58563,8 @@ function epcLookupModelPart(r, veh) {
         plate: plate,
         scopeNote: r.scopeNote ? String(r.scopeNote) : ""
     };
+    if (veh && veh.backend === "mobis") Object.assign(model, epcLookupMobisExtras(r));
+    return model;
 }
 
 function epcLookupOlderOf(sup) {
@@ -58459,17 +58589,29 @@ async function epcLookupSearchName(text, order, o) {
         mode: "off",
         label: veh.label
     };
+    if (veh.backend === "mobis" && veh.type !== "vin") return {
+        mode: "novin",
+        backend: "mobis",
+        label: veh.label
+    };
+    const mobis = veh.backend === "mobis";
     const q = epcLookupClean(text);
     const limit = o.limit || EPC_LOOKUP_ROW_LIMIT;
-    const key = "n|" + veh.param + "|" + q.toLowerCase() + "|" + limit;
+    const key = (mobis ? "m|" : "n|") + veh.param + "|" + q.toLowerCase() + "|" + limit;
     const hit = epcLookupCacheGet(key);
     if (hit) return hit;
-    const r = await epcLookupGet("/api/search", {
+    const r = await epcLookupGet("/api/search", mobis ? {
+        q: q,
+        vehicle: veh.param,
+        limit: limit
+    } : {
         q: q,
         vehicle: veh.param,
         limit: limit,
         lang: "en"
-    }, o);
+    }, mobis ? Object.assign({}, o, {
+        backend: "mobis"
+    }) : o);
     const model = epcLookupModelSearch(r, veh);
     if (!model.partial) epcLookupCachePut(key, model);
     return model;
@@ -58482,27 +58624,56 @@ async function epcLookupPartInfo(num, order, o) {
         mode: "off",
         label: veh.label
     };
+    if (veh.backend === "mobis" && veh.type !== "vin") return {
+        mode: "novin",
+        backend: "mobis",
+        label: veh.label
+    };
+    const mobis = veh.backend === "mobis";
     const key = typeof partNumberKey === "function" ? partNumberKey(num) : String(num || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
     if (key.length < 3) throw epcLookupError("part number too short", false, 400, "bad-part-number");
-    const ck = "p|" + veh.param + "|" + key;
+    const ck = (mobis ? "pm|" : "p|") + veh.param + "|" + key;
     const hit = epcLookupCacheGet(ck);
     if (hit) return hit;
-    const r = await epcLookupGet("/api/part/" + encodeURIComponent(key), {
+    const r = await epcLookupGet("/api/part/" + encodeURIComponent(key), mobis ? {
+        vehicle: veh.param
+    } : {
         vehicle: veh.param,
         lang: "en",
         maxCatalogs: 6
-    }, o);
+    }, mobis ? Object.assign({}, o, {
+        backend: "mobis"
+    }) : o);
     const model = epcLookupModelPart(r, veh);
     if (!model.partial) epcLookupCachePut(ck, model);
     return model;
 }
 
-function epcLookupBadge(it) {
+function epcLookupWarm(order) {
+    try {
+        if (!epcLookupEnabled()) return;
+        const veh = epcLookupVehicleOf(order);
+        if (veh.backend !== "mobis" || veh.type !== "vin") return;
+        const w = epcLookupState.warm;
+        if (w.has(veh.param) || w.size > 60) return;
+        w.add(veh.param);
+        epcLookupGet("/api/vehicles", {
+            q: veh.param
+        }, {
+            backend: "mobis",
+            timeoutMs: 2e4
+        }).catch(() => {
+            w.delete(veh.param);
+        });
+    } catch (e) {}
+}
+
+function epcLookupBadge(it, mobis) {
     const c = it.confidence;
     const cond = it.numbers.some(n => n.conditional) || !!(it.certainty && it.certainty !== "pinned");
     if (c === "exact" && !cond) return {
         cls: "ok",
-        text: "✓ مؤكد لسيارتك"
+        text: mobis ? "✓ يناسب سيارتك" : "✓ مؤكد لسيارتك"
     };
     if (c === "exact") return {
         cls: "warn",
@@ -58615,11 +58786,18 @@ function epcLookupInferredHtml(list) {
     return h;
 }
 
-function epcLookupStatusBoxHtml(st, label) {
+function epcLookupStatusBoxHtml(st, label, backend) {
     const code = st && st.code;
     if (!code) return "";
     const en = st.message ? '<div class="epcl-en"><bdi dir="ltr">' + escapeHtml(st.message) + "</bdi></div>" : "";
     const box = (cls, head, detail) => '<div class="epcl-stbox epcl-stbox-' + cls + '"><div class="epcl-sthead">' + head + "</div>" + (detail ? '<div class="epcl-stdetail">' + detail + "</div>" : "") + en + "</div>";
+    if (backend === "mobis") {
+        if (code === "bad-frame") return box("warn", "⚠ رقم الهيكل (VIN) غير صحيح — لم يُسأل الكتالوج", "الـVIN 17 خانة (حروف وأرقام بلا I وO وQ) — تأكد منه من لوحة السيارة أو الاستمارة.");
+        if (code === "unknown-vehicle") {
+            const rel = /data release (\d{4}-\d{2})/.exec(st.message || "");
+            return box("info", "❓ هذا الـVIN غير موجود بكتالوج هيونداي/كيا المثبّت على الجهاز", "قد يكون طرازًا أحدث من بيانات البرنامج" + (rel ? ' (إصدار <bdi dir="ltr">' + escapeHtml(rel[1]) + "</bdi>)" : "") + " أو خارج الأسواق التي يغطيها — راجع البرنامج الأصلي.");
+        }
+    }
     if (code === "not-covered") {
         let d = "";
         if (st.reason === "foreign-wmi") {
@@ -58666,12 +58844,12 @@ function epcLookupCandHtml(c, name) {
 
 function epcLookupItemHtml(it, o) {
     o = o || {};
-    const b = epcLookupBadge(it);
+    const b = epcLookupBadge(it, !!o.mobis);
     const shown = it.numbers.slice(0, o.maxNums || 6);
     const first = shown[0] ? shown[0].num : "";
     const isCand = it.confidence === "varies" || it.confidence === "needs-vehicle" || it.certainty === "unpinned";
     const cands = it.confidence === "varies" ? it.candidates || [] : [];
-    let h = '<div class="epcl-item">' + '<div class="epcl-item-head"><span class="epcl-name" title="' + escapeHtml(it.group) + '">' + escapeHtml(it.name) + "</span>" + (b.text ? '<span class="epcl-badge epcl-badge-' + b.cls + '">' + escapeHtml(b.text) + "</span>" : "") + "</div>";
+    let h = '<div class="epcl-item">' + '<div class="epcl-item-head"><span class="epcl-name" title="' + escapeHtml(it.group) + '">' + escapeHtml(it.name) + "</span>" + (b.text ? '<span class="epcl-badge epcl-badge-' + b.cls + '">' + escapeHtml(b.text) + "</span>" : "") + "</div>" + (o.mobis ? epcLookupMatchNoteHtml(it) : "");
     if (cands.length) {
         const ev = it.candidatesEvaluated || cands.length, tot = it.candidatesTotal || ev;
         h += '<div class="epcl-note">' + (it.candidatesAgree ? "المرشّحون المقيَّمون (" + escapeHtml(ev) + " من " + escapeHtml(tot) + ") متفقون على الرقم — يبقى مرشّحًا حتى يُعرف الشاصي/VIN:" : "مرشّحات من " + epcLookupCatalogsAr(ev) + (tot > ev ? " (يطابق الموديل والسنة " + epcLookupCatalogsAr(tot) + ")" : "") + " — الرقم يتبع الكتالوج والشهر:") + "</div>" + '<div class="epcl-cands">' + cands.slice(0, o.maxCands || 4).map(c => epcLookupCandHtml(c, it.name)).join("") + "</div>";
@@ -58713,10 +58891,40 @@ function epcLookupVehicleLineHtml(model) {
     return '<span class="epcl-warn">⚠ بلا سيارة محددة — الأرقام مرشّحة فقط. أضف رقم الشاصي/VIN أو الموديل والسنة بالطلبية.</span>';
 }
 
+function epcLookupSectionHtml(title) {
+    const ar = EPC_LOOKUP_SECTIONS_AR[String(title || "").trim().toUpperCase()];
+    return '<bdi dir="ltr">' + escapeHtml(title) + "</bdi>" + (ar ? " (" + escapeHtml(ar) + ")" : "");
+}
+
+function epcLookupNoticesHtml(list) {
+    const secs = [];
+    (list || []).forEach(n => {
+        (n.sections || []).forEach(s => {
+            if (s && secs.indexOf(s) < 0) secs.push(s);
+        });
+    });
+    if (!secs.length) return "";
+    return '<div class="epcl-cond">⚠ برنامج Microcat على هذا الجهاز لا يستطيع قراءة ' + (secs.length > 1 ? "هذه الأقسام" : "هذا القسم") + " من كتالوج السيارة (خلل داخلي بالبرنامج): " + secs.slice(0, 6).map(epcLookupSectionHtml).join("، ") + " — الأرقام المعروضة لا تشملها، فراجع البرنامج الأصلي لهذه القطعة.</div>";
+}
+
+function epcLookupDataAgeHtml(d) {
+    if (!d || !d.release || d.ageMonths < EPC_LOOKUP_MOBIS_STALE_MONTHS) return "";
+    return '<div class="epcl-cond">⚠ بيانات برنامج Microcat إصدار <bdi dir="ltr">' + escapeHtml(d.release) + "</bdi> (عمرها " + escapeHtml(d.ageMonths) + " أشهر) ولا تُحدَّث — قد تنقصها أرقام أو استبدالات أحدث: تأكد من الرقم قبل الطلب.</div>";
+}
+
+function epcLookupWarmingHtml() {
+    return '<div class="epcl-note epcl-dim">⏳ يجهّز الجسر كتالوج هذه السيارة (أول مرة فقط، قد يستغرق حتى 20 ثانية) — يُعاد البحث تلقائيًا، أو اضغط 📘 EPC لإعادته الآن.</div>';
+}
+
+function epcLookupNoVinHtml(model) {
+    const typed = String(model && model.label || "");
+    return '<div class="epcl-note epcl-dim">❓ كتالوج هيونداي/كيا يحتاج رقم الهيكل (VIN) كاملًا من 17 خانة بالطلبية' + (typed ? " — المكتوب «" + epcLookupLtr(typed) + "» ليس VIN كاملًا" : "") + ".</div>";
+}
+
 function epcLookupVehicleBlockHtml(model) {
     const st = model.status || {};
     const v = model.vehicle || {};
-    if (st.code) return epcLookupStatusBoxHtml(st, v.label);
+    if (st.code) return epcLookupStatusBoxHtml(st, v.label, model.backend);
     let h = '<div class="epcl-bar">' + epcLookupVehicleLineHtml(model) + "</div>";
     if (v.resolved && v.type === "model") h += '<div class="epcl-q"><div class="epcl-qhead">❓ أرسل رقم الشاصي أو VIN بالطلبية لتحديد الرقم — الموديل والسنة وحدهما لا يكفيان</div></div>';
     if (v.flAmbiguous && v.flCandidates && v.flCandidates.length > 1) {
@@ -58727,6 +58935,7 @@ function epcLookupVehicleBlockHtml(model) {
     }
     const inf = (v.inferred || []).filter(i => !(v.flAmbiguous && i.code === "vehicle"));
     if (v.resolved && v.type !== "model" && inf.length) h += epcLookupInferredHtml(inf);
+    if (model.backend === "mobis") h += epcLookupDataAgeHtml(model.data);
     return h;
 }
 
@@ -58789,6 +58998,7 @@ function epcLookupCardHtml(m, o) {
     const title = m.partNo + (m.name ? " — " + m.name : "");
     const partialNote = m.partial ? '<div class="epcl-note epcl-dim">⏱ نتيجة جزئية: انتهى الوقت المسموح للبحث — اضغط البحث مرة أخرى.</div>' : "";
     let h = '<div class="epcl-item epcl-card">';
+    if (!m.found && !m.name && m.backend === "mobis") return h + epcLookupMobisMissHtml(m, st, v) + "</div>";
     if (!m.found && !m.name) {
         if (!hasChain && !m.nameHint) {
             h += '<div class="epcl-item-head"><span class="epcl-name">' + escapeHtml(m.partNo) + '</span><span class="epcl-badge epcl-badge-bad">✗ غير موجود بالكتالوج</span></div>' + '<div class="epcl-note">الرقم غير موجود بكتالوج تويوتا (2014 وما بعد) — تأكد من كتابته، أو قد يكون رقمًا قديمًا جدًا.</div>';
@@ -58811,12 +59021,12 @@ function epcLookupCardHtml(m, o) {
         if (!v.sent) notes.push("أضف رقم الشاصي/VIN أو الموديل والسنة بالطلبية لمعرفة هل الرقم يناسب السيارة."); else if (approx) notes.push("السيارة معروفة بالموديل والسنة فقط — أضف رقم الشاصي/VIN بالطلبية لمعرفة هل الرقم يناسبها."); else if (!v.resolved) notes.push("تعذّر تحديد السيارة من «" + escapeHtml(v.label) + "» — لا يمكن الحكم على المطابقة.");
     }
     if (m.viaSupersession) notes.push("الاسم عبر الرقم البديل (الرقم نفسه خارج كتالوج 2014+).");
-    if (m.usage && m.usage.catalogs && m.verdict !== "fits") notes.push("مستخدم بـ " + escapeHtml(m.usage.catalogs) + " كتالوج.");
+    if (m.usage && m.usage.catalogs && m.verdict !== "fits" && m.backend !== "mobis") notes.push("مستخدم بـ " + escapeHtml(m.usage.catalogs) + " كتالوج.");
     if (m.plate && m.plate.approximate) notes.push('تمييز مكان القطعة بالصورة <span class="epcl-strong">تقريبي</span> (نداء بحرف مماثل — نسخة أخرى من القطعة) فتحقّق من اللوحة.'); else if (m.plate && m.plate.noMark) notes.push("لم يُرسم إطار لهذه القطعة على اللوحة (النداء غير ظاهر بالصورة)."); else if (m.plate && m.plate.catalogName && !(v.resolved && m.verdict === "fits")) notes.push('الصورة من كتالوج: <bdi dir="ltr">' + escapeHtml(m.plate.catalogName) + "</bdi>");
     notes.forEach(t => {
         h += '<div class="epcl-note">' + t + "</div>";
     });
-    if (st.code) h += epcLookupStatusBoxHtml(st, v.label);
+    if (st.code) h += epcLookupStatusBoxHtml(st, v.label, m.backend);
     if (!noAnswer && !approx && m.verdict !== "does-not-fit" && m.verdict !== "not-in-catalogue") {
         const cl = (m.inferred || []).slice();
         (m.caveats || []).forEach(c => {
@@ -58840,7 +59050,36 @@ function epcLookupCardHtml(m, o) {
     }
     h += epcLookupChainHtml(m);
     h += epcLookupAlsoHtml(m.alsoListed || []);
+    if (m.backend === "mobis") h += epcLookupDataAgeHtml(m.data);
     return h + partialNote + "</div>";
+}
+
+function epcLookupMobisMissHtml(m, st, v) {
+    if (st && st.code) return '<div class="epcl-item-head"><span class="epcl-name">' + escapeHtml(m.partNo) + "</span></div>" + epcLookupStatusBoxHtml(st, v && v.label, "mobis");
+    if (m.partial) return '<div class="epcl-item-head"><span class="epcl-name">' + escapeHtml(m.partNo) + "</span></div>" + epcLookupWarmingHtml();
+    const d = m.data || {};
+    const un = Number(d.unreadable) > 0;
+    let h = '<div class="epcl-item-head"><span class="epcl-name">' + escapeHtml(m.partNo) + '</span><span class="epcl-badge epcl-badge-' + (un ? "warn" : "bad") + '">' + (un ? "؟ غير مذكور بالأقسام المقروءة" : "✗ غير موجود بكتالوج السيارة") + "</span></div>";
+    h += '<div class="epcl-note">الرقم غير مذكور بكتالوج ' + (v && v.catalogName ? '<bdi dir="ltr">' + escapeHtml(v.catalogName) + "</bdi>" : "هذه السيارة") + " — تأكد من كتابته ومن رقم الهيكل (VIN).</div>";
+    if (un) {
+        const ex = [];
+        (m.notices || []).forEach(n => {
+            (n.sections || []).forEach(s => {
+                if (s && ex.indexOf(s) < 0) ex.push(s);
+            });
+        });
+        h += '<div class="epcl-cond">⚠ برنامج Microcat على هذا الجهاز لا يستطيع قراءة ' + escapeHtml(d.unreadable) + (d.sections ? " من " + escapeHtml(d.sections) : "") + " قسمًا من كتالوج السيارة (خلل داخلي بالبرنامج" + (ex.length ? "، منها: " + ex.slice(0, 4).map(epcLookupSectionHtml).join("، ") : "") + ") — فقد يكون الرقم بأحدها؛ راجع البرنامج الأصلي.</div>";
+    }
+    return h + epcLookupDataAgeHtml(m.data);
+}
+
+function epcLookupMatchNoteHtml(it) {
+    const m = it && it.match;
+    if (!m || m.level === "strong") return "";
+    const parts = [];
+    if (m.missing && m.missing.length) parts.push("ينقص: " + m.missing.map(w => '<bdi dir="ltr">' + escapeHtml(w) + "</bdi>").join("، "));
+    if (m.conflicts && m.conflicts.length) parts.push("يخالف: " + m.conflicts.map(w => '<bdi dir="ltr">' + escapeHtml(w) + "</bdi>").join("، "));
+    return '<div class="epcl-note epcl-dim">' + (m.level === "weak" ? "مطابقة ضعيفة للاسم المكتوب" : "مطابقة جزئية للاسم المكتوب") + (parts.length ? " — " + parts.join(" · ") : "") + "</div>";
 }
 
 function epcLookupResultsHtml(model, o) {
@@ -58865,10 +59104,14 @@ function epcLookupResultsHtml(model, o) {
         built: "",
         scopeFrom: ""
     }, model.label);
+    if (model.mode === "novin") return epcLookupNoVinHtml(model);
     if (model.mode !== "name") return "";
     const st = model.status || {};
+    const mobis = model.backend === "mobis";
     let h = epcLookupVehicleBlockHtml(model);
-    if (EPC_LOOKUP_NO_ANSWER[st.code]) return h;
+    if (EPC_LOOKUP_NO_ANSWER[st.code] || mobis && st.code) return h;
+    if (mobis && model.partial && !model.items.length) return h + epcLookupWarmingHtml();
+    if (mobis) h += epcLookupNoticesHtml(model.notices);
     if (!model.items.length) {
         h += '<div class="epcl-note">لا نتائج بالكتالوج لهذا الاسم' + (model.unknown.length ? " — كلمات غير مفهومة: " + escapeHtml(model.unknown.join("، ")) : "") + (model.notApplicable ? " (+" + model.notApplicable + " مطابقة بالاسم لا تنطبق على سيارتك)" : "") + ". جرّب كلمة أبسط أو الاسم بالإنجليزي.</div>";
         return h;
@@ -58877,11 +59120,12 @@ function epcLookupResultsHtml(model, o) {
     h += model.items.map(it => epcLookupItemHtml(it, {
         maxNums: o.overlay ? 8 : 5,
         maxCands: o.overlay ? 6 : 4,
-        covered: covered
+        covered: covered,
+        mobis: mobis
     })).join("");
     if (model.notApplicable) h += '<div class="epcl-note">+' + model.notApplicable + " مطابقة بالاسم لا تنطبق على سيارتك (مخفية).</div>";
     if (model.partial) h += '<div class="epcl-note epcl-dim">⏱ نتيجة جزئية: انتهى الوقت المسموح للبحث — اضغط البحث مرة أخرى أو اكتب الاسم أدق.</div>';
-    if (o.more && model.total > model.items.length) h += '<div class="epcl-nums"><button type="button" class="epcl-link" data-epcl-more title="يفتح شاشة البحث الذكي بنتائج أكثر">🔎 عرض المزيد (' + escapeHtml(model.total) + " نتيجة)</button></div>";
+    if (o.more && !mobis && model.total > model.items.length) h += '<div class="epcl-nums"><button type="button" class="epcl-link" data-epcl-more title="يفتح شاشة البحث الذكي بنتائج أكثر">🔎 عرض المزيد (' + escapeHtml(model.total) + " نتيجة)</button></div>";
     return h;
 }
 
@@ -58908,7 +59152,8 @@ function epcLookupStripInner(part, order) {
 
 function epcLookupStripBody(part, order, st) {
     const isFirst = !!(order && Array.isArray(order.parts) && order.parts[0] && order.parts[0].id === part.id);
-    const chip = '<button type="button" class="epcl-chip' + (isFirst ? " epcl-chip-first" : "") + '" data-epcl-run title="كتالوج EPC محلي: متصل — اضغط للبحث: الاسم ⟷ الرقم + صورة اللوحة"><span class="epcl-dot"></span>📘 <span class="epcl-chip-s">EPC</span><span class="epcl-chip-l">كتالوج EPC محلي: متصل</span></button>';
+    const lbl = epcLookupBackendOf(order) === "mobis" ? "كتالوج هيونداي/كيا (Microcat) محلي: متصل" : "كتالوج EPC محلي: متصل";
+    const chip = '<button type="button" class="epcl-chip' + (isFirst ? " epcl-chip-first" : "") + '" data-epcl-run title="' + lbl + ' — اضغط للبحث: الاسم ⟷ الرقم + صورة اللوحة"><span class="epcl-dot"></span>📘 <span class="epcl-chip-s">EPC</span><span class="epcl-chip-l">' + lbl + "</span></button>";
     if (!st || st.status === "idle") return chip;
     if (st.status === "busy") return '<div class="epcl-bar">' + chip + '<span class="epcl-dim">⏳ جارٍ البحث…</span></div>';
     if (st.status === "err") return '<div class="epcl-bar">' + chip + '<span class="' + (st.busy ? "epcl-dim" : "epcl-warn") + '">' + escapeHtml(st.err || "تعذّر البحث") + "</span></div>";
@@ -58924,15 +59169,16 @@ function epcLookupRowHtml(p, order) {
     if (!p || !epcLookupEnabled()) return "";
     epcLookupBindOnce();
     if (!epcLookupOrderCovered(order)) return "";
-    if (epcLookupState.online === null) {
-        epcLookupProbe(false);
+    const bk = epcLookupBackendOf(order), bs = epcLookupBk(bk);
+    if (bs.online === null) {
+        epcLookupProbe(false, bk);
         return "";
     }
-    if (epcLookupState.online !== true) return "";
+    if (bs.online !== true) return "";
     const st = epcLookupState.rows.get(p.id);
     if (st && st.status === "ok") {
         const cur = st.mode === "number" ? typeof partNumberKey === "function" ? partNumberKey(p.partNumber) : "" : epcLookupClean(p.description);
-        if (cur !== st.q) {
+        if (cur !== st.q || st.model && st.model.backend === "mobis" !== (bk === "mobis")) {
             st.status = "idle";
             st.model = null;
         }
@@ -58976,7 +59222,9 @@ function epcLookupRowState(partId, inQuote) {
             auto: null,
             autoDone: "",
             autoTimer: null,
-            autoNow: false
+            autoNow: false,
+            warmQ: "",
+            warmTries: 0
         };
         epcLookupState.rows.set(partId, st);
     }
@@ -59006,6 +59254,7 @@ async function epcLookupRun(partId, mode) {
         st.model = null;
         return;
     }
+    const bk = epcLookupBackendOf(f.order), bs = epcLookupBk(bk);
     const key = typeof partNumberKey === "function" ? partNumberKey(f.part.partNumber) : "";
     const m = mode || (key.length >= 5 ? "number" : "name");
     const q = m === "number" ? key : epcLookupClean(f.part.description);
@@ -59017,7 +59266,7 @@ async function epcLookupRun(partId, mode) {
         epcLookupRefresh(partId);
         return;
     }
-    const ok = await epcLookupProbe(false);
+    const ok = await epcLookupProbe(false, bk);
     if (!ok) {
         st.status = "idle";
         st.model = null;
@@ -59054,14 +59303,14 @@ async function epcLookupRun(partId, mode) {
         if (seq !== st.seq || e && e.aborted) return;
         st.model = null;
         st.status = "err";
-        st.err = epcLookupErrText(e);
+        st.err = epcLookupErrText(e, bk);
         st.busy = !!(e && e.busy);
         if (e && e.offline) {
-            epcLookupState.online = false;
-            epcLookupState.probeAt = Date.now();
+            bs.online = false;
+            bs.probeAt = Date.now();
             epcLookupOnStatusChange();
             epcLookupWhyOffline().then(w => {
-                epcLookupState.why = w;
+                bs.why = w;
                 epcLookupOnStatusChange();
             }).catch(() => {});
             return;
@@ -59069,6 +59318,16 @@ async function epcLookupRun(partId, mode) {
     }
     epcLookupRefresh(partId);
     if (m === "name" && st.status === "ok" && st.seq === seq) epcLookupAutoConsider(partId, st, st.model, seq);
+    if (st.status === "ok" && st.seq === seq && st.model && st.model.backend === "mobis" && st.model.partial) {
+        if (st.warmQ !== q) {
+            st.warmQ = q;
+            st.warmTries = 0;
+        }
+        if (++st.warmTries <= 4) epcLookupSchedule(partId, st.inQuote, m, 6e3);
+    } else if (st.warmQ) {
+        st.warmQ = "";
+        st.warmTries = 0;
+    }
 }
 
 function epcLookupAutoConsider(partId, st, model, seq) {
@@ -59147,14 +59406,17 @@ function epcLookupSchedule(partId, inQuote, mode, delay) {
 
 function epcLookupOnStatusChange() {
     try {
-        const on = epcLookupEnabled() && epcLookupState.online === true;
+        const en = epcLookupEnabled();
+        const on = en && epcLookupState.online === true;
         if (typeof document !== "undefined" && document.querySelectorAll) {
             document.querySelectorAll(".part-pn-block").forEach(blk => {
                 const has = blk.querySelector(".epcl-strip");
-                if (on && !has) {
-                    const c = typeof partNumberContext === "function" ? partNumberContext(blk) : null;
+                const c = typeof partNumberContext === "function" ? partNumberContext(blk) : null;
+                const bk = c ? epcLookupBackendOf(c.order) : "toyota";
+                const want = en && bk !== "" && epcLookupBk(bk).online === true;
+                if (want && !has) {
                     if (c && blk.insertAdjacentHTML) blk.insertAdjacentHTML("beforeend", epcLookupRowHtml(c.part, c.order));
-                } else if (!on && has) {
+                } else if (!want && has) {
                     has.remove();
                 }
             });
@@ -59205,7 +59467,8 @@ function epcLookupOrderCovered(order) {
 
 function epcLookupOverlayCovered(st) {
     try {
-        return epcLookupOrderCovered(epcLookupOrderOfOverlay(st));
+        const o = epcLookupOrderOfOverlay(st);
+        return epcLookupOrderCovered(o) && epcLookupBackendOf(o) !== "mobis";
     } catch (e) {
         return true;
     }
@@ -59413,7 +59676,7 @@ function epcLookupRenderLightbox() {
             if (load) load.style.display = "none";
         });
         img.addEventListener("error", () => {
-            if (load) load.textContent = "تعذّر تحميل الصورة — تأكد أن الخدمة المحلية شغّالة وأن كتالوج تويوتا مثبّت على هذا الجهاز";
+            if (load) load.textContent = epcLookupIsMobisPlate(lb.path) ? "تعذّر تحميل الصورة — تأكد أن جسر هيونداي/كيا شغّال وأن برنامج Microcat مفتوح على هذا الجهاز" : "تعذّر تحميل الصورة — تأكد أن الخدمة المحلية شغّالة وأن كتالوج تويوتا مثبّت على هذا الجهاز";
         });
     }
     const x = document.querySelector ? document.querySelector("#epcl-lb [data-epcl-lb-close]") : null;
@@ -59483,7 +59746,8 @@ async function epcLookupOnPlate(el) {
             noMark: !!info.plate.noMark
         }, base)); else if (typeof showToast === "function") showToast("لا توجد صورة لهذه القطعة بالكتالوج", "error");
     } catch (e) {
-        if (typeof showToast === "function") showToast(epcLookupErrText(e), "error");
+        const f2 = partId ? epcLookupFindPart(partId, inQuote) : null;
+        if (typeof showToast === "function") showToast(epcLookupErrText(e, f2 ? epcLookupBackendOf(f2.order) : "toyota"), "error");
     }
 }
 
@@ -59498,6 +59762,11 @@ function epcLookupBindOnce() {
             partId: c.part.id,
             inQuote: !!(c.row && c.row.closest && c.row.closest("#quote-parts-list"))
         };
+    };
+    const downFor = c => {
+        const f = c ? epcLookupFindPart(c.partId, c.inQuote) : null;
+        const bs = epcLookupBk(f ? epcLookupBackendOf(f.order) : "toyota");
+        return bs.online === false && Date.now() - bs.probeAt < EPC_LOOKUP_PROBE_TTL_MS;
     };
     document.addEventListener("input", e => {
         if (st.mute) return;
@@ -59531,15 +59800,16 @@ function epcLookupBindOnce() {
                 }
             }
         }
-        if (st.online === false && Date.now() - st.probeAt < EPC_LOOKUP_PROBE_TTL_MS) return;
+        if (downFor(c)) return;
         if (c) epcLookupSchedule(c.partId, c.inQuote, isDesc ? "name" : "number", isDesc ? EPC_LOOKUP_DEBOUNCE_MS : EPC_LOOKUP_NUMBER_DEBOUNCE_MS);
     }, true);
     document.addEventListener("change", e => {
         const t = e.target;
         if (!t || !t.classList || !epcLookupEnabled()) return;
         if (t.classList.contains("part-desc-input")) {
-            if (st.mute || st.online === false && Date.now() - st.probeAt < EPC_LOOKUP_PROBE_TTL_MS) return;
+            if (st.mute) return;
             const cd = ctxOf(t);
+            if (downFor(cd)) return;
             if (cd) {
                 const rs = epcLookupRowState(cd.partId, cd.inQuote);
                 rs.autoNow = true;
@@ -59548,8 +59818,9 @@ function epcLookupBindOnce() {
             return;
         }
         if (!t.classList.contains("part-pn-input")) return;
-        if (st.mute || st.online === false && Date.now() - st.probeAt < EPC_LOOKUP_PROBE_TTL_MS) return;
+        if (st.mute) return;
         const c = ctxOf(t);
+        if (downFor(c)) return;
         if (c) epcLookupSchedule(c.partId, c.inQuote, "number", 60);
     }, true);
     document.addEventListener("focusin", e => {
@@ -59557,7 +59828,13 @@ function epcLookupBindOnce() {
         if (!t || !t.classList || !epcLookupEnabled()) return;
         if (t.classList.contains("part-desc-input") || t.classList.contains("part-pn-input")) {
             const c = ctxOf(t), f = c ? epcLookupFindPart(c.partId, c.inQuote) : null;
-            if (!f || epcLookupOrderCovered(f.order)) epcLookupProbe(false);
+            if (!f || epcLookupOrderCovered(f.order)) {
+                const bk = f ? epcLookupBackendOf(f.order) : "toyota";
+                const pr = epcLookupProbe(false, bk);
+                if (f && bk === "mobis") pr.then(ok => {
+                    if (ok) epcLookupWarm(f.order);
+                }).catch(() => {});
+            }
         }
     });
     document.addEventListener("click", e => {
@@ -59674,6 +59951,8 @@ function epcLookupBindOnce() {
             epcLookupSetEnabled(false);
             st.online = null;
             st.why = "";
+            st.mobis.online = null;
+            st.mobis.why = "";
             epcLookupOnStatusChange();
             if (typeof pnSearch !== "undefined" && pnSearch && typeof partNumberSearchRefreshList === "function") partNumberSearchRefreshList();
         }
@@ -59688,6 +59967,10 @@ function epcLookupActivate() {
     st.why = "";
     st.probeAt = 0;
     st.probing = null;
+    st.mobis.online = null;
+    st.mobis.why = "";
+    st.mobis.probeAt = 0;
+    st.mobis.probing = null;
     epcLookupOnStatusChange();
     return epcLookupProbe(true).then(ok => {
         epcLookupOnStatusChange();
