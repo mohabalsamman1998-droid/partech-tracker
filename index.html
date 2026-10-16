@@ -16008,7 +16008,7 @@ mediaBindDelegationOnce();
 
 let quoteOriginalSnapshot = null;
 
-const QROUTE_RECIPIENTS = [ "amerpartech@gmail.com", "iomar.aljohnii@gmail.com" ];
+const QROUTE_RECIPIENTS = [ "amerpartech@gmail.com" ];
 
 const QROUTE_TIMEOUT_MS = 2e4;
 
@@ -16050,9 +16050,10 @@ function qrouteTo(o) {
 }
 
 function qrouteDestOf(to) {
-    if (!to.length) return "none";
-    if (QROUTE_RECIPIENTS.every(e => to.indexOf(e) >= 0)) return "both";
-    return to[0];
+    const live = to.filter(e => QROUTE_RECIPIENTS.indexOf(e) >= 0);
+    if (!live.length) return "none";
+    if (QROUTE_RECIPIENTS.length > 1 && QROUTE_RECIPIENTS.every(e => live.indexOf(e) >= 0)) return "both";
+    return live[0];
 }
 
 function qrouteDestEmails(v) {
@@ -16185,7 +16186,7 @@ function qrouteUiOn() {
 function qrouteSelectHtml(o) {
     const cur = qrouteDestOf(qrouteTo(o));
     const opt = (val, lbl) => '<option value="' + escapeHtml(val) + '"' + (val === cur ? " selected" : "") + ">" + escapeHtml(lbl) + "</option>";
-    return '<select class="qr-dest qr-dest-' + (cur === "none" ? "none" : "on") + '" data-qr-dest="' + escapeHtml(o.id) + '" aria-label="وجهة الطلب"' + (qrouteCanChange(o) ? "" : " disabled") + ">" + opt("none", "غير موجّه") + QROUTE_RECIPIENTS.map(e => opt(e, "موجّه إلى: " + qrouteName(e))).join("") + opt("both", "موجّه إلى: الجميع") + "</select>";
+    return '<select class="qr-dest qr-dest-' + (cur === "none" ? "none" : "on") + '" data-qr-dest="' + escapeHtml(o.id) + '" aria-label="وجهة الطلب"' + (qrouteCanChange(o) ? "" : " disabled") + ">" + opt("none", "غير موجّه") + QROUTE_RECIPIENTS.map(e => opt(e, "موجّه إلى: " + qrouteName(e))).join("") + (QROUTE_RECIPIENTS.length > 1 ? opt("both", "موجّه إلى: الجميع") : "") + "</select>";
 }
 
 function qrouteRowClass(o) {
@@ -16200,7 +16201,7 @@ function qrouteRowChipsHtml(o) {
 
 function qrouteRadiosHtml(cur) {
     const opt = (val, lbl) => '<label class="qr-radio' + (cur === val ? " qr-radio-on" : "") + '"><input type="radio" name="qr-dest-new" value="' + escapeHtml(val) + '"' + (cur === val ? " checked" : "") + "> " + escapeHtml(lbl) + "</label>";
-    return '<div class="qr-radios" role="radiogroup" aria-label="وجّهه لـ">' + opt("none", "لاحقًا") + QROUTE_RECIPIENTS.map(e => opt(e, qrouteName(e))).join("") + opt("both", "الجميع") + "</div>";
+    return '<div class="qr-radios" role="radiogroup" aria-label="وجّهه لـ">' + opt("none", "لاحقًا") + QROUTE_RECIPIENTS.map(e => opt(e, qrouteName(e))).join("") + (QROUTE_RECIPIENTS.length > 1 ? opt("both", "الجميع") : "") + "</div>";
 }
 
 function qrouteModalFieldHtml(d, isPurchasing) {
@@ -16213,7 +16214,7 @@ function qrouteModalFieldHtml(d, isPurchasing) {
             id: d.id,
             to: []
         };
-        inner = '<span class="field-label">وجّهه لـ</span>' + qrouteRadiosHtml(qrouteDestOf(qrouteCreate.to)) + '<div class="qr-note">لا يظهر لعامر وعمر إلا بعد التوجيه — وجّهه الآن أو لاحقًا من قائمة طلبات التسعير.</div>';
+        inner = '<span class="field-label">وجّهه لـ</span>' + qrouteRadiosHtml(qrouteDestOf(qrouteCreate.to)) + '<div class="qr-note">لا يظهر للمشتريات إلا بعد التوجيه — وجّهه الآن أو لاحقًا من قائمة طلبات التسعير.</div>';
     } else if (on && d && d.isQuote === true && !d.pendingReturnToQuote) {
         inner = '<span class="field-label">وجهة الطلب</span><div class="qr-strip" data-qr-strip>' + qrouteSelectHtml(d) + "</div>";
     }
@@ -16321,18 +16322,13 @@ async function qrouteAfterSave(saved, wasNew, markSent) {
         return true;
     }
     try {
-        const ref = "#" + saved.orderNumber + (orderDisplayLabel(saved) ? " — " + orderDisplayLabel(saved) : "");
-        const rows = n.to.map(e => ({
-            kind: "order_needs_pricing",
-            order_id: saved.id,
-            order_ref: ref,
-            actor_email: presenceEmail,
-            target_email: e,
-            message: "طلبية جديدة تحتاج تسعير: " + ref
-        }));
-        const {error: error} = await withTimeout(sb.from("activity_events").insert(rows), QROUTE_TIMEOUT_MS, "quote reminder");
+        const {data: data, error: error} = await withTimeout(sb.rpc("remind_quote_recipients", {
+            p_order_id: saved.id
+        }), QROUTE_TIMEOUT_MS, "remind_quote_recipients");
         if (error) throw error;
+        if (data && data.sent === 0) showToast("الطلب غير موجّه — وجّهه حتى يظهر للمشتريات", "ok");
     } catch (e) {
+        console.error("remind_quote_recipients:", e);
         showToast("تم الحفظ لكن تعذّر إرسال التذكير — أعد الضغط على «حفظ و اعادة طلب»", "error");
     }
     return true;
