@@ -57676,6 +57676,8 @@ const EPC_LOOKUP_ROW_LIMIT = 4;
 
 const EPC_LOOKUP_OVERLAY_LIMIT = 8;
 
+const EPC_LOOKUP_MORE_LIMIT = 16;
+
 const EPC_LOOKUP_AUTO_IDLE_MS = 700;
 
 const EPC_LOOKUP_AUTO_MIN_SCORE = 114;
@@ -57719,7 +57721,17 @@ const EPC_LOOKUP_SECTIONS_AR = {
     "PARKING BRAKE SYSTEM": "فرامل اليد",
     "SHIFT LEVER CONTROL (ATM)": "ذراع القير الأوتوماتيك",
     "HEATER SYSTEM - HEATER CONTROL": "تحكم التدفئة",
-    "HEATER SYSTEM - DUCT & HOSE": "مجاري ومواسير التدفئة"
+    "HEATER SYSTEM - DUCT & HOSE": "مجاري ومواسير التدفئة",
+    "FRONT DOOR LOCKING": "أقفال ومقابض الباب الأمامي",
+    "REAR DOOR LOCKING": "أقفال ومقابض الباب الخلفي",
+    "TAILGATE TRIM": "تجليد الصندوق الخلفي",
+    "HARDWARE - SEAT": "ملحقات المقاعد",
+    "SHIFT LEVER CONTROL (MTM)": "ذراع القير اليدوي"
+};
+
+const EPC_LOOKUP_MOBIS_REASONS = {
+    "a related part of the same assembly, not the part itself": "قطعة مرتبطة من نفس التجميعة — وليست القطعة نفسها",
+    "a related part, not the part asked for": "اسم شبيه بالمطلوب — وليس القطعة المطلوبة نفسها"
 };
 
 const EPC_LOOKUP_CAVEATS = {
@@ -58246,7 +58258,8 @@ function epcLookupMatchOf(m) {
         matched: arr(m.matched),
         missing: arr(m.missing),
         unstated: arr(m.unstated),
-        conflicts: arr(m.conflicts)
+        conflicts: arr(m.conflicts),
+        reasons: arr(m.reasons)
     };
 }
 
@@ -59076,6 +59089,8 @@ function epcLookupMobisMissHtml(m, st, v) {
 function epcLookupMatchNoteHtml(it) {
     const m = it && it.match;
     if (!m || m.level === "strong") return "";
+    const why = (m.reasons || []).map(r => EPC_LOOKUP_MOBIS_REASONS[r]).filter(Boolean)[0];
+    if (why) return '<div class="epcl-note epcl-dim">' + escapeHtml(why) + "</div>";
     const parts = [];
     if (m.missing && m.missing.length) parts.push("ينقص: " + m.missing.map(w => '<bdi dir="ltr">' + escapeHtml(w) + "</bdi>").join("، "));
     if (m.conflicts && m.conflicts.length) parts.push("يخالف: " + m.conflicts.map(w => '<bdi dir="ltr">' + escapeHtml(w) + "</bdi>").join("، "));
@@ -59113,7 +59128,7 @@ function epcLookupResultsHtml(model, o) {
     if (mobis && model.partial && !model.items.length) return h + epcLookupWarmingHtml();
     if (mobis) h += epcLookupNoticesHtml(model.notices);
     if (!model.items.length) {
-        h += '<div class="epcl-note">لا نتائج بالكتالوج لهذا الاسم' + (model.unknown.length ? " — كلمات غير مفهومة: " + escapeHtml(model.unknown.join("، ")) : "") + (model.notApplicable ? " (+" + model.notApplicable + " مطابقة بالاسم لا تنطبق على سيارتك)" : "") + ". جرّب كلمة أبسط أو الاسم بالإنجليزي.</div>";
+        if (mobis && model.notices && model.notices.length) h += '<div class="epcl-note">لا أرقام لهذا الاسم بالأقسام التي يقرؤها البرنامج — القطعة غالبًا بالقسم المذكور أعلاه: راجع البرنامج الأصلي.</div>'; else h += '<div class="epcl-note">لا نتائج بالكتالوج لهذا الاسم' + (model.unknown.length ? " — كلمات غير مفهومة: " + escapeHtml(model.unknown.join("، ")) : "") + (model.notApplicable ? " (+" + model.notApplicable + " مطابقة بالاسم لا تنطبق على سيارتك)" : "") + ". جرّب كلمة أبسط أو الاسم بالإنجليزي.</div>";
         return h;
     }
     const covered = (model.vehicle && model.vehicle.inferred || []).map(i => i.code);
@@ -59126,6 +59141,9 @@ function epcLookupResultsHtml(model, o) {
     if (model.notApplicable) h += '<div class="epcl-note">+' + model.notApplicable + " مطابقة بالاسم لا تنطبق على سيارتك (مخفية).</div>";
     if (model.partial) h += '<div class="epcl-note epcl-dim">⏱ نتيجة جزئية: انتهى الوقت المسموح للبحث — اضغط البحث مرة أخرى أو اكتب الاسم أدق.</div>';
     if (o.more && !mobis && model.total > model.items.length) h += '<div class="epcl-nums"><button type="button" class="epcl-link" data-epcl-more title="يفتح شاشة البحث الذكي بنتائج أكثر">🔎 عرض المزيد (' + escapeHtml(model.total) + " نتيجة)</button></div>";
+    if (o.more && mobis && !o.overlay) {
+        if (o.expanded) h += '<div class="epcl-nums"><button type="button" class="epcl-link" data-epcl-less-inline title="يرجع إلى أول النتائج فقط">▲ عرض أقل</button></div>'; else if (model.total > model.items.length) h += '<div class="epcl-nums"><button type="button" class="epcl-link" data-epcl-more-inline title="يعرض نتائج أكثر لنفس الاسم بالكتالوج">＋ عرض المزيد (' + escapeHtml(model.total) + " نتيجة)</button></div>";
+    }
     return h;
 }
 
@@ -59161,7 +59179,8 @@ function epcLookupStripBody(part, order, st) {
     if (!m) return chip;
     return '<div class="epcl-bar">' + chip + "</div>" + epcLookupResultsHtml(m, {
         fillName: !String(part.description || "").trim(),
-        more: true
+        more: true,
+        expanded: !!(st.moreLimit && st.moreQ === st.q && st.mode === "name")
     });
 }
 
@@ -59175,6 +59194,7 @@ function epcLookupRowHtml(p, order) {
         return "";
     }
     if (bs.online !== true) return "";
+    if (bk === "mobis") epcLookupWarm(order);
     const st = epcLookupState.rows.get(p.id);
     if (st && st.status === "ok") {
         const cur = st.mode === "number" ? typeof partNumberKey === "function" ? partNumberKey(p.partNumber) : "" : epcLookupClean(p.description);
@@ -59224,7 +59244,9 @@ function epcLookupRowState(partId, inQuote) {
             autoTimer: null,
             autoNow: false,
             warmQ: "",
-            warmTries: 0
+            warmTries: 0,
+            moreLimit: 0,
+            moreQ: ""
         };
         epcLookupState.rows.set(partId, st);
     }
@@ -59287,13 +59309,15 @@ async function epcLookupRun(partId, mode) {
     st.status = "busy";
     st.err = "";
     st.busy = false;
+    if (st.moreQ !== q) st.moreLimit = 0;
+    const limit = m === "name" && st.moreLimit && st.moreQ === q && bk === "mobis" ? st.moreLimit : EPC_LOOKUP_ROW_LIMIT;
     epcLookupRefresh(partId);
     try {
         const sig = ctrl ? ctrl.signal : undefined;
         const model = m === "number" ? await epcLookupPartInfo(q, f.order, {
             signal: sig
         }) : await epcLookupSearchName(q, f.order, {
-            limit: EPC_LOOKUP_ROW_LIMIT,
+            limit: limit,
             signal: sig
         });
         if (seq !== st.seq) return;
@@ -59891,6 +59915,21 @@ function epcLookupBindOnce() {
         if (el) {
             e.preventDefault();
             epcLookupOnPlate(el);
+            return;
+        }
+        el = t.closest("[data-epcl-more-inline],[data-epcl-less-inline]");
+        if (el) {
+            e.preventDefault();
+            const strip = el.closest(".epcl-strip");
+            const partId = strip ? strip.getAttribute("data-epcl-part") : "";
+            if (partId) {
+                const rs = epcLookupRowState(partId, !!el.closest("#quote-parts-list"));
+                if (el.hasAttribute("data-epcl-more-inline")) {
+                    rs.moreLimit = EPC_LOOKUP_MORE_LIMIT;
+                    rs.moreQ = rs.q;
+                } else rs.moreLimit = 0;
+                epcLookupRun(partId, "name");
+            }
             return;
         }
         el = t.closest("[data-epcl-more]");
