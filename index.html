@@ -59164,8 +59164,29 @@ function epcLookupStatusHtml() {
     return '<div class="epcl-status">⏳ كتالوج EPC محلي: جارٍ الفحص… <span class="epcl-dim">(إن ظهر طلب إذن من المتصفح فاختر «السماح»)</span></div>';
 }
 
+function epcLookupOverlayCovered(st) {
+    try {
+        const order = epcLookupOrderOfOverlay(st);
+        return !(order && epcLookupVehicleOf(order).off);
+    } catch (e) {
+        return true;
+    }
+}
+
+function epcLookupOverlayFileBtn(show) {
+    try {
+        if (typeof document === "undefined" || !document.querySelector) return;
+        const btn = document.querySelector("[data-pn-file]");
+        const box = btn && btn.parentNode;
+        if (box && box.style) box.style.display = show ? "" : "none";
+    } catch (e) {}
+}
+
 function epcLookupOverlayHtml(st) {
     if (!st) return "";
+    const covered = epcLookupOverlayCovered(st);
+    epcLookupOverlayFileBtn(covered);
+    if (!covered) return "";
     epcLookupBindOnce();
     let h = epcLookupStatusHtml();
     if (epcLookupEnabled() && epcLookupState.online === true) {
@@ -59184,7 +59205,7 @@ function epcLookupOrderOfOverlay(st) {
 
 function epcLookupOverlayRun(st) {
     try {
-        if (!st || !epcLookupEnabled()) return;
+        if (!st || !epcLookupEnabled() || !epcLookupOverlayCovered(st)) return;
         if (!st.epc) st.epc = {
             status: "idle",
             q: null,
