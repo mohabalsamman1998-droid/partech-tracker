@@ -2210,6 +2210,16 @@
     .vcat-sec-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
     .vcat-row{padding:10px;gap:8px;}
   }
+  /* جهاز المكتب (الجوال): انتظار الصورة وطبقة التكبير */
+  .vcat-plate-wait{margin:6px 0 2px;font-size:13px;color:var(--text-dim);text-align:center;}
+  .vcat-plate-pending{display:block;min-height:160px;width:100%;}
+  .vcat-via{margin:2px 0 6px;}
+  .vcat-lb{position:fixed;inset:0;z-index:3000;display:flex;flex-direction:column;background:rgba(6,10,8,.92);}
+  .vcat-lb-bar{display:flex;align-items:center;gap:10px;padding:10px 14px;color:#fff;}
+  .vcat-lb-title{flex:1;min-width:0;font-weight:700;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .vcat-lb-body{flex:1;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:6px 8px 16px;-webkit-overflow-scrolling:touch;}
+  .vcat-lb-img{display:block;max-width:100%;height:auto;background:#fff;border-radius:8px;cursor:zoom-in;}
+  .vcat-lb-imgbig{display:block;max-width:none;width:220%;height:auto;background:#fff;border-radius:8px;cursor:zoom-out;}
   /* VCAT END css */
   /* ============ mobile (placed last so it wins the cascade) ============ */
   @media (max-width:760px){
@@ -55397,6 +55407,136 @@ function vcatWait(ms) {
     return new Promise(r => setTimeout(r, ms));
 }
 
+function vcatRelayRegion() {
+    return "ap-northeast-2";
+}
+
+function vcatRelayAvailable() {
+    try {
+        return typeof sb !== "undefined" && !!sb && !!sb.functions && typeof sb.functions.invoke === "function" && typeof presenceEmail !== "undefined" && !!presenceEmail;
+    } catch (e) {
+        return false;
+    }
+}
+
+function vcatQueryString(params) {
+    const parts = [];
+    Object.keys(params || {}).forEach(k => {
+        const v = params[k];
+        if (v === undefined || v === null || v === "") return;
+        parts.push(encodeURIComponent(k) + "=" + encodeURIComponent(String(v)).replace(/[!'()*]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase()));
+    });
+    return parts.join("&");
+}
+
+function vcatRelayError(code, backend, status) {
+    const e = epcLookupError("relay " + code, code === "agent-offline" || code === "disabled" || code === "backend-down", status || 0, code);
+    e.relay = true;
+    e.backend = backend || "";
+    if (code === "rate" || code === "busy") e.busy = true;
+    return e;
+}
+
+async function vcatRelayCall(backend, path, query, timeoutMs) {
+    if (!vcatRelayAvailable()) throw vcatRelayError("unavailable", backend);
+    let timer = 0;
+    const limit = new Promise((_, rej) => {
+        timer = setTimeout(() => rej(vcatRelayError("timeout", backend)), timeoutMs || 32e3);
+    });
+    let out;
+    try {
+        out = await Promise.race([ sb.functions.invoke("catalog-relay", {
+            body: {
+                backend: backend,
+                path: path,
+                query: query || ""
+            },
+            region: vcatRelayRegion()
+        }), limit ]);
+    } catch (e) {
+        if (e && e.relay) throw e;
+        throw vcatRelayError("network", backend);
+    } finally {
+        clearTimeout(timer);
+    }
+    const d = out && out.data;
+    if (!d || typeof d !== "object") {
+        const st = out && out.error && out.error.context && out.error.context.status;
+        throw vcatRelayError(st === 401 ? "unauthorized" : st === 429 ? "rate" : "network", backend, st || 0);
+    }
+    if (d.ok !== true) throw vcatRelayError(String(d.code || "agent-error"), backend);
+    return d;
+}
+
+async function vcatRelayGet(backend, path, params, timeoutMs) {
+    const d = await vcatRelayCall(backend, path, vcatQueryString(params), timeoutMs);
+    let body = null;
+    try {
+        body = JSON.parse(d.text || "");
+    } catch (e) {
+        body = null;
+    }
+    const status = Number(d.status) || 0;
+    if (status < 200 || status >= 300 || !body || body.ok === false) {
+        const er = body && body.error ? body.error : {};
+        const err = epcLookupError(er.message || "HTTP " + status, false, status, er.code || null);
+        if (status === 429) err.busy = true;
+        throw err;
+    }
+    return body;
+}
+
+function vcatGet(svc, path, params, timeoutMs) {
+    if (svc && svc.via === "relay") return vcatRelayGet(svc.backend, path, params, 32e3);
+    return epcLookupGet(path, params, {
+        backend: svc.backend,
+        timeoutMs: timeoutMs
+    });
+}
+
+function vcatPlateQuery(path) {
+    const m = /^\/api\/plate\.png\?([A-Za-z0-9=&._,%-]+)$/.exec(String(path || ""));
+    if (!m) return "";
+    return m[1].split("&").filter(p => p && !/^(scale|crop)=/.test(p)).join("&");
+}
+
+async function vcatPlateData(st, path) {
+    const query = vcatPlateQuery(path);
+    if (!query) throw vcatRelayError("bad-request");
+    const cache = st.plateCache || (st.plateCache = new Map);
+    if (cache.has(query)) return cache.get(query);
+    const backend = typeof epcLookupIsMobisPlate === "function" && epcLookupIsMobisPlate(path) ? "mobis" : "toyota";
+    const d = await vcatRelayCall(backend, "/api/plate.png", query, 4e4);
+    if (!d.b64 || !/^image\/(png|jpeg|webp)$/.test(String(d.ct || ""))) {
+        let er = {};
+        try {
+            er = (JSON.parse(d.text || "") || {}).error || {};
+        } catch (e) {
+            er = {};
+        }
+        throw epcLookupError(er.message || "HTTP " + (Number(d.status) || 0), false, Number(d.status) || 0, er.code || null);
+    }
+    const url = "data:" + d.ct + ";base64," + d.b64;
+    if (cache.size >= 24) cache.delete(cache.keys().next().value);
+    cache.set(query, url);
+    return url;
+}
+
+function vcatErrText(e, backend) {
+    if (e && e.relay) {
+        const c = e.code;
+        if (c === "agent-offline") return "جهاز المكتب غير متصل الآن بالإنترنت (أو برنامج الربط متوقف عليه) — تأكد أنه شغّال ثم أعد المحاولة";
+        if (c === "disabled") return "الوصول إلى كتالوج جهاز المكتب من هذا الجهاز متوقف حاليًا";
+        if (c === "backend-down") return backend === "mobis" ? "كتالوج هيونداي/جينيسيس/كيا على جهاز المكتب لا يردّ — تأكد أن برنامجه مفتوح هناك" : "كتالوج تويوتا/لكزس على جهاز المكتب لا يردّ — تأكد أن خدمته تعمل هناك";
+        if (c === "timeout") return "جهاز المكتب لم يردّ في الوقت المناسب — أعد المحاولة بعد قليل";
+        if (c === "rate" || c === "busy") return "⏳ الطلبات كثيرة لحظات — أعد المحاولة بعد قليل";
+        if (c === "too-large") return "الصورة أكبر من أن تُنقل من جهاز المكتب";
+        if (c === "unauthorized" || c === "forbidden" || c === "unavailable") return "تحتاج الدخول إلى التطبيق بحساب مسموح لاستعمال كتالوج جهاز المكتب";
+        return "تعذّر الوصول إلى كتالوج جهاز المكتب" + (c ? " (" + c + ")" : "");
+    }
+    return typeof epcLookupErrText === "function" ? epcLookupErrText(e, backend) : "تعذّر البحث بالكتالوج";
+}
+
 function vcatSectionOf(st, id) {
     const svc = st.svc;
     return svc && Array.isArray(svc.sections) ? svc.sections.find(s => s && String(s.id) === String(id)) || null : null;
@@ -55414,12 +55554,9 @@ async function vcatFetchNode(st, kind, id) {
     const svc = st.svc;
     let j = null;
     for (let i = 0; i < 4; i++) {
-        j = await epcLookupGet("/api/tree/node", vcatNodeParams(svc, {
+        j = await vcatGet(svc, "/api/tree/node", vcatNodeParams(svc, {
             [kind]: id
-        }), {
-            backend: svc.backend,
-            timeoutMs: vcatTimeout(svc)
-        });
+        }), vcatTimeout(svc));
         if (!(j && j.partial && kind === "group")) break;
         await vcatWait(350);
     }
@@ -55545,7 +55682,8 @@ async function vcatLoadRoot(mine, st, tok) {
         });
         return;
     }
-    if (!epcLookupEnabled()) {
+    const local = epcLookupEnabled(), relay = vcatRelayAvailable();
+    if (!local && !relay) {
         set({
             status: "off",
             backend: backends[0]
@@ -55560,34 +55698,89 @@ async function vcatLoadRoot(mine, st, tok) {
             backend: bk,
             vin: st.vin
         })) return;
-        let ok = false;
-        try {
-            ok = await epcLookupProbe(false, bk);
-        } catch (e) {
-            ok = false;
+        let via = "";
+        if (local) {
+            let ok = false;
+            try {
+                ok = await epcLookupProbe(false, bk);
+            } catch (e) {
+                ok = false;
+            }
+            if (pcat !== mine || st.tok !== tok) return;
+            if (ok) via = "local";
         }
-        if (pcat !== mine || st.tok !== tok) return;
-        if (!ok) {
+        if (!via && relay) via = "relay";
+        if (!via) {
             last = {
                 status: "down",
                 backend: bk
             };
             continue;
         }
-        let j = null;
+        const ask = v => vcatGet({
+            backend: bk,
+            vin: st.vin,
+            via: v
+        }, "/api/tree", vcatRootParams({
+            backend: bk,
+            vin: st.vin
+        }), vcatTimeout({
+            backend: bk
+        }));
+        let j = null, err = null;
         try {
-            j = await epcLookupGet("/api/tree", vcatRootParams({
-                backend: bk,
-                vin: st.vin
-            }), {
-                backend: bk,
-                timeoutMs: vcatTimeout({
-                    backend: bk
-                })
-            });
+            j = await ask(via);
         } catch (e) {
-            if (pcat !== mine || st.tok !== tok) return;
-            if (e && e.offline) {
+            err = e || new Error("root");
+        }
+        if (err && via === "local" && err.offline && relay) {
+            via = "relay";
+            err = null;
+            try {
+                j = await ask(via);
+            } catch (e) {
+                err = e || new Error("root");
+            }
+        }
+        if (pcat !== mine || st.tok !== tok) return;
+        if (err) {
+            if (err.relay) {
+                const c = err.code;
+                if (c === "agent-offline" || c === "disabled") {
+                    last = {
+                        status: "down",
+                        backend: bk,
+                        via: "relay",
+                        why: c
+                    };
+                    break;
+                }
+                if (c === "backend-down") {
+                    last = {
+                        status: "down",
+                        backend: bk,
+                        via: "relay",
+                        why: "service"
+                    };
+                    continue;
+                }
+                if (c === "unauthorized" || c === "forbidden" || c === "unavailable") {
+                    last = {
+                        status: "off",
+                        backend: bk,
+                        why: c
+                    };
+                    break;
+                }
+                last = {
+                    status: "err",
+                    backend: bk,
+                    text: vcatErrText(err, bk),
+                    busy: !!err.busy
+                };
+                continue;
+            }
+            if (err.offline) {
                 last = {
                     status: "down",
                     backend: bk
@@ -55597,12 +55790,11 @@ async function vcatLoadRoot(mine, st, tok) {
             last = {
                 status: "err",
                 backend: bk,
-                text: epcLookupErrText(e, bk),
-                busy: !!(e && e.busy)
+                text: vcatErrText(err, bk),
+                busy: !!err.busy
             };
             continue;
         }
-        if (pcat !== mine || st.tok !== tok) return;
         const stt = typeof epcLookupStatusOf === "function" ? epcLookupStatusOf(j) : {
             code: String(j.status || ""),
             message: ""
@@ -55612,6 +55804,7 @@ async function vcatLoadRoot(mine, st, tok) {
             last = {
                 status: "status",
                 backend: bk,
+                via: via,
                 st: stt
             };
             if (stt.code === "not-covered" && i < backends.length - 1) continue;
@@ -55625,6 +55818,7 @@ async function vcatLoadRoot(mine, st, tok) {
             set({
                 status: "warming",
                 backend: bk,
+                via: via,
                 vin: st.vin,
                 veh: j.vehicle || {}
             });
@@ -55640,6 +55834,7 @@ async function vcatLoadRoot(mine, st, tok) {
         set({
             status: "ok",
             backend: bk,
+            via: via,
             vin: st.vin,
             veh: j.vehicle || {},
             use: j.vehicle && j.vehicle.use || {
@@ -55666,6 +55861,10 @@ function vcatSvcBoxHtml(st) {
     if (s.status === "off") {
         return '<div class="epcl-stbox"><div class="epcl-stdetail">الكتالوج المصوّر يعمل على جهاز المكتب الذي عليه برنامج الكتالوج وخدمته المحلية، ولا يعمل من الجوال. لتفعيله على هذا الجهاز اضغط الزر (مرة واحدة).</div>' + '<button type="button" class="epcl-activate" data-vcat-act="activate">تفعيل كتالوج الصور على هذا الجهاز</button></div>';
     }
+    if (s.status === "down" && s.via === "relay") {
+        const svcDown = s.why === "service";
+        return '<div class="epcl-stbox epcl-stbox-warn"><div class="epcl-sthead">⚠ ' + (svcDown ? names[s.backend] + " على جهاز المكتب: لا يردّ" : "جهاز المكتب غير متصل بالإنترنت") + '</div><div class="epcl-stdetail">' + escapeHtml(vcatErrText(vcatRelayError(svcDown ? "backend-down" : s.why || "agent-offline", s.backend), s.backend)) + "</div>" + '<div class="epcl-st-act"><button type="button" class="epcl-link" data-vcat-act="recheck">إعادة الفحص</button></div></div>';
+    }
     if (s.status === "down") {
         const bs = typeof epcLookupBk === "function" ? epcLookupBk(s.backend) : {
             why: ""
@@ -55687,13 +55886,13 @@ function vcatSvcBoxHtml(st) {
         const un = Number(c.unreadable) || 0;
         const veh = s.veh || {};
         const catLine = vcatCatLineHtml(veh);
-        return '<div class="vcat-ready">' + '<div class="vcat-ready-line"><span class="epcl-ok">✓ كتالوج السيارة جاهز</span> <span class="epcl-dim">(' + vcatSectionsAr(c.sections || (s.sections || []).length) + " · " + vcatPlatesAr(c.figures != null ? c.figures : c.plates) + (un ? " · " + un + " غير مقروء" : "") + ")</span></div>" + (catLine ? '<div class="vcat-cat" dir="ltr">' + catLine + "</div>" : "") + '<button type="button" class="btn btn-primary vcat-open" data-vcat-act="open">📖 فتح كتالوج هذه السيارة</button></div>';
+        return '<div class="vcat-ready">' + '<div class="vcat-ready-line"><span class="epcl-ok">✓ كتالوج السيارة جاهز</span> <span class="epcl-dim">(' + vcatSectionsAr(c.sections || (s.sections || []).length) + " · " + vcatPlatesAr(c.figures != null ? c.figures : c.plates) + (un ? " · " + un + " غير مقروء" : "") + ")</span></div>" + (catLine ? '<div class="vcat-cat" dir="ltr">' + catLine + "</div>" : "") + (s.via === "relay" ? '<div class="epcl-dim vcat-via">عبر جهاز المكتب (الإنترنت) — أبطأ قليلًا من العمل على جهاز المكتب نفسه.</div>' : "") + '<button type="button" class="btn btn-primary vcat-open" data-vcat-act="open">📖 فتح كتالوج هذه السيارة</button></div>';
     }
     return "";
 }
 
 function vcatCardBodyHtml(st) {
-    if (st.stage === "idle") return '<div class="pcat-hint">يُرسل الرقم إلى NHTSA لقراءة السيارة وإلى خدمة الكتالوج المحلية على هذا الجهاز فقط، ولا يُحفظ.</div>';
+    if (st.stage === "idle") return '<div class="pcat-hint">يُرسل الرقم إلى NHTSA لقراءة السيارة وإلى كتالوج جهاز المكتب (مباشرة إن كنت عليه، أو عبر قاعدة التطبيق من الجوال)، ولا يُحفظ.</div>';
     if (st.stage === "bad") return '<div class="pcat-hint">' + vinHintHtml(st.vin) + "</div>";
     if (st.stage === "busy") return '<div class="epcl-note">⏳ جارٍ قراءة السيارة…</div>' + (st.svc && st.svc.status !== "idle" ? vcatSvcBoxHtml(st) : "");
     let h = "";
@@ -55948,13 +56147,14 @@ function vcatPlateHtml(st, node) {
     if (!pk) return '<div class="vcat-noplate">لا توجد صورة لهذه اللوحة بالكتالوج.</div>';
     const plates = pk.plates, idx = pk.idx;
     st.platePath = pk.path;
-    const src = typeof epcLookupPlateUrl === "function" ? epcLookupPlateUrl(pk.path, false) : "";
-    if (!src) return '<div class="vcat-noplate">تعذّر تجهيز رابط الصورة.</div>';
+    const relay = !!(st.svc && st.svc.via === "relay");
+    const src = relay ? "" : typeof epcLookupPlateUrl === "function" ? epcLookupPlateUrl(pk.path, false) : "";
+    if (relay ? !vcatPlateQuery(pk.path) : !src) return '<div class="vcat-noplate">تعذّر تجهيز رابط الصورة.</div>';
     const tabs = plates.length > 1 ? '<div class="filter-chips vcat-tabs">' + plates.map((p, i) => {
         const n = (node.parts || []).filter(r => vcatRowTab(r) === i).length;
         return '<button type="button" class="chip' + (i === idx ? " chip-active" : "") + '" data-vcat-act="tab" data-i="' + i + '" title="' + escapeHtml(vcatPartsAr(n)) + '">لوحة ' + (i + 1) + ' <span class="vcat-tabn">' + n + "</span></button>";
     }).join("") + "</div>" : "";
-    return tabs + '<div class="vcat-plate" data-vcat-plate><button type="button" class="vcat-plate-btn" data-vcat-act="zoom" aria-label="تكبير صورة اللوحة" title="اضغط لتكبير الصورة">' + '<img class="vcat-plate-img" alt="لوحة الكتالوج" referrerpolicy="no-referrer" src="' + escapeHtml(src) + '"></button>' + '<div class="vcat-plate-cap" data-vcat-cap>' + vcatPlateCaption(pk) + "</div></div>";
+    return tabs + '<div class="vcat-plate" data-vcat-plate><button type="button" class="vcat-plate-btn" data-vcat-act="zoom" aria-label="تكبير صورة اللوحة" title="اضغط لتكبير الصورة">' + '<img class="vcat-plate-img' + (relay ? " vcat-plate-pending" : "") + '" alt="لوحة الكتالوج" referrerpolicy="no-referrer"' + (relay ? ' data-vcat-rpath="' + escapeHtml(pk.path) + '"' : ' src="' + escapeHtml(src) + '"') + "></button>" + (relay ? '<div class="vcat-plate-wait" data-vcat-wait>⏳ جارٍ جلب الصورة من جهاز المكتب…</div>' : "") + '<div class="vcat-plate-cap" data-vcat-cap>' + vcatPlateCaption(pk) + "</div></div>";
 }
 
 function vcatFigureBodyHtml(st, node) {
@@ -56039,6 +56239,58 @@ function vcatBindPlate(box) {
         const w = img.closest(".vcat-plate");
         if (w) w.innerHTML = '<div class="vcat-noplate">تعذّر تحميل الصورة — تأكد أن خدمة الكتالوج المحلية تعمل وأن برنامج الكتالوج مفتوح على هذا الجهاز.</div>';
     });
+    vcatHydratePlate(box);
+}
+
+function vcatHydratePlate(box) {
+    const st = vcatState();
+    if (!st || !st.svc || st.svc.via !== "relay" || !box || !box.querySelector) return;
+    const img = box.querySelector(".vcat-plate-img[data-vcat-rpath]");
+    if (!img) return;
+    const path = img.getAttribute("data-vcat-rpath");
+    if (img.getAttribute("data-vcat-have") === path) return;
+    const mine = pcat, tok = st.tok;
+    const wrap = img.closest ? img.closest(".vcat-plate") : null;
+    vcatPlateData(st, path).then(url => {
+        if (pcat !== mine || st.tok !== tok || img.getAttribute("data-vcat-rpath") !== path) return;
+        img.setAttribute("src", url);
+        img.setAttribute("data-vcat-have", path);
+        img.classList.remove("vcat-plate-pending");
+        const w = wrap && wrap.querySelector ? wrap.querySelector("[data-vcat-wait]") : null;
+        if (w) w.remove();
+    }).catch(e => {
+        if (pcat !== mine || st.tok !== tok || img.getAttribute("data-vcat-rpath") !== path) return;
+        if (wrap) wrap.innerHTML = '<div class="vcat-noplate">' + escapeHtml(vcatErrText(e, st.svc.backend)) + "</div>";
+    });
+}
+
+function vcatRelayZoom(st) {
+    const node = st.nav && st.nav.fig ? st.nodes.get("figure:" + st.nav.fig) : null;
+    const row = st.sel && node ? (node.parts || []).find(r => String(r.pnc) === st.sel) : null;
+    const title = (node && node.title ? node.title : "") + (row ? " — " + row.pnc : "");
+    const mine = pcat, tok = st.tok;
+    vcatPlateData(st, st.platePath).then(url => {
+        if (pcat !== mine || st.tok !== tok) return;
+        const old = document.getElementById("vcat-lb");
+        if (old) old.remove();
+        const lb = document.createElement("div");
+        lb.id = "vcat-lb";
+        lb.className = "vcat-lb";
+        lb.innerHTML = '<div class="vcat-lb-bar"><span class="vcat-lb-title" dir="auto">' + escapeHtml(title) + '</span><button type="button" class="icon-btn" data-vcat-lb="close" aria-label="إغلاق">✕</button></div>' + '<div class="vcat-lb-body"><img class="vcat-lb-img" data-vcat-lb="img" alt="لوحة الكتالوج" src="' + escapeHtml(url) + '"></div>';
+        lb.addEventListener("click", ev => {
+            const t = ev.target;
+            if (!t || !t.getAttribute) return;
+            const k = t.getAttribute("data-vcat-lb");
+            if (k === "close" || t === lb) {
+                lb.remove();
+                return;
+            }
+            if (k === "img") t.className = t.className === "vcat-lb-img" ? "vcat-lb-imgbig" : "vcat-lb-img";
+        });
+        document.body.appendChild(lb);
+    }).catch(e => {
+        if (typeof showToast === "function") showToast(vcatErrText(e, st.svc.backend), "error");
+    });
 }
 
 function vcatEnsureNode() {
@@ -56064,8 +56316,8 @@ function vcatEnsureNode() {
         if (st.pending === key) st.pending = "";
         if (pcat !== mine || st.tok !== tok) return;
         st.nodeErr = key;
-        st.nodeErrText = typeof epcLookupErrText === "function" ? epcLookupErrText(e, st.svc.backend) : "تعذّر التحميل";
-        if (e && e.offline && typeof epcLookupBk === "function") {
+        st.nodeErrText = vcatErrText(e, st.svc.backend);
+        if (e && e.offline && !e.relay && typeof epcLookupBk === "function") {
             const bs = epcLookupBk(st.svc.backend);
             bs.online = false;
             bs.probeAt = Date.now();
@@ -56162,14 +56414,22 @@ function vcatSelectRow(key) {
     if (!box) return;
     const pk = vcatPlatePick(st, node);
     const img = box.querySelector(".vcat-plate-img");
-    const src = pk && typeof epcLookupPlateUrl === "function" ? epcLookupPlateUrl(pk.path, false) : "";
-    if (!pk || !img || !src) {
+    const relay = st.svc.via === "relay";
+    const src = !relay && pk && typeof epcLookupPlateUrl === "function" ? epcLookupPlateUrl(pk.path, false) : "";
+    if (!pk || !img || !relay && !src) {
         box.innerHTML = vcatPlateHtml(st, node);
         vcatBindPlate(box);
         return;
     }
     st.platePath = pk.path;
-    if (img.getAttribute("src") !== src) img.setAttribute("src", src);
+    if (relay) {
+        if (img.getAttribute("data-vcat-rpath") !== pk.path) {
+            img.setAttribute("data-vcat-rpath", pk.path);
+            const pw = box.querySelector(".vcat-plate");
+            if (pw && !pw.querySelector("[data-vcat-wait]")) pw.insertAdjacentHTML("beforeend", '<div class="vcat-plate-wait" data-vcat-wait>⏳ جارٍ جلب الصورة من جهاز المكتب…</div>');
+            vcatHydratePlate(box);
+        }
+    } else if (img.getAttribute("src") !== src) img.setAttribute("src", src);
     const cap = box.querySelector("[data-vcat-cap]");
     if (cap) cap.textContent = vcatPlateCaption(pk);
 }
@@ -56177,6 +56437,10 @@ function vcatSelectRow(key) {
 function vcatZoom() {
     const st = vcatState();
     if (!st || !st.nav.fig || !st.platePath || typeof epcLookupOpenPlate !== "function") return;
+    if (st.svc && st.svc.via === "relay") {
+        vcatRelayZoom(st);
+        return;
+    }
     const node = st.nodes.get("figure:" + st.nav.fig);
     if (typeof epcLookupBindOnce === "function") epcLookupBindOnce();
     const row = st.sel && node ? (node.parts || []).find(r => String(r.pnc) === st.sel) : null;
@@ -56234,12 +56498,9 @@ function vcatQueryChanged(value) {
 
 async function vcatFilterRun(mine, st, qTok, q) {
     try {
-        const j = await epcLookupGet("/api/tree", Object.assign(vcatRootParams(st.svc), st.svc.backend === "mobis" ? {} : st.svc.use || {}, {
+        const j = await vcatGet(st.svc, "/api/tree", Object.assign(vcatRootParams(st.svc), st.svc.backend === "mobis" ? {} : st.svc.use || {}, {
             q: q
-        }), {
-            backend: st.svc.backend,
-            timeoutMs: st.svc.backend === "mobis" ? 45e3 : 25e3
-        });
+        }), st.svc.backend === "mobis" ? 45e3 : 25e3);
         if (pcat !== mine || st.qTok !== qTok) return;
         const f = j && j.filter ? j.filter : {};
         const order = Array.isArray(f.order) ? f.order.map(String) : [];
@@ -56280,7 +56541,7 @@ async function vcatFilterRun(mine, st, qTok, q) {
             q: q,
             busy: false,
             items: [],
-            error: typeof epcLookupErrText === "function" ? epcLookupErrText(e, st.svc.backend) : "تعذّر البحث"
+            error: vcatErrText(e, st.svc.backend)
         };
     }
     if (pcat === mine && pcat.screen === "vehicle" && !st.nav.sec) vcatPaintMain();
