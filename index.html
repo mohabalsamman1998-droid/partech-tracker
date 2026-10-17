@@ -610,10 +610,20 @@
   :root[data-theme="light"] .tasks-badge.supply-req-badge{color:#fff;}
   .tasks-badge.smx-badge-low{top:auto;bottom:-7px;}
   .smx-supply-block{margin:0 0 16px;}
-  .smx-supply-head{display:flex;align-items:center;gap:8px;margin:0 2px 8px;font-size:14px;font-weight:800;color:var(--supply-req);}
+  /* العنوان زر طيّ/فرد (2026-10-17): نفس شكله السابق + سهم ▴/▾ بنهايته؛ مطويّة ⇒ بلا هامش سفلي والقائمة مخفية (محدِّد بصنفين ليغلب .task-items-list{display:flex}) */
+  .smx-supply-head{display:flex;align-items:center;gap:8px;width:100%;margin:0 0 8px;padding:4px 2px;border:0;border-radius:var(--radius-sm);background:none;font-family:inherit;font-size:14px;font-weight:800;color:var(--supply-req);text-align:start;cursor:pointer;}
+  .smx-supply-head.smx-supply-head-folded{margin-bottom:0;}
+  .smx-supply-head:hover{background:var(--supply-req-dim);}
+  .smx-supply-head:focus-visible{outline:2px solid var(--supply-req);outline-offset:2px;}
+  .smx-supply-chev{margin-inline-start:auto;font-size:12.5px;font-weight:700;line-height:1;white-space:nowrap;color:var(--text-dim);}
+  .smx-supply-head:hover .smx-supply-chev{color:var(--supply-req);}
+  .smx-supply-list.smx-supply-list-hidden{display:none;}
   .smx-supply-count{min-width:22px;padding:1px 7px;border-radius:999px;background:var(--supply-req);color:#04121F;font-size:12px;font-weight:800;text-align:center;}
   :root[data-theme="light"] .smx-supply-count{color:#fff;}
   .smx-supply-list .smx-supply-row:focus-visible{outline:2px solid var(--supply-req);outline-offset:2px;}
+  /* شارة «↩ معادة للتسعير» بصف طلب التسعير الذي سبق اعتماده (2026-10-17): بنفسجي مجموعات الموردين — بعيد عن أصفر/أخضر/أحمر الصف وأزرق التوريد؛ نص الثيم النهاري أغمق لتباين ≥ 4.5 على --surface-2 */
+  .smx-ret-chip{display:inline-flex;align-items:center;flex-shrink:0;white-space:nowrap;padding:1px 9px;border-radius:999px;border:1px solid var(--sg-violet-line);background:var(--sg-violet-dim);color:var(--sg-violet);font-size:12.5px;font-weight:800;}
+  :root[data-theme="light"] .smx-ret-chip{color:#6A3FC0;}
 /* SMX END css */
   .quote-priority-controls{display:flex;flex-direction:column;gap:2px;flex-shrink:0;}
   .quote-priority-btn{
@@ -3457,9 +3467,58 @@ function smxSupplyRowHtml(o) {
     return '<div class="task-item-row quote-row supply-req-row smx-supply-row" data-smx-supply-open="' + escapeHtml(o.id) + '" role="button" tabindex="0">' + '<span class="quote-row-number">' + escapeHtml(o.orderNumber) + "</span>" + '<span class="quote-row-label">' + escapeHtml(orderDisplayLabel(o) || "—") + "</span>" + '<span class="supply-req-chip">📦 طلب توريد</span>' + (c.state === "partial" ? '<span class="supply-req-progress" title="' + escapeHtml(orderSupplyProgressLabel(o)) + '">🚚 ' + c.done + "/" + c.total + "</span>" : "") + (who ? '<span class="quote-row-elapsed">طلبه ' + escapeHtml(who) + "</span>" : "") + (!isNaN(ms) ? '<span class="quote-row-elapsed">' + escapeHtml(arabicRelativeTime(ms)) + "</span>" : "") + "</div>";
 }
 
-function smxSupplyBlockHtml(sum) {
+function smxSupplyFoldStore() {
+    if (!smxSupplyFoldStore.s) smxSupplyFoldStore.s = {
+        collapsed: null
+    };
+    return smxSupplyFoldStore.s;
+}
+
+function smxSupplyCollapsed() {
+    const st = smxSupplyFoldStore();
+    if (st.collapsed === null) {
+        try {
+            st.collapsed = localStorage.getItem("partech-smx-supply-collapsed") === "1";
+        } catch (e) {
+            st.collapsed = false;
+        }
+    }
+    return st.collapsed;
+}
+
+function smxSetSupplyCollapsed(v) {
+    const st = smxSupplyFoldStore();
+    st.collapsed = !!v;
+    try {
+        localStorage.setItem("partech-smx-supply-collapsed", st.collapsed ? "1" : "0");
+    } catch (e) {}
+    return st.collapsed;
+}
+
+function smxSupplyBlockHtml(sum, collapsed) {
     if (!sum || !sum.count) return "";
-    return '<div class="smx-supply-head"><span class="smx-supply-title">📦 طلبات التوريد القائمة</span><span class="smx-supply-count num">' + sum.count + "</span></div>" + '<div class="task-items-list smx-supply-list">' + sum.list.map(smxSupplyRowHtml).join("") + "</div>";
+    const folded = collapsed === undefined ? smxSupplyCollapsed() : !!collapsed;
+    return '<button type="button" class="smx-supply-head' + (folded ? " smx-supply-head-folded" : "") + '" data-smx-supply-toggle="1" aria-expanded="' + (folded ? "false" : "true") + '" aria-controls="smx-supply-list" title="' + (folded ? "فرد القائمة" : "طي القائمة") + '">' + '<span class="smx-supply-title">📦 طلبات التوريد القائمة</span><span class="smx-supply-count num">' + sum.count + '</span><span class="smx-supply-chev" aria-hidden="true">' + (folded ? "فرد ▾" : "طي ▴") + "</span></button>" + '<div class="task-items-list smx-supply-list' + (folded ? " smx-supply-list-hidden" : "") + '" id="smx-supply-list">' + sum.list.map(smxSupplyRowHtml).join("") + "</div>";
+}
+
+function smxSupplyToggleTarget(e) {
+    const t = e && e.target;
+    return t && t.closest ? t.closest("[data-smx-supply-toggle]") : null;
+}
+
+function smxToggleSupplyBlock(host) {
+    try {
+        smxSetSupplyCollapsed(!smxSupplyCollapsed());
+        const html = smxSupplyBlockHtml(smxSupplySummary(appData.orders));
+        if (host._smxHtml !== html) {
+            host.innerHTML = html;
+            host._smxHtml = html;
+        }
+        const btn = host.querySelector ? host.querySelector("[data-smx-supply-toggle]") : null;
+        if (btn && btn.focus) btn.focus();
+    } catch (e) {
+        console.warn("smxToggleSupplyBlock:", e);
+    }
 }
 
 function smxSupplyRowTarget(e) {
@@ -3488,6 +3547,10 @@ function smxSupplyBlockHost() {
     host.style.display = "none";
     table.parentNode.insertBefore(host, table);
     host.addEventListener("click", e => {
+        if (smxSupplyToggleTarget(e)) {
+            smxToggleSupplyBlock(host);
+            return;
+        }
         const row = smxSupplyRowTarget(e);
         if (row) smxOpenSupplyOrder(row.getAttribute("data-smx-supply-open"));
     });
@@ -3553,6 +3616,29 @@ function smxBeforeOrdersRender() {
         }
     } catch (e) {
         console.warn("smxBeforeOrdersRender:", e);
+    }
+}
+
+function smxReturnedToPricing(o) {
+    return !!o && o.isQuote === true && !!(o.quoteApprovedAt || o.quoteApprovalUntracked);
+}
+
+function smxReturnedChipHtml() {
+    return '<span class="smx-ret-chip" data-smx-ret="1" title="طلبية سبق اعتمادها وأُعيدت لطلب تسعير للمراجعة">↩ معادة للتسعير</span>';
+}
+
+function smxDecorateQuoteRows(el) {
+    try {
+        if (!el || !el.querySelectorAll) return;
+        const ids = new Set((appData.orders || []).filter(smxReturnedToPricing).map(o => o.id));
+        if (!ids.size) return;
+        el.querySelectorAll(".quote-row[data-quote-id]").forEach(row => {
+            if (!ids.has(row.getAttribute("data-quote-id")) || row.querySelector("[data-smx-ret]")) return;
+            const label = row.querySelector(".quote-row-label");
+            if (label) label.insertAdjacentHTML("afterend", smxReturnedChipHtml());
+        });
+    } catch (e) {
+        console.warn("smxDecorateQuoteRows:", e);
     }
 }
 
@@ -16743,6 +16829,7 @@ function renderQuotesList() {
                 });
             }
         });
+        if (typeof smxDecorateQuoteRows === "function") smxDecorateQuoteRows(el);
     }
     refreshScrapyardQuotesListIfOpen();
     updateQuotesReadyBadge();
@@ -55523,6 +55610,7 @@ async function togglePurchasesTaskDone(taskId, newDone) {
 }
 
 function bindScrapyardQuoteRowEvents() {
+    if (typeof smxDecorateQuoteRows === "function") smxDecorateQuoteRows(document.getElementById("scrapyard-quotes-items-list"));
     document.querySelectorAll("#scrapyard-quotes-items-list .quote-row[data-quote-id]").forEach(row => {
         row.addEventListener("click", () => openQuoteModal("edit", row.getAttribute("data-quote-id"), "purchasing"));
         bindQuotePriorityMoveButtons(row);
