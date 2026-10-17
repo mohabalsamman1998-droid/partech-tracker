@@ -2240,6 +2240,13 @@
     .vcat-th{width:72px;height:60px;}
     .vcat-th-lg{width:92px;height:76px;}
   }
+  /* قوائم جزئية، سطور الحساسات، تنبيه القسم */
+  .vcat-partial-tag{font-size:10.5px;font-weight:800;color:var(--amber);background:var(--amber-dim);border:1px solid var(--amber-line);border-radius:999px;padding:0 7px;white-space:nowrap;}
+  .vcat-row-hintar{font-size:11.5px;color:var(--green);font-weight:700;overflow-wrap:anywhere;}
+  .vcat-row-hint{font-size:10.5px;color:var(--text-faint);direction:ltr;unicode-bidi:plaintext;text-align:right;overflow-wrap:anywhere;}
+  .vcat-sec-note{margin-bottom:8px;line-height:1.7;}
+  .vcat-partial{margin-bottom:10px;}
+  .vcat-partial-poor{color:var(--rust);background:var(--rust-dim);border-color:var(--rust-line);}
   /* VCAT END css */
   /* ============ mobile (placed last so it wins the cascade) ============ */
   @media (max-width:760px){
@@ -55221,7 +55228,9 @@ function vcatState() {
             thumbBusy: new Set,
             thumbFails: 0,
             fullImgs: new Map,
-            hay: new Map
+            hay: new Map,
+            recTimer: 0,
+            recTries: 0
         };
     }
     return pcat.vcat;
@@ -55342,6 +55351,10 @@ function vcatPlatesAr(n) {
 
 function vcatPartsAr(n) {
     return vcatCountAr(n, "قطعة واحدة", "قطعتان", "قطع", "قطعة");
+}
+
+function vcatPagesAr(n) {
+    return vcatCountAr(n, "صفحة واحدة", "صفحتان", "صفحات", "صفحة");
 }
 
 function vcatSectionsAr(n) {
@@ -55751,6 +55764,8 @@ function vcatSetVin(raw, immediate) {
     st.hay = new Map;
     clearTimeout(st.timer);
     clearTimeout(st.qTimer);
+    clearTimeout(st.recTimer);
+    st.recTries = 0;
     pcat.vin = v;
     if (typeof partsCatRefreshExtPanel === "function") partsCatRefreshExtPanel();
     st.kind = vcatKindOf(v);
@@ -55996,11 +56011,54 @@ async function vcatLoadRoot(mine, st, tok) {
             },
             counts: j.counts || {},
             warnings: Array.isArray(j.warnings) ? j.warnings.map(String) : [],
-            sections: sections
+            sections: sections,
+            recovery: j.recovery || null
         });
+        if (j.recovery && j.recovery.state === "running") {
+            st.recTries = 0;
+            vcatRecoverySchedule(mine, st, tok);
+        }
         return;
     }
     if (last) set(last);
+}
+
+function vcatRecoverySchedule(mine, st, tok) {
+    clearTimeout(st.recTimer);
+    if ((st.recTries || 0) >= 24) return;
+    st.recTimer = setTimeout(() => vcatRecoveryPoll(mine, st, tok), 15e3);
+}
+
+async function vcatRecoveryPoll(mine, st, tok) {
+    if (pcat !== mine || st.tok !== tok || !st.svc || st.svc.status !== "ok") return;
+    st.recTries = (st.recTries || 0) + 1;
+    let j = null;
+    try {
+        j = await vcatGet(st.svc, "/api/tree", vcatRootParams(st.svc), vcatTimeout(st.svc));
+    } catch (e) {
+        j = null;
+    }
+    if (pcat !== mine || st.tok !== tok || !st.svc || st.svc.status !== "ok") return;
+    if (!j || !Array.isArray(j.sections) || !j.sections.length) {
+        vcatRecoverySchedule(mine, st, tok);
+        return;
+    }
+    st.svc = Object.assign({}, st.svc, {
+        counts: j.counts || {},
+        warnings: Array.isArray(j.warnings) ? j.warnings.map(String) : [],
+        sections: j.sections,
+        recovery: j.recovery || null,
+        veh: j.vehicle || st.svc.veh
+    });
+    if (j.recovery && j.recovery.state === "running") vcatRecoverySchedule(mine, st, tok); else {
+        st.nodes = new Map;
+        st.nodeErr = "";
+        st.pending = "";
+        st.hay = new Map;
+        st.fullImgs = new Map;
+    }
+    if (pcat.screen === "vehicle") vcatPaintMain();
+    vcatPaintCard();
 }
 
 function vcatSvcBoxHtml(st) {
@@ -56111,8 +56169,13 @@ function vcatStripHtml(st) {
             const data = epcLookupDataOf(veh);
             if (compact) h += epcLookupDataAgeHtml(data) ? '<div class="epcl-cond">⚠ بيانات Microcat قديمة (إصدار ' + vcatLtr(data.release) + "): تأكد من الرقم قبل الطلب.</div>" : ""; else h += epcLookupDataAgeHtml(data);
         }
-        const un = s.counts && Number(s.counts.unreadable);
-        if (un && !compact) h += '<div class="epcl-note">برنامج Microcat على هذا الجهاز يعطي خطأً داخليًا عند قراءة قطع ' + un + " صفحة من كتالوج هذه السيارة: تظهر هذه الصفحات بصورتها وعلامة «القطع غير متاحة»، وأرقام قطعها بالبرنامج الأصلي فقط.</div>";
+        const un = s.counts && Number(s.counts.unreadable), pa = s.counts && Number(s.counts.partial);
+        const rec = s.recovery || null;
+        if (rec && rec.state === "running") {
+            if (!compact) h += '<div class="epcl-note">⏳ يستعيد الجسر الآن قطع الصفحات التي يرفض برنامج Microcat فتحها (الصدامات والمقاعد وتجليد الأبواب…): مرة واحدة لكل موديل، من دقيقة إلى دقيقتين، وتظهر القوائم هنا تلقائيًا.</div>';
+        } else if (!compact && (un || pa)) {
+            h += '<div class="epcl-note">' + (pa ? "قوائم " + (pa === 2 ? "صفحتين" : vcatPagesAr(pa)) + " مبنية من بحث البرنامج برقم القطعة (لأنه يفشل في فتح الصفحات نفسها) وتحمل علامة «قائمة جزئية»: قد تنقص منها قطع يرفض البرنامج قراءتها. " : "") + (un ? vcatPagesAr(un) + " بلا قائمة قطع إطلاقًا (بالرسم فقط): أرقام قطعها بالبرنامج الأصلي." : "") + "</div>";
+        }
     }
     if (typeof epcLookupInferredHtml === "function" && Array.isArray(veh.inferred) && veh.inferred.length) h += epcLookupInferredHtml(veh.inferred.map(i => typeof i === "string" ? {
         code: i,
@@ -56156,20 +56219,27 @@ function vcatRootBodyHtml(st) {
         fam.get(key).list.push(s);
     });
     const fams = [ ...fam.entries() ].sort((a, b) => a[1].order - b[1].order);
-    return fams.map(([name, f]) => (name && fams.length > 1 ? '<div class="vcat-fam">' + escapeHtml(name) + "</div>" : "") + '<div class="vcat-sec-grid">' + f.list.map(s => '<button type="button" class="vcat-sec" data-vcat-act="sec" data-id="' + escapeHtml(s.id) + '">' + (s.hasImage && vcatThumbOn(st) ? vcatThumbBox(s.id, escapeHtml(s.icon || "📦"), "vcat-th-lg") : '<span class="vcat-sec-ic">' + escapeHtml(s.icon || "📦") + "</span>") + '<span class="vcat-sec-name">' + escapeHtml(s.labelAr || s.label) + "</span>" + (s.labelAr && s.label ? '<span class="vcat-sec-en" dir="ltr">' + escapeHtml(s.label) + "</span>" : "") + '<span class="vcat-sec-count">' + vcatPlatesAr(s.figures) + "</span>" + (s.unreadable ? '<span class="vcat-unread">' + s.unreadable + " بلا قائمة قطع</span>" : "") + "</button>").join("") + "</div>").join("");
+    return fams.map(([name, f]) => (name && fams.length > 1 ? '<div class="vcat-fam">' + escapeHtml(name) + "</div>" : "") + '<div class="vcat-sec-grid">' + f.list.map(s => '<button type="button" class="vcat-sec" data-vcat-act="sec" data-id="' + escapeHtml(s.id) + '">' + (s.hasImage && vcatThumbOn(st) ? vcatThumbBox(s.id, escapeHtml(s.icon || "📦"), "vcat-th-lg") : '<span class="vcat-sec-ic">' + escapeHtml(s.icon || "📦") + "</span>") + '<span class="vcat-sec-name">' + escapeHtml(s.labelAr || s.label) + "</span>" + (s.labelAr && s.label ? '<span class="vcat-sec-en" dir="ltr">' + escapeHtml(s.label) + "</span>" : "") + '<span class="vcat-sec-count">' + vcatPlatesAr(s.figures) + "</span>" + (s.unreadable ? '<span class="vcat-unread">' + s.unreadable + " بلا قائمة قطع</span>" : "") + (s.partial ? '<span class="vcat-partial-tag">' + vcatCountAr(s.partial, "قائمة جزئية واحدة", "قائمتان جزئيتان", "قوائم جزئية", "قائمة جزئية") + "</span>" : "") + "</button>").join("") + "</div>").join("");
 }
 
 function vcatQuickHtml(st) {
     if (!st.svc || st.svc.backend !== "mobis") return "";
     const chips = [ [ "صدام امامي", "الصدام الأمامي" ], [ "صدام خلفي", "الصدام الخلفي" ], [ "كشاف امامي", "الكشاف الأمامي" ], [ "فانوس خلفي", "الفانوس الخلفي" ], [ "رديتر", "الرديتر والتبريد" ], [ "فرامل امامي", "الفرامل الأمامية" ], [ "مساعد", "المساعدات" ], [ "فلتر", "الفلاتر" ], [ "مراية", "المرايا" ], [ "زجاج", "الزجاج" ] ];
-    return '<div class="vcat-quick"><span class="vcat-quick-t">الأكثر طلبًا:</span>' + chips.map(c => '<button type="button" class="chip" data-vcat-act="quick" data-q="' + escapeHtml(c[0]) + '">' + escapeHtml(c[1]) + "</button>").join("") + "</div>";
+    return '<div class="vcat-quick"><span class="vcat-quick-t">الأكثر طلبًا:</span>' + (vcatSectionOf(st, "SN") ? '<button type="button" class="chip" data-vcat-act="sec" data-id="SN">📡 الحساسات</button>' : "") + chips.map(c => '<button type="button" class="chip" data-vcat-act="quick" data-q="' + escapeHtml(c[0]) + '">' + escapeHtml(c[1]) + "</button>").join("") + "</div>";
+}
+
+function vcatPartialTag(level, n) {
+    const text = n ? n + " جزئية" : level === "poor" ? "ناقصة كثيرًا" : level === "good" ? "شبه كاملة" : "قائمة جزئية";
+    return '<span class="vcat-partial-tag' + (level === "poor" ? " vcat-partial-poor" : "") + '">' + text + "</span>";
 }
 
 function vcatGroupRowHtml(st, secId, g, path) {
     const allBad = g.figures > 0 && g.unreadable >= g.figures;
+    const par = Number(g.partial) || 0;
     const th = vcatThumbOn(st) && g.hasImage !== false ? vcatThumbBox(g.id, "🖼️", "") : "";
-    const main = '<span class="vcat-row-main"><span class="vcat-row-ar">' + (g.number ? '<bdi dir="ltr" class="vcat-num-tag">' + escapeHtml(g.number) + "</bdi> " : "") + escapeHtml(g.labelAr || g.label) + "</span>" + (g.labelAr && g.label ? '<span class="vcat-row-en" dir="ltr">' + escapeHtml(g.label) + "</span>" : "") + (path ? '<span class="vcat-row-path">' + escapeHtml(path) + "</span>" : "") + "</span>";
-    const meta = '<span class="vcat-row-meta">' + (allBad ? '<span class="vcat-unread">القطع غير متاحة</span>' : '<span class="pcat-badge">' + vcatPlatesAr(g.figures) + "</span>" + (g.unreadable ? '<span class="vcat-unread">' + g.unreadable + " بلا قائمة قطع</span>" : "")) + "</span>";
+    const pg = g.virtual && g.page && g.page !== "01/01" ? '<span class="vcat-row-sub">صفحة ' + vcatLtr(g.page) + "</span>" : "";
+    const main = '<span class="vcat-row-main"><span class="vcat-row-ar">' + (g.number ? '<bdi dir="ltr" class="vcat-num-tag">' + escapeHtml(g.number) + "</bdi> " : "") + escapeHtml(g.labelAr || g.label) + "</span>" + (g.labelAr && g.label ? '<span class="vcat-row-en" dir="ltr">' + escapeHtml(g.label) + "</span>" : "") + pg + (g.hintAr ? '<span class="vcat-row-hintar">' + escapeHtml(g.hintAr) + "</span>" : "") + (g.hint ? '<span class="vcat-row-hint" dir="ltr">' + escapeHtml(g.hint) + "</span>" : "") + (path ? '<span class="vcat-row-path">' + escapeHtml(path) + "</span>" : "") + "</span>";
+    const meta = '<span class="vcat-row-meta">' + (allBad ? '<span class="vcat-unread">القطع غير متاحة</span>' : '<span class="pcat-badge">' + vcatPlatesAr(g.figures) + "</span>" + (g.unreadable ? '<span class="vcat-unread">' + g.unreadable + " بلا قائمة قطع</span>" : "") + (par ? vcatPartialTag(g.completeness, par >= g.figures ? 0 : par) : "")) + "</span>";
     return '<button type="button" class="vcat-row' + (allBad ? " vcat-row-bad" : "") + '" data-vcat-act="grp" data-id="' + escapeHtml(g.id) + '" data-sec="' + escapeHtml(secId) + '"' + (g.firstFigure ? ' data-fig="' + escapeHtml(g.firstFigure) + '"' : "") + (allBad ? ' title="قائمة القطع غير متاحة من برنامج Microcat على هذا الجهاز: تُعرض صورة الصفحة فقط"' : "") + ">" + th + main + meta + "</button>";
 }
 
@@ -56183,7 +56253,7 @@ function vcatSectionBodyHtml(st) {
         prev = g.area;
         return head + vcatGroupRowHtml(st, sec.id, g, "");
     }).join("");
-    return '<div class="vcat-list">' + rows + "</div>";
+    return (sec.note ? '<div class="epcl-note vcat-sec-note">' + escapeHtml(sec.note) + "</div>" : "") + '<div class="vcat-list">' + rows + "</div>";
 }
 
 function vcatLoadingHtml() {
@@ -56206,7 +56276,7 @@ function vcatGroupBodyHtml(st, node) {
             return '<button type="button" class="vcat-row vcat-row-bad" data-vcat-act="fig" data-id="' + escapeHtml(f.id) + '" title="قائمة القطع غير متاحة من برنامج Microcat على هذا الجهاز: تُعرض صورة الصفحة فقط">' + title + '<span class="vcat-row-meta"><span class="vcat-unread">القطع غير متاحة</span></span></button>';
         }
         const counted = f.parts != null && !f.pending;
-        const meta = '<span class="vcat-row-meta">' + (f.empty ? '<span class="vcat-dimtag">لا قطع لهذه السيارة</span>' : counted ? '<span class="pcat-badge">' + vcatPartsAr(f.parts) + "</span>" : "") + (counted && f.ambiguous ? '<span class="epcl-badge epcl-badge-warn">' + f.ambiguous + " بأكثر من رقم</span>" : "") + "</span>";
+        const meta = '<span class="vcat-row-meta">' + (f.empty ? '<span class="vcat-dimtag">لا قطع لهذه السيارة</span>' : counted ? '<span class="pcat-badge">' + vcatPartsAr(f.parts) + "</span>" : "") + (counted && f.ambiguous ? '<span class="epcl-badge epcl-badge-warn">' + f.ambiguous + " بأكثر من رقم</span>" : "") + (f.partial ? vcatPartialTag(f.completeness, 0) : "") + "</span>";
         return '<button type="button" class="vcat-row' + (f.empty ? " vcat-row-dim" : "") + '" data-vcat-act="fig" data-id="' + escapeHtml(f.id) + '">' + title + meta + "</button>";
     }).join("");
     return '<div class="vcat-list">' + rows + "</div>";
@@ -56265,7 +56335,7 @@ function vcatPartRowHtml(r, sel, multi, mobis, covered) {
         text: ""
     };
     const shown = nums.slice(0, 8);
-    let h = '<div class="vcat-part' + (sel ? " vcat-part-on" : "") + '" role="button" tabindex="0" data-vcat-act="row" data-key="' + escapeHtml(key) + '" aria-pressed="' + (sel ? "true" : "false") + '">' + '<div class="vcat-part-head"><span class="vcat-pnc" dir="ltr" title="رقم النداء على الصورة">' + escapeHtml(key) + '</span><span class="vcat-pname" dir="ltr">' + escapeHtml(r.name || "") + "</span>" + (b.cls !== "ok" && b.text ? '<span class="epcl-badge epcl-badge-' + b.cls + '">' + escapeHtml(b.text) + "</span>" : "") + (r.onPlate === false ? '<span class="vcat-dimtag" title="النداء غير ظاهر على الصورة">غير مرسومة بالصورة</span>' : multi ? '<span class="vcat-dimtag">لوحة ' + (vcatRowTab(r) + 1) + "</span>" : "") + "</div>" + '<div class="vcat-nums">' + shown.map(vcatNumberChipHtml).join("") + (nums.length > shown.length ? '<span class="epcl-more">+' + (nums.length - shown.length) + "</span>" : "") + "</div>";
+    let h = '<div class="vcat-part' + (sel ? " vcat-part-on" : "") + '" role="button" tabindex="0" data-vcat-act="row" data-key="' + escapeHtml(key) + '" aria-pressed="' + (sel ? "true" : "false") + '">' + '<div class="vcat-part-head"><span class="vcat-pnc" dir="ltr" title="رقم النداء على الصورة">' + escapeHtml(key) + '</span><span class="vcat-pname" dir="ltr">' + escapeHtml(r.name || "") + "</span>" + (b.cls !== "ok" && b.text ? '<span class="epcl-badge epcl-badge-' + b.cls + '">' + escapeHtml(b.text) + "</span>" : "") + (r.onPlate === false && !r.noFrame ? '<span class="vcat-dimtag" title="النداء غير ظاهر على الصورة">غير مرسومة بالصورة</span>' : multi ? '<span class="vcat-dimtag">لوحة ' + (vcatRowTab(r) + 1) + "</span>" : "") + "</div>" + '<div class="vcat-nums">' + shown.map(vcatNumberChipHtml).join("") + (nums.length > shown.length ? '<span class="epcl-more">+' + (nums.length - shown.length) + "</span>" : "") + "</div>";
     if (cav0.length && typeof epcLookupCaveatsText === "function") h += '<div class="epcl-cond">⚠ مشروط بـ: ' + escapeHtml(epcLookupCaveatsText(cav0)) + "</div>";
     if (typeof epcLookupItemQuestions === "function" && typeof epcLookupQuestionHtml === "function" && (r.confidence === "ambiguous" || r.confidence === "exact")) {
         epcLookupItemQuestions({
@@ -56303,11 +56373,13 @@ function vcatPlatePick(st, node) {
         idx: idx,
         row: row,
         hl: hl,
-        path: hl ? row.plate.url : plates[idx].url
+        path: hl ? row.plate.url : plates[idx].url,
+        noFrames: !!(node && node.noFrames)
     };
 }
 
 function vcatPlateCaption(pk) {
+    if (pk.noFrames) return pk.row ? "لا إطار تمييز على هذه الصفحة: طابق رقم النداء (" + pk.row.pnc + ") مع الرقم على الرسم" : "اضغط الصورة لتكبيرها. لا إطار تمييز على هذه الصفحة: طابق رقم النداء بجانب القطعة مع الرقم على الرسم";
     if (pk.row) return pk.row.onPlate === false ? "القطعة المختارة غير مرسومة بالصورة" : "الإطار الأحمر = مكان القطعة المختارة";
     return "اضغط الصورة لتكبيرها، واضغط قطعة بالقائمة لتمييز مكانها";
 }
@@ -56329,11 +56401,11 @@ function vcatPlateHtml(st, node) {
 
 function vcatFigureBodyHtml(st, node) {
     const mobis = st.svc.backend === "mobis";
+    const gp = Array.isArray(node.path) ? node.path.find(p => p && p.level === "group") : null;
+    const where = (gp && gp.number ? "(" + gp.number + ") " : "") + (node.title || node.id);
     if (node.unreadable) {
         const pic = node.fullImage && vcatThumbOn(st) ? '<div class="vcat-plate" data-vcat-fullid="' + escapeHtml(node.id) + '"><button type="button" class="vcat-plate-btn" data-vcat-act="zoomfull" aria-label="تكبير صورة الصفحة" title="اضغط لتكبير الصورة">' + '<img class="vcat-plate-img vcat-plate-pending" alt="صورة الصفحة" referrerpolicy="no-referrer"></button><div class="vcat-plate-wait" data-vcat-wait>⏳ جارٍ جلب الصورة…</div>' + '<div class="vcat-plate-cap">اضغط الصورة لتكبيرها. الأرقام عليها أرقام النداء لا أرقام القطع.</div></div>' : "";
-        const gp = Array.isArray(node.path) ? node.path.find(p => p && p.level === "group") : null;
-        const where = (gp && gp.number ? "(" + gp.number + ") " : "") + (node.title || node.id);
-        return '<div class="vcat-unrd">' + pic + '<div class="epcl-stbox epcl-stbox-warn"><div class="epcl-sthead">⚠ قائمة قطع هذه الصفحة غير متاحة هنا</div><div class="epcl-stdetail">برنامج Microcat على هذا الجهاز يعطي خطأً داخليًا عند قراءة قطع هذه الصفحة، فلا أرقام قطع لها هنا' + (pic ? " (الصورة أعلاه للدلالة على موضع القطعة)" : " ولا صورة") + '. افتح الصفحة نفسها بالبرنامج الأصلي: <bdi dir="ltr">' + escapeHtml(where) + "</bdi>" + (node.page ? " — صفحة " + vcatLtr(node.page) : "") + ".</div></div></div>";
+        return '<div class="vcat-unrd"><div class="epcl-stbox epcl-stbox-warn"><div class="epcl-sthead">⚠ قائمة قطع هذه الصفحة غير متاحة هنا</div><div class="epcl-stdetail">برنامج Microcat على هذا الجهاز يعطي خطأً داخليًا عند قراءة قطع هذه الصفحة، فلا أرقام قطع لها هنا' + (pic ? " (الصورة أدناه للدلالة على موضع القطعة)" : " ولا صورة") + '. افتح الصفحة نفسها بالبرنامج الأصلي: <bdi dir="ltr">' + escapeHtml(where) + "</bdi>" + (node.page ? " — صفحة " + vcatLtr(node.page) : "") + ".</div></div>" + pic + "</div>";
     }
     const plates = vcatPlatesOf(node);
     const parts = Array.isArray(node.parts) ? node.parts : [];
@@ -56341,9 +56413,14 @@ function vcatFigureBodyHtml(st, node) {
     const tab = Math.min(Math.max(0, st.tab || 0), Math.max(0, plates.length - 1));
     const rows = multi ? parts.filter(r => vcatRowTab(r) === tab) : parts;
     let h = "";
+    if (node.partial) {
+        const lv = node.completeness;
+        const est = lv === "poor" ? " تقدير: ينقص هذه القائمة الكثير، فأغلب أرقام هذه الفئة يرفض البرنامج قراءتها؛ لا تعتمد على غياب قطعة عنها، وافتح الصفحة بالبرنامج الأصلي." : lv === "good" ? " تقدير: القائمة شبه كاملة، وقد تنقصها قطع قليلة." : lv === "fair" ? " تقدير: تنقص القائمة قطع غير قليلة." : "";
+        h += '<div class="epcl-stbox epcl-stbox-warn vcat-partial"><div class="epcl-sthead">⚠ قائمة جزئية' + (lv === "poor" ? " — ناقصة كثيرًا" : "") + '</div><div class="epcl-stdetail">برنامج Microcat يفشل في فتح هذه الصفحة نفسها، فجُمعت قطعها من بحثه برقم القطعة؛ وقد تنقص قطع يرفض قراءتها. ولا إطار على الرسم: طابق رقم النداء الرمادي بجانب كل قطعة مع الرقم على الرسم.' + est + "</div></div>";
+    }
     const na = node.counts && Number(node.counts.notApplicable) ? Number(node.counts.notApplicable) : Array.isArray(node.notApplicable) ? node.notApplicable.length : 0;
     h += '<div class="vcat-figgrid"><div class="vcat-figside" data-vcat-figbox>' + vcatPlateHtml(st, node) + '</div><div class="vcat-figlist">';
-    if (!parts.length) return h + '<div class="expense-empty-hint">لا قطع لهذه السيارة بهذه اللوحة' + (na ? " (" + vcatItemsAr(na) + " لا تنطبق عليها)" : "") + "</div></div></div>";
+    if (!parts.length) return h + '<div class="expense-empty-hint">لا قطع لهذه السيارة بهذه اللوحة' + (na ? " (" + vcatItemsAr(na) + " لا تنطبق عليها)" : "") + (node.partial ? " — والقائمة جزئية" : "") + "</div></div></div>";
     h += '<div class="vcat-parts-head">' + vcatPartsAr(rows.length) + (na ? ' <span class="epcl-dim">· ' + vcatItemsAr(na) + " لا تنطبق على هذه السيارة (مخفية)</span>" : "") + "</div>";
     const covered = vcatCoveredCodes(st);
     h += '<div class="vcat-parts" data-vcat-parts>' + rows.map(r => vcatPartRowHtml(r, st.sel === String(r.pnc), multi, mobis, covered)).join("") + "</div></div></div>";
@@ -56374,8 +56451,8 @@ function vcatGroupHits(st, q) {
             let h = st.hay.get(key);
             if (!h) {
                 h = {
-                    name: vcatFold((g.labelAr || "") + " " + (g.label || "")),
-                    more: vcatFold((g.kw || "") + " " + (g.number || ""))
+                    name: g.virtual ? "" : vcatFold((g.labelAr || "") + " " + (g.label || "")),
+                    more: vcatFold((g.kw || "") + (g.virtual ? "" : " " + (g.number || "")))
                 };
                 st.hay.set(key, h);
             }
