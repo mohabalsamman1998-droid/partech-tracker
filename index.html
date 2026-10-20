@@ -2605,14 +2605,19 @@
   .att-tone-warn{background:var(--amber);color:var(--amber-ink);}
   .att-tone-bad{background:var(--rust-deep);color:#fff;animation:att-pulse 1.8s ease-in-out infinite;}
   @keyframes att-pulse{0%,100%{box-shadow:inset 0 0 0 0 rgba(255,255,255,0);}50%{box-shadow:inset 0 0 0 3px rgba(255,255,255,.45);}}
-  .att-alert{position:fixed;inset:0;z-index:95;display:grid;place-items:center;padding:24px;background:rgba(127,29,29,.96);color:#fff;text-align:center;}
-  .att-alert-box{max-width:420px;}
-  .att-alert-icon{font-size:72px;line-height:1;margin-bottom:8px;animation:att-shake 1s ease-in-out infinite;}
-  @keyframes att-shake{0%,100%{transform:rotate(0);}20%{transform:rotate(-12deg);}40%{transform:rotate(10deg);}60%{transform:rotate(-6deg);}80%{transform:rotate(4deg);}}
-  .att-alert h2{font-family:'Cairo',sans-serif;font-size:26px;margin:0 0 8px;}
-  .att-alert p{font-size:16px;line-height:1.8;margin:0 0 22px;opacity:.96;}
-  .att-alert .att-alert-ok{background:#fff;border-color:#fff;color:#7f1d1d;min-width:160px;min-height:46px;font-weight:800;}
-  @media (prefers-reduced-motion:reduce){.att-tone-bad,.att-alert-icon{animation:none;}}
+  /* إنذار التأخر: شاشة حمراء وامضة بملء الشاشة، عدّاد حيّ ضخم، وصفارة واهتزاز من الكود (يتجدد كل 5 دقائق حتى الوصول) */
+  .att-alert{position:fixed;inset:0;z-index:95;display:grid;place-items:center;padding:24px;background:#9b1c1c;color:#fff;text-align:center;overflow-y:auto;animation:att-flash .7s ease-in-out infinite alternate;}
+  @keyframes att-flash{from{background:#6b0f0f;box-shadow:inset 0 0 0 0 rgba(255,255,255,0);}to{background:#e11d1d;box-shadow:inset 0 0 0 10px rgba(255,255,255,.55);}}
+  .att-alert-box{max-width:440px;width:100%;}
+  .att-alert-icon{font-size:88px;line-height:1;margin-bottom:6px;animation:att-shake .8s ease-in-out infinite;}
+  @keyframes att-shake{0%,100%{transform:rotate(0);}20%{transform:rotate(-14deg);}40%{transform:rotate(12deg);}60%{transform:rotate(-8deg);}80%{transform:rotate(5deg);}}
+  .att-alert h2{font-family:'Cairo',sans-serif;font-size:34px;font-weight:900;margin:0 0 6px;text-shadow:0 2px 8px rgba(0,0,0,.45);}
+  .att-alert-cap{font-size:15px;font-weight:700;opacity:.95;}
+  .att-alert-big{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:900;font-size:54px;line-height:1.1;direction:ltr;unicode-bidi:isolate;font-variant-numeric:tabular-nums;margin:2px 0 14px;text-shadow:0 2px 10px rgba(0,0,0,.5);}
+  .att-alert p{font-size:17px;line-height:1.8;margin:0 0 12px;font-weight:700;}
+  .att-alert .att-alert-note{font-size:13.5px;font-weight:600;opacity:.92;margin:0 0 20px;}
+  .att-alert .att-alert-ok{background:#fff;border-color:#fff;color:#7f1d1d;min-width:220px;min-height:54px;font-size:18px;font-weight:900;}
+  @media (prefers-reduced-motion:reduce){.att-tone-bad,.att-alert-icon{animation:none;}.att-alert{animation:none;background:#b91c1c;}}
   @media print{.att-banner,.att-banner-sp,.att-alert,#att-root{display:none !important;}}
   /* ATT END css */
 </style>
@@ -62538,7 +62543,13 @@ const ATT_BANNER_LEAD_MS = 36e5;
 
 const ATT_BANNER_SOON_MS = 6e5;
 
-const ATT_REPEAT_MS = 9e5;
+const ATT_REPEAT_MS = 3e5;
+
+const ATT_SIREN_MAX_MS = 6e4;
+
+const ATT_ALARM_BUZZ_MS = 2e3;
+
+const ATT_ALERT_FRESH_MS = 4e4;
 
 const ATT_RPC_TIMEOUT_MS = 15e3;
 
@@ -62593,7 +62604,19 @@ let attWaiting = false;
 
 let attAlertDay = "";
 
-let attLastRepeat = 0;
+let attAlertNextAt = 0;
+
+let attAlarmStartedAt = 0;
+
+let attAlarmBuzzAt = 0;
+
+let attSirenUntil = 0;
+
+let attSirenEndCtx = 0;
+
+let attSirenNodes = [];
+
+let attTitleOrig = null;
 
 let attLastRoll = 0;
 
@@ -63087,23 +63110,47 @@ function attUnlockAudio() {
     } catch (e) {}
 }
 
-function attBeep() {
+function attSiren() {
     try {
-        if (!attAudio || attAudio.state !== "running") return;
-        const t = attAudio.currentTime;
-        [ 0, .38, .76 ].forEach(function(d) {
-            const o = attAudio.createOscillator(), g = attAudio.createGain();
-            o.type = "sine";
-            o.frequency.value = 880;
-            g.gain.setValueAtTime(1e-4, t + d);
-            g.gain.exponentialRampToValueAtTime(.35, t + d + .02);
-            g.gain.exponentialRampToValueAtTime(1e-4, t + d + .3);
-            o.connect(g);
-            g.connect(attAudio.destination);
-            o.start(t + d);
-            o.stop(t + d + .32);
+        if (!attAudio || attAudio.state !== "running") return false;
+        const now = attAudio.currentTime;
+        const t = Math.max(now, attSirenEndCtx);
+        const o = attAudio.createOscillator(), g = attAudio.createGain();
+        o.type = "square";
+        for (let i = 0; i < 16; i++) o.frequency.setValueAtTime(i % 2 ? 720 : 1040, t + i * .4);
+        g.gain.setValueAtTime(1e-4, t);
+        g.gain.exponentialRampToValueAtTime(.5, t + .05);
+        g.gain.setValueAtTime(.5, t + 6.3);
+        g.gain.exponentialRampToValueAtTime(1e-4, t + 6.4);
+        o.connect(g);
+        g.connect(attAudio.destination);
+        o.start(t);
+        o.stop(t + 6.4);
+        attSirenNodes.push({
+            o: o,
+            g: g
         });
-    } catch (e) {}
+        if (attSirenNodes.length > 6) attSirenNodes.shift();
+        attSirenEndCtx = t + 6.4;
+        attSirenUntil = Date.now() + Math.round((attSirenEndCtx - now) * 1e3);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+function attSirenStop() {
+    attSirenNodes.forEach(function(n) {
+        try {
+            n.o.stop();
+        } catch (e) {}
+        try {
+            n.g.disconnect();
+        } catch (e) {}
+    });
+    attSirenNodes = [];
+    attSirenEndCtx = 0;
+    attSirenUntil = 0;
 }
 
 function attAlertEl() {
@@ -63120,31 +63167,77 @@ function attAlertEl() {
     }, attEl("div", {
         class: "att-alert-icon",
         "aria-hidden": "true"
-    }, "⏰"), attEl("h2", {
+    }, "🚨"), attEl("h2", {
         id: "att-alert-title"
-    }, "تأخرت عن الدوام"), attEl("p", {
+    }, "تأخّرت عن الدوام!"), attEl("div", {
+        class: "att-alert-cap"
+    }, "متأخر منذ"), attEl("div", {
+        id: "att-alert-big",
+        class: "att-alert-big",
+        "aria-hidden": "true"
+    }, "00:00:00"), attEl("p", {
         id: "att-alert-text"
-    }), attEl("button", {
+    }), attEl("p", {
+        class: "att-alert-note"
+    }, "يتجدد هذا الإنذار كل 5 دقائق حتى يُسجَّل وصولك."), attEl("button", {
         type: "button",
         class: "btn att-alert-ok",
         onclick: function() {
-            attHideAlert();
+            attHideAlert(true);
         }
-    }, "حسنًا")));
+    }, "حسنًا، أنا في الطريق")));
     document.body.appendChild(el);
     return el;
 }
 
-function attHideAlert() {
+function attHideAlert(dismissed) {
     const el = document.getElementById("att-alert");
-    if (el && !el.classList.contains("att-hide")) el.classList.add("att-hide");
+    const was = !!el && !el.classList.contains("att-hide");
+    if (was) {
+        el.classList.add("att-hide");
+        attAlarmStartedAt = 0;
+        attAlarmBuzzAt = 0;
+        attSirenStop();
+        try {
+            if (navigator.vibrate) navigator.vibrate(0);
+        } catch (e) {}
+    }
+    if (attTitleOrig !== null) {
+        try {
+            document.title = attTitleOrig;
+        } catch (e) {}
+        attTitleOrig = null;
+    }
+    if (dismissed) {
+        attAlertNextAt = Date.now() + ATT_REPEAT_MS;
+        if (attMe) attStoreSet("att-alert-last", attAlertKey(attMe) + "@" + Date.now());
+    }
+}
+
+function attAlertKey(me) {
+    return String(me && me.employee && me.employee.id) + ":" + (me && me.today && me.today.date);
+}
+
+function attAlertLastAt(key) {
+    const raw = attStoreGet("att-alert-last") || "";
+    const i = raw.lastIndexOf("@");
+    if (i < 0 || raw.slice(0, i) !== key) return 0;
+    const n = Number(raw.slice(i + 1));
+    return isFinite(n) ? n : 0;
 }
 
 function attShowAlert(v, me) {
     const el = attAlertEl();
     const loc = me && me.location && me.location.name ? " إلى «" + me.location.name + "»" : "";
-    attSetText(document.getElementById("att-alert-text"), "مضى " + attMinutesText(Math.floor(v.lateMs / 6e4)) + " على موعد الدوام ولم يُسجَّل وصولك. توجّه" + loc + " وسيُسجَّل حضورك تلقائيًا عند وصولك، ويتوقف العدّاد.");
+    attSetText(document.getElementById("att-alert-text"), "مضى " + attMinutesText(Math.floor(v.lateMs / 6e4)) + " على موعد الدوام ولم يُسجَّل وصولك. توجّه فورًا" + loc + " وسيُسجَّل حضورك تلقائيًا عند وصولك ويتوقف الإنذار.");
+    attSetText(document.getElementById("att-alert-big"), attHMS(v.lateMs));
     el.classList.remove("att-hide");
+    attAlarmStartedAt = Date.now();
+    attAlertNextAt = attAlarmStartedAt + ATT_REPEAT_MS;
+    attStoreSet("att-alert-last", attAlertKey(me) + "@" + attAlarmStartedAt);
+    attAlarmBuzzAt = attAlarmStartedAt;
+    attVibrate([ 500, 200, 500, 200, 900 ]);
+    attSiren();
     try {
         const b = el.querySelector(".att-alert-ok");
         if (b) b.focus({
@@ -63153,8 +63246,22 @@ function attShowAlert(v, me) {
     } catch (e) {}
 }
 
+function attAlarmTick(v) {
+    attSetText(document.getElementById("att-alert-big"), attHMS(v.lateMs));
+    const now = Date.now();
+    if (now - attAlarmBuzzAt >= ATT_ALARM_BUZZ_MS) {
+        attAlarmBuzzAt = now;
+        attVibrate([ 500, 200, 500, 200, 900 ]);
+    }
+    if (now - attAlarmStartedAt < ATT_SIREN_MAX_MS && attSirenUntil - now < 1500) attSiren();
+    try {
+        if (attTitleOrig === null) attTitleOrig = document.title || "";
+        document.title = Math.floor(now / 1e3) % 2 ? "🚨 متأخر عن الدوام" : attTitleOrig;
+    } catch (e) {}
+}
+
 function attMaybeAlert(v, me) {
-    const key = String(me.employee && me.employee.id) + ":" + me.today.date;
+    const key = attAlertKey(me);
     if (attAlertDay !== key) {
         if (Date.now() - attFreshAt < ATT_ALERT_HOLD_MS) return;
         if (attLastLoad < attFreshAt + ATT_ALERT_HOLD_MS / 2) {
@@ -63165,19 +63272,23 @@ function attMaybeAlert(v, me) {
             return;
         }
         attAlertDay = key;
-        attLastRepeat = Date.now();
-        if (attStoreGet("att-alerted") !== key) {
-            attStoreSet("att-alerted", key);
-            attShowAlert(v, me);
-            attVibrate();
-            attBeep();
+        const last = attAlertLastAt(key);
+        attAlertNextAt = last ? last + ATT_REPEAT_MS : 0;
+    }
+    const el = document.getElementById("att-alert");
+    if (el && !el.classList.contains("att-hide")) {
+        attAlarmTick(v);
+        return;
+    }
+    if (Date.now() < attAlertNextAt) return;
+    if (Date.now() - attLastLoad > ATT_ALERT_FRESH_MS) {
+        if (Date.now() - attLastConfirm > 5e3) {
+            attLastConfirm = Date.now();
+            attMeLoad();
         }
         return;
     }
-    if (Date.now() - attLastRepeat > ATT_REPEAT_MS) {
-        attLastRepeat = Date.now();
-        attVibrate([ 300, 120, 300 ]);
-    }
+    attShowAlert(v, me);
 }
 
 function attOnArrived(a, me) {
@@ -64668,7 +64779,9 @@ function attEndSession() {
         attHiddenAt = 0;
         attDayMiss = 0;
         attLastConfirm = 0;
+        attAlertNextAt = 0;
         attHideAlert();
+        attSirenStop();
         const b = document.getElementById("att-banner");
         if (b) b.classList.add("att-hide");
         attBannerSpace();
