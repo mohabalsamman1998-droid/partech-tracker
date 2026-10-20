@@ -12,7 +12,7 @@
 // بياخذ دايمًا آخر نسخة منشورة، والكاش مجرد شبكة أمان لما الشبكة تفشل أو تتأخر. هذا مهم لأن
 // النشر متكرر والتحديث لازم يوصل بدون أي خطوة من المستخدم.
 
-// build-id: 8deca28a9109
+// build-id: 713026b56acc
 const SHELL_CACHE = 'partech-shell-v1';
 const SHELL_URLS = [
   './',
@@ -149,6 +149,65 @@ function revalidateInBackground(request, cache) {
     })
     .catch(() => {});
 }
+
+// ===== ATT-ALARM BEGIN — إنذار التأخر (service worker) =====
+// إضافة اختيارية لـsw.js تجعل إشعار «إنذار التأخر» (att.push_due_late) يظهر بإلحاح بدل الإشعار العادي. تُلصق كاملةً **قبل** مستمع 'push' الأصلي
+// (أي قبل `self.addEventListener('push', …)` الموجود بـsw.js): المستمعان يعملان بترتيب تسجيلهما، وهذا يلتقط الإنذار وحده ويدع بقية الإشعارات تمرّ للأصلي كما هي.
+// الأفضل أن يلصقها الأمر tools/late-alarm-merge-sw.mjs (آمن لإعادة التشغيل ويحافظ على نهايات الأسطر).
+//   • يميّز الإنذار بأن نص الإشعار يبدأ بالعلامة 🚨 (U+1F6A8) — النص الذي تولّده الدالة att.late_push_message في الترحيل (يختبر ذلك test-sw-alarm.mjs).
+//   • كل تجديد (كل 5 دقائق) يُغلق أولًا إنذار الدقائق السابقة (الوسم att-late) ثم يُعرض الجديد كإشعار جديد، فيُنبّه من جديد ولا يتكدّس عشرات الإشعارات
+//     إن كان الجوال مغلقًا ثم وصلته دفعةً. (لا نعتمد على renotify وحده: لا تدعمه كل المتصفحات، وبدونه قد يحلّ الجديد محل القديم بصمت؛ نُبقيه احتياطًا لكروم.)
+//   • requireInteraction: يبقى على الشاشة حتى يُنقر عليه (يعمل بكروم/إيدج على الحاسوب؛ أندرويد وآيفون يتجاهلانه ويبقى الإشعار بشريط الإشعارات أصلًا).
+//   • اهتزاز طويل متكرر (الأجهزة التي تدعمه).
+//   • النقر على الإنذار يفتح التطبيق نفسه (ليبدأ التتبع ويُسجَّل الحضور) بدل فتح «سجل الإشعارات» الذي يفتحه النقر على بقية الإشعارات.
+// لا يغيّر عنوان الإشعار («بارتك» من Edge Function)، ولا يستطيع فرض صوت مخصص: الصوت للنظام (قيد المتصفحات لا قيد الكود).
+(function () {
+  var ATT_ALARM_MARK = '\u{1F6A8}';
+  var ATT_ALARM_TAG = 'att-late';
+  self.addEventListener('push', function (event) {
+    var data = {};
+    try { data = event.data ? event.data.json() : {}; } catch (e) { return; }
+    var body = data && typeof data.body === 'string' ? data.body : '';
+    if (body.indexOf(ATT_ALARM_MARK) !== 0) return;                       // ليس إنذار تأخر: يمرّ للمستمع الأصلي
+    event.stopImmediatePropagation();                                     // وإلا عرضه الأصلي مرة ثانية بإعدادات عادية
+    var old;
+    try { old = self.registration.getNotifications ? self.registration.getNotifications({ tag: ATT_ALARM_TAG }) : Promise.resolve([]); }
+    catch (e) { old = Promise.resolve([]); }
+    event.waitUntil(
+      Promise.resolve(old).catch(function () { return []; }).then(function (list) {
+        for (var i = 0; list && i < list.length; i++) { try { list[i].close(); } catch (e) { /* يتجاهل */ } }
+        return self.registration.showNotification(data.title || 'بارتك', {
+          body: body,
+          icon: 'icon-192-v2.png',
+          badge: 'icon-192-v2.png',
+          dir: 'rtl',
+          lang: 'ar',
+          tag: ATT_ALARM_TAG,
+          renotify: true,
+          requireInteraction: true,
+          silent: false,
+          vibrate: [600, 200, 600, 200, 600, 200, 1000],
+          timestamp: Date.now(),
+          data: { attLate: true }
+        });
+      })
+    );
+  });
+  self.addEventListener('notificationclick', function (event) {
+    if (!event.notification || !event.notification.data || event.notification.data.attLate !== true) return;     // إشعار آخر: للأصلي
+    event.stopImmediatePropagation();
+    event.notification.close();
+    event.waitUntil(
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (windowClients) {
+        for (var i = 0; i < windowClients.length; i++) {
+          if ('focus' in windowClients[i]) return windowClients[i].focus();
+        }
+        if (self.clients.openWindow) return self.clients.openWindow('./');
+      })
+    );
+  });
+})();
+// ===== ATT-ALARM END =====
 
 self.addEventListener('push', (event) => {
   let data = {};

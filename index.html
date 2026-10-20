@@ -2640,8 +2640,18 @@
   .att-alert .att-alert-ok{background:transparent;border:2px solid #fff;color:#fff;min-width:220px;min-height:46px;font-size:16px;font-weight:800;}
   .att-alert .att-alert-checkin{background:#fff;border-color:#fff;color:#7f1d1d;min-width:260px;min-height:58px;font-size:20px;font-weight:900;margin:0 0 8px;}
   .att-alert .att-alert-msg{margin:0 auto 12px;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.5);}
+  /* الإشعارات إجبارية: طبقة تغطي التطبيق حتى تُفعَّل (تحت التوست 100 وفوق إنذار التأخر 95)، وزرّ كتم الإشعارات القديم مخفي */
+  body.att-notify-on #btn-push-toggle{display:none !important;}
+  body.att-notify-open{overflow:hidden;}
+  .att-notify-back{position:fixed;inset:0;z-index:99;display:grid;place-items:center;padding:20px;background:var(--bg);color:var(--text);overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;}
+  .att-notify-card{width:min(440px,100%);text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:26px 20px;outline:none;}
+  .att-notify-icon{font-size:48px;line-height:1;margin:0 0 10px;}
+  .att-notify-title{margin:0 0 10px;font-size:20px;font-weight:800;color:var(--text);}
+  .att-notify-text{margin:0 0 18px;font-size:15px;line-height:1.7;color:var(--text-dim);}
+  .att-notify-btn{min-height:48px;min-width:220px;font-size:16px;font-weight:800;}
+  .att-notify-skip{margin-top:10px;min-height:44px;}
   @media (prefers-reduced-motion:reduce){.att-tone-bad,.att-alert-icon{animation:none;}.att-alert{animation:none;background:#b91c1c;}}
-  @media print{.att-banner,.att-banner-sp,.att-alert,#att-root{display:none !important;}}
+  @media print{.att-banner,.att-banner-sp,.att-alert,.att-notify-back,#att-root{display:none !important;}}
   /* ATT END css */
 </style>
 </head>
@@ -39382,8 +39392,8 @@ var PTX_ACCT_IO = function() {
             if (!v.ok) {
                 rec.needsDetails = true;
             }
-            if (comp && comp.pdf && mime === "application/pdf" && rec.origName !== "") {
-                rec.origName = rec.origName.replace(/\.[A-Za-z0-9]{1,5}$/, "").slice(0, 196) + ".pdf";
+            if (comp && comp.pdf && mime === "application/pdf" && rec.origName !== "" && typeof pdfimgPdfName === "function") {
+                rec.origName = pdfimgPdfName(rec.origName);
             }
             live = S.items.filter(function(x) {
                 return x.state !== "failed";
@@ -64950,8 +64960,202 @@ function attTabSettings(panel) {
     }, "المديرون فقط (الحسابات المعلَّمة «مدير» في بارتك). لا يظهر زرها لأي موظف، ويرفض السيرفر أي حساب غير مدير حتى لو حاول. أما الموظف فيرى حالته وحدها: شريطًا وعدّاد تأخير عند الحاجة.")));
 }
 
+const ATT_NOTIFY_FORCE = true;
+
+const ATT_NOTIFY_SKIP_AFTER = 2;
+
+let attNotifyEl = null;
+
+let attNotifyShown = "";
+
+let attNotifyBusy = false;
+
+let attNotifyFails = 0;
+
+let attNotifySkipped = false;
+
+let attNotifyBound = false;
+
+function attNotifyKind() {
+    try {
+        if (!ATT_NOTIFY_FORCE || attNotifySkipped) return "off";
+        if (typeof pushSupported !== "function" || typeof subscribeToPush !== "function" || typeof getExistingPushSubscription !== "function") return "off";
+        if (typeof isIosNonStandalone === "function" && isIosNonStandalone()) return "ios";
+        if (!pushSupported() || typeof Notification === "undefined") return "off";
+        if (Notification.permission === "denied") return "denied";
+        if (Notification.permission !== "granted") return "ask";
+        return "sub";
+    } catch (e) {
+        return "off";
+    }
+}
+
+function attNotifyHide() {
+    try {
+        if (attNotifyEl && attNotifyEl.parentNode) attNotifyEl.parentNode.removeChild(attNotifyEl);
+        attNotifyEl = null;
+        attNotifyShown = "";
+        if (document.body) document.body.classList.remove("att-notify-open");
+    } catch (e) {}
+}
+
+function attNotifyShow(kind) {
+    const txt = {
+        ask: [ "فعّل الإشعارات للمتابعة", "بارتك يرسل لك التنبيهات المهمة (ومنها تنبيه التأخر عن الدوام) حتى والتطبيق مغلق. لا يمكن استعمال التطبيق قبل تفعيلها.", "تفعيل الإشعارات" ],
+        denied: [ "الإشعارات محظورة على هذا الجهاز", "فعّلها من إعدادات المتصفح: اضغط القفل 🔒 بجانب عنوان الموقع ← الأذونات ← الإشعارات ← السماح (وعلى الجوال: إعدادات الجهاز ← الإشعارات ← بارتك). ثم ارجع هنا واضغط «تحقّق مجددًا».", "تحقّق مجددًا" ],
+        ios: [ "ثبّت التطبيق لتفعيل الإشعارات", "في الآيفون لا تعمل الإشعارات إلا من أيقونة التطبيق: اضغط زر المشاركة ثم «إضافة إلى الشاشة الرئيسية»، ثم افتح بارتك من الأيقونة وفعّل الإشعارات.", "تحقّق مجددًا" ],
+        retry: [ "تعذّر تفعيل الإشعارات", "تحقق من الإنترنت ثم أعد المحاولة.", "إعادة المحاولة" ]
+    }[kind];
+    if (!txt) return;
+    attNotifyHide();
+    const kids = [ attEl("div", {
+        class: "att-notify-icon",
+        "aria-hidden": "true"
+    }, "🔔"), attEl("h2", {
+        class: "att-notify-title"
+    }, txt[0]), attEl("p", {
+        class: "att-notify-text"
+    }, txt[1]), attEl("button", {
+        type: "button",
+        class: "btn btn-primary att-notify-btn",
+        onclick: function() {
+            attSafe(function() {
+                return attNotifyAct(kind);
+            });
+        }
+    }, txt[2]) ];
+    if (kind === "retry" && attNotifyFails >= ATT_NOTIFY_SKIP_AFTER) {
+        kids.push(attEl("button", {
+            type: "button",
+            class: "btn btn-ghost att-notify-skip",
+            onclick: function() {
+                attSafe(attNotifySkip);
+            }
+        }, "متابعة مؤقتًا"));
+    }
+    const card = attEl("div", {
+        class: "att-notify-card",
+        role: "alertdialog",
+        "aria-modal": "true",
+        "aria-label": txt[0],
+        tabindex: "-1"
+    }, kids);
+    const back = attEl("div", {
+        class: "att-notify-back"
+    }, card);
+    back.addEventListener("keydown", function(ev) {
+        if (ev.key !== "Tab") return;
+        ev.preventDefault();
+        const bs = card.querySelectorAll("button");
+        if (!bs.length) return;
+        const cur = Array.prototype.indexOf.call(bs, document.activeElement);
+        const next = ev.shiftKey ? cur <= 0 ? bs.length - 1 : cur - 1 : cur + 1 >= bs.length ? 0 : cur + 1;
+        try {
+            bs[next].focus();
+        } catch (e) {}
+    });
+    attNotifyEl = back;
+    attNotifyShown = kind;
+    if (document.body) {
+        document.body.appendChild(back);
+        document.body.classList.add("att-notify-open");
+    }
+    try {
+        card.querySelector("button").focus({
+            preventScroll: true
+        });
+    } catch (e) {}
+}
+
+async function attNotifyCheck(gen, tried) {
+    let kind = attNotifyKind();
+    if (kind === "sub") {
+        let sub = null;
+        try {
+            sub = await getExistingPushSubscription();
+        } catch (e) {}
+        if (gen !== attGen) return;
+        if (sub) {
+            kind = "off";
+        } else if (tried) {
+            attNotifyFails++;
+            kind = "retry";
+        } else {
+            try {
+                await subscribeToPush();
+            } catch (e) {}
+            try {
+                sub = await getExistingPushSubscription();
+            } catch (e) {}
+            if (gen !== attGen) return;
+            if (sub) {
+                kind = "off";
+            } else {
+                attNotifyFails++;
+                kind = "retry";
+            }
+        }
+    }
+    if (gen !== attGen) return;
+    if (kind === "off") {
+        attNotifyFails = 0;
+        attNotifyHide();
+        return;
+    }
+    attNotifyShow(kind);
+}
+
+async function attNotifyAct(kind) {
+    if (attNotifyBusy) return;
+    attNotifyBusy = true;
+    const gen = attGen;
+    let tried = false;
+    try {
+        if (kind === "ask" || kind === "retry") {
+            tried = true;
+            try {
+                await subscribeToPush();
+            } catch (e) {}
+        }
+        await attNotifyCheck(gen, tried);
+    } finally {
+        attNotifyBusy = false;
+    }
+}
+
+function attNotifySkip() {
+    attNotifySkipped = true;
+    attNotifyHide();
+    attToast("سنطلب تفعيل الإشعارات مجددًا عند الدخول القادم", "error");
+}
+
+function attNotifyRecheck() {
+    if (!attNotifyEl || attNotifyBusy || attNotifyShown !== "denied" && attNotifyShown !== "ios") return;
+    attSafe(function() {
+        return attNotifyCheck(attGen, false);
+    });
+}
+
+function attNotifyGate() {
+    if (!ATT_NOTIFY_FORCE) return;
+    try {
+        if (document.body) document.body.classList.add("att-notify-on");
+    } catch (e) {}
+    if (!attNotifyBound) {
+        attNotifyBound = true;
+        document.addEventListener("visibilitychange", function() {
+            if (!document.hidden) attNotifyRecheck();
+        }, false);
+        if (window.addEventListener) window.addEventListener("focus", attNotifyRecheck, false);
+    }
+    attNotifySkipped = false;
+    attNotifyFails = 0;
+    return attNotifyCheck(attGen, false);
+}
+
 function attOnLogin() {
     return attSafe(function() {
+        attSafe(attNotifyGate);
         attBindOnce();
         attSyncButton();
         attFreshAt = Date.now();
@@ -64963,6 +65167,8 @@ function attOnLogin() {
 function attEndSession() {
     try {
         attGen++;
+        attNotifyHide();
+        attNotifyBusy = false;
         attStopPoll();
         attStopTick();
         attClearTimers();
@@ -65009,7 +65215,9 @@ const PDFIMG_MIN_BYTES = 100;
 
 const PDFIMG_MAX_BYTES = 7340032;
 
-const PDFIMG_HDR = "%PDF-1.4\n%âãÏÓ\n";
+const PDFIMG_NAME_MAX = 196;
+
+const PDFIMG_HDR = "%PDF-1.4\n%" + String.fromCharCode(226, 227, 207, 211) + "\n";
 
 const PDFIMG_OBJ1 = "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
 
@@ -65082,10 +65290,7 @@ function pdfimgJpegInfo(b) {
     return null;
 }
 
-function pdfimgBuild(jpeg) {
-    const info = pdfimgJpegInfo(jpeg);
-    if (!info || info.end > PDFIMG_MAX_BYTES) return null;
-    const data = info.end === jpeg.length ? jpeg : jpeg.subarray(0, info.end);
+function pdfimgAssemble(data, info) {
     const land = info.width > info.height, pw = land ? 842 : 595, ph = land ? 595 : 842, m = PDFIMG_MARGIN;
     const sc = Math.min((pw - 2 * m) / info.width, (ph - 2 * m) / info.height);
     const dw = info.width * sc, dh = info.height * sc;
@@ -65119,6 +65324,14 @@ function pdfimgBuild(jpeg) {
         out.set(parts[k], p);
         p += parts[k].length;
     }
+    return out;
+}
+
+function pdfimgBuild(jpeg) {
+    const info = pdfimgJpegInfo(jpeg);
+    if (!info || info.end > PDFIMG_MAX_BYTES) return null;
+    const data = info.end === jpeg.length ? jpeg : jpeg.subarray(0, info.end);
+    const out = pdfimgAssemble(data, info);
     const back = pdfimgExtract(out);
     if (!back || back.length !== data.length) return null;
     for (let k = 0; k < data.length; k++) {
@@ -65140,9 +65353,15 @@ function pdfimgExtract(b) {
         const len = Number(mm[1]), start = o4 + mm.index + mm[0].length;
         if (!(len >= PDFIMG_MIN_BYTES) || start + len + 18 > n || n - (start + len) > 1024) return null;
         if (b[start] !== 255 || b[start + 1] !== 216 || b[start + len - 2] !== 255 || b[start + len - 1] !== 217) return null;
-        const tail = pdfimgLatin1(b, start + len, n);
-        if (tail.indexOf("\nendstream\nendobj\n") !== 0 || tail.indexOf("/Producer (" + PDFIMG_PRODUCER + ")") < 0 || tail.slice(-6) !== "%%EOF\n") return null;
-        return b.subarray(start, start + len);
+        const jpg = b.subarray(start, start + len);
+        const info = pdfimgJpegInfo(jpg);
+        if (!info || info.end !== len) return null;
+        const ref = pdfimgAssemble(jpg, info);
+        if (ref.length !== n) return null;
+        for (let k = 0; k < n; k++) {
+            if (ref[k] !== b[k]) return null;
+        }
+        return jpg;
     } catch (e) {
         return null;
     }
@@ -65187,6 +65406,13 @@ async function pdfimgFromJpeg(blob) {
     }
 }
 
+function pdfimgPdfName(name) {
+    let s = String(name === null || name === undefined ? "" : name).replace(/\.[A-Za-z0-9]{1,5}$/, "").slice(0, PDFIMG_NAME_MAX);
+    const c = s.charCodeAt(s.length - 1);
+    if (c >= 55296 && c <= 56319) s = s.slice(0, -1);
+    return s + ".pdf";
+}
+
 function pdfimgPreview(sh, done) {
     try {
         if (!sh || !sh.blob || sh.blobUrl || String(sh.mime) !== "application/pdf" || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") return;
@@ -65208,7 +65434,11 @@ function pdfimgPreview(sh, done) {
             }
             if (!url) return;
             sh.blobUrl = url;
-            if (typeof done === "function") done();
+            if (typeof done === "function") {
+                try {
+                    done();
+                } catch (e) {}
+            }
         }, function() {});
     } catch (e) {}
 }
