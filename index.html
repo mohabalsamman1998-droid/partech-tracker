@@ -2727,6 +2727,21 @@
   .att-alert .att-alert-ok{background:transparent;border:2px solid #fff;color:#fff;min-width:220px;min-height:46px;font-size:16px;font-weight:800;}
   .att-alert .att-alert-checkin{background:#fff;border-color:#fff;color:#7f1d1d;min-width:260px;min-height:58px;font-size:20px;font-weight:900;margin:0 0 8px;}
   .att-alert .att-alert-msg{margin:0 auto 12px;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.5);}
+  /* ورقة «تغيير المكان أو الوقت» (خطط الأيام) */
+  .att-plan-body .att-plan-h{margin:14px 0 6px;font-size:14px;font-weight:800;color:var(--text);}
+  .att-plan-scopes{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .att-plan-scope{position:relative;display:flex;flex-direction:column;gap:2px;min-height:60px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);cursor:pointer;}
+  .att-plan-scope input{position:absolute;inset:0;margin:0;opacity:0;cursor:pointer;}
+  .att-plan-scope-on{border-color:var(--green);box-shadow:inset 0 0 0 1px var(--green);}
+  .att-plan-scope-off{opacity:.5;cursor:not-allowed;}
+  .att-plan-scope-always{grid-column:1 / -1;border-color:var(--amber-line);}
+  .att-plan-scope-t{font-weight:800;}
+  .att-plan-scope-s{font-size:12.5px;color:var(--text-dim);}
+  .att-plan-chip{flex-direction:column;justify-content:center;line-height:1.25;padding:6px 14px;}
+  .att-plan-chip-sub{display:block;font-size:11.5px;font-weight:600;color:var(--text-dim);}
+  .att-plan-sum{margin:14px 0 6px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);font-size:14px;line-height:1.7;}
+  .att-plan-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-top:1px solid var(--border-soft);font-size:13.5px;}
+  .att-plan-item-t{flex:1;}
   /* الإشعارات إجبارية: طبقة تغطي التطبيق حتى تُفعَّل (تحت التوست 100 وفوق إنذار التأخر 95)، وزرّ كتم الإشعارات القديم مخفي */
   body.att-notify-on #btn-push-toggle{display:none !important;}
   body.att-notify-open{overflow:hidden;}
@@ -62781,6 +62796,14 @@ const ATT_ERR = {
     in_use: "لا يمكن حذف موقع مرتبط بموظفين. انقل الموظفين إلى موقع آخر أولًا.",
     in_use_off: "لا يمكن تعطيل موقع يعمل به موظفون فعّالون (يفقدون نطاقهم فلا يُحتسب حضورهم). انقلهم إلى موقع آخر أولًا.",
     no_record: "لا يوجد سجل حضور في هذا اليوم لإسقاط تأخيره.",
+    plan_past: "لا يمكن تغيير يوم مضى. لتصحيح حضور يوم سابق افتح «التأخيرات» واضغط «تعديل» على ذلك اليوم.",
+    plan_range: "اختر تاريخ نهاية بعد تاريخ البداية، وبحد أقصى 90 يومًا من اليوم.",
+    plan_off_day: "هذا اليوم عطلة حسب أيام الدوام في الإعدادات، فلا يُحتسب فيه حضور.",
+    plan_locked: "لهذا اليوم سجل حضور أو عذر أو غياب بالفعل فلا يتغير. لتصحيحه استخدم «تعديل الحضور».",
+    in_use_plans: "هذا الموقع استُخدم في تغييرات دوام موظفين فلا يُحذف. عطّله بدل حذفه (يختفي من الخيارات ويبقى سجله).",
+    in_use_plans_off: "لهذا الموقع تغييرات قادمة لموظفين. احذفها أو غيّر مكانها من بطاقة الموظف ثم عطّله.",
+    in_use_history: "لا يمكن حذف مكان سُجّل فيه حضور. عطّله بدل حذفه.",
+    stale: "تغيّرت بيانات هذا الموظف من شاشة أخرى. حُدّثت الشاشة؛ افتح «تعديل» من جديد.",
     not_found: "العنصر غير موجود."
 };
 
@@ -67184,6 +67207,537 @@ function attTabSetup(panel) {
     attSecEmployees(panel);
     attSecPlaces(panel);
     attSecRules(panel);
+}
+
+function attIsoDow(ymd) {
+    const p = String(ymd).split("-").map(Number);
+    const d = new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay();
+    return d === 0 ? 7 : d;
+}
+
+function attHmText(hm) {
+    const p = String(hm || "").split(":");
+    return attTimeText(Date.UTC(1970, 0, 1, Number(p[0]) || 0, Number(p[1]) || 0), "UTC");
+}
+
+function attHmAdd(hm, mins) {
+    const p = String(hm || "").split(":");
+    const t = (Number(p[0]) || 0) * 60 + (Number(p[1]) || 0) + mins;
+    return t < 0 || t > 1439 ? null : attPad(Math.floor(t / 60)) + ":" + attPad(t % 60);
+}
+
+function attPlanDates(from, to, workDays) {
+    const dates = [], off = [];
+    if (!from || !to || to < from) return {
+        dates: dates,
+        off: off,
+        bad: true
+    };
+    for (let d = from, n = 0; d <= to && n < 400; d = attYmdAdd(d, 1), n++) {
+        (workDays.indexOf(attIsoDow(d)) >= 0 ? dates : off).push(d);
+    }
+    return {
+        dates: dates,
+        off: off,
+        bad: false
+    };
+}
+
+function attPlanGroups(plans, workDays) {
+    const list = (plans || []).slice().sort(function(a, b) {
+        return a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
+    });
+    const out = [];
+    list.forEach(function(p) {
+        const last = out[out.length - 1];
+        let adjacent = false;
+        if (last && !last.locked && !p.locked && last.loc === (p.location_id === undefined ? null : p.location_id) && last.shift === (p.shift_start || null)) {
+            let d = attYmdAdd(last.to, 1), n = 0;
+            while (d < p.date && workDays.indexOf(attIsoDow(d)) < 0 && n < 14) {
+                d = attYmdAdd(d, 1);
+                n++;
+            }
+            adjacent = d === p.date;
+        }
+        if (adjacent) {
+            last.to = p.date;
+            last.count++;
+        } else out.push({
+            from: p.date,
+            to: p.date,
+            loc: p.location_id === undefined ? null : p.location_id,
+            shift: p.shift_start || null,
+            locked: !!p.locked,
+            record: p.record || null,
+            count: 1
+        });
+    });
+    return out;
+}
+
+function attPlanDayWord(ymd, today) {
+    return ymd === today ? "اليوم" : ymd === attYmdAdd(today, 1) ? "غدًا" : attDayLong(ymd);
+}
+
+function attPlanLine(g, cfg, today) {
+    const loc = g.loc !== null ? (cfg.locations || []).filter(function(l) {
+        return l.id === g.loc;
+    })[0] || null : null;
+    const when = g.from === g.to ? attPlanDayWord(g.from, today) : "من " + attPlanDayWord(g.from, today) + " إلى " + attPlanDayWord(g.to, today);
+    const bits = [];
+    bits.push(loc ? loc.name : "مكانه المعتاد");
+    bits.push(g.shift ? "الدوام " + attHmText(g.shift) : "بوقته المعتاد");
+    return when + " — " + bits.join(" · ");
+}
+
+function attPlanSummary(m) {
+    const who = m.name;
+    const place = m.locName ? "يداوم في «" + m.locName + "»" : "يبقى في مكانه المعتاد" + (m.usualName ? " «" + m.usualName + "»" : "");
+    const time = m.time ? "ويبدأ دوامه " + attHmText(m.time) : "بوقته المعتاد" + (m.usualTime ? " " + attHmText(m.usualTime) : "");
+    if (!m.locName && !m.time) return "لم تغيّر شيئًا بعد: " + who + " على معتاده.";
+    if (m.scope === "always") {
+        const bits = [];
+        if (m.locName) bits.push("مكانه المعتاد «" + m.locName + "»");
+        if (m.time) bits.push("دوامه المعتاد " + attHmText(m.time));
+        return "من الآن وللأيام القادمة يصير " + bits.join(" و") + " (لا يتغير ما سُجّل من أيام سابقة).";
+    }
+    const days = m.dayCount === 1 ? "" : " (" + attDaysGen(m.dayCount) + " دوام)";
+    const when = m.scope === "today" ? "اليوم فقط" : m.scope === "tomorrow" ? "غدًا فقط" : attPlanDayWord(m.from, m.today) + (m.to !== m.from ? " حتى " + attPlanDayWord(m.to, m.today) : "") + days;
+    return when + ": " + who + " " + place + " " + time + ". وبعدها يعود إلى معتاده.";
+}
+
+function attPlanUsualTime(emp, cfg) {
+    return String(emp && emp.shift_start || cfg.settings && cfg.settings.default_shift_start || "").slice(0, 5);
+}
+
+function attPlanSheet(empId, opts) {
+    const v = attView;
+    if (!v || !v.cfg || v.cfg.plans === undefined) return null;
+    if (document.querySelector("#att-root .att-plan-who")) return null;
+    const cfg = v.cfg, emp = attEmpOf(empId);
+    if (!emp || !emp.active) return null;
+    const today = cfg.today || attDayKey(attNow(), attTz());
+    const maxDay = attYmdAdd(today, Number(cfg.plan_days) || 90);
+    const wd = cfg.settings && cfg.settings.work_days || [];
+    const locs = (cfg.locations || []).filter(function(l) {
+        return l.active;
+    });
+    const usual = locs.filter(function(l) {
+        return l.id === emp.usual_location_id;
+    })[0] || null;
+    const usualTime = attPlanUsualTime(emp, cfg);
+    const row = (v.today && v.today.rows || []).filter(function(x) {
+        return x.employee_id === empId;
+    })[0] || null;
+    const recorded = !!(row && row.implicit === false);
+    const tomorrow = attYmdAdd(today, 1);
+    const todayOff = wd.indexOf(attIsoDow(today)) < 0, tomorrowOff = wd.indexOf(attIsoDow(tomorrow)) < 0;
+    const st = {
+        scope: "",
+        from: today,
+        to: today,
+        loc: "usual",
+        time: "usual",
+        other: "",
+        sending: false
+    };
+    st.scope = !todayOff && !recorded ? "today" : !tomorrowOff ? "tomorrow" : "range";
+    if (st.scope === "tomorrow") {
+        st.from = tomorrow;
+        st.to = tomorrow;
+    }
+    if (st.scope === "range") {
+        st.from = tomorrow;
+        st.to = tomorrow;
+    }
+    if (opts && opts.scope === "always") st.scope = "always";
+    const name = emp.name;
+    const sum = attEl("div", {
+        class: "att-plan-sum",
+        role: "status",
+        "aria-live": "polite"
+    });
+    const okBtn = attEl("button", {
+        type: "button",
+        class: "btn btn-primary att-plan-ok",
+        disabled: true
+    }, "حفظ");
+    const fromIn = attEl("input", {
+        type: "date",
+        class: "att-in att-ltr",
+        min: today,
+        max: maxDay,
+        value: st.from,
+        "aria-label": "من تاريخ"
+    });
+    const toIn = attEl("input", {
+        type: "date",
+        class: "att-in att-ltr",
+        min: today,
+        max: maxDay,
+        value: st.to,
+        "aria-label": "إلى تاريخ"
+    });
+    const rangeBox = attEl("div", {
+        class: "att-plan-range att-hide"
+    }, attEl("label", {
+        class: "att-field"
+    }, attEl("span", {}, "من تاريخ"), fromIn), attEl("label", {
+        class: "att-field"
+    }, attEl("span", {}, "إلى تاريخ"), toIn));
+    const otherIn = attEl("input", {
+        type: "time",
+        class: "att-in att-hide",
+        value: usualTime,
+        "aria-label": "وقت بدء الدوام"
+    });
+    const scopeBox = attEl("div", {
+        class: "att-plan-scopes",
+        role: "radiogroup",
+        "aria-label": "متى؟"
+    });
+    const locBox = attEl("div", {
+        class: "att-chiprow att-plan-locs",
+        role: "group",
+        "aria-label": "أين يداوم؟"
+    });
+    const timeBox = attEl("div", {
+        class: "att-chiprow att-plan-times",
+        role: "group",
+        "aria-label": "متى يبدأ دوامه؟"
+    });
+    const listBox = attEl("div", {
+        class: "att-plan-list"
+    });
+    const scopeDefs = [ [ "today", "اليوم فقط", todayOff ? "عطلة" : recorded ? "سُجّل حضوره" : attDayLong(today), todayOff || recorded ], [ "tomorrow", "غدًا", tomorrowOff ? "عطلة" : attDayLong(tomorrow), tomorrowOff ], [ "range", "تواريخ محددة", "يوم أو عدّة أيام", false ], [ "always", "تغيير دائم", "يصير هو المعتاد", false ] ];
+    const scopeEls = {};
+    function dateModel() {
+        if (st.scope === "today") return attPlanDates(today, today, wd);
+        if (st.scope === "tomorrow") return attPlanDates(tomorrow, tomorrow, wd);
+        return attPlanDates(st.from, st.to, wd);
+    }
+    function timeValue() {
+        return st.time === "usual" ? null : st.time === "other" ? st.other || null : st.time;
+    }
+    function sameAsUsual(hm) {
+        return !hm || hm === usualTime;
+    }
+    function model() {
+        const dm = dateModel();
+        const tv = timeValue();
+        const lc = st.loc === "usual" ? null : locs.filter(function(l) {
+            return String(l.id) === String(st.loc);
+        })[0] || null;
+        return {
+            dm: dm,
+            locObj: lc,
+            time: sameAsUsual(tv) ? null : tv,
+            always: st.scope === "always"
+        };
+    }
+    function redraw() {
+        const m = model();
+        const first = st.scope === "always" ? today : m.dm.dates[0] || st.from;
+        attSetText(sum, attPlanSummary({
+            name: name,
+            scope: st.scope,
+            from: st.scope === "today" ? today : st.scope === "tomorrow" ? tomorrow : st.from,
+            to: st.scope === "today" ? today : st.scope === "tomorrow" ? tomorrow : st.to,
+            today: today,
+            locName: m.locObj ? m.locObj.name : "",
+            usualName: usual ? usual.name : "",
+            time: m.time,
+            usualTime: usualTime,
+            dayCount: m.dm.dates.length
+        }) + (!m.always && m.dm.off.length ? " (تُستثنى أيام العطلة)" : ""));
+        const changed = !!(m.locObj || m.time);
+        let valid = changed;
+        if (!m.always) {
+            valid = valid && !m.dm.bad && m.dm.dates.length > 0 && (st.scope !== "range" || st.from >= today && st.to <= maxDay);
+        }
+        if (st.time === "other" && !st.other) valid = false;
+        okBtn.disabled = !valid || st.sending;
+        okBtn.textContent = st.scope === "today" ? "حفظ لليوم فقط" : st.scope === "tomorrow" ? "حفظ ليوم الغد" : st.scope === "always" ? "حفظ كتغيير دائم" : "حفظ لـ " + (m.dm.dates.length || 0) + " " + (m.dm.dates.length === 1 ? "يوم" : "أيام");
+        if (usualLocTx) attSetText(usualLocTx, st.scope === "always" ? "بلا تغيير" : "كالمعتاد");
+        rangeBox.classList.toggle("att-hide", st.scope !== "range");
+        otherIn.classList.toggle("att-hide", st.time !== "other");
+        Object.keys(scopeEls).forEach(function(k) {
+            scopeEls[k].input.checked = st.scope === k;
+            scopeEls[k].label.classList.toggle("att-plan-scope-on", st.scope === k);
+        });
+        Array.prototype.forEach.call(locBox.querySelectorAll(".att-chipbtn"), function(b) {
+            b.setAttribute("aria-pressed", b.dataset.k === String(st.loc) ? "true" : "false");
+        });
+        Array.prototype.forEach.call(timeBox.querySelectorAll(".att-chipbtn"), function(b) {
+            b.setAttribute("aria-pressed", b.dataset.k === st.time ? "true" : "false");
+        });
+        return first;
+    }
+    scopeDefs.forEach(function(d) {
+        const inp = attEl("input", {
+            type: "radio",
+            name: "att-plan-scope",
+            value: d[0],
+            disabled: !!d[3],
+            onchange: function() {
+                st.scope = d[0];
+                if (d[0] === "today") {
+                    st.from = today;
+                    st.to = today;
+                } else if (d[0] === "tomorrow") {
+                    st.from = tomorrow;
+                    st.to = tomorrow;
+                }
+                if (d[0] === "always" && st.loc === "usual") {}
+                redraw();
+            }
+        });
+        const lab = attEl("label", {
+            class: "att-plan-scope" + (d[3] ? " att-plan-scope-off" : "") + (d[0] === "always" ? " att-plan-scope-always" : "")
+        }, inp, attEl("span", {
+            class: "att-plan-scope-t"
+        }, d[1]), attEl("span", {
+            class: "att-plan-scope-s"
+        }, d[2]));
+        scopeEls[d[0]] = {
+            input: inp,
+            label: lab
+        };
+        scopeBox.appendChild(lab);
+    });
+    let usualLocTx = null;
+    function chip(box, key, text, sub, onPick) {
+        const tx = attEl("span", {
+            class: "att-plan-chip-t"
+        }, text);
+        const b = attEl("button", {
+            type: "button",
+            class: "att-chipbtn att-plan-chip",
+            "aria-pressed": "false",
+            dataset: {
+                k: String(key)
+            },
+            onclick: function() {
+                onPick();
+                redraw();
+            }
+        }, tx, sub ? attEl("span", {
+            class: "att-plan-chip-sub"
+        }, sub) : null);
+        box.appendChild(b);
+        return tx;
+    }
+    usualLocTx = chip(locBox, "usual", "كالمعتاد", usual ? usual.name : "", function() {
+        st.loc = "usual";
+    });
+    locs.filter(function(l) {
+        return !usual || l.id !== usual.id;
+    }).forEach(function(l) {
+        chip(locBox, l.id, l.name, "", function() {
+            st.loc = String(l.id);
+        });
+    });
+    chip(timeBox, "usual", "كالمعتاد", usualTime ? attHmText(usualTime) : "", function() {
+        st.time = "usual";
+    });
+    [ [ -60, "قبل ساعة" ], [ 60, "بعد ساعة" ] ].forEach(function(o) {
+        const hm = attHmAdd(usualTime, o[0]);
+        if (hm) chip(timeBox, hm, o[1], attHmText(hm), function() {
+            st.time = hm;
+        });
+    });
+    chip(timeBox, "other", "وقت آخر…", "", function() {
+        st.time = "other";
+    });
+    fromIn.addEventListener("input", function() {
+        st.from = fromIn.value || today;
+        if (st.to < st.from) {
+            st.to = st.from;
+            toIn.value = st.to;
+        }
+        redraw();
+    });
+    toIn.addEventListener("input", function() {
+        st.to = toIn.value || st.from;
+        if (st.to < st.from) {
+            st.to = st.from;
+            toIn.value = st.to;
+        }
+        redraw();
+    });
+    otherIn.addEventListener("input", function() {
+        st.other = otherIn.value;
+        redraw();
+    });
+    function drawList() {
+        listBox.innerHTML = "";
+        const groups = attPlanGroups((attView && attView.cfg && attView.cfg.plans || []).filter(function(p) {
+            return p && p.employee_id === empId && p.date >= today;
+        }), wd);
+        if (!groups.length) {
+            listBox.appendChild(attEl("div", {
+                class: "att-hint"
+            }, "لا توجد تغييرات قادمة: يداوم في مكانه المعتاد وبوقته المعتاد."));
+            return;
+        }
+        listBox.appendChild(attEl("h4", {
+            class: "att-plan-h"
+        }, "تغييرات قادمة"));
+        groups.forEach(function(g) {
+            listBox.appendChild(attEl("div", {
+                class: "att-plan-item"
+            }, attEl("span", {
+                class: "att-plan-item-t"
+            }, attPlanLine(g, attView.cfg, today)), g.locked ? attEl("span", {
+                class: "att-chip"
+            }, g.record === "present" ? "سُجّل حضوره" : "له سجل") : attEl("button", {
+                type: "button",
+                class: "btn btn-ghost btn-sm att-plan-del",
+                "aria-label": "حذف تغيير " + name,
+                onclick: function() {
+                    attSafe(function() {
+                        return attPlanRemove(g);
+                    });
+                }
+            }, "حذف")));
+        });
+    }
+    async function attPlanAfter(msg, kind) {
+        attToast(msg, kind);
+        try {
+            await attReloadConfig();
+        } catch (e) {
+            attToast("تم الحفظ، لكن تعذّر تحديث الشاشة. اضغط «تحديث».", "error");
+        }
+        if (attView === v) {
+            try {
+                await attAfterEdit();
+            } catch (e) {}
+        }
+    }
+    function attPlanRemove(g) {
+        const run = attAct(async function() {
+            const r = await attCall("att_admin_set_plan", {
+                action: "clear",
+                employee_id: empId,
+                from: g.from,
+                to: g.to
+            });
+            if (!r || !r.ok) {
+                attToast(attErrText(r), "error");
+                return;
+            }
+            await attPlanAfter("حُذف التغيير: " + name + " يعود إلى معتاده", "ok");
+            drawList();
+        });
+        const go = function() {
+            return run();
+        };
+        if (typeof confirmAction === "function") confirmAction({
+            title: "حذف تغيير " + name + "؟",
+            message: attPlanLine(g, attView.cfg, today) + ". يعود إلى مكانه ووقته المعتادين في هذه الأيام.",
+            confirmLabel: "نعم، احذف",
+            cancelLabel: "لا",
+            dangerous: true,
+            onConfirm: go
+        });
+    }
+    function doSend(close) {
+        const m = model();
+        const tv = m.time, lid = m.locObj ? m.locObj.id : null;
+        return attAct(async function() {
+            if (st.sending) return;
+            st.sending = true;
+            redraw();
+            try {
+                let r;
+                if (m.always) {
+                    if (lid !== null && tv !== null) r = await attCall("att_admin_set_plan", {
+                        action: "default",
+                        employee_id: empId,
+                        location_id: lid,
+                        shift_start: tv
+                    }); else if (lid !== null) r = await attCall("att_admin_set_plan", {
+                        action: "default",
+                        employee_id: empId,
+                        location_id: lid
+                    }); else r = await attCall("att_admin_set_plan", {
+                        action: "default",
+                        employee_id: empId,
+                        shift_start: tv
+                    });
+                } else {
+                    const f = st.scope === "today" ? today : st.scope === "tomorrow" ? tomorrow : st.from;
+                    const t = st.scope === "today" ? today : st.scope === "tomorrow" ? tomorrow : st.to;
+                    r = await attCall("att_admin_set_plan", {
+                        action: "set",
+                        employee_id: empId,
+                        from: f,
+                        to: t,
+                        location_id: lid,
+                        shift_start: tv,
+                        note: null,
+                        replace_from: null,
+                        replace_to: null
+                    });
+                }
+                if (!r || !r.ok) {
+                    attToast(attErrText(r), "error");
+                    return;
+                }
+                close();
+                let msg;
+                if (m.always) msg = "تم: صار " + (m.locObj ? "مكان " + name + " المعتاد «" + m.locObj.name + "»" : "دوام " + name + " المعتاد " + attHmText(tv)) + " من الآن"; else msg = "تم: " + name + " " + (m.locObj ? "في «" + m.locObj.name + "» " : "") + (tv ? "من " + attHmText(tv) + " " : "") + attPlanDayWord(r.dates && r.dates[0] ? r.dates[0] : st.from, today) + (r.dates && r.dates.length > 1 ? " وما بعده" : "");
+                if (r.skipped_locked && r.skipped_locked.length) msg += " (لم يُغيَّر " + attDayLong(r.skipped_locked[0]) + " لأن له سجلًا بالفعل)"; else if (r.skipped_off && r.skipped_off.length) msg += " (استُثنيت أيام العطلة)";
+                if (r.today && r.today.state === "running_late") msg += " — يظهر الآن متأخرًا لأن الموعد الجديد فات";
+                if (m.always && r.radius_reset) msg += " (اعتُمد قطر المكان الجديد)";
+                await attPlanAfter(msg, "ok");
+            } finally {
+                st.sending = false;
+            }
+        })();
+    }
+    const body = attEl("div", {
+        class: "att-plan-body"
+    }, attEl("p", {
+        class: "att-muted att-plan-who"
+    }, name + " — المعتاد: " + (usual ? usual.name : "بلا مكان معتاد") + " · " + (usualTime ? attHmText(usualTime) : "")), attEl("h4", {
+        class: "att-plan-h"
+    }, "متى؟"), scopeBox, rangeBox, attEl("h4", {
+        class: "att-plan-h"
+    }, "أين يداوم؟"), locBox, attEl("h4", {
+        class: "att-plan-h"
+    }, "متى يبدأ دوامه؟"), timeBox, otherIn, sum, listBox);
+    drawList();
+    const mod = attModal(ATT_PLAN_LABEL, body, function(close) {
+        okBtn.addEventListener("click", function() {
+            const m = model();
+            if (okBtn.disabled) return;
+            if (m.always) {
+                const msg = (m.locObj ? "المكان المعتاد: «" + (usual ? usual.name : "—") + "» ← «" + m.locObj.name + "»" : "") + (m.locObj && m.time ? " · " : "") + (m.time ? "الدوام: " + (usualTime ? attHmText(usualTime) : "—") + " ← " + attHmText(m.time) : "") + ". يسري من الآن على كل الأيام القادمة، ولا يمسّ الأيام التي سُجّل حضورها.";
+                if (typeof confirmAction === "function") confirmAction({
+                    title: "تغيير دائم لـ" + name + "؟",
+                    message: msg,
+                    confirmLabel: "نعم، غيّر المعتاد",
+                    cancelLabel: "لا",
+                    onConfirm: function() {
+                        doSend(close);
+                    }
+                });
+                return;
+            }
+            doSend(close);
+        });
+        return [ okBtn, attEl("button", {
+            type: "button",
+            class: "btn btn-ghost",
+            onclick: close
+        }, "إلغاء") ];
+    }, null, {
+        sheet: true
+    });
+    redraw();
+    return mod;
 }
 
 const ATT_NOTIFY_FORCE = true;
