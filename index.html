@@ -2500,6 +2500,16 @@
   .epcl-auto-x:hover{opacity:.65;}
   .epcl-sep{color:var(--text-faint);}
   /* EPC-LOOKUP END css */
+  /* KPIW BEGIN css */
+  /* تلميح تحت عنوان المؤشر (الرئيسية فقط، بلا JS): البطاقات صارت تفتح قائمة طلبياتها */
+  #ops-kpi .ops-tiles::before{content:'اضغط على أي بطاقة لعرض الطلبيات المحسوبة فيها';grid-column:1/-1;font-size:11.5px;color:var(--text-dim);font-weight:600;line-height:1.4;}
+  .kpiw-state{font-size:12px;color:var(--text-dim);white-space:nowrap;}
+  .kpiw-note{line-height:1.6;margin-bottom:6px;}
+  .kpiw-count{font-size:13px;color:var(--text-dim);}
+  .kpiw-stat-row{width:100%;background:none;border:0;padding:6px 0;font-family:inherit;color:inherit;cursor:pointer;text-align:start;border-radius:6px;}
+  .kpiw-stat-row:hover{background:var(--surface-2);}
+  .kpiw-stat-row:focus-visible{outline:2px solid var(--green-line);outline-offset:2px;}
+  /* KPIW END css */
   /* ATT BEGIN css */
   /* ===== ATT — الحضور والتأخير بالموقع داخل التطبيق (إضافة فقط) — كل القواعد بنطاق .att-* / #att-* / body.att-* =====
      ألوان الثيم بمتغيّرات التطبيق فقط (يتبع :root[data-theme="light"] تلقائيًا)؛ الجوال أولًا (390px).
@@ -2601,6 +2611,17 @@
   .att-banner-cap{font-size:13px;font-weight:700;}
   .att-banner-sub{font-size:12px;line-height:1.6;opacity:.92;margin-top:2px;}
   .att-banner-sub:empty{display:none;}
+  /* زر «وصلت» داخل الشريط والإنذار + رسالة نتيجته */
+  .att-banner-act{margin-top:6px;display:flex;flex-direction:column;align-items:center;gap:4px;}
+  .att-checkin-btn{min-height:44px;padding:8px 18px;font-family:'Cairo',sans-serif;font-weight:800;font-size:15px;border-radius:999px;border:2px solid currentColor;background:rgba(255,255,255,.22);color:inherit;cursor:pointer;}
+  .att-checkin-btn:disabled{opacity:.7;cursor:progress;}
+  .att-tone-info .att-checkin-btn{background:var(--green);border-color:var(--green);color:var(--green-ink,#06170F);}
+  .att-check-msg{font-size:13.5px;font-weight:700;line-height:1.7;max-width:420px;}
+  .att-check-msg:empty{display:none;}
+  .att-banner-slim .att-banner-cap,.att-banner-slim .att-banner-sub{display:none;}
+  .att-banner-slim{padding-top:calc(5px + env(safe-area-inset-top));padding-bottom:5px;}
+  .att-banner-slim .att-banner-act{flex-direction:row;justify-content:center;margin-top:2px;}
+  .att-banner-slim .att-checkin-btn{min-height:38px;padding:5px 14px;font-size:14px;}
   .att-tone-info{background:var(--surface-2);color:var(--text);border-bottom-color:var(--border);}
   .att-tone-warn{background:var(--amber);color:var(--amber-ink);}
   .att-tone-bad{background:var(--rust-deep);color:#fff;animation:att-pulse 1.8s ease-in-out infinite;}
@@ -2616,7 +2637,9 @@
   .att-alert-big{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:900;font-size:54px;line-height:1.1;direction:ltr;unicode-bidi:isolate;font-variant-numeric:tabular-nums;margin:2px 0 14px;text-shadow:0 2px 10px rgba(0,0,0,.5);}
   .att-alert p{font-size:17px;line-height:1.8;margin:0 0 12px;font-weight:700;}
   .att-alert .att-alert-note{font-size:13.5px;font-weight:600;opacity:.92;margin:0 0 20px;}
-  .att-alert .att-alert-ok{background:#fff;border-color:#fff;color:#7f1d1d;min-width:220px;min-height:54px;font-size:18px;font-weight:900;}
+  .att-alert .att-alert-ok{background:transparent;border:2px solid #fff;color:#fff;min-width:220px;min-height:46px;font-size:16px;font-weight:800;}
+  .att-alert .att-alert-checkin{background:#fff;border-color:#fff;color:#7f1d1d;min-width:260px;min-height:58px;font-size:20px;font-weight:900;margin:0 0 8px;}
+  .att-alert .att-alert-msg{margin:0 auto 12px;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.5);}
   @media (prefers-reduced-motion:reduce){.att-tone-bad,.att-alert-icon{animation:none;}.att-alert{animation:none;background:#b91c1c;}}
   @media print{.att-banner,.att-banner-sp,.att-alert,#att-root{display:none !important;}}
   /* ATT END css */
@@ -39225,6 +39248,20 @@ var PTX_ACCT_IO = function() {
                 if (comp.large) {
                     warn = "image_large";
                 }
+                if (typeof pdfimgFromJpeg === "function") {
+                    try {
+                        comp.pdf = await pdfimgFromJpeg(blob);
+                    } catch (e4) {
+                        comp.pdf = null;
+                    }
+                    if (myGen !== S.gen) {
+                        return fail("stopped");
+                    }
+                    if (comp.pdf) {
+                        blob = comp.pdf;
+                        mime = "application/pdf";
+                    }
+                }
             } else {
                 return fail("type");
             }
@@ -39312,6 +39349,9 @@ var PTX_ACCT_IO = function() {
                 medium: mime.indexOf("image/") === 0 ? "photo_of_paper" : "unknown"
             };
             facts = assign({}, base, isObj(c.facts) ? c.facts : {});
+            if (comp && comp.pdf && mime === "application/pdf" && facts.medium === "unknown") {
+                facts.medium = "photo_of_paper";
+            }
             if (facts.kind === "other" && links.length && !(isObj(c.facts) && c.facts.kind)) {
                 facts.kind = kindForLinkType(str(links[0].type));
             }
@@ -39341,6 +39381,9 @@ var PTX_ACCT_IO = function() {
             };
             if (!v.ok) {
                 rec.needsDetails = true;
+            }
+            if (comp && comp.pdf && mime === "application/pdf" && rec.origName !== "") {
+                rec.origName = rec.origName.replace(/\.[A-Za-z0-9]{1,5}$/, "").slice(0, 196) + ".pdf";
             }
             live = S.items.filter(function(x) {
                 return x.state !== "failed";
@@ -44044,6 +44087,9 @@ function acct2LoadPreview(sh) {
                     sh.blobUrl = "";
                 }
             }
+            if (typeof pdfimgPreview === "function") pdfimgPreview(sh, function() {
+                if (gen === acct2Gen && acct2St === st && st.sheet === sh) acct2SheetRender();
+            });
             sh.blobState = "ready";
         } else sh.blobState = "error";
         acct2SheetRender();
@@ -44170,6 +44216,7 @@ function acct2DetailHtml(sh) {
     if (doc.hasFile && !doc.void) {
         acts += acct2ColorHtml() + '<button type="button" class="acct2-chip" data-acct2-act="detail-page">' + B.page + "</button>" + '<button type="button" class="acct2-chip" data-acct2-act="detail-retake">' + B.retake + "</button>";
     }
+    if (typeof pdfimgOpenBtnHtml === "function") acts += pdfimgOpenBtnHtml(doc, sh);
     if (!doc.void) acts += '<button type="button" class="acct2-chip acct2-chip-danger" data-acct2-act="void-toggle">' + B.voidDoc + "</button>";
     body += '<div class="acct2-actions acct2-actions-sticky">' + acts + "</div>";
     if (sh.voidOpen && !doc.void) {
@@ -62535,6 +62582,8 @@ epcLookupStartup();
 
 const ATT_POLL_ACTIVE_MS = 45e3;
 
+const ATT_POLL_WINDOW_MS = 6e4;
+
 const ATT_POLL_IDLE_MS = 3e5;
 
 const ATT_POLL_UNLINKED_MS = 18e5;
@@ -62550,6 +62599,12 @@ const ATT_SIREN_MAX_MS = 6e4;
 const ATT_ALARM_BUZZ_MS = 2e3;
 
 const ATT_ALERT_FRESH_MS = 4e4;
+
+const ATT_CHECKIN_LABEL = "📍 وصلت — سجّل حضوري";
+
+const ATT_GEO_TIMEOUT_MS = 2e4;
+
+const ATT_CHECK_MSG_MS = 12e3;
 
 const ATT_RPC_TIMEOUT_MS = 15e3;
 
@@ -62930,20 +62985,24 @@ function attDerive(today, nowMs) {
 
 function attBannerModel(v, me) {
     const loc = me && me.location && me.location.name ? me.location.name : "";
-    const where = loc ? "موقع عملك «" + loc + "»: يُسجَّل حضورك تلقائيًا عند وصولك — أبقِ التطبيق مفتوحًا والموقع مفعّلًا." : "";
+    const where = loc ? "موقع عملك «" + loc + "»: يُسجَّل حضورك تلقائيًا، أو اضغط «وصلت» عند وصولك." : "";
     if (v.kind === "pending") {
-        if (v.remainingMs > ATT_BANNER_LEAD_MS) return null;
+        const slim = v.remainingMs > ATT_BANNER_LEAD_MS;
         const soon = v.remainingMs <= ATT_BANNER_SOON_MS;
         return {
             tone: soon ? "warn" : "info",
+            slim: slim,
+            act: true,
             title: "بداية الدوام " + attTimeText(v.dl, me && me.timezone),
             big: attHMS(v.remainingMs),
-            cap: soon ? "اقترب الموعد ولم يُسجَّل وصولك بعد" : "لم يُسجَّل وصولك بعد",
-            sub: where
+            cap: slim ? "" : soon ? "اقترب الموعد ولم يُسجَّل وصولك بعد" : "لم يُسجَّل وصولك بعد",
+            sub: slim ? "" : where
         };
     }
     if (v.kind === "grace") return {
         tone: "warn",
+        slim: false,
+        act: true,
         title: "ضمن مهلة السماح",
         big: attHMS(v.remainingMs),
         cap: "بعدها يبدأ احتساب التأخير",
@@ -62953,6 +63012,8 @@ function attBannerModel(v, me) {
         const mins = Math.floor(v.lateMs / 6e4);
         return {
             tone: "bad",
+            slim: false,
+            act: true,
             title: "متأخر منذ",
             big: attHMS(v.lateMs),
             cap: attMinutesText(mins) + (v.over ? " — تجاوزت حدّ الغياب وقد يُحتسب اليوم غيابًا" : ""),
@@ -62985,7 +63046,18 @@ function attBannerEl() {
         class: "att-banner-cap"
     })), attEl("div", {
         class: "att-banner-sub"
-    }));
+    }), attEl("div", {
+        class: "att-banner-act att-hide"
+    }, attEl("button", {
+        type: "button",
+        class: "btn att-checkin-btn att-banner-btn",
+        onclick: function() {
+            attSafe(attCheckIn);
+        }
+    }, ATT_CHECKIN_LABEL), attEl("div", {
+        class: "att-check-msg",
+        role: "alert"
+    })));
     document.body.insertBefore(sp, document.body.firstChild);
     document.body.insertBefore(el, sp);
     return el;
@@ -63066,13 +63138,16 @@ function attPaint() {
         if (b1) b1.classList.add("att-hide");
     } else {
         const el = attBannerEl();
-        const cls = "att-banner att-tone-" + m.tone;
+        const cls = "att-banner att-tone-" + m.tone + (m.slim ? " att-banner-slim" : "");
         if (el.className !== cls) el.className = cls;
         attSetText(el.querySelector(".att-banner-title"), m.title);
         attSetText(el.querySelector(".att-banner-big"), m.big);
         attSetText(el.querySelector(".att-banner-cap"), m.cap);
         attSetText(el.querySelector(".att-banner-sub"), m.sub);
+        const act = el.querySelector(".att-banner-act");
+        if (act) act.classList.toggle("att-hide", !m.act);
     }
+    attCheckMsgTick();
     attBannerSpace();
     if (v.kind === "late") attMaybeAlert(v, me); else attHideAlert();
     if (v.kind === "pending" || v.kind === "grace" || v.kind === "late") attStartTick(); else attStopTick();
@@ -63177,6 +63252,15 @@ function attAlertEl() {
         "aria-hidden": "true"
     }, "00:00:00"), attEl("p", {
         id: "att-alert-text"
+    }), attEl("button", {
+        type: "button",
+        class: "btn att-checkin-btn att-alert-checkin",
+        onclick: function() {
+            attSafe(attCheckIn);
+        }
+    }, ATT_CHECKIN_LABEL), attEl("div", {
+        class: "att-check-msg att-alert-msg",
+        role: "alert"
     }), attEl("p", {
         class: "att-alert-note"
     }, "يتجدد هذا الإنذار كل 5 دقائق حتى يُسجَّل وصولك."), attEl("button", {
@@ -63298,6 +63382,119 @@ function attOnArrived(a, me) {
     attToast(late ? "سُجّل حضورك — تأخير " + attMinutesText(a.late_minutes) : "تم تسجيل حضورك ✓", late ? "error" : "ok");
 }
 
+let attCheckBusy = false;
+
+let attCheckMsgAt = 0;
+
+function attGetPosition() {
+    return new Promise(function(resolve, reject) {
+        try {
+            if (!navigator.geolocation) {
+                reject(attErrCode("NO_GEO"));
+                return;
+            }
+            navigator.geolocation.getCurrentPosition(function(p) {
+                resolve({
+                    lat: p.coords.latitude,
+                    lng: p.coords.longitude,
+                    accuracy: p.coords.accuracy
+                });
+            }, function(e) {
+                reject(attErrCode(e && e.code === 1 ? "GEO_DENIED" : e && e.code === 3 ? "GEO_TIMEOUT" : "GEO_FAIL"));
+            }, {
+                enableHighAccuracy: true,
+                timeout: ATT_GEO_TIMEOUT_MS,
+                maximumAge: 0
+            });
+        } catch (e) {
+            reject(attErrCode("GEO_FAIL"));
+        }
+    });
+}
+
+function attMeters(m) {
+    m = Math.round(Number(m) || 0);
+    return m >= 1e3 ? (m / 1e3).toFixed(1) + " كم" : m + " م";
+}
+
+function attCheckText(r) {
+    const e = r && r.error;
+    if (e === "outside") return "أنت بعيد عن «" + (r.location || "موقع العمل") + "» بنحو " + attMeters(r.distance_m) + " (المسموح " + attMeters(r.radius_m) + "). توجّه إلى موقع العمل ثم اضغط مرة أخرى.";
+    if (e === "weak_signal") return "إشارة الموقع ضعيفة (دقتها " + attMeters(r.accuracy_m) + " والمطلوب " + attMeters(r.max_accuracy_m) + " أو أقل). اخرج لمكان مفتوح وأعد المحاولة.";
+    if (e === "too_early") return "لم يفتح التسجيل بعد، يفتح الساعة " + attTimeText(Date.parse(r.opens_at), attMe && attMe.timezone) + ".";
+    if (e === "not_working_day") return "اليوم ليس يوم دوام لك.";
+    if (e === "day_locked") return "سجّل المدير حالة هذا اليوم (" + (r.status === "excused" ? "عذر/إجازة" : "غياب") + ") فلا تتغير بالزر.";
+    if (e === "no_location") return "لم يُحدَّد لك موقع عمل بعد. أخبر المدير.";
+    if (e === "bad_position") return "تعذّر قراءة موقعك. أعد المحاولة.";
+    return "تعذّر التحقق من حسابك. أعد فتح التطبيق وحاول مرة أخرى.";
+}
+
+function attCheckErrText(e) {
+    const c = e && e.code;
+    if (c === "GEO_DENIED") return "اسمح للتطبيق بالوصول إلى الموقع (من إعدادات الجهاز) ثم أعد المحاولة.";
+    if (c === "GEO_TIMEOUT" || c === "GEO_FAIL" || c === "NO_GEO") return "تعذّر تحديد موقعك الآن. اخرج لمكان مفتوح وتأكد أن خدمة الموقع مفعّلة ثم أعد المحاولة.";
+    return attFailText(e);
+}
+
+function attCheckUi(busy, msg) {
+    try {
+        Array.prototype.forEach.call(document.querySelectorAll(".att-checkin-btn"), function(b) {
+            b.disabled = !!busy;
+            attSetText(b, busy ? "جارٍ تحديد موقعك…" : ATT_CHECKIN_LABEL);
+        });
+        Array.prototype.forEach.call(document.querySelectorAll(".att-check-msg"), function(m) {
+            attSetText(m, msg || "");
+        });
+        attCheckMsgAt = msg ? Date.now() : 0;
+        attBannerSpace();
+    } catch (e) {}
+}
+
+function attCheckMsgTick() {
+    if (attCheckMsgAt && Date.now() - attCheckMsgAt > ATT_CHECK_MSG_MS) {
+        attCheckUi(attCheckBusy, "");
+    }
+}
+
+async function attCheckIn() {
+    if (attCheckBusy || !attMe) return;
+    const gen = attGen;
+    attCheckBusy = true;
+    attCheckUi(true, "");
+    let msg = "";
+    try {
+        const pos = await attGetPosition();
+        if (gen !== attGen) return;
+        const t0 = Date.now();
+        const r = await attRpc("att_app_check_in", pos);
+        const t1 = Date.now();
+        if (gen !== attGen) return;
+        const st = r && (r.server_time || r.me && r.me.server_time);
+        if (st) attSyncClock(st, t0, t1);
+        if (r && r.ok === true && r.me) {
+            attFails = 0;
+            attLastLoad = Date.now();
+            attMe = r.me;
+            const t = attMe.today || {};
+            attWaiting = !!(t.working && !t.attendance);
+            if (t.attendance && t.attendance.status === "present") {
+                if (r.already) attToast("حضورك مسجّل أصلًا ✓", "ok"); else attOnArrived(t.attendance, attMe);
+            }
+            attPaint();
+            attSchedulePoll();
+            return;
+        }
+        msg = attCheckText(r);
+    } catch (e) {
+        msg = attCheckErrText(e);
+    } finally {
+        if (gen === attGen) {
+            attCheckBusy = false;
+            attCheckUi(false, msg);
+        }
+    }
+}
+
 async function attMeLoad() {
     if (typeof sb === "undefined" || !sb) return;
     const gen = attGen;
@@ -63353,7 +63550,7 @@ function attSchedulePoll() {
     if (!attMe || !attMe.today) return;
     const v = attDerive(attMe.today, attNow());
     let ms = ATT_POLL_IDLE_MS;
-    if (v.kind === "grace" || v.kind === "late") ms = ATT_POLL_ACTIVE_MS; else if (v.kind === "pending") ms = v.remainingMs > ATT_BANNER_LEAD_MS ? Math.max(5e3, Math.min(ATT_POLL_IDLE_MS, v.remainingMs - ATT_BANNER_LEAD_MS + 1e3)) : ATT_POLL_ACTIVE_MS; else if (v.kind === "early") ms = Math.max(5e3, Math.min(ATT_POLL_IDLE_MS, v.opens - attNow() + 1e3));
+    if (v.kind === "grace" || v.kind === "late") ms = ATT_POLL_ACTIVE_MS; else if (v.kind === "pending") ms = v.remainingMs > ATT_BANNER_LEAD_MS ? ATT_POLL_WINDOW_MS : ATT_POLL_ACTIVE_MS; else if (v.kind === "early") ms = Math.max(5e3, Math.min(ATT_POLL_IDLE_MS, v.opens - attNow() + 1e3));
     attLater(ms);
 }
 
@@ -63806,7 +64003,7 @@ function attTabToday(panel) {
             const bits = [ "وصل " + attTimeText(Date.parse(r.checked_in_at), tz) ];
             if (r.state === "late") bits.push("تأخير " + attMinutesText(r.late_minutes));
             if (r.distance_m !== null && r.distance_m !== undefined) bits.push("على بعد " + r.distance_m + " م");
-            if (r.source === "manual") bits.push("يدوي"); else if (r.source === "tracking") bits.push("من تتبع التطبيق");
+            if (r.source === "manual") bits.push("يدوي"); else if (r.source === "tracking") bits.push("من تتبع التطبيق"); else if (r.source === "auto") bits.push("سجّل بزر «وصلت»");
             detail = attEl("span", {
                 class: "att-muted"
             }, bits.join(" — "));
@@ -64537,7 +64734,7 @@ function attTabReports(panel) {
                 byId[e.id] = e;
             });
             attCsvDownload("تفاصيل-الحضور-" + attView.month + ".csv", [ [ "الموظف", "التاريخ", "الحالة", "وقت الدخول", "دقائق التأخير", "دقائق التأخير الفعلية", "مصدر", "ملاحظة" ] ].concat(rep.days.map(function(d) {
-                return [ byId[d.employee_id].name, d.date, ATT_STATE_LABEL[d.state] || d.state, d.checked_in_at ? attTimeText(Date.parse(d.checked_in_at), attTz()) : "", d.late_minutes, d.late_minutes_raw, d.source === "manual" ? "يدوي" : d.source === "tracking" ? "من التتبع" : d.implicit ? "تلقائي (بلا سجل)" : "تلقائي", d.note || "" ];
+                return [ byId[d.employee_id].name, d.date, ATT_STATE_LABEL[d.state] || d.state, d.checked_in_at ? attTimeText(Date.parse(d.checked_in_at), attTz()) : "", d.late_minutes, d.late_minutes_raw, d.source === "manual" ? "يدوي" : d.source === "tracking" ? "من التتبع" : d.source === "auto" ? "بزر وصلت" : d.implicit ? "تلقائي (بلا سجل)" : "تلقائي", d.note || "" ];
             })));
         }
     }
@@ -64799,6 +64996,579 @@ function attCloseScreen() {
         if (attOpenFlag) attClose();
     } catch (e) {}
 }
+
+const PDFIMG_ENABLED = true;
+
+const PDFIMG_PRODUCER = "PARTECH-IMG2PDF/1";
+
+const PDFIMG_TITLE = "PARTECH document";
+
+const PDFIMG_MARGIN = 18;
+
+const PDFIMG_MIN_BYTES = 100;
+
+const PDFIMG_MAX_BYTES = 7340032;
+
+const PDFIMG_HDR = "%PDF-1.4\n%âãÏÓ\n";
+
+const PDFIMG_OBJ1 = "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
+
+const PDFIMG_OBJ2 = "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n";
+
+const PDFIMG_OBJ3 = "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ";
+
+const PDFIMG_HEAD = PDFIMG_HDR + PDFIMG_OBJ1 + PDFIMG_OBJ2 + PDFIMG_OBJ3;
+
+function pdfimgAscii(s) {
+    const u = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i) & 255;
+    return u;
+}
+
+function pdfimgLatin1(b, from, to) {
+    let s = "";
+    const end = Math.min(to, b.length);
+    for (let i = from; i < end; i += 4096) s += String.fromCharCode.apply(null, Array.prototype.slice.call(b, i, Math.min(i + 4096, end)));
+    return s;
+}
+
+function pdfimgNum(v) {
+    const r = Math.round(Number(v) * 100) / 100;
+    return String(r === 0 ? 0 : r);
+}
+
+function pdfimgJpegInfo(b) {
+    const n = b && typeof b.length === "number" ? b.length : 0;
+    if (n < PDFIMG_MIN_BYTES || b[0] !== 255 || b[1] !== 216) return null;
+    let end = 0;
+    for (let k = n - 2; k >= 2 && k >= n - 66; k--) {
+        if (b[k] === 255 && b[k + 1] === 217) {
+            end = k + 2;
+            break;
+        }
+    }
+    if (!end) return null;
+    let i = 2;
+    while (i + 3 < end) {
+        if (b[i] !== 255) return null;
+        const m = b[i + 1];
+        if (m === 255) {
+            i++;
+            continue;
+        }
+        if (m === 0) return null;
+        if (m === 1 || m >= 208 && m <= 216) {
+            i += 2;
+            continue;
+        }
+        if (m === 217 || m === 218) return null;
+        const len = b[i + 2] << 8 | b[i + 3];
+        if (len < 2 || i + 2 + len > end) return null;
+        if (m === 192 || m === 193 || m === 194) {
+            if (len < 8) return null;
+            const prec = b[i + 4], h = b[i + 5] << 8 | b[i + 6], w = b[i + 7] << 8 | b[i + 8], nc = b[i + 9];
+            if (prec !== 8 || !w || !h || nc !== 1 && nc !== 3 || len < 8 + nc * 3) return null;
+            return {
+                width: w,
+                height: h,
+                comps: nc,
+                progressive: m === 194,
+                end: end
+            };
+        }
+        if (m >= 195 && m <= 207 && m !== 196 && m !== 200 && m !== 204) return null;
+        i += 2 + len;
+    }
+    return null;
+}
+
+function pdfimgBuild(jpeg) {
+    const info = pdfimgJpegInfo(jpeg);
+    if (!info || info.end > PDFIMG_MAX_BYTES) return null;
+    const data = info.end === jpeg.length ? jpeg : jpeg.subarray(0, info.end);
+    const land = info.width > info.height, pw = land ? 842 : 595, ph = land ? 595 : 842, m = PDFIMG_MARGIN;
+    const sc = Math.min((pw - 2 * m) / info.width, (ph - 2 * m) / info.height);
+    const dw = info.width * sc, dh = info.height * sc;
+    const content = "q " + pdfimgNum(dw) + " 0 0 " + pdfimgNum(dh) + " " + pdfimgNum((pw - dw) / 2) + " " + pdfimgNum((ph - dh) / 2) + " cm /Im0 Do Q\n";
+    const parts = [], offs = [];
+    let off = 0;
+    const put = x => {
+        const u = typeof x === "string" ? pdfimgAscii(x) : x;
+        parts.push(u);
+        off += u.length;
+    };
+    offs[1] = PDFIMG_HDR.length;
+    offs[2] = offs[1] + PDFIMG_OBJ1.length;
+    offs[3] = offs[2] + PDFIMG_OBJ2.length;
+    put(PDFIMG_HEAD + pw + " " + ph + "] /Resources << /XObject << /Im0 4 0 R >> /ProcSet [/PDF /ImageB /ImageC] >> /Contents 5 0 R >>\nendobj\n");
+    offs[4] = off;
+    put("4 0 obj\n<< /Type /XObject /Subtype /Image /Width " + info.width + " /Height " + info.height + " /ColorSpace /" + (info.comps === 1 ? "DeviceGray" : "DeviceRGB") + " /BitsPerComponent 8 /Filter /DCTDecode /Length " + data.length + " >>\nstream\n");
+    put(data);
+    put("\nendstream\nendobj\n");
+    offs[5] = off;
+    put("5 0 obj\n<< /Length " + content.length + " >>\nstream\n" + content + "endstream\nendobj\n");
+    offs[6] = off;
+    put("6 0 obj\n<< /Producer (" + PDFIMG_PRODUCER + ") /Title (" + PDFIMG_TITLE + ") >>\nendobj\n");
+    const xref = off;
+    let x = "xref\n0 7\n0000000000 65535 f \n";
+    for (let k = 1; k <= 6; k++) x += String(offs[k]).padStart(10, "0") + " 00000 n \n";
+    put(x + "trailer\n<< /Size 7 /Root 1 0 R /Info 6 0 R >>\nstartxref\n" + xref + "\n%%EOF\n");
+    const out = new Uint8Array(off);
+    let p = 0;
+    for (let k = 0; k < parts.length; k++) {
+        out.set(parts[k], p);
+        p += parts[k].length;
+    }
+    const back = pdfimgExtract(out);
+    if (!back || back.length !== data.length) return null;
+    for (let k = 0; k < data.length; k++) {
+        if (back[k] !== data[k]) return null;
+    }
+    return out;
+}
+
+function pdfimgExtract(b) {
+    try {
+        const n = b && typeof b.length === "number" ? b.length : 0;
+        if (n < 500 || n > 9e6) return null;
+        const head = pdfimgLatin1(b, 0, Math.min(n, 800));
+        if (head.indexOf(PDFIMG_HEAD) !== 0) return null;
+        const o4 = head.indexOf("\n4 0 obj\n<< /Type /XObject /Subtype /Image /Width ");
+        if (o4 < 0) return null;
+        const mm = /\/BitsPerComponent 8 \/Filter \/DCTDecode \/Length (\d{1,8}) >>\nstream\n/.exec(head.slice(o4));
+        if (!mm) return null;
+        const len = Number(mm[1]), start = o4 + mm.index + mm[0].length;
+        if (!(len >= PDFIMG_MIN_BYTES) || start + len + 18 > n || n - (start + len) > 1024) return null;
+        if (b[start] !== 255 || b[start + 1] !== 216 || b[start + len - 2] !== 255 || b[start + len - 1] !== 217) return null;
+        const tail = pdfimgLatin1(b, start + len, n);
+        if (tail.indexOf("\nendstream\nendobj\n") !== 0 || tail.indexOf("/Producer (" + PDFIMG_PRODUCER + ")") < 0 || tail.slice(-6) !== "%%EOF\n") return null;
+        return b.subarray(start, start + len);
+    } catch (e) {
+        return null;
+    }
+}
+
+function pdfimgReadBytes(blob) {
+    return new Promise(function(resolve, reject) {
+        try {
+            if (blob && typeof blob.arrayBuffer === "function") {
+                blob.arrayBuffer().then(function(ab) {
+                    resolve(new Uint8Array(ab));
+                }, reject);
+                return;
+            }
+            if (typeof FileReader === "undefined") {
+                reject(new Error("no_reader"));
+                return;
+            }
+            const fr = new FileReader;
+            fr.onload = function() {
+                resolve(new Uint8Array(fr.result));
+            };
+            fr.onerror = function() {
+                reject(fr.error || new Error("read_failed"));
+            };
+            fr.readAsArrayBuffer(blob);
+        } catch (e) {
+            reject(e);
+        }
+    });
+}
+
+async function pdfimgFromJpeg(blob) {
+    try {
+        if (!PDFIMG_ENABLED || !blob || typeof blob.size !== "number" || blob.size < PDFIMG_MIN_BYTES || blob.size > PDFIMG_MAX_BYTES) return null;
+        const pdf = pdfimgBuild(await pdfimgReadBytes(blob));
+        return pdf ? new Blob([ pdf ], {
+            type: "application/pdf"
+        }) : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function pdfimgPreview(sh, done) {
+    try {
+        if (!sh || !sh.blob || sh.blobUrl || String(sh.mime) !== "application/pdf" || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") return;
+        const blob = sh.blob;
+        const headPart = typeof blob.slice === "function" && blob.size > 800 ? blob.slice(0, 800) : blob;
+        pdfimgReadBytes(headPart).then(function(h) {
+            if (pdfimgLatin1(h, 0, h.length).indexOf(PDFIMG_HEAD) !== 0) return null;
+            return headPart === blob ? h : pdfimgReadBytes(blob);
+        }).then(function(u8) {
+            const jpg = u8 ? pdfimgExtract(u8) : null;
+            if (!jpg || sh.blob !== blob || sh.blobUrl) return;
+            let url = "";
+            try {
+                url = URL.createObjectURL(new Blob([ jpg ], {
+                    type: "image/jpeg"
+                }));
+            } catch (e) {
+                url = "";
+            }
+            if (!url) return;
+            sh.blobUrl = url;
+            if (typeof done === "function") done();
+        }, function() {});
+    } catch (e) {}
+}
+
+function pdfimgOpenBtnHtml(doc, sh) {
+    if (!doc || !sh || doc.mime !== "application/pdf" || sh.blobState !== "ready" || !sh.blobUrl) return "";
+    return '<button type="button" class="acct2-chip" data-acct2-act="file-open">📄 فتح PDF</button>';
+}
+
+const KPIW_METRICS = {
+    created: {
+        title: "عدد الطلبيات",
+        field: "created",
+        when: "أُنشئت",
+        note: "تُحسب الطلبية بيوم إنشائها (وتشمل طلبات التسعير)."
+    },
+    pricedNew: {
+        title: "مسعّرة جديد",
+        field: "pricedNew",
+        when: "اكتمل تسعيرها",
+        note: "تُحسب الطلبية بيوم اكتمال تسعيرها لأول مرة بقطعة جديدة، والطلبية المختلطة تظهر في قائمة الجديد وقائمة المستخدم."
+    },
+    pricedUsed: {
+        title: "مسعّرة مستخدم",
+        field: "pricedUsed",
+        when: "اكتمل تسعيرها",
+        note: "تُحسب الطلبية بيوم اكتمال تسعيرها لأول مرة بقطعة مستخدمة، والطلبية المختلطة تظهر في قائمة الجديد وقائمة المستخدم."
+    },
+    success: {
+        title: "الطلبيات الناجحة",
+        field: "success",
+        when: "وُرّدت",
+        note: "تُحسب الطلبية بيوم أول مرة انضغط فيها «تم التوريد» لا بيوم إنشائها، وشرطها أن تكون مؤكدة وموردة."
+    },
+    avgTime: {
+        title: "متوسط الوقت المستغرق",
+        field: "timeCount",
+        when: "اكتمل تسعيرها",
+        note: "الطلبيات التي اكتمل تسعيرها بالفترة؛ المدة من الإنشاء إلى التسعير بساعات الدوام (9 ص – 6 م) دون يوم الجمعة."
+    }
+};
+
+let kpiwKeyHandler = null;
+
+function kpiwMetricEventMs(metricId, o, readyMap, kindsMap) {
+    if (!o) return NaN;
+    if (metricId === "created") return opsKpiMs(o.createdAt);
+    if (metricId === "success") return typeof smxKpiSuppliedMs === "function" ? smxKpiSuppliedMs(o) : opsKpiMs(o.suppliedAt);
+    if (metricId === "avgTime") return readyMap ? opsKpiMs(readyMap.get(o.id)) : NaN;
+    const k = kindsMap ? kindsMap.get(o.id) : null;
+    if (!k) return NaN;
+    return opsKpiMs(metricId === "pricedNew" ? k.new : k.used);
+}
+
+function kpiwOpsRange(period, day, elevated, nowMs) {
+    const periods = opsKpiPeriodsFor(!!elevated);
+    const periodId = periods.some(p => p.id === period) ? period : "today";
+    return opsKpiRange(periodId, day, nowMs);
+}
+
+function kpiwOpsMatches(metricId, orders, readyMap, range, kindsMap) {
+    const m = KPIW_METRICS[metricId];
+    const out = [];
+    if (!m) return out;
+    (orders || []).forEach(o => {
+        if (!o) return;
+        const d = opsKpiCompute([ o ], readyMap, range, kindsMap);
+        let bi = -1;
+        for (let i = 0; i < d.buckets.length; i++) {
+            if (d.buckets[i][m.field] > 0) {
+                bi = i;
+                break;
+            }
+        }
+        if (bi < 0) return;
+        out.push({
+            order: o,
+            bucket: bi,
+            ms: kpiwMetricEventMs(metricId, o, readyMap, kindsMap),
+            minutes: metricId === "avgTime" ? d.buckets[bi].timeSum : null
+        });
+    });
+    out.sort((a, b) => (isNaN(b.ms) ? 0 : b.ms) - (isNaN(a.ms) ? 0 : a.ms));
+    return out;
+}
+
+function kpiwClock(ms) {
+    const d = new Date(ms);
+    let h = d.getHours();
+    const ap = h < 12 ? "ص" : "م";
+    h = h % 12;
+    if (h === 0) h = 12;
+    return h + ":" + opsKpiPad2(d.getMinutes()) + " " + ap;
+}
+
+function kpiwWhen(ms, withDate) {
+    if (typeof ms !== "number" || isNaN(ms)) return "—";
+    return (withDate ? opsKpiDmy(ms) + " · " : "") + kpiwClock(ms);
+}
+
+function kpiwOrderState(o) {
+    if (!o) return "";
+    const bits = [ o.isQuote ? "طلب تسعير" : o.supplied ? "موردة" : o.confirmed ? "مؤكدة" : "غير مؤكدة" ];
+    if (o.archived) bits.push("🗄️ مؤرشفة");
+    return bits.join(" · ");
+}
+
+function kpiwRow(metricId, e, custName, withDate) {
+    const o = e.order;
+    return {
+        orderId: o.id,
+        number: o.orderNumber || "",
+        label: typeof orderDisplayLabel === "function" ? orderDisplayLabel(o) : String(o.orderLabel || ""),
+        customer: custName || "",
+        state: kpiwOrderState(o),
+        when: KPIW_METRICS[metricId].when + " " + kpiwWhen(e.ms, withDate),
+        extra: metricId === "avgTime" && e.minutes !== null && e.minutes !== undefined ? "المدة: " + opsKpiDurationLabel(e.minutes) : "",
+        bucket: e.bucket
+    };
+}
+
+function kpiwCustomerNames(customers) {
+    const map = new Map;
+    (customers || []).forEach(c => {
+        if (c && c.id) map.set(c.id, c.name || c.phone || "");
+    });
+    return map;
+}
+
+function kpiwBuildOpsSpec(metricId, st) {
+    const m = KPIW_METRICS[metricId];
+    if (!m) return null;
+    const nowMs = st.nowMs != null ? st.nowMs : Date.now();
+    const range = kpiwOpsRange(st.period, st.day, !!st.elevated, nowMs);
+    const needsKinds = metricId === "pricedNew" || metricId === "pricedUsed";
+    const missing = metricId === "avgTime" && !st.readyMap || needsKinds && !st.kindsMap;
+    const entries = missing ? [] : kpiwOpsMatches(metricId, st.orders, st.readyMap, range, st.kindsMap);
+    const names = kpiwCustomerNames(st.customers);
+    const multi = !range.hourly;
+    const groups = [];
+    if (multi) {
+        const byB = new Map;
+        entries.forEach(e => {
+            if (!byB.has(e.bucket)) byB.set(e.bucket, []);
+            byB.get(e.bucket).push(e);
+        });
+        Array.from(byB.keys()).sort((a, b) => b - a).forEach(bi => groups.push({
+            label: opsKpiBucketLabels(range, bi).full,
+            rows: byB.get(bi).map(e => kpiwRow(metricId, e, names.get(e.order.customerId), false))
+        }));
+    } else if (entries.length) {
+        groups.push({
+            label: "",
+            rows: entries.map(e => kpiwRow(metricId, e, names.get(e.order.customerId), false))
+        });
+    }
+    let note = m.note;
+    if (metricId === "avgTime" && entries.length) {
+        const sum = entries.reduce((s, e) => s + (e.minutes || 0), 0);
+        note += " المتوسط: " + opsKpiDurationLabel(Math.round(sum / entries.length)) + " على " + opsKpiOrdersLabel(entries.length) + ".";
+    }
+    return {
+        title: m.title,
+        count: entries.length,
+        sub: (range.id === "today" ? "اليوم — " : "") + opsKpiRangeLabel(range),
+        note: note,
+        groups: groups,
+        emptyText: missing ? "بيانات التسعير لم تُحمَّل بعد — جرّب بعد لحظات." : "لا توجد طلبيات محسوبة بهذه الفترة."
+    };
+}
+
+function kpiwListHtml(spec) {
+    const rowHtml = r => '<button type="button" class="purchase-history-row kpiw-row" data-kpiw-order="' + escapeHtml(r.orderId) + '">' + '<div class="purchase-history-row-main"><span class="purchase-history-desc">' + escapeHtml(r.number) + (r.label ? " — " + escapeHtml(r.label) : "") + "</span>" + '<span class="kpiw-state">' + escapeHtml(r.state) + "</span></div>" + '<div class="purchase-history-row-sub">' + (r.customer ? "<span>👤 " + escapeHtml(r.customer) + "</span>" : "") + "<span>" + escapeHtml(r.when) + (r.extra ? " · " + escapeHtml(r.extra) : "") + "</span></div>" + "</button>";
+    const body = (spec.groups || []).length ? spec.groups.map(g => '<div class="purchase-history-section">' + (g.label ? '<div class="purchase-history-section-title"><span>' + escapeHtml(g.label) + '</span><span class="num text-dim">' + g.rows.length + "</span></div>" : "") + g.rows.map(rowHtml).join("") + "</div>").join("") : '<div class="expense-empty-hint">' + escapeHtml(spec.emptyText || "لا توجد طلبيات") + "</div>";
+    return '<div class="modal-backdrop" data-close-backdrop data-kpiw-list>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true" aria-label="' + escapeHtml(spec.title) + '">' + '<div class="modal-header"><div class="modal-title">' + escapeHtml(spec.title) + ' <span class="num kpiw-count">' + spec.count + "</span></div>" + '<button type="button" class="icon-btn" id="kpiw-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="modal-sub">' + escapeHtml(spec.sub || "") + "</div>" + (spec.note ? '<div class="modal-sub kpiw-note">' + escapeHtml(spec.note) + "</div>" : "") + body + "</div></div>";
+}
+
+function kpiwCloseList() {
+    if (kpiwKeyHandler) {
+        document.removeEventListener("keydown", kpiwKeyHandler);
+        kpiwKeyHandler = null;
+    }
+    const root = document.getElementById("modal-root");
+    if (root && root.querySelector("[data-kpiw-list]")) {
+        root.innerHTML = "";
+        root.classList.remove("modal-open");
+    }
+}
+
+function kpiwShowList(spec, reopen) {
+    const root = document.getElementById("modal-root");
+    if (!root || !spec) return false;
+    if (root.classList.contains("modal-open") && !root.querySelector("[data-kpiw-list]")) return false;
+    if (kpiwKeyHandler) {
+        document.removeEventListener("keydown", kpiwKeyHandler);
+        kpiwKeyHandler = null;
+    }
+    root.innerHTML = kpiwListHtml(spec);
+    root.classList.add("modal-open");
+    const back = root.querySelector("[data-kpiw-list]");
+    back.addEventListener("click", e => {
+        if (e.target === back) kpiwCloseList();
+    });
+    const closeBtn = root.querySelector("#kpiw-close-btn");
+    if (closeBtn) closeBtn.addEventListener("click", kpiwCloseList);
+    root.querySelectorAll("[data-kpiw-order]").forEach(btn => btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-kpiw-order");
+        if (!(appData.orders || []).some(o => o && o.id === id)) {
+            showToast("هذه الطلبية غير موجودة (ربما تم حذفها)", "error");
+            return;
+        }
+        kpiwCloseList();
+        modalCloseCallback = () => {
+            try {
+                reopen();
+            } catch (err) {
+                console.warn("kpiw reopen:", err);
+            }
+        };
+        openModal("edit", id);
+    }));
+    kpiwKeyHandler = e => {
+        if (e.key !== "Escape") return;
+        const cr = document.getElementById("confirm-root");
+        if (cr && cr.classList.contains("modal-open")) return;
+        kpiwCloseList();
+    };
+    document.addEventListener("keydown", kpiwKeyHandler);
+    return true;
+}
+
+function kpiwOpenOpsList(metricId) {
+    if (currentUserRole !== "full" || !opsKpiOrdersReady) return false;
+    const spec = kpiwBuildOpsSpec(metricId, {
+        period: opsKpiPeriod,
+        day: opsKpiDay,
+        elevated: !!currentUserIsElevated,
+        nowMs: Date.now(),
+        orders: appData.orders,
+        readyMap: opsKpiReadyFirst,
+        kindsMap: opsKpiKinds,
+        customers: appData.customers
+    });
+    return !!spec && kpiwShowList(spec, () => kpiwOpenOpsList(metricId));
+}
+
+function kpiwSalesSuccess(periodKey, customMonth, orders) {
+    const created = [], success = [];
+    (orders || appData.orders || []).forEach(o => {
+        if (!o) return;
+        if (dateMatchesPeriod(periodDateOf(o.createdAt), periodKey, customMonth)) created.push({
+            order: o,
+            ms: opsKpiMs(o.createdAt),
+            bucket: 0
+        });
+        if (o.confirmed && o.supplied && !o.isQuote) {
+            const ms = kpiwMetricEventMs("success", o, null, null);
+            if (dateMatchesPeriod(periodDateOf(isNaN(ms) ? null : new Date(ms).toISOString()), periodKey, customMonth)) success.push({
+                order: o,
+                ms: ms,
+                bucket: 0
+            });
+        }
+    });
+    created.sort((a, b) => (isNaN(b.ms) ? 0 : b.ms) - (isNaN(a.ms) ? 0 : a.ms));
+    success.sort((a, b) => (isNaN(b.ms) ? 0 : b.ms) - (isNaN(a.ms) ? 0 : a.ms));
+    const rate = created.length > 0 && success.length <= created.length ? round2(success.length / created.length * 100) : null;
+    return {
+        created: created,
+        success: success,
+        rate: rate
+    };
+}
+
+function kpiwStatsSuccessHtml(s) {
+    return '<div class="treasury-summary">' + '<button type="button" class="treasury-summary-row kpiw-stat-row" data-kpiw-stat="success"><span>طلبات ناجحة (وُرّدت بالفترة) ‹</span><span class="num text-green">' + s.success.length + "</span></button>" + '<button type="button" class="treasury-summary-row kpiw-stat-row" data-kpiw-stat="created"><span>طلبات أُنشئت بالفترة ‹</span><span class="num">' + s.created.length + "</span></button>" + '<div class="treasury-summary-row net"><span>نسبة النجاح</span><span class="num">' + (s.rate === null ? "—" : s.rate + "%") + "</span></div>" + "</div>" + '<div class="expense-empty-hint">الناجحة تُحتسب بيوم أول توريد لا بتاريخ إنشاء الطلبية، والمُنشأة بيوم إنشائها. اضغط على أي رقم لعرض طلبياته.</div>';
+}
+
+function kpiwPatchSalesHtml(html, s) {
+    const t = html.indexOf("✅ نجاح الطلبات");
+    if (t < 0) return html;
+    const a = html.indexOf('<div class="treasury-summary">', t);
+    if (a < 0) return html;
+    const tail = "</span></div></div></div>";
+    const b = html.indexOf(tail, a);
+    if (b < 0) return html;
+    return html.slice(0, a) + kpiwStatsSuccessHtml(s) + "</div>" + html.slice(b + tail.length);
+}
+
+function kpiwStatPeriodLabel(periodKey, customMonth) {
+    const p = typeof SALES_KPI_PERIODS !== "undefined" ? SALES_KPI_PERIODS.find(x => x.id === periodKey) : null;
+    let l = p ? p.label : "";
+    if (periodKey === "customMonth" && customMonth) l += " (" + arabicMonthLabel(customMonth) + ")";
+    return l;
+}
+
+function kpiwBuildStatSpec(kind, periodKey, customMonth, orders, customers) {
+    const s = kpiwSalesSuccess(periodKey, customMonth, orders);
+    const isSuccess = kind === "success";
+    if (!isSuccess && kind !== "created") return null;
+    const list = isSuccess ? s.success : s.created;
+    const names = kpiwCustomerNames(customers);
+    const mid = isSuccess ? "success" : "created";
+    const rows = list.map(e => kpiwRow(mid, e, names.get(e.order.customerId), true));
+    return {
+        title: isSuccess ? "الطلبيات الناجحة" : "الطلبيات المُنشأة",
+        count: list.length,
+        sub: kpiwStatPeriodLabel(periodKey, customMonth),
+        note: isSuccess ? KPIW_METRICS.success.note : KPIW_METRICS.created.note,
+        groups: rows.length ? [ {
+            label: "",
+            rows: rows
+        } ] : [],
+        emptyText: "لا توجد طلبيات محسوبة بهذه الفترة."
+    };
+}
+
+function kpiwOpenStatList(kind) {
+    if (currentUserRole !== "full") return false;
+    const spec = kpiwBuildStatSpec(kind, salesKpiPeriod, salesKpiCustomMonth, appData.orders, appData.customers);
+    return !!spec && kpiwShowList(spec, () => kpiwOpenStatList(kind));
+}
+
+function kpiwOnDocClick(e) {
+    try {
+        const t = e && e.target;
+        if (!t || !t.closest) return;
+        const tile = t.closest("#ops-kpi [data-ops-metric]");
+        if (tile) {
+            kpiwOpenOpsList(tile.getAttribute("data-ops-metric"));
+            return;
+        }
+        const stat = t.closest("#statistics-view [data-kpiw-stat]");
+        if (stat) kpiwOpenStatList(stat.getAttribute("data-kpiw-stat"));
+    } catch (err) {
+        console.warn("kpiw click:", err);
+    }
+}
+
+(function kpiwInstall() {
+    try {
+        if (typeof salesPerformanceSectionHtml === "function" && !salesPerformanceSectionHtml.kpiwWrapped) {
+            const orig = salesPerformanceSectionHtml;
+            const wrapped = function() {
+                const html = orig.apply(this, arguments);
+                try {
+                    return kpiwPatchSalesHtml(html, kpiwSalesSuccess(salesKpiPeriod, salesKpiCustomMonth));
+                } catch (err) {
+                    console.warn("kpiw stats:", err);
+                    return html;
+                }
+            };
+            wrapped.kpiwWrapped = true;
+            salesPerformanceSectionHtml = wrapped;
+        }
+        if (typeof document !== "undefined" && document.addEventListener) document.addEventListener("click", kpiwOnDocClick, true);
+    } catch (err) {
+        console.warn("kpiw install:", err);
+    }
+})();
 
 async function bootstrapAuth() {
     bindAuthGate();
