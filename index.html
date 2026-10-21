@@ -1544,6 +1544,14 @@
   .acct2-fab{display:none !important;}
   #ops-kpi .ops-foot, #ops-kpi-scrapyard .ops-foot{display:none;}
   /* HOMEKPI END css */
+  /* SUPTGT BEGIN css */
+  /* توجيه طلب التوريد (SUPTGT): منتقي الوجهة بالحوار وبعرض طلب التوريد، وشارة الوجهة بالصف */
+  .suptgt-label{font-size:12.5px;color:var(--text-dim);font-weight:700;margin:10px 0 6px;}
+  .suptgt-chips{display:flex;flex-wrap:wrap;gap:8px;}
+  .suptgt-view-line{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:10px 0;padding-top:10px;border-top:1px dashed var(--border-soft);}
+  .suptgt-view-line .suptgt-label{margin:0;}
+  .supply-req-target{font-size:11.5px;font-weight:700;color:var(--green);margin-inline-start:6px;white-space:nowrap;}
+  /* SUPTGT END css */
   /* TAXINV BEGIN css */
   /* ===== TAXINV — الفاتورة الضريبية (المرحلة الأولى) — كل القواعد بنطاق .taxinv-* =====
      CONTRACT-ADDENDUM-D: الورقة هي نفسها ورقة الفاتورة القديمة (.doc-sheet و.doc-header-band و.doc-brand-col و.doc-logo-img و.doc-co-info و.doc-identity-* و.doc-billto
@@ -71079,6 +71087,375 @@ function homekpiYardFabOff() {
             };
         }
         homekpiYardFabOff();
+    } catch (e) {}
+})();
+
+const SUPTGT_TIMEOUT_MS = 15e3;
+
+const SUPTGT_TARGETS_TTL_MS = 6e5;
+
+let suptgtTargets = null;
+
+let suptgtTargetsAt = 0;
+
+let suptgtTargetsPending = null;
+
+let suptgtBusy = false;
+
+function suptgtName(email) {
+    return email ? displayNameForEmail(email) || String(email).split("@")[0] : "";
+}
+
+function suptgtMyEmail() {
+    try {
+        if (typeof scrapyardSharedState !== "undefined" && scrapyardSharedState && scrapyardSharedState.email) return String(scrapyardSharedState.email).toLowerCase();
+    } catch (e) {}
+    try {
+        if (typeof presenceEmail !== "undefined" && presenceEmail) return String(presenceEmail).toLowerCase();
+    } catch (e) {}
+    return "";
+}
+
+function suptgtElevated() {
+    try {
+        return typeof currentUserIsElevated !== "undefined" && !!currentUserIsElevated || typeof hasElevatedAccess === "function" && hasElevatedAccess() === true;
+    } catch (e) {
+        return false;
+    }
+}
+
+function suptgtLoadTargets() {
+    if (suptgtTargets && Date.now() - suptgtTargetsAt < SUPTGT_TARGETS_TTL_MS) return Promise.resolve(suptgtTargets);
+    if (suptgtTargetsPending) return suptgtTargetsPending;
+    if (typeof sb === "undefined" || !sb) return Promise.resolve(null);
+    suptgtTargetsPending = Promise.resolve(withTimeout(sb.rpc("get_supply_request_targets"), SUPTGT_TIMEOUT_MS, "get_supply_request_targets")).then(function(res) {
+        suptgtTargetsPending = null;
+        if (!res || res.error || !Array.isArray(res.data)) return null;
+        suptgtTargets = res.data.map(function(r) {
+            return String(r && r.email || "").toLowerCase();
+        }).filter(Boolean);
+        suptgtTargetsAt = Date.now();
+        return suptgtTargets;
+    }, function() {
+        suptgtTargetsPending = null;
+        return null;
+    });
+    return suptgtTargetsPending;
+}
+
+function suptgtSetOrderTarget(order, email) {
+    if (!order) return;
+    if (email) order.supplyTargetEmail = String(email).toLowerCase(); else delete order.supplyTargetEmail;
+}
+
+function suptgtDialog(opts) {
+    const root = document.getElementById("confirm-root");
+    if (!root) return false;
+    let sel = opts.current ? String(opts.current).toLowerCase() : "";
+    const chips = [ [ "", "كل المشتريات" ] ].concat((opts.targets || []).map(function(e) {
+        return [ e, suptgtName(e) ];
+    }));
+    const chipHtml = function(v, label) {
+        return '<button type="button" class="chip' + (sel === v ? " chip-active" : "") + '" data-suptgt-pick="' + escapeHtml(v) + '" aria-pressed="' + (sel === v ? "true" : "false") + '">' + escapeHtml(label) + "</button>";
+    };
+    const extras = (opts.extras || []).map(function(x, i) {
+        return '<button type="button" class="btn ' + (x.danger ? "btn-danger" : "btn-ghost") + '" data-suptgt-extra="' + i + '">' + escapeHtml(x.label) + "</button>";
+    }).join("");
+    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true" data-suptgt-dialog>' + '<div class="modal-title">' + escapeHtml(opts.title || "") + "</div>" + (opts.message ? '<p class="modal-sub">' + escapeHtml(opts.message) + "</p>" : "") + '<div class="suptgt-label">توجيه الطلب إلى</div>' + '<div class="suptgt-chips" role="group" aria-label="توجيه الطلب">' + chips.map(function(c) {
+        return chipHtml(c[0], c[1]);
+    }).join("") + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + extras + '<button type="button" class="btn btn-ghost" data-suptgt-cancel>إغلاق</button>' + '<button type="button" class="btn btn-primary" data-suptgt-ok>' + escapeHtml(opts.confirmLabel || "تأكيد") + "</button>" + "</div>" + "</div>" + "</div>";
+    root.classList.add("modal-open");
+    const close = function() {
+        root.innerHTML = "";
+        root.classList.remove("modal-open");
+    };
+    root.querySelector("[data-close-confirm]").addEventListener("click", function(e) {
+        if (e.target.hasAttribute("data-close-confirm")) close();
+    });
+    root.querySelector("[data-suptgt-cancel]").addEventListener("click", close);
+    root.querySelectorAll("[data-suptgt-pick]").forEach(function(b) {
+        b.addEventListener("click", function() {
+            sel = b.getAttribute("data-suptgt-pick");
+            root.querySelectorAll("[data-suptgt-pick]").forEach(function(x) {
+                const on = x.getAttribute("data-suptgt-pick") === sel;
+                x.classList.toggle("chip-active", on);
+                x.setAttribute("aria-pressed", on ? "true" : "false");
+            });
+        });
+    });
+    root.querySelectorAll("[data-suptgt-extra]").forEach(function(b) {
+        b.addEventListener("click", function() {
+            const x = (opts.extras || [])[Number(b.getAttribute("data-suptgt-extra"))];
+            close();
+            if (x && x.onClick) x.onClick();
+        });
+    });
+    root.querySelector("[data-suptgt-ok]").addEventListener("click", function() {
+        close();
+        if (opts.onConfirm) opts.onConfirm(sel);
+    });
+    return true;
+}
+
+async function suptgtSendRequest(orderId, target) {
+    if (suptgtBusy || typeof supplyRequestInFlight === "undefined" || supplyRequestInFlight || !sb) return false;
+    const live = (appData.orders || []).find(function(o) {
+        return o.id === orderId;
+    });
+    if (!live) {
+        showToast("تعذر العثور على الطلبية — أغلق النافذة وافتحها من جديد", "error");
+        return false;
+    }
+    const why = supplyRequestBlockReason(live);
+    if (why) {
+        const unsaved = draft && draft.id === orderId && supplyRequestApplies(draft);
+        showToast(unsaved ? "احفظ الطلبية أولًا — تعديلاتها غير المحفوظة تجعلها مؤهلة لطلب التوريد" : why, "error");
+        return false;
+    }
+    suptgtBusy = true;
+    supplyRequestInFlight = true;
+    try {
+        const args = {
+            p_order_id: orderId,
+            p_requested: true
+        };
+        if (target) args.p_target_email = target;
+        const {data: data, error: error} = await withTimeout(sb.rpc("set_order_supply_request", args), SUPTGT_TIMEOUT_MS, "set_order_supply_request");
+        if (error) throw error;
+        const res = supplyRequestRpcResult(data);
+        if (!res) throw new Error("set_order_supply_request: bad result");
+        const fresh = (appData.orders || []).find(function(o) {
+            return o.id === orderId;
+        });
+        const tgt = data && typeof data.supplyTargetEmail === "string" ? data.supplyTargetEmail : "";
+        [ live, fresh ].forEach(function(o) {
+            if (o) {
+                setSupplyRequestFields(o, !!res.at, res.by, res.at);
+                suptgtSetOrderTarget(o, tgt);
+            }
+        });
+        if (draft && draft.id === orderId) {
+            setSupplyRequestFields(draft, !!res.at, res.by, res.at);
+            suptgtSetOrderTarget(draft, tgt);
+            refreshSupplyRequestButton();
+        }
+        if (!res.changed) showToast("طلب التوريد مسجّل مسبقًا لهذه الطلبية", "ok"); else if (!res.notified) showToast("تم تسجيل طلب التوريد لكن تعذّر إرسال الإشعار للمشتريات — سيظهر الطلب في قائمتهم عند التحديث", "error"); else showToast(tgt ? "تم إرسال طلب التوريد إلى " + suptgtName(tgt) : "تم إرسال طلب التوريد للمشتريات", "ok");
+        return true;
+    } catch (e) {
+        if (supplyRequestRpcMissing(e)) {
+            supplyRequestFeatureUnavailable = true;
+            if (draft && draft.id === orderId) refreshSupplyRequestButton();
+            showToast("ميزة طلب التوريد غير مفعّلة على الخادم بعد — لم يُرسل شيء", "error");
+            return false;
+        }
+        console.error("suptgtSendRequest:", e);
+        const msg = e && typeof e.hint === "string" && e.hint.indexOf("supply_request_") === 0 && e.message ? e.message : e && e.message === "غير متاح" ? "غير متاح" : friendlyErrorText(e);
+        showToast("تعذر إرسال طلب التوريد: " + msg, "error");
+        return false;
+    } finally {
+        suptgtBusy = false;
+        supplyRequestInFlight = false;
+    }
+}
+
+async function suptgtDirectRequest(orderId, target) {
+    if (suptgtBusy || !sb) return {
+        ok: false
+    };
+    suptgtBusy = true;
+    try {
+        const {data: data, error: error} = await withTimeout(sb.rpc("direct_supply_request", {
+            p_order_id: orderId,
+            p_target_email: target || null
+        }), SUPTGT_TIMEOUT_MS, "direct_supply_request");
+        if (error) throw error;
+        const tgt = data && typeof data.supplyTargetEmail === "string" ? data.supplyTargetEmail : "";
+        [ (appData.orders || []).find(function(o) {
+            return o.id === orderId;
+        }), draft && draft.id === orderId ? draft : null ].forEach(function(o) {
+            suptgtSetOrderTarget(o, tgt);
+        });
+        try {
+            const feed = typeof scrapyardSharedState !== "undefined" && scrapyardSharedState && scrapyardSharedState.supplyRequests || [];
+            feed.forEach(function(o) {
+                if (o.id === orderId) suptgtSetOrderTarget(o, tgt);
+            });
+        } catch (e) {}
+        if (draft && draft.id === orderId) {
+            try {
+                refreshSupplyRequestButton();
+            } catch (e) {}
+        }
+        showToast(data && data.changed === false ? "الطلب موجَّه لنفس الجهة مسبقًا" : tgt ? "تم توجيه طلب التوريد إلى " + suptgtName(tgt) : "أُعيد طلب التوريد لكل المشتريات", "ok");
+        return {
+            ok: true,
+            target: tgt
+        };
+    } catch (e) {
+        console.error("suptgtDirectRequest:", e);
+        const msg = e && typeof e.hint === "string" && e.hint.indexOf("supply_request_") === 0 && e.message ? e.message : e && e.message === "غير متاح" ? "غير متاح" : friendlyErrorText(e);
+        showToast("تعذر تغيير توجيه طلب التوريد: " + msg, "error");
+        return {
+            ok: false
+        };
+    } finally {
+        suptgtBusy = false;
+    }
+}
+
+(function suptgtInstall() {
+    try {
+        if (typeof onSupplyRequestButtonClick === "function") {
+            const prevOnSupplyBtn = onSupplyRequestButtonClick;
+            onSupplyRequestButtonClick = function() {
+                const self = this, args = arguments;
+                try {
+                    if (!draft || typeof sb === "undefined" || !sb) return prevOnSupplyBtn.apply(self, args);
+                    const orderId = draft.id, requested = !!draft.supplyRequestedAt;
+                    if (requested && !suptgtElevated()) return prevOnSupplyBtn.apply(self, args);
+                    if (!requested) {
+                        const why = supplyRequestBlockReason(draft);
+                        if (why) {
+                            showToast(why, "error");
+                            return;
+                        }
+                    }
+                    suptgtLoadTargets().then(function(list) {
+                        try {
+                            if (!list || !list.length || !draft || draft.id !== orderId) return prevOnSupplyBtn.apply(self, args);
+                            if (!requested) {
+                                suptgtDialog({
+                                    title: "إرسال طلب توريد للمشتريات؟",
+                                    message: "ستظهر الطلبية لدى المشتريات ضمن «طلبات التسعير» بلون مميز حتى يكتمل توريدها.",
+                                    targets: list,
+                                    current: "",
+                                    confirmLabel: "إرسال الطلب",
+                                    onConfirm: function(t) {
+                                        suptgtSendRequest(orderId, t);
+                                    }
+                                });
+                            } else {
+                                suptgtDialog({
+                                    title: "طلب التوريد قائم لهذه الطلبية",
+                                    message: "موجَّه حاليًا إلى: " + (draft.supplyTargetEmail ? suptgtName(draft.supplyTargetEmail) : "كل المشتريات"),
+                                    targets: list,
+                                    current: draft.supplyTargetEmail || "",
+                                    confirmLabel: "حفظ التوجيه",
+                                    onConfirm: function(t) {
+                                        suptgtDirectRequest(orderId, t);
+                                    },
+                                    extras: [ {
+                                        label: "إلغاء طلب التوريد",
+                                        danger: true,
+                                        onClick: function() {
+                                            prevOnSupplyBtn.apply(self, args);
+                                        }
+                                    } ]
+                                });
+                            }
+                        } catch (e) {
+                            console.error("suptgt dialog:", e);
+                            try {
+                                prevOnSupplyBtn.apply(self, args);
+                            } catch (e2) {}
+                        }
+                    });
+                } catch (e) {
+                    return prevOnSupplyBtn.apply(self, args);
+                }
+            };
+        }
+        if (typeof setSupplyRequestFields === "function") {
+            const prevSetFields = setSupplyRequestFields;
+            setSupplyRequestFields = function(order, on) {
+                const r = prevSetFields.apply(this, arguments);
+                try {
+                    if (order && !on) delete order.supplyTargetEmail;
+                } catch (e) {}
+                return r;
+            };
+        }
+        if (typeof adoptLiveSupplyRequest === "function") {
+            const prevAdopt = adoptLiveSupplyRequest;
+            adoptLiveSupplyRequest = function(target, live) {
+                const changed = prevAdopt.apply(this, arguments);
+                try {
+                    if (target && live) {
+                        const before = target.supplyTargetEmail || "";
+                        suptgtSetOrderTarget(target, live.supplyRequestedAt ? live.supplyTargetEmail : "");
+                        if ((target.supplyTargetEmail || "") !== before) return true;
+                    }
+                } catch (e) {}
+                return changed;
+            };
+        }
+        if (typeof supplyRequestButtonHtml === "function") {
+            const prevBtnHtml = supplyRequestButtonHtml;
+            supplyRequestButtonHtml = function(d) {
+                const h = prevBtnHtml.apply(this, arguments);
+                try {
+                    if (h && d && d.supplyRequestedAt && d.supplyTargetEmail) return h.replace("تم طلب التوريد</button>", "تم طلب التوريد → " + escapeHtml(suptgtName(d.supplyTargetEmail)) + "</button>");
+                } catch (e) {}
+                return h;
+            };
+        }
+        if (typeof supplyRequestRowHtml === "function") {
+            const prevRowHtml = supplyRequestRowHtml;
+            supplyRequestRowHtml = function(o) {
+                const h = prevRowHtml.apply(this, arguments);
+                try {
+                    if (!suptgtTargets) suptgtLoadTargets();
+                    if (h && o && o.supplyTargetEmail) {
+                        const mine = String(o.supplyTargetEmail).toLowerCase() === suptgtMyEmail();
+                        return h.replace(/<\/div>$/, '<span class="supply-req-target">' + (mine ? "🎯 موجّه إليك" : "🎯 " + escapeHtml(suptgtName(o.supplyTargetEmail))) + "</span></div>");
+                    }
+                } catch (e) {}
+                return h;
+            };
+        }
+        if (typeof supplyRequestViewHtml === "function") {
+            const prevViewHtml = supplyRequestViewHtml;
+            supplyRequestViewHtml = function(order) {
+                const h = prevViewHtml.apply(this, arguments);
+                try {
+                    if (!h || !order) return h;
+                    const cur = order.supplyTargetEmail ? String(order.supplyTargetEmail).toLowerCase() : "";
+                    const list = suptgtTargets || [];
+                    const line = '<div class="suptgt-view-line" data-suptgt-order="' + escapeHtml(order.id) + '"><span class="suptgt-label">الموجَّه إليه: ' + escapeHtml(cur ? cur === suptgtMyEmail() ? "أنت" : suptgtName(cur) : "كل المشتريات") + "</span>" + (list.length ? '<span class="suptgt-chips">' + [ [ "", "كل المشتريات" ] ].concat(list.map(function(e) {
+                        return [ e, suptgtName(e) ];
+                    })).map(function(c) {
+                        return '<button type="button" class="chip' + (cur === c[0] ? " chip-active" : "") + '" data-suptgt-set="' + escapeHtml(c[0]) + '" aria-pressed="' + (cur === c[0] ? "true" : "false") + '">' + escapeHtml(c[1]) + "</button>";
+                    }).join("") + "</span>" : "") + "</div>";
+                    const anchor = '<p class="modal-sub" style="margin-top:10px;">للاطلاع فقط';
+                    const i = h.lastIndexOf(anchor);
+                    return i < 0 ? h : h.slice(0, i) + line + h.slice(i);
+                } catch (e) {
+                    return h;
+                }
+            };
+        }
+        document.addEventListener("click", function(ev) {
+            try {
+                const t = ev.target;
+                const b = t && t.closest ? t.closest("[data-suptgt-set]") : null;
+                if (!b) return;
+                const line = b.closest("[data-suptgt-order]");
+                if (!line) return;
+                const orderId = line.getAttribute("data-suptgt-order"), want = b.getAttribute("data-suptgt-set");
+                suptgtDirectRequest(orderId, want).then(function(r) {
+                    if (!r.ok) return;
+                    const visible = !r.target || r.target === suptgtMyEmail() || suptgtElevated();
+                    const root = document.getElementById("modal-root");
+                    if (!visible) {
+                        if (root) {
+                            root.innerHTML = "";
+                            root.classList.remove("modal-open");
+                        }
+                    } else if (typeof openSupplyRequestViewModal === "function") openSupplyRequestViewModal(orderId);
+                    if (typeof refreshScrapyardHomeQuotes === "function") refreshScrapyardHomeQuotes();
+                });
+            } catch (e) {}
+        }, false);
     } catch (e) {}
 })();</script>
 </body>
