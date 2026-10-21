@@ -70791,6 +70791,64 @@ let zatcaOrigMount = null;
             }
         }, false);
     } catch (e) {}
-})();</script>
+})();
+
+function openaccAmt(x) {
+    const n = Number(x);
+    return n > .004 ? n : 0;
+}
+
+function openaccSort(rows, amountsOf) {
+    const amt = new Map(rows.map(r => [ r, amountsOf(r) ]));
+    const created = r => new Date(r.createdAt || 0).getTime() || 0;
+    return [ ...rows ].sort((a, b) => {
+        const x = amt.get(a), y = amt.get(b);
+        const xo = x[0] > 0 || x[1] > 0 ? 1 : 0, yo = y[0] > 0 || y[1] > 0 ? 1 : 0;
+        if (yo - xo) return yo - xo;
+        if (xo) {
+            if (y[0] - x[0]) return y[0] - x[0];
+            if (y[1] - x[1]) return y[1] - x[1];
+        }
+        return created(b) - created(a);
+    });
+}
+
+customersMatchingSearch = function(refundsIdx, sortIdx) {
+    const idx = refundsIdx || customerRefundsPendingIndex();
+    const q = customersSearchQuery.trim().toLowerCase();
+    let rows = appData.customers || [];
+    if (q) {
+        rows = rows.filter(c => {
+            if (editingCustomers[c.id]) return true;
+            const hay = [ c.name, c.phone ].join(" ").toLowerCase();
+            return hay.includes(q);
+        });
+    }
+    if (sortIdx) {
+        return [ ...rows ].sort((a, b) => (sortIdx[b.id] || 0) - (sortIdx[a.id] || 0));
+    }
+    const stats = customerStatsIndex();
+    return openaccSort(rows, c => [ openaccAmt((stats[c.id] || {}).remaining), openaccAmt(idx[c.id]) ]);
+};
+
+suppliersMatchingSearch = function(receivablesIdx, sortIdx) {
+    const idx = receivablesIdx || supplierReturnReceivablesIndex().bySupplier;
+    const q = suppliersSearchQuery.trim().toLowerCase();
+    let rows = appData.suppliers || [];
+    const isEditing = s => !!editingSuppliers[s.id];
+    if (suppliersKindFilter === "new") rows = rows.filter(s => isEditing(s) || s.handlesNew); else if (suppliersKindFilter === "used") rows = rows.filter(s => isEditing(s) || s.handlesUsed);
+    if (q) {
+        rows = rows.filter(s => {
+            if (isEditing(s)) return true;
+            const hay = [ s.name, s.phone ].concat(Array.isArray(s.extraPhones) ? s.extraPhones : []).join(" ").toLowerCase();
+            return hay.includes(q);
+        });
+    }
+    if (sortIdx) {
+        return [ ...rows ].sort((a, b) => (sortIdx[b.id] || 0) - (sortIdx[a.id] || 0));
+    }
+    const owed = supplierOwedIndex();
+    return openaccSort(rows, s => [ openaccAmt(owed[s.id]), openaccAmt(idx[s.id]) ]);
+};</script>
 </body>
 </html>
