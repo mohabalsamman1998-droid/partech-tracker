@@ -1468,6 +1468,47 @@
   .doc-sheet.pdf-export-mode .doc-totals-row.doc-totals-row-fee{font-size:14px;}
   .doc-sheet.pdf-export-mode .doc-footer-note-input{font-size:14px;}
   .doc-table tr{break-inside:avoid;}
+  /* PDFPG BEGIN css */
+  /* PDF بصفحات كاملة (2026-10-21): كثرة القطع تُصغِّر الورقة تدريجيًا لتناسب صفحة واحدة (pdf-fit-1..3)، وصفحات المتابعة برأس مختصر (pdf-cont)، وسطر رقم الصفحة. تُستعمل من pdfPagedSheet فقط. */
+  .doc-totals, .doc-footer-note-input{break-inside:avoid;page-break-inside:avoid;}
+  .doc-sheet.pdf-export-mode.pdf-fit-1{padding:22px 24px 18px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-1 .doc-logo-img{height:62px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-1 .doc-co-info{font-size:12.5px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-1 .doc-table{font-size:13px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-1 .doc-table th,.doc-sheet.pdf-export-mode.pdf-fit-1 .doc-table td{padding:8px 9px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-1 .doc-totals-row{font-size:14px;padding:6px 4px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-1 .doc-totals-row.grand{font-size:17px;padding:9px 4px 4px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-1 .doc-totals-row.doc-totals-row-fee{font-size:12.5px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-1 .taxinv-table{font-size:11px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-1 .taxinv-table th{font-size:9.5px;padding:6px 3px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-1 .taxinv-table td{padding:6px 3px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-2{padding:18px 20px 14px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-2 .doc-logo-img{height:52px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-2 .doc-co-info{font-size:11.5px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-2 .doc-table{font-size:11.5px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-2 .doc-table th,.doc-sheet.pdf-export-mode.pdf-fit-2 .doc-table td{padding:5px 7px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-2 .doc-totals-row{font-size:12.5px;padding:4px 4px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-2 .doc-totals-row.grand{font-size:15px;padding:7px 4px 3px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-2 .doc-totals-row.doc-totals-row-fee{font-size:11.5px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-2 .taxinv-table{font-size:10px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-2 .taxinv-table th{font-size:8.5px;padding:4px 2px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-2 .taxinv-table td{padding:4px 2px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-3{padding:14px 16px 10px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-3 .doc-logo-img{height:44px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-3 .doc-co-info{font-size:10.5px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-3 .doc-table{font-size:10.5px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-3 .doc-table th,.doc-sheet.pdf-export-mode.pdf-fit-3 .doc-table td{padding:3px 6px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-3 .doc-totals-row{font-size:11.5px;padding:3px 3px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-3 .doc-totals-row.grand{font-size:13.5px;padding:5px 3px 2px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-3 .doc-totals-row.doc-totals-row-fee{font-size:10.5px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-3 .taxinv-table{font-size:9px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-3 .taxinv-table th{font-size:8px;padding:3px 2px;}
+  .doc-sheet.pdf-export-mode.pdf-fit-3 .taxinv-table td{padding:3px 2px;}
+  .doc-sheet.pdf-export-mode.pdf-cont .doc-co-info{display:none;}
+  .doc-sheet.pdf-export-mode.pdf-cont .doc-logo-img{height:40px;}
+  .doc-sheet.pdf-export-mode.pdf-cont .doc-header-band{padding-bottom:6px;margin-bottom:8px;}
+  .doc-sheet.pdf-export-mode .pdf-page-label{margin-top:8px;text-align:center;font-size:11px;color:#777;}
+  /* PDFPG END css */
   /* TAXINV BEGIN css */
   /* ===== TAXINV — الفاتورة الضريبية (المرحلة الأولى) — كل القواعد بنطاق .taxinv-* =====
      CONTRACT-ADDENDUM-D: الورقة هي نفسها ورقة الفاتورة القديمة (.doc-sheet و.doc-header-band و.doc-brand-col و.doc-logo-img و.doc-co-info و.doc-identity-* و.doc-billto
@@ -19703,6 +19744,238 @@ function pdfIsolateLtrRuns(root) {
         par.replaceChild(frag, tn);
     });
 }
+
+const PDF_PAGE_W_MM = 194, PDF_PAGE_H_MM = 281;
+
+function pdfCopyCanvases(src, dst) {
+    const s = src.querySelectorAll ? src.querySelectorAll("canvas") : [], d = dst.querySelectorAll ? dst.querySelectorAll("canvas") : [];
+    for (let i = 0; i < s.length && i < d.length; i++) {
+        try {
+            d[i].width = s[i].width;
+            d[i].height = s[i].height;
+            d[i].getContext("2d").drawImage(s[i], 0, 0);
+        } catch (e) {}
+    }
+}
+
+function pdfMainChildIndex(kids) {
+    let best = -1, bestRows = 0;
+    kids.forEach((k, i) => {
+        const t = k.tagName === "TABLE" ? k : k.querySelector ? k.querySelector("table") : null;
+        if (!t) return;
+        const n = t.querySelectorAll("tbody tr").length;
+        if (n > bestRows) {
+            bestRows = n;
+            best = i;
+        }
+    });
+    return best;
+}
+
+function pdfPaginateSheet(sheet, container, level, capPx, withLabel) {
+    const kids = Array.from(sheet.children).filter(k => !k.classList.contains("no-print") && !k.classList.contains("doc-toolbar"));
+    const mi = pdfMainChildIndex(kids);
+    if (mi < 0) return null;
+    const head = kids.slice(0, mi), mainEl = kids[mi], tail = kids.slice(mi + 1);
+    const mainTable = mainEl.tagName === "TABLE" ? mainEl : mainEl.querySelector("table");
+    const rows = Array.from(mainTable.querySelectorAll("tbody tr"));
+    if (!rows.length) return null;
+    const hasTotals = x => x.classList && x.classList.contains("doc-totals") || x.querySelector && x.querySelector(".doc-totals");
+    if (!tail.length || !tail.some(hasTotals) || tail.some(x => x.tagName === "TABLE" || x.querySelector && x.querySelector("table"))) return null;
+    const lvl = document.createElement("div");
+    container.appendChild(lvl);
+    const hOf = el => Math.ceil(el.getBoundingClientRect().height);
+    const mkPage = first => {
+        const pg = sheet.cloneNode(false);
+        if (level) pg.classList.add("pdf-fit-" + level);
+        if (!first) pg.classList.add("pdf-cont");
+        head.forEach(h => {
+            if (first || h.classList.contains("doc-header-band") || h.classList.contains("taxinv-watermark")) {
+                const c = h.cloneNode(true);
+                pdfCopyCanvases(h, c);
+                pg.appendChild(c);
+            }
+        });
+        const m = mainEl.cloneNode(true);
+        const t = m.tagName === "TABLE" ? m : m.querySelector("table");
+        t.querySelectorAll("tbody").forEach((b, i) => {
+            if (i === 0) b.innerHTML = ""; else b.remove();
+        });
+        pg.appendChild(m);
+        let gap = null, lab = null;
+        if (withLabel) {
+            gap = document.createElement("div");
+            gap.className = "pdf-gap";
+            gap.style.cssText = "height:0;border-top:1px solid transparent;";
+            pg.appendChild(gap);
+        }
+        tail.forEach(x => {
+            const c = x.cloneNode(true);
+            pdfCopyCanvases(x, c);
+            pg.appendChild(c);
+        });
+        if (withLabel) {
+            lab = document.createElement("div");
+            lab.className = "pdf-page-label";
+            lab.textContent = "صفحة 9 من 9";
+            pg.appendChild(lab);
+        }
+        return {
+            pg: pg,
+            tbody: t.querySelector("tbody"),
+            gap: gap,
+            lab: lab
+        };
+    };
+    const pages = [];
+    let i = 0;
+    while (i < rows.length) {
+        const P = mkPage(pages.length === 0);
+        lvl.appendChild(P.pg);
+        let n = 0;
+        while (i + n < rows.length) {
+            const r = rows[i + n].cloneNode(true);
+            pdfCopyCanvases(rows[i + n], r);
+            P.tbody.appendChild(r);
+            if (hOf(P.pg) > capPx && n > 0) {
+                P.tbody.removeChild(r);
+                break;
+            }
+            n++;
+            if (hOf(P.pg) > capPx) break;
+        }
+        i += n;
+        pages.push(P);
+    }
+    return {
+        pages: pages,
+        lvl: lvl
+    };
+}
+
+function pdfPagedSheet(sheet) {
+    const host = document.createElement("div");
+    host.style.cssText = "position:fixed;left:-20000px;top:0;width:" + PDF_PAGE_W_MM + "mm;background:#fff;pointer-events:none;";
+    document.body.appendChild(host);
+    const cleanup = () => {
+        try {
+            host.remove();
+        } catch (e) {}
+    };
+    try {
+        const capPx = Math.floor(PDF_PAGE_H_MM * 96 / 25.4) - 6;
+        let best = null;
+        for (let level = 0; level <= 3; level++) {
+            let r = pdfPaginateSheet(sheet, host, level, capPx, false);
+            if (!r) {
+                cleanup();
+                return null;
+            }
+            if (r.pages.length > 1) {
+                r.lvl.remove();
+                r = pdfPaginateSheet(sheet, host, level, capPx, true);
+            }
+            r.level = level;
+            if (!best || r.pages.length < best.pages.length) {
+                if (best) best.lvl.remove();
+                best = r;
+            } else {
+                r.lvl.remove();
+            }
+            if (best.pages.length === 1) break;
+        }
+        const total = best.pages.length;
+        const root = document.createElement("div");
+        root.className = "pdf-paged-root";
+        best.pages.forEach((P, idx) => {
+            if (total > 1) {
+                P.lab.textContent = "صفحة " + (idx + 1) + " من " + total;
+                const free = capPx - Math.ceil(P.pg.getBoundingClientRect().height);
+                P.gap.style.height = Math.max(0, free) + "px";
+            }
+            root.appendChild(P.pg);
+            if (idx < total - 1) {
+                const br = document.createElement("div");
+                br.className = "html2pdf__page-break";
+                root.appendChild(br);
+            }
+        });
+        host.innerHTML = "";
+        host.appendChild(root);
+        return {
+            root: root,
+            pages: total,
+            level: best.level,
+            cleanup: cleanup
+        };
+    } catch (e) {
+        cleanup();
+        return null;
+    }
+}
+
+buildDocPdfBlob = async function() {
+    try {
+        await ensureHtml2pdf();
+    } catch (e) {
+        throw new Error("LIB_MISSING");
+    }
+    if (typeof html2pdf === "undefined") {
+        throw new Error("LIB_MISSING");
+    }
+    const sheet = document.getElementById("doc-sheet");
+    if (!sheet) throw new Error("NO_SHEET");
+    sheet.classList.add("pdf-export-mode");
+    sheet.querySelectorAll("input").forEach(inp => {
+        inp.setAttribute("value", inp.value);
+    });
+    let paged = null;
+    try {
+        if (document.fonts && document.fonts.ready) {
+            try {
+                await withTimeout(document.fonts.ready, 5e3, "document.fonts.ready");
+            } catch (e) {}
+        }
+        const opt = {
+            margin: 8,
+            filename: docPdfFilename(),
+            image: {
+                type: "jpeg",
+                quality: .98
+            },
+            html2canvas: {
+                scale: 1,
+                useCORS: true,
+                backgroundColor: "#ffffff",
+                windowWidth: 900,
+                onclone: clonedDoc => {
+                    try {
+                        const c = clonedDoc.querySelector(".html2pdf__container");
+                        if (c) pdfIsolateLtrRuns(c);
+                    } catch (e) {}
+                }
+            },
+            jsPDF: {
+                unit: "mm",
+                format: "a4",
+                orientation: "portrait"
+            }
+        };
+        try {
+            paged = pdfPagedSheet(sheet);
+        } catch (e) {
+            paged = null;
+        }
+        if (!paged) opt.pagebreak = {
+            mode: [ "css", "legacy" ],
+            avoid: [ "tr", ".doc-totals", ".doc-totals-row" ]
+        };
+        return await withTimeout(html2pdf().set(opt).from(paged ? paged.root : sheet).outputPdf("blob"), 25e3, "html2pdf outputPdf");
+    } finally {
+        if (paged) paged.cleanup();
+        sheet.classList.remove("pdf-export-mode");
+    }
+};
 
 async function buildDocPdfBlob() {
     try {
