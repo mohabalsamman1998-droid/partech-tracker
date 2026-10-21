@@ -68042,9 +68042,17 @@ let attNotifySkipped = false;
 
 let attNotifyBound = false;
 
+function attNotifyExempt() {
+    try {
+        return typeof hasElevatedAccess === "function" && hasElevatedAccess() === true;
+    } catch (e) {
+        return false;
+    }
+}
+
 function attNotifyKind() {
     try {
-        if (!ATT_NOTIFY_FORCE || attNotifySkipped) return "off";
+        if (!ATT_NOTIFY_FORCE || attNotifySkipped || attNotifyExempt()) return "off";
         if (typeof pushSupported !== "function" || typeof subscribeToPush !== "function" || typeof getExistingPushSubscription !== "function") return "off";
         if (typeof isIosNonStandalone === "function" && isIosNonStandalone()) return "ios";
         if (!pushSupported() || typeof Notification === "undefined") return "off";
@@ -68204,9 +68212,6 @@ function attNotifyRecheck() {
 
 function attNotifyGate() {
     if (!ATT_NOTIFY_FORCE) return;
-    try {
-        if (document.body) document.body.classList.add("att-notify-on");
-    } catch (e) {}
     if (!attNotifyBound) {
         attNotifyBound = true;
         document.addEventListener("visibilitychange", function() {
@@ -68216,6 +68221,16 @@ function attNotifyGate() {
     }
     attNotifySkipped = false;
     attNotifyFails = 0;
+    if (attNotifyExempt()) {
+        try {
+            if (document.body) document.body.classList.remove("att-notify-on");
+        } catch (e) {}
+        attNotifyHide();
+        return;
+    }
+    try {
+        if (document.body) document.body.classList.add("att-notify-on");
+    } catch (e) {}
     return attNotifyCheck(attGen, false);
 }
 
