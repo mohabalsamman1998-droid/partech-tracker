@@ -70579,6 +70579,7 @@ function zatcaRenderAdmin(root, st, msg) {
     const rej = (st.rejected || []).map(r => "<li><b>" + v(r.doc_number) + "</b> — " + v(r.error) + ' <button type="button" class="btn btn-sm btn-ghost" data-zatca-act="retry" data-zatca-id="' + v(r.invoice_id) + '">أعد المحاولة</button></li>').join("");
     const exp = c.cert_expires_at ? String(c.cert_expires_at).slice(0, 10) : "";
     root.innerHTML = '<div class="modal-backdrop" data-close-confirm data-zatca-dialog="admin"><div class="modal-card taxinv-dialog-card" role="dialog" aria-modal="true">' + '<div class="modal-title">🧾 الربط مع هيئة الزكاة (فاتورة)</div>' + '<div class="modal-sub">يُرسل كل مستند ضريبي بالسلسلة الرسمية إلى الهيئة تلقائيًا: الفاتورة العادية تُعتمد لحظيًا قبل تسليمها، والمبسطة يُبلَّغ عنها خلال دقائق.</div>' + '<div class="taxinv-hint zatca-strip ' + (c.enabled ? "zatca-ok" : "zatca-wait") + '"><b>الحالة:</b> الإرسال ' + (c.enabled ? "مُفعَّل" : "متوقف") + " — البيئة: " + escapeHtml(ZATCA_ENV_SHORT(c.env)) + " — الوحدة " + (st.onboarded ? "مسجَّلة" + (exp ? " (الشهادة تنتهي " + v(exp) + ")" : "") : "غير مسجَّلة بعد") + " — المقبول: " + (Number(counts.reported || 0) + Number(counts.cleared || 0)) + " · المعلّق: " + (Number(counts.pending || 0) + Number(counts.signed || 0)) + " · المرفوض: " + Number(counts.rejected || 0) + "</div>" + (c.last_error ? '<div class="taxinv-hint zatca-strip zatca-bad"><b>آخر خطأ:</b> ' + v(c.last_error) + "</div>" : "") + (msg ? '<div class="taxinv-hint zatca-strip ' + (/^✓/.test(msg) ? "zatca-ok" : "zatca-bad") + '" id="zatca-msg">' + v(msg) + "</div>" : "") + '<div class="taxinv-grid" style="margin-top:12px;">' + '<label class="taxinv-field"><span class="taxinv-field-label">العنوان المختصر للمنشأة (4 حروف + 4 أرقام، من إثبات العنوان الوطني)</span><input type="text" id="zatca-f-short" dir="ltr" maxlength="8" value="' + v(c.short_address) + '" autocomplete="off" placeholder="RURH3796"' + (c.enabled ? " readonly" : "") + "></label>" + '<label class="taxinv-field"><span class="taxinv-field-label">البيئة</span><select id="zatca-f-env"' + (c.enabled ? " disabled" : "") + ">" + envOpts + "</select></label>" + '<label class="taxinv-field"><span class="taxinv-field-label">اسم الفرع/الوحدة</span><input type="text" id="zatca-f-branch" dir="ltr" value="' + v(c.branch_name) + '" autocomplete="off"' + (c.enabled ? " readonly" : "") + "></label>" + '<label class="taxinv-field"><span class="taxinv-field-label">الرمز لمرة واحدة (من بوابة فاتورة ← تسجيل وحدة جديدة؛ لا يلزم بالتجريبية)</span><input type="text" id="zatca-f-otp" dir="ltr" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="123456"' + (c.enabled ? " readonly" : "") + "></label>" + "</div>" + '<div class="taxinv-hint">الخطوات: (1) أدخل العنوان المختصر واختر البيئة. (2) من بوابة فاتورة سجّل وحدة جديدة وانسخ الرمز لمرة واحدة. (3) اضغط «تسجيل الوحدة». (4) فعّل الإرسال. جرّب أولًا بالبيئة «تجريبية» (لا يصل الهيئة شيء حقيقي) ثم «محاكاة» ثم «الإنتاج».</div>' + (rej ? '<div class="taxinv-form-title" style="margin-top:12px;">مستندات رفضتها الهيئة</div><ul class="taxinv-errors">' + rej + "</ul>" : "") + '<div class="modal-footer-actions" style="margin-top:14px;justify-content:flex-end;gap:8px;flex-wrap:wrap;">' + '<button type="button" class="btn btn-ghost" data-zatca-act="close">إغلاق</button>' + '<button type="button" class="btn btn-ghost" data-zatca-act="refresh">تحديث</button>' + (c.enabled ? '<button type="button" class="btn btn-danger-ghost" data-zatca-act="disable">إيقاف الإرسال</button>' : '<button type="button" class="btn btn-ghost" id="zatca-onboard-btn" data-zatca-act="onboard">تسجيل الوحدة لدى الهيئة</button><button type="button" class="btn btn-primary" id="zatca-enable-btn" data-zatca-act="enable"' + (st.onboarded ? "" : " disabled") + ">تفعيل الإرسال</button>") + "</div></div></div>";
+    root.classList.add("modal-open");
 }
 
 function zatcaFormVals() {
@@ -70608,6 +70609,7 @@ async function zatcaAdminAct(act, btn) {
     };
     if (act === "close") {
         root.innerHTML = "";
+        root.classList.remove("modal-open");
         return;
     }
     if (act === "refresh") {
@@ -70680,11 +70682,13 @@ async function zatcaAdminAct(act, btn) {
         }
         if (act === "enable") {
             const envName = ZATCA_ENV_SHORT(f.env);
-            const yes = await confirmAction({
+            const yes = await new Promise(resolve => confirmAction({
                 title: "تفعيل الإرسال إلى الهيئة؟",
                 message: f.env === "production" ? "بيئة الإنتاج: كل فاتورة ضريبية تصدر بالسلسلة الرسمية تُرسل فعليًا للهيئة، والفاتورة العادية لا تُسلَّم للعميل قبل اعتمادها. وما صدر قبل التفعيل بالسلسلة الرسمية يُلحَق ويُرسل الآن بالترتيب." : "البيئة «" + envName + "»: تجربة فقط، لا يُسجَّل شيء حقيقي لدى الهيئة. وما صدر بالسلسلة الرسمية يُلحَق ويُرسل للتجربة بالترتيب.",
-                confirmLabel: "فعّل"
-            });
+                confirmLabel: "فعّل",
+                onConfirm: () => resolve(true),
+                onCancel: () => resolve(false)
+            }));
             if (!yes) {
                 await reload("");
                 return;
