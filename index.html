@@ -1524,6 +1524,26 @@
   @media screen{ .doc-overlay[data-taxinv-root="issued"],.doc-overlay[data-taxinv-root="preview"]{background:var(--bg);}
     .doc-overlay[data-taxinv-root="issued"] .doc-toolbar-title,.doc-overlay[data-taxinv-root="preview"] .doc-toolbar-title{color:var(--text);} }
   /* ZATCA END css */
+  /* HOMEKPI BEGIN css */
+  /* مؤشر الأداء بالرئيسية وبشاشة المشتريات: شرائح الفترة مخفية وتظهر بزر الفترة فقط، وتلميح «اضغط على أي بطاقة…» محذوف (طلب مهاب 2026-10-22) */
+  #ops-kpi .ops-periods, #ops-kpi-scrapyard .ops-periods{display:none;}
+  #ops-kpi.ops-periods-open .ops-periods, #ops-kpi-scrapyard.ops-periods-open .ops-periods{display:flex;}
+  #ops-kpi .ops-tiles::before{display:none;}
+  .ops-periods-toggle{background:none;border:1px solid var(--border);border-radius:999px;padding:4px 12px;font-family:inherit;font-size:12.5px;font-weight:700;color:var(--text);cursor:pointer;margin-inline-start:auto;margin-inline-end:8px;}
+  /* بطاقات المستحقات بالرئيسية (#kpi-row): مصغّرة بصف واحد وفوق مؤشر الأداء؛ البطاقة المفتوحة (تفصيل) تمتد صفًّا كاملًا */
+  #kpi-row{grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:6px;margin-bottom:10px;}
+  #kpi-row .kpi-card{padding:6px 10px;border-radius:10px;}
+  #kpi-row .kpi-label{display:block;font-size:10.5px;line-height:1.3;margin-bottom:1px;}
+  #kpi-row .kpi-value{font-size:14px;line-height:1.3;}
+  #kpi-row .kpi-card[aria-expanded="true"]{grid-column:1/-1;}
+  /* شاشة المشتريات: بطاقتا المستحق مصغّرتان؛ الزر العائم لتصوير فاتورة بلا طلب مُلغى؛ فقرة شرح حساب المؤشر مخفية */
+  .kpi-row.scrapyard-kpi-row{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-bottom:10px;}
+  .scrapyard-kpi-row .kpi-card{padding:6px 10px;border-radius:10px;}
+  .scrapyard-kpi-row .kpi-label{display:block;font-size:10.5px;line-height:1.3;margin-bottom:1px;}
+  .scrapyard-kpi-row .kpi-value{font-size:14px;line-height:1.3;}
+  .acct2-fab{display:none !important;}
+  #ops-kpi .ops-foot, #ops-kpi-scrapyard .ops-foot{display:none;}
+  /* HOMEKPI END css */
   /* TAXINV BEGIN css */
   /* ===== TAXINV — الفاتورة الضريبية (المرحلة الأولى) — كل القواعد بنطاق .taxinv-* =====
      CONTRACT-ADDENDUM-D: الورقة هي نفسها ورقة الفاتورة القديمة (.doc-sheet و.doc-header-band و.doc-brand-col و.doc-logo-img و.doc-co-info و.doc-identity-* و.doc-billto
@@ -70931,12 +70951,23 @@ let zatcaOrigMount = null;
 
 const HOMEKPI_HIDE_CONFIRMED = true;
 
+function homekpiDuePlace() {
+    const row = document.getElementById("kpi-row"), ops = document.getElementById("ops-kpi");
+    if (row && ops && ops.parentNode && row.parentNode === ops.parentNode && row.nextElementSibling !== ops) ops.parentNode.insertBefore(row, ops);
+}
+
 (function homekpiInstall() {
     try {
+        try {
+            homekpiDuePlace();
+        } catch (e) {}
         if (typeof renderKPIs !== "function") return;
         const prevRenderKPIs = renderKPIs;
         renderKPIs = function() {
             const r = prevRenderKPIs.apply(this, arguments);
+            try {
+                homekpiDuePlace();
+            } catch (e) {}
             if (HOMEKPI_HIDE_CONFIRMED) {
                 try {
                     const row = document.getElementById("kpi-row");
@@ -70946,6 +70977,108 @@ const HOMEKPI_HIDE_CONFIRMED = true;
             }
             return r;
         };
+    } catch (e) {}
+})();
+
+const HOMEKPI_OPS_HOSTS = [ "ops-kpi", "ops-kpi-scrapyard" ];
+
+function homekpiOpsDecorate() {
+    HOMEKPI_OPS_HOSTS.forEach(function(id) {
+        const host = document.getElementById(id);
+        const head = host && host.querySelector(".ops-head");
+        if (!head) return;
+        let btn = head.querySelector("[data-ops-periods-toggle]");
+        if (!btn) {
+            btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "ops-periods-toggle";
+            btn.setAttribute("data-ops-periods-toggle", "1");
+            const col = head.querySelector("[data-ops-collapse]");
+            head.insertBefore(btn, col || null);
+        }
+        const open = host.classList.contains("ops-periods-open");
+        const active = host.querySelector(".ops-periods .chip-active");
+        btn.textContent = (active ? active.textContent.trim() : "الفترة") + (open ? " ▴" : " ▾");
+        btn.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+}
+
+(function homekpiOpsInstall() {
+    try {
+        if (typeof renderOpsKpi === "function") {
+            const prevRenderOpsKpi = renderOpsKpi;
+            renderOpsKpi = function() {
+                const r = prevRenderOpsKpi.apply(this, arguments);
+                try {
+                    homekpiOpsDecorate();
+                } catch (e) {}
+                return r;
+            };
+        }
+        document.addEventListener("click", function(ev) {
+            try {
+                const t = ev.target;
+                if (!t || !t.closest) return;
+                const tg = t.closest("[data-ops-periods-toggle]");
+                if (tg) {
+                    const host = tg.closest("#ops-kpi, #ops-kpi-scrapyard");
+                    if (host) {
+                        host.classList.toggle("ops-periods-open");
+                        homekpiOpsDecorate();
+                    }
+                    return;
+                }
+                if (t.closest("[data-ops-period]")) {
+                    const host = t.closest("#ops-kpi, #ops-kpi-scrapyard");
+                    if (host) {
+                        host.classList.remove("ops-periods-open");
+                        homekpiOpsDecorate();
+                    }
+                }
+            } catch (e) {}
+        }, true);
+    } catch (e) {}
+})();
+
+const HOMEKPI_YARD_DROP = [ "مهام معلقة", "طلبات تسعير معلقة" ];
+
+function homekpiYardTrim() {
+    const row = document.querySelector(".scrapyard-kpi-row");
+    if (!row) return;
+    Array.prototype.slice.call(row.querySelectorAll(".kpi-card")).forEach(function(c) {
+        const l = c.querySelector(".kpi-label");
+        const t = l ? String(l.textContent).replace(/[\u064B-\u0652]/g, "").trim() : "";
+        if (HOMEKPI_YARD_DROP.indexOf(t) !== -1 && c.parentNode) c.parentNode.removeChild(c);
+    });
+    const ops = document.getElementById("ops-kpi-scrapyard");
+    if (ops && ops.parentNode && row.parentNode === ops.parentNode && row.nextElementSibling !== ops) ops.parentNode.insertBefore(row, ops);
+}
+
+function homekpiYardFabOff() {
+    const f = document.getElementById("acct2-fab");
+    if (f && f.parentNode) f.parentNode.removeChild(f);
+}
+
+(function homekpiYardInstall() {
+    try {
+        if (typeof renderScrapyardHomeView === "function") {
+            const prevYardHome = renderScrapyardHomeView;
+            renderScrapyardHomeView = function() {
+                const r = prevYardHome.apply(this, arguments);
+                try {
+                    homekpiYardTrim();
+                } catch (e) {}
+                return r;
+            };
+        }
+        if (typeof acct2FabEnsure === "function") {
+            acct2FabEnsure = function() {
+                try {
+                    homekpiYardFabOff();
+                } catch (e) {}
+            };
+        }
+        homekpiYardFabOff();
     } catch (e) {}
 })();</script>
 </body>
