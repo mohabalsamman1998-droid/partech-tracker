@@ -70813,6 +70813,15 @@ function openaccSort(rows, amountsOf) {
     });
 }
 
+function openaccLegacySort(rows, flagOf) {
+    return [ ...rows ].sort((a, b) => {
+        const ap = flagOf(a) > 0 ? 1 : 0;
+        const bp = flagOf(b) > 0 ? 1 : 0;
+        if (bp - ap) return bp - ap;
+        return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+    });
+}
+
 customersMatchingSearch = function(refundsIdx, sortIdx) {
     const idx = refundsIdx || customerRefundsPendingIndex();
     const q = customersSearchQuery.trim().toLowerCase();
@@ -70827,8 +70836,11 @@ customersMatchingSearch = function(refundsIdx, sortIdx) {
     if (sortIdx) {
         return [ ...rows ].sort((a, b) => (sortIdx[b.id] || 0) - (sortIdx[a.id] || 0));
     }
-    const stats = customerStatsIndex();
-    return openaccSort(rows, c => [ openaccAmt((stats[c.id] || {}).remaining), openaccAmt(idx[c.id]) ]);
+    if (customersSortBy === "open") {
+        const stats = customerStatsIndex();
+        return openaccSort(rows, c => [ openaccAmt((stats[c.id] || {}).remaining), openaccAmt(idx[c.id]) ]);
+    }
+    return openaccLegacySort(rows, c => idx[c.id] || 0);
 };
 
 suppliersMatchingSearch = function(receivablesIdx, sortIdx) {
@@ -70847,8 +70859,34 @@ suppliersMatchingSearch = function(receivablesIdx, sortIdx) {
     if (sortIdx) {
         return [ ...rows ].sort((a, b) => (sortIdx[b.id] || 0) - (sortIdx[a.id] || 0));
     }
-    const owed = supplierOwedIndex();
-    return openaccSort(rows, s => [ openaccAmt(owed[s.id]), openaccAmt(idx[s.id]) ]);
-};</script>
+    if (suppliersSortBy === "open") {
+        const owed = supplierOwedIndex();
+        return openaccSort(rows, s => [ openaccAmt(owed[s.id]), openaccAmt(idx[s.id]) ]);
+    }
+    return openaccLegacySort(rows, s => idx[s.id] || 0);
+};
+
+try {
+    if (typeof CUSTOMER_SORT_OPTIONS !== "undefined" && !CUSTOMER_SORT_OPTIONS.some(o => o.id === "open")) {
+        CUSTOMER_SORT_OPTIONS.unshift({
+            id: "open",
+            label: "💳 حساب مفتوح"
+        });
+        CUSTOMER_SORT_OPTIONS.forEach(o => {
+            if (o.id === "default") o.label = "الأحدث";
+        });
+        customersSortBy = "open";
+    }
+    if (typeof SUPPLIER_SORT_OPTIONS !== "undefined" && !SUPPLIER_SORT_OPTIONS.some(o => o.id === "open")) {
+        SUPPLIER_SORT_OPTIONS.unshift({
+            id: "open",
+            label: "💳 حساب مفتوح"
+        });
+        SUPPLIER_SORT_OPTIONS.forEach(o => {
+            if (o.id === "default") o.label = "الأحدث";
+        });
+        suppliersSortBy = "open";
+    }
+} catch (e) {}</script>
 </body>
 </html>
