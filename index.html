@@ -1520,8 +1520,9 @@
   @media print{ .taxinv-qr.taxinv-qr-long{width:4.5cm;} }
   .doc-sheet.pdf-export-mode .taxinv-qr.taxinv-qr-long{width:auto;}
   [data-zatca-dialog] .taxinv-errors li{display:flex;gap:8px;align-items:center;justify-content:space-between;}
-  /* وضوح شريط أدوات الفاتورة الضريبية: خلفية الشاشة شبه شفافة فكان التطبيق خلفها (الشعار والأزرار) يتداخل مع أزرار الأدوات الشفافة. تُعتَّم بالكامل على الشاشة فقط (لا الطباعة) */
-  @media screen{ .doc-overlay[data-taxinv-root="issued"],.doc-overlay[data-taxinv-root="preview"]{background:var(--bg);} }
+  /* وضوح شريط أدوات الفاتورة الضريبية: خلفية الشاشة شبه شفافة فكان التطبيق خلفها (الشعار والأزرار) يتداخل مع أزرار الأدوات الشفافة. تُعتَّم بالكامل على الشاشة فقط (لا الطباعة)، وعنوان الشريط يأخذ لون النص (أبيض الأصل كان يضيع على خلفية النمط الفاتح) */
+  @media screen{ .doc-overlay[data-taxinv-root="issued"],.doc-overlay[data-taxinv-root="preview"]{background:var(--bg);}
+    .doc-overlay[data-taxinv-root="issued"] .doc-toolbar-title,.doc-overlay[data-taxinv-root="preview"] .doc-toolbar-title{color:var(--text);} }
   /* ZATCA END css */
   /* TAXINV BEGIN css */
   /* ===== TAXINV — الفاتورة الضريبية (المرحلة الأولى) — كل القواعد بنطاق .taxinv-* =====
@@ -68910,6 +68911,102 @@ async function bootstrapAuth() {
 
 bootstrapAuth();
 
+function openaccAmt(x) {
+    const n = Number(x);
+    return n > .004 ? n : 0;
+}
+
+function openaccSort(rows, amountsOf) {
+    const amt = new Map(rows.map(r => [ r, amountsOf(r) ]));
+    const created = r => new Date(r.createdAt || 0).getTime() || 0;
+    return [ ...rows ].sort((a, b) => {
+        const x = amt.get(a), y = amt.get(b);
+        const xo = x[0] > 0 || x[1] > 0 ? 1 : 0, yo = y[0] > 0 || y[1] > 0 ? 1 : 0;
+        if (yo - xo) return yo - xo;
+        if (xo) {
+            if (y[0] - x[0]) return y[0] - x[0];
+            if (y[1] - x[1]) return y[1] - x[1];
+        }
+        return created(b) - created(a);
+    });
+}
+
+function openaccLegacySort(rows, flagOf) {
+    return [ ...rows ].sort((a, b) => {
+        const ap = flagOf(a) > 0 ? 1 : 0;
+        const bp = flagOf(b) > 0 ? 1 : 0;
+        if (bp - ap) return bp - ap;
+        return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+    });
+}
+
+customersMatchingSearch = function(refundsIdx, sortIdx) {
+    const idx = refundsIdx || customerRefundsPendingIndex();
+    const q = customersSearchQuery.trim().toLowerCase();
+    let rows = appData.customers || [];
+    if (q) {
+        rows = rows.filter(c => {
+            if (editingCustomers[c.id]) return true;
+            const hay = [ c.name, c.phone ].join(" ").toLowerCase();
+            return hay.includes(q);
+        });
+    }
+    if (sortIdx) {
+        return [ ...rows ].sort((a, b) => (sortIdx[b.id] || 0) - (sortIdx[a.id] || 0));
+    }
+    if (customersSortBy === "open") {
+        const stats = customerStatsIndex();
+        return openaccSort(rows, c => [ openaccAmt((stats[c.id] || {}).remaining), openaccAmt(idx[c.id]) ]);
+    }
+    return openaccLegacySort(rows, c => idx[c.id] || 0);
+};
+
+suppliersMatchingSearch = function(receivablesIdx, sortIdx) {
+    const idx = receivablesIdx || supplierReturnReceivablesIndex().bySupplier;
+    const q = suppliersSearchQuery.trim().toLowerCase();
+    let rows = appData.suppliers || [];
+    const isEditing = s => !!editingSuppliers[s.id];
+    if (suppliersKindFilter === "new") rows = rows.filter(s => isEditing(s) || s.handlesNew); else if (suppliersKindFilter === "used") rows = rows.filter(s => isEditing(s) || s.handlesUsed);
+    if (q) {
+        rows = rows.filter(s => {
+            if (isEditing(s)) return true;
+            const hay = [ s.name, s.phone ].concat(Array.isArray(s.extraPhones) ? s.extraPhones : []).join(" ").toLowerCase();
+            return hay.includes(q);
+        });
+    }
+    if (sortIdx) {
+        return [ ...rows ].sort((a, b) => (sortIdx[b.id] || 0) - (sortIdx[a.id] || 0));
+    }
+    if (suppliersSortBy === "open") {
+        const owed = supplierOwedIndex();
+        return openaccSort(rows, s => [ openaccAmt(owed[s.id]), openaccAmt(idx[s.id]) ]);
+    }
+    return openaccLegacySort(rows, s => idx[s.id] || 0);
+};
+
+try {
+    if (typeof CUSTOMER_SORT_OPTIONS !== "undefined" && !CUSTOMER_SORT_OPTIONS.some(o => o.id === "open")) {
+        CUSTOMER_SORT_OPTIONS.unshift({
+            id: "open",
+            label: "💳 حساب مفتوح"
+        });
+        CUSTOMER_SORT_OPTIONS.forEach(o => {
+            if (o.id === "default") o.label = "الأحدث";
+        });
+        customersSortBy = "open";
+    }
+    if (typeof SUPPLIER_SORT_OPTIONS !== "undefined" && !SUPPLIER_SORT_OPTIONS.some(o => o.id === "open")) {
+        SUPPLIER_SORT_OPTIONS.unshift({
+            id: "open",
+            label: "💳 حساب مفتوح"
+        });
+        SUPPLIER_SORT_OPTIONS.forEach(o => {
+            if (o.id === "default") o.label = "الأحدث";
+        });
+        suppliersSortBy = "open";
+    }
+} catch (e) {}
+
 const zatcaQrcode = function() {
     var qrcode = function() {
         var qrcode = function(typeNumber, errorCorrectionLevel) {
@@ -70791,102 +70888,6 @@ let zatcaOrigMount = null;
             }
         }, false);
     } catch (e) {}
-})();
-
-function openaccAmt(x) {
-    const n = Number(x);
-    return n > .004 ? n : 0;
-}
-
-function openaccSort(rows, amountsOf) {
-    const amt = new Map(rows.map(r => [ r, amountsOf(r) ]));
-    const created = r => new Date(r.createdAt || 0).getTime() || 0;
-    return [ ...rows ].sort((a, b) => {
-        const x = amt.get(a), y = amt.get(b);
-        const xo = x[0] > 0 || x[1] > 0 ? 1 : 0, yo = y[0] > 0 || y[1] > 0 ? 1 : 0;
-        if (yo - xo) return yo - xo;
-        if (xo) {
-            if (y[0] - x[0]) return y[0] - x[0];
-            if (y[1] - x[1]) return y[1] - x[1];
-        }
-        return created(b) - created(a);
-    });
-}
-
-function openaccLegacySort(rows, flagOf) {
-    return [ ...rows ].sort((a, b) => {
-        const ap = flagOf(a) > 0 ? 1 : 0;
-        const bp = flagOf(b) > 0 ? 1 : 0;
-        if (bp - ap) return bp - ap;
-        return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
-    });
-}
-
-customersMatchingSearch = function(refundsIdx, sortIdx) {
-    const idx = refundsIdx || customerRefundsPendingIndex();
-    const q = customersSearchQuery.trim().toLowerCase();
-    let rows = appData.customers || [];
-    if (q) {
-        rows = rows.filter(c => {
-            if (editingCustomers[c.id]) return true;
-            const hay = [ c.name, c.phone ].join(" ").toLowerCase();
-            return hay.includes(q);
-        });
-    }
-    if (sortIdx) {
-        return [ ...rows ].sort((a, b) => (sortIdx[b.id] || 0) - (sortIdx[a.id] || 0));
-    }
-    if (customersSortBy === "open") {
-        const stats = customerStatsIndex();
-        return openaccSort(rows, c => [ openaccAmt((stats[c.id] || {}).remaining), openaccAmt(idx[c.id]) ]);
-    }
-    return openaccLegacySort(rows, c => idx[c.id] || 0);
-};
-
-suppliersMatchingSearch = function(receivablesIdx, sortIdx) {
-    const idx = receivablesIdx || supplierReturnReceivablesIndex().bySupplier;
-    const q = suppliersSearchQuery.trim().toLowerCase();
-    let rows = appData.suppliers || [];
-    const isEditing = s => !!editingSuppliers[s.id];
-    if (suppliersKindFilter === "new") rows = rows.filter(s => isEditing(s) || s.handlesNew); else if (suppliersKindFilter === "used") rows = rows.filter(s => isEditing(s) || s.handlesUsed);
-    if (q) {
-        rows = rows.filter(s => {
-            if (isEditing(s)) return true;
-            const hay = [ s.name, s.phone ].concat(Array.isArray(s.extraPhones) ? s.extraPhones : []).join(" ").toLowerCase();
-            return hay.includes(q);
-        });
-    }
-    if (sortIdx) {
-        return [ ...rows ].sort((a, b) => (sortIdx[b.id] || 0) - (sortIdx[a.id] || 0));
-    }
-    if (suppliersSortBy === "open") {
-        const owed = supplierOwedIndex();
-        return openaccSort(rows, s => [ openaccAmt(owed[s.id]), openaccAmt(idx[s.id]) ]);
-    }
-    return openaccLegacySort(rows, s => idx[s.id] || 0);
-};
-
-try {
-    if (typeof CUSTOMER_SORT_OPTIONS !== "undefined" && !CUSTOMER_SORT_OPTIONS.some(o => o.id === "open")) {
-        CUSTOMER_SORT_OPTIONS.unshift({
-            id: "open",
-            label: "💳 حساب مفتوح"
-        });
-        CUSTOMER_SORT_OPTIONS.forEach(o => {
-            if (o.id === "default") o.label = "الأحدث";
-        });
-        customersSortBy = "open";
-    }
-    if (typeof SUPPLIER_SORT_OPTIONS !== "undefined" && !SUPPLIER_SORT_OPTIONS.some(o => o.id === "open")) {
-        SUPPLIER_SORT_OPTIONS.unshift({
-            id: "open",
-            label: "💳 حساب مفتوح"
-        });
-        SUPPLIER_SORT_OPTIONS.forEach(o => {
-            if (o.id === "default") o.label = "الأحدث";
-        });
-        suppliersSortBy = "open";
-    }
-} catch (e) {}</script>
+})();</script>
 </body>
 </html>
