@@ -63073,6 +63073,8 @@ const ATT_BANNER_SOON_MS = 6e5;
 
 const ATT_REPEAT_MS = 12e5;
 
+const ATT_ALARM_PREFS_TTL_MS = 6e5;
+
 const ATT_SIREN_MAX_MS = 6e4;
 
 const ATT_ALARM_BUZZ_MS = 2e3;
@@ -63147,6 +63149,14 @@ let attWaiting = false;
 let attAlertDay = "";
 
 let attAlertNextAt = 0;
+
+let attAlarmPrefs = null;
+
+let attAlarmPrefsAt = 0;
+
+let attAlarmPrefsBusy = false;
+
+let attAlarmPrefsMissing = false;
 
 let attAlarmStartedAt = 0;
 
@@ -64423,6 +64433,49 @@ function attSirenStop() {
     attSirenUntil = 0;
 }
 
+function attAlarmRepeatMs() {
+    const m = attAlarmPrefs ? Number(attAlarmPrefs.repeat_minutes) : 0;
+    return m >= 1 && m <= 120 ? Math.floor(m) * 6e4 : ATT_REPEAT_MS;
+}
+
+function attAlarmDelayMs() {
+    const m = attAlarmPrefs ? Number(attAlarmPrefs.start_after_minutes) : 0;
+    return m >= 1 ? Math.min(Math.floor(m), 240) * 6e4 : 0;
+}
+
+function attAlarmOff() {
+    return !!attAlarmPrefs && attAlarmPrefs.enabled === false;
+}
+
+function attAlertNoteText() {
+    const n = Math.round(attAlarmRepeatMs() / 6e4);
+    return "يتجدد هذا الإنذار كل " + (n === 1 ? "دقيقة" : n === 2 ? "دقيقتين" : attMinutesText(n)) + " حتى يُسجَّل وصولك.";
+}
+
+async function attLoadAlarmPrefs() {
+    if (attAlarmPrefsMissing || attAlarmPrefsBusy || typeof sb === "undefined" || !sb) return;
+    if (attAlarmPrefsAt && Date.now() - attAlarmPrefsAt < ATT_ALARM_PREFS_TTL_MS) return;
+    const gen = attGen;
+    attAlarmPrefsBusy = true;
+    attAlarmPrefsAt = Date.now();
+    try {
+        const r = await attRpc("att_app_alarm_prefs", {});
+        if (gen !== attGen) return;
+        if (r && r.ok === true && r.linked && r.alarm && typeof r.alarm === "object") {
+            attAlarmPrefs = {
+                enabled: r.alarm.enabled !== false,
+                repeat_minutes: Number(r.alarm.repeat_minutes) || 0,
+                start_after_minutes: Number(r.alarm.start_after_minutes) || 0
+            };
+            attPaint();
+        }
+    } catch (e) {
+        if (e && (e.code === "PGRST202" || /Could not find the function/i.test(String(e.message || "")))) attAlarmPrefsMissing = true;
+    } finally {
+        if (gen === attGen) attAlarmPrefsBusy = false;
+    }
+}
+
 function attAlertEl() {
     let el = document.getElementById("att-alert");
     if (el) return el;
@@ -64458,7 +64511,7 @@ function attAlertEl() {
         role: "alert"
     }), attEl("p", {
         class: "att-alert-note"
-    }, "يتجدد هذا الإنذار كل 20 دقيقة حتى يُسجَّل وصولك."), attEl("button", {
+    }, attAlertNoteText()), attEl("button", {
         type: "button",
         class: "btn att-alert-ok",
         onclick: function() {
@@ -64488,7 +64541,7 @@ function attHideAlert(dismissed) {
         attTitleOrig = null;
     }
     if (dismissed) {
-        attAlertNextAt = Date.now() + ATT_REPEAT_MS;
+        attAlertNextAt = Date.now() + attAlarmRepeatMs();
         if (attMe) attStoreSet("att-alert-last", attAlertKey(attMe) + "@" + Date.now());
     }
 }
@@ -64510,9 +64563,10 @@ function attShowAlert(v, me) {
     const loc = me && me.location && me.location.name ? " إلى «" + me.location.name + "»" : "";
     attSetText(document.getElementById("att-alert-text"), "مضى " + attMinutesText(Math.floor(v.lateMs / 6e4)) + " على موعد الدوام ولم يُسجَّل وصولك. توجّه فورًا" + loc + " وسيُسجَّل حضورك تلقائيًا عند وصولك ويتوقف الإنذار.");
     attSetText(document.getElementById("att-alert-big"), attHMS(v.lateMs));
+    attSetText(el.querySelector(".att-alert-note"), attAlertNoteText());
     el.classList.remove("att-hide");
     attAlarmStartedAt = Date.now();
-    attAlertNextAt = attAlarmStartedAt + ATT_REPEAT_MS;
+    attAlertNextAt = attAlarmStartedAt + attAlarmRepeatMs();
     attStoreSet("att-alert-last", attAlertKey(me) + "@" + attAlarmStartedAt);
     attAlarmBuzzAt = attAlarmStartedAt;
     attVibrate([ 500, 200, 500, 200, 900 ]);
@@ -64540,6 +64594,10 @@ function attAlarmTick(v) {
 }
 
 function attMaybeAlert(v, me) {
+    if (attAlarmOff() || attAlarmDelayMs() > 0 && v.lateMs < attAlarmDelayMs()) {
+        attHideAlert();
+        return;
+    }
     const key = attAlertKey(me);
     if (attAlertDay !== key) {
         if (Date.now() - attFreshAt < ATT_ALERT_HOLD_MS) return;
@@ -64552,7 +64610,7 @@ function attMaybeAlert(v, me) {
         }
         attAlertDay = key;
         const last = attAlertLastAt(key);
-        attAlertNextAt = last ? last + ATT_REPEAT_MS : 0;
+        attAlertNextAt = last ? last + attAlarmRepeatMs() : 0;
     }
     const el = document.getElementById("att-alert");
     if (el && !el.classList.contains("att-hide")) {
@@ -64728,6 +64786,7 @@ async function attMeLoad() {
         if (was && t.attendance && t.attendance.status === "present") attOnArrived(t.attendance, attMe);
         attPaint();
         attSchedulePoll();
+        attLoadAlarmPrefs();
     } catch (e) {
         if (gen === attGen && seq === attMeSeq) attRetry(e);
     } finally {
@@ -64944,6 +65003,7 @@ async function attOpenScreen() {
     const ep = ++attPanelEp;
     attView = {
         cfg: null,
+        alarm: null,
         tab: "today",
         arg: null,
         rid: 0,
@@ -64985,6 +65045,8 @@ async function attOpenScreen() {
         attView.cfg = await attCall("att_admin_config", {});
         if (gen !== attGen || ep !== attPanelEp || !attOpenFlag) return;
         if (!attView.cfg || attView.cfg.ok !== true) throw attErrCode("auth");
+        await attLoadAlarmAdmin();
+        if (gen !== attGen || ep !== attPanelEp || !attOpenFlag) return;
         attLegacyBack = false;
         attMergeLegacy(true, true);
         attDrawShell();
@@ -65183,7 +65245,29 @@ async function attReloadConfig() {
     if (!attView) return null;
     if (!cfg || cfg.ok !== true) throw attErrCode("auth");
     attView.cfg = cfg;
+    await attLoadAlarmAdmin();
     return cfg;
+}
+
+async function attLoadAlarmAdmin() {
+    const v = attView;
+    if (!v) return;
+    let a = null;
+    try {
+        const r = await attCall("att_admin_alarm_prefs", {});
+        if (r && r.ok === true && Array.isArray(r.prefs)) {
+            const map = {};
+            r.prefs.forEach(function(x) {
+                if (x && x.employee_id !== undefined) map[x.employee_id] = x;
+            });
+            a = {
+                defaults: r.defaults || {},
+                push_enabled: r.push_enabled !== false,
+                map: map
+            };
+        }
+    } catch (e) {}
+    if (attView === v) v.alarm = a;
 }
 
 function attMark(kind, ok) {
@@ -66642,6 +66726,8 @@ function attSecEmployees(host) {
         const bits = [ locName(e.location_id) || (firstActive ? "الموقع الافتراضي (" + firstActive.name + ")" : "لم يُحدَّد موقع") ];
         if (e.radius_m !== null && e.radius_m !== undefined) bits.push("قطر خاص " + attFmtDiam(e.radius_m * 2));
         bits.push("الدوام " + String(e.shift_start || cfg.settings.default_shift_start).slice(0, 5) + (e.shift_start ? "" : " (وقت الشركة)"));
+        const alarmTxt = attAlarmSummary(attView.alarm && attView.alarm.map[e.id]);
+        if (alarmTxt) bits.push("الإنذار: " + alarmTxt);
         sec.appendChild(attEl("div", {
             class: "att-row" + (e.active ? "" : " att-off")
         }, attEl("div", {
@@ -66666,7 +66752,108 @@ function attSecEmployees(host) {
             onclick: attBusy(function() {
                 return attEmployeeForm(e);
             })
-        }, "تعديل"))));
+        }, "تعديل"), attView.alarm ? attEl("button", {
+            type: "button",
+            class: "btn btn-ghost btn-sm att-alarm-btn",
+            title: "إنذار التأخير لهذا الموظف",
+            onclick: attBusy(function() {
+                return attAlarmForm(e);
+            })
+        }, "🔔 الإنذار") : null)));
+    });
+}
+
+function attAlarmSummary(p) {
+    if (!p) return "";
+    if (p.enabled === false) return "معطّل";
+    const bits = [];
+    if (p.start_after_minutes) bits.push("يبدأ بعد " + p.start_after_minutes + " د");
+    if (p.repeat_minutes) bits.push("كل " + p.repeat_minutes + " د");
+    return bits.join(" · ");
+}
+
+async function attAlarmForm(e) {
+    const al = attView && attView.alarm;
+    if (!al) return;
+    const cur = al.map[e.id] || null, def = al.defaults || {};
+    const enabled = attEl("input", {
+        type: "checkbox",
+        checked: !cur || cur.enabled !== false
+    });
+    const start = attEl("input", {
+        type: "number",
+        class: "att-in",
+        min: "0",
+        max: "240",
+        step: "1",
+        inputmode: "numeric",
+        placeholder: String(def.start_after_minutes || 0),
+        value: cur && cur.start_after_minutes ? String(cur.start_after_minutes) : ""
+    });
+    const rep = attEl("input", {
+        type: "number",
+        class: "att-in",
+        min: "1",
+        max: "120",
+        step: "1",
+        inputmode: "numeric",
+        placeholder: String(def.repeat_minutes || 20),
+        value: cur && cur.repeat_minutes ? String(cur.repeat_minutes) : ""
+    });
+    const body = attEl("div", {}, al.push_enabled === false ? attEl("div", {
+        class: "att-notice att-warn"
+    }, "إنذار الإشعارات العام متوقف حاليًا من الخادم، فلا يصل أي إشعار تأخير لأي موظف حتى يُستأنف.") : null, attEl("label", {
+        class: "att-check"
+    }, enabled, "تفعيل إنذار التأخير لهذا الموظف"), attField("يبدأ الإنذار بعد (دقيقة من موعد الدوام)", start, "اتركه فارغًا ليبدأ لحظة التأخر. مثال: 10 = لا إنذار قبل مرور 10 دقائق على موعد دوامه."), attField("يتكرر الإنذار كل (دقيقة)", rep, "اتركه فارغًا ليتبع الافتراضي (" + (def.repeat_minutes || 20) + " دقيقة). من 1 إلى 120."));
+    const read = function(inp, lo, hi, what) {
+        const raw = String(inp.value === undefined || inp.value === null ? "" : inp.value).trim();
+        if (raw === "") return null;
+        const n = Number(raw);
+        if (!isFinite(n) || Math.floor(n) !== n || n < lo || n > hi) {
+            attToast(what + " بين " + lo + " و" + hi + " دقيقة", "error");
+            return undefined;
+        }
+        return n;
+    };
+    attModal("إنذار التأخير — " + e.name, body, function(close) {
+        const commit = function(reset) {
+            return attAct(async function() {
+                let s = null, r = null;
+                if (!reset) {
+                    s = read(start, 0, 240, "وقت بدء الإنذار");
+                    if (s === undefined) return;
+                    r = read(rep, 1, 120, "تكرار الإنذار");
+                    if (r === undefined) return;
+                }
+                const res = await attCall("att_admin_set_alarm_prefs", {
+                    employee_id: e.id,
+                    enabled: !reset && !enabled.checked ? false : null,
+                    start_after_minutes: s,
+                    repeat_minutes: r
+                });
+                if (!res || !res.ok) {
+                    attToast(attErrText(res), "error");
+                    return;
+                }
+                attToast(reset ? "عاد الإنذار للإعداد الافتراضي" : "تم الحفظ");
+                close();
+                await attLoadAlarmAdmin();
+                attRenderTab();
+            });
+        };
+        return [ attEl("button", {
+            type: "button",
+            class: "btn btn-primary",
+            onclick: commit(false)
+        }, "حفظ"), cur ? attEl("button", {
+            type: "button",
+            class: "btn btn-ghost",
+            onclick: commit(true)
+        }, "استعادة الافتراضي") : null, attEl("button", {
+            type: "button",
+            class: "btn btn-ghost",
+            onclick: close
+        }, "إلغاء") ];
     });
 }
 
@@ -68290,6 +68477,10 @@ function attEndSession() {
         attMeBusyAt = 0;
         attAlertDay = "";
         attFails = 0;
+        attAlarmPrefs = null;
+        attAlarmPrefsAt = 0;
+        attAlarmPrefsBusy = false;
+        attAlarmPrefsMissing = false;
         attFreshAt = 0;
         attHiddenAt = 0;
         attDayMiss = 0;
