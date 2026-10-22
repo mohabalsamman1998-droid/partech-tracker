@@ -1572,6 +1572,21 @@
   /* زر «📥 كتالوج الأرقام» (استيراد ملفات الكتالوج الضخمة بالصندوق): الكتالوجان محمّلان بالكامل بقاعدة البيانات، فلا حاجة له يوميًا (طلب المالك 2026-10-22) */
   #btn-import-oem-alts, #oem-alt-import-status{display:none !important;}
   /* SLIM END css */
+  /* GRADE BEGIN css */
+  /* اختيار جودة القطع (GRADE): أصلي / درجة أولى / المتوفر — أزرار بخلفية صلبة (قاعدة المالك: لا أزرار شفافة فوق الخلفية السوداء) وبحجم لمس مريح */
+  .grade-order{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 10px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);}
+  .grade-order-label{font-size:12.5px;font-weight:700;color:var(--text-dim);}
+  .grade-order-note{font-size:12px;font-weight:700;color:var(--amber);}
+  .grade-pick{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:6px 0 2px;}
+  .grade-pick-label{font-size:11px;font-weight:700;color:var(--text-dim);}
+  .grade-pills{display:flex;gap:8px;flex-wrap:wrap;}
+  .grade-pill{border:1px solid var(--border);background:var(--surface-2);color:var(--text);min-height:36px;padding:6px 14px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;font-family:'Cairo',sans-serif;line-height:1.4;}
+  .grade-pill.on{background:var(--green);border-color:var(--green);color:var(--green-ink);}
+  .grade-pill.on::before{content:'✓ ';}
+  .grade-missing{outline:2px solid var(--rust);outline-offset:3px;border-radius:8px;}
+  .grade-missing .grade-pick-label{color:var(--rust);}
+  .grade-tag{display:inline-block;font-size:10px;font-weight:700;color:var(--green);background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:0 6px;margin-inline-end:6px;}
+  /* GRADE END css */
   /* TAXINV BEGIN css */
   /* ===== TAXINV — الفاتورة الضريبية (المرحلة الأولى) — كل القواعد بنطاق .taxinv-* =====
      CONTRACT-ADDENDUM-D: الورقة هي نفسها ورقة الفاتورة القديمة (.doc-sheet و.doc-header-band و.doc-brand-col و.doc-logo-img و.doc-co-info و.doc-identity-* و.doc-billto
@@ -66471,6 +66486,13 @@ function attTabMap(panel) {
                     maxZoom: 16
                 });
             }
+            const fm = v.mk["k" + sel];
+            if (fm) {
+                const fl = fm.getLatLng();
+                map.setView([ fl.lat, fl.lng ], 16, {
+                    animate: false
+                });
+            }
             attDefer(function() {
                 if (v.map) v.map.invalidateSize();
             }, 80);
@@ -71676,6 +71698,12 @@ const SUPCOPY_ANCHOR = '<span class="section-title">تفاصيل الطلبية<
 
 const SUPCOPY_LABEL = "📤 إرسال للمورد";
 
+const SUPCOPY_QUALITY = {
+    oem: "أصلي",
+    first: "درجة أولى",
+    any: "المتوفر"
+};
+
 const SUPCOPY_WA_MAX = 8e3;
 
 function supcopyWaUrl(text) {
@@ -71733,7 +71761,11 @@ function supcopyBuildText(order, o) {
     let total = 0, priced = 0;
     parts.forEach(function(p, i) {
         const qty = Number(p.qty) > 0 ? Math.floor(Number(p.qty)) || 1 : 1;
-        const kind = p.used === true ? " (مستعمل)" : p.used === false ? " (جديد)" : "";
+        const tags = [];
+        if (p.used === true) tags.push("مستعمل");
+        const ql = Object.prototype.hasOwnProperty.call(SUPCOPY_QUALITY, p.quality) ? SUPCOPY_QUALITY[p.quality] : "";
+        if (ql) tags.push(ql);
+        const kind = tags.length ? " (" + tags.join(" · ") + ")" : "";
         lines.push(i + 1 + ". " + String(p.description).trim() + kind + " × " + qty);
         const pn = String(p.partNumber || "").trim();
         if (pn) lines.push("   رقم القطعة: " + pn);
@@ -71980,6 +72012,439 @@ function slimSweep(root) {
                 characterData: true
             });
         }
+    } catch (e) {}
+})();
+
+const GRADE_VALUES = [ "oem", "first", "any" ];
+
+const GRADE_LABELS = {
+    oem: "أصلي",
+    first: "درجة أولى",
+    any: "المتوفر"
+};
+
+const GRADE_MISSING_TEXT = "اختر الجودة المطلوبة (أصلي / درجة أولى / المتوفر) لكل قطعة";
+
+const gradeDefaults = {
+    order: null,
+    quote: null
+};
+
+let gradePasteQ = null;
+
+function gradeValid(v) {
+    return typeof v === "string" && Object.prototype.hasOwnProperty.call(GRADE_LABELS, v);
+}
+
+function gradeDraft(src) {
+    try {
+        return src === "quote" ? typeof quoteDraft !== "undefined" ? quoteDraft : null : typeof draft !== "undefined" ? draft : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function gradeEditable(src, p) {
+    if (!p || p.returned) return false;
+    if (src === "quote") return !(typeof quoteModalRole !== "undefined" && quoteModalRole === "purchasing");
+    return !(typeof fieldGated === "function" && fieldGated(p.id));
+}
+
+function gradeSaved(src, p) {
+    try {
+        const d = gradeDraft(src);
+        const s = d ? persistedPartIds.get(d.id) : null;
+        return !!(s && s.has(p.id));
+    } catch (e) {
+        return false;
+    }
+}
+
+function gradePillsHtml(cur, attr) {
+    return GRADE_VALUES.map(function(k) {
+        return '<button type="button" class="grade-pill' + (cur === k ? " on" : "") + '" ' + attr + '="' + k + '" aria-pressed="' + (cur === k ? "true" : "false") + '">' + GRADE_LABELS[k] + "</button>";
+    }).join("");
+}
+
+function gradeTagHtml(p) {
+    return p && gradeValid(p.quality) ? '<span class="grade-tag">الجودة: ' + GRADE_LABELS[p.quality] + "</span>" : "";
+}
+
+function gradePickHtml(p, src, i) {
+    if (!p || p.returned) return "";
+    const cur = gradeValid(p.quality) ? p.quality : "";
+    if (!gradeEditable(src, p)) return cur ? '<div class="grade-pick">' + gradeTagHtml(p) + "</div>" : "";
+    return '<div class="grade-pick" data-grade-src="' + src + '" data-grade-part="' + escapeHtml(p.id) + '" role="group" aria-label="الجودة المطلوبة' + (typeof i === "number" ? " للقطعة " + (i + 1) : "") + '">' + '<span class="grade-pick-label">الجودة</span><div class="grade-pills">' + gradePillsHtml(cur, "data-grade-set") + "</div></div>";
+}
+
+function gradeCounted(src, p) {
+    return !!p && !p.returned && String(p.description || "").trim() !== "" && gradeEditable(src, p);
+}
+
+function gradeCommon(d, src, skip) {
+    if (!d || !Array.isArray(d.parts)) return "";
+    const ps = d.parts.filter(function(p) {
+        return gradeCounted(src, p) && !(skip && skip(p));
+    });
+    if (!ps.length) return "";
+    const f = ps[0].quality;
+    return gradeValid(f) && ps.every(function(p) {
+        return p.quality === f;
+    }) ? f : "";
+}
+
+function gradeAllValue(d, src, skip) {
+    if (!d || !Array.isArray(d.parts)) return "";
+    const has = d.parts.some(function(p) {
+        return gradeCounted(src, p) && !(skip && skip(p));
+    });
+    const v = has ? gradeCommon(d, src, skip) : gradeDefaults[src];
+    return gradeValid(v) ? v : "";
+}
+
+function gradeMixed(d, src) {
+    if (!d || !Array.isArray(d.parts) || gradeAllValue(d, src)) return false;
+    return d.parts.some(function(p) {
+        return gradeCounted(src, p) && gradeValid(p.quality);
+    });
+}
+
+function gradeOrderHtml(d, src) {
+    if (!d || !Array.isArray(d.parts)) return "";
+    const ps = d.parts.filter(function(p) {
+        return p && !p.returned;
+    });
+    if (src === "quote" && !gradeEditable("quote", {
+        id: ""
+    })) return "";
+    if (ps.length && !ps.some(function(p) {
+        return gradeEditable(src, p);
+    })) return "";
+    return '<div class="grade-order" data-grade-src="' + src + '" data-grade-all-group role="group" aria-label="الجودة المطلوبة لكل القطع">' + '<span class="grade-order-label">الجودة لكل القطع (إجباري)</span><div class="grade-pills">' + gradePillsHtml(gradeAllValue(d, src), "data-grade-all") + "</div>" + '<span class="grade-order-note" data-grade-note>' + (gradeMixed(d, src) ? "مختلفة" : "") + "</span></div>";
+}
+
+function gradeInjectRow(h, p, src, i) {
+    const html = gradePickHtml(p, src, i);
+    if (!html) return h;
+    let at = h.indexOf('<div class="part-pn-block">');
+    if (at < 0) at = h.indexOf('</div><div class="part-price-group">');
+    return at < 0 ? h : h.slice(0, at) + html + h.slice(at);
+}
+
+function gradeInjectBlock(h, d, src, anchor) {
+    const i = h.indexOf(anchor);
+    if (i < 0) return h;
+    const html = gradeOrderHtml(d || gradeDraft(src), src);
+    return html ? h.slice(0, i) + html + h.slice(i) : h;
+}
+
+function gradeInjectSub(h, p) {
+    const tag = gradeTagHtml(p);
+    if (!tag) return h;
+    const a = '<div class="purchase-history-row-sub"><span>';
+    const i = h.indexOf(a);
+    return i < 0 ? h : h.slice(0, i + a.length) + tag + h.slice(i + a.length);
+}
+
+function gradeSync(src) {
+    const d = gradeDraft(src);
+    if (!d) return;
+    document.querySelectorAll('[data-grade-part][data-grade-src="' + src + '"]').forEach(function(g) {
+        const p = (d.parts || []).find(function(x) {
+            return x && x.id === g.getAttribute("data-grade-part");
+        });
+        const cur = p && gradeValid(p.quality) ? p.quality : "";
+        g.querySelectorAll("[data-grade-set]").forEach(function(b) {
+            const on = b.getAttribute("data-grade-set") === cur;
+            b.classList.toggle("on", on);
+            b.setAttribute("aria-pressed", on ? "true" : "false");
+        });
+        if (cur) g.classList.remove("grade-missing");
+    });
+    const all = gradeAllValue(d, src), mixed = gradeMixed(d, src);
+    document.querySelectorAll('[data-grade-all-group][data-grade-src="' + src + '"]').forEach(function(g) {
+        g.querySelectorAll("[data-grade-all]").forEach(function(b) {
+            const on = b.getAttribute("data-grade-all") === all;
+            b.classList.toggle("on", on);
+            b.setAttribute("aria-pressed", on ? "true" : "false");
+        });
+        const n = g.querySelector("[data-grade-note]");
+        if (n) n.textContent = mixed ? "مختلفة" : "";
+    });
+}
+
+function gradeClick(ev) {
+    const t = ev.target;
+    const b = t && t.closest ? t.closest("[data-grade-set],[data-grade-all]") : null;
+    if (!b) return;
+    const g = b.closest("[data-grade-src]");
+    if (!g) return;
+    const src = g.getAttribute("data-grade-src"), d = gradeDraft(src);
+    const all = b.hasAttribute("data-grade-all");
+    const v = b.getAttribute(all ? "data-grade-all" : "data-grade-set");
+    if (!d || !Array.isArray(d.parts) || !gradeValid(v)) return;
+    ev.preventDefault();
+    if (all) {
+        gradeDefaults[src] = v;
+        d.parts.forEach(function(p) {
+            if (gradeEditable(src, p)) p.quality = v;
+        });
+    } else {
+        const p = d.parts.find(function(x) {
+            return x && x.id === g.getAttribute("data-grade-part");
+        });
+        if (!p || !gradeEditable(src, p)) return;
+        p.quality = v;
+    }
+    gradeSync(src);
+}
+
+function gradeMissing(src) {
+    const d = gradeDraft(src);
+    if (!d || !Array.isArray(d.parts)) return [];
+    if (src === "quote" && !gradeEditable("quote", {
+        id: ""
+    })) return [];
+    return d.parts.filter(function(p) {
+        return p && !p.returned && String(p.description || "").trim() !== "" && !gradeValid(p.quality) && gradeEditable(src, p) && !gradeSaved(src, p);
+    });
+}
+
+function gradeGuard(src) {
+    try {
+        const miss = gradeMissing(src);
+        if (!miss.length) return true;
+        if (!document.querySelector('[data-grade-part][data-grade-src="' + src + '"]')) return true;
+        try {
+            showToast(GRADE_MISSING_TEXT, "error");
+        } catch (e) {}
+        try {
+            const ids = miss.map(function(p) {
+                return p.id;
+            });
+            let first = null;
+            document.querySelectorAll('[data-grade-part][data-grade-src="' + src + '"]').forEach(function(g) {
+                if (ids.indexOf(g.getAttribute("data-grade-part")) >= 0) {
+                    g.classList.add("grade-missing");
+                    if (!first) first = g;
+                }
+            });
+            if (first && first.scrollIntoView) first.scrollIntoView({
+                block: "center",
+                behavior: "smooth"
+            });
+        } catch (e) {}
+        return false;
+    } catch (e) {
+        return true;
+    }
+}
+
+function gradeIsNewUnfilled(src, p) {
+    return !!p && !p.returned && !gradeValid(p.quality) && !gradeSaved(src, p);
+}
+
+function gradeFillNew(src) {
+    const d = gradeDraft(src);
+    if (!d || !Array.isArray(d.parts)) return;
+    const skip = function(p) {
+        return gradeIsNewUnfilled(src, p);
+    };
+    const v = gradeAllValue(d, src, skip);
+    if (!gradeValid(v)) return;
+    d.parts.forEach(function(p) {
+        if (gradeIsNewUnfilled(src, p) && gradeEditable(src, p)) p.quality = v;
+    });
+}
+
+(function gradeInstall() {
+    try {
+        if (typeof modalHtml === "function") {
+            const prevModalHtml = modalHtml;
+            modalHtml = function(d) {
+                const h = prevModalHtml.apply(this, arguments);
+                try {
+                    return gradeInjectBlock(h, d, "order", '<div id="parts-list" class="parts-list">');
+                } catch (e) {
+                    return h;
+                }
+            };
+        }
+        if (typeof quoteModalHtml === "function") {
+            const prevQuoteHtml = quoteModalHtml;
+            quoteModalHtml = function(d) {
+                const h = prevQuoteHtml.apply(this, arguments);
+                try {
+                    return gradeInjectBlock(h, d, "quote", '<div id="quote-parts-list" class="parts-list">');
+                } catch (e) {
+                    return h;
+                }
+            };
+        }
+        if (typeof partRowHtml === "function") {
+            const prevRow = partRowHtml;
+            partRowHtml = function(p, i) {
+                const h = prevRow.apply(this, arguments);
+                try {
+                    return gradeInjectRow(h, p, "order", i);
+                } catch (e) {
+                    return h;
+                }
+            };
+        }
+        if (typeof quotePartRowHtml === "function") {
+            const prevQRow = quotePartRowHtml;
+            quotePartRowHtml = function(p, i) {
+                const h = prevQRow.apply(this, arguments);
+                try {
+                    return gradeInjectRow(h, p, "quote", i);
+                } catch (e) {
+                    return h;
+                }
+            };
+        }
+        if (typeof supplyRequestPartRowHtml === "function") {
+            const prevSr = supplyRequestPartRowHtml;
+            supplyRequestPartRowHtml = function(p) {
+                const h = prevSr.apply(this, arguments);
+                try {
+                    return gradeInjectSub(h, p);
+                } catch (e) {
+                    return h;
+                }
+            };
+        }
+        if (typeof approvedQuotePartRowHtml === "function") {
+            const prevAq = approvedQuotePartRowHtml;
+            approvedQuotePartRowHtml = function(p) {
+                const h = prevAq.apply(this, arguments);
+                try {
+                    return gradeInjectSub(h, p);
+                } catch (e) {
+                    return h;
+                }
+            };
+        }
+        if (typeof openModal === "function") {
+            const prevOpen = openModal;
+            openModal = function() {
+                gradeDefaults.order = null;
+                return prevOpen.apply(this, arguments);
+            };
+        }
+        if (typeof openQuoteModal === "function") {
+            const prevOpenQ = openQuoteModal;
+            openQuoteModal = function() {
+                gradeDefaults.quote = null;
+                return prevOpenQ.apply(this, arguments);
+            };
+        }
+        if (typeof draftAddParts === "function") {
+            const prevAdd = draftAddParts;
+            draftAddParts = function(list) {
+                try {
+                    if (list && list.length) {
+                        const pq = gradePasteQ && gradePasteQ.length === list.length ? gradePasteQ : null;
+                        const base = gradeAllValue(gradeDraft("order"), "order");
+                        for (let i = 0; i < list.length; i++) {
+                            const p = list[i];
+                            if (!p || gradeValid(p.quality)) continue;
+                            const v = pq && gradeValid(pq[i]) ? pq[i] : base;
+                            if (gradeValid(v)) p.quality = v;
+                        }
+                    }
+                } catch (e) {}
+                const r = prevAdd.apply(this, arguments);
+                try {
+                    gradeSync("order");
+                } catch (e) {}
+                return r;
+            };
+        }
+        if (typeof refreshPartsList === "function") {
+            const prevRp = refreshPartsList;
+            refreshPartsList = function() {
+                const r = prevRp.apply(this, arguments);
+                try {
+                    gradeSync("order");
+                } catch (e) {}
+                return r;
+            };
+        }
+        if (typeof refreshQuotePartsList === "function") {
+            const prevRq = refreshQuotePartsList;
+            refreshQuotePartsList = function() {
+                try {
+                    gradeFillNew("quote");
+                } catch (e) {}
+                const r = prevRq.apply(this, arguments);
+                try {
+                    gradeSync("quote");
+                } catch (e) {}
+                return r;
+            };
+        }
+        if (typeof copyPartsToClipboard === "function") {
+            const prevCopy = copyPartsToClipboard;
+            copyPartsToClipboard = function() {
+                const r = prevCopy.apply(this, arguments);
+                try {
+                    if (copiedPartsClipboard && draft && Array.isArray(draft.parts) && copiedPartsClipboard.length === draft.parts.length) {
+                        copiedPartsClipboard.forEach(function(c, i) {
+                            const q = draft.parts[i] && draft.parts[i].quality;
+                            if (gradeValid(q)) c.quality = q;
+                        });
+                    }
+                } catch (e) {}
+                return r;
+            };
+        }
+        if (typeof pastePartsFromClipboard === "function") {
+            const prevPaste = pastePartsFromClipboard;
+            pastePartsFromClipboard = function() {
+                try {
+                    gradePasteQ = (copiedPartsClipboard || []).map(function(c) {
+                        return c && c.quality;
+                    });
+                } catch (e) {
+                    gradePasteQ = null;
+                }
+                try {
+                    return prevPaste.apply(this, arguments);
+                } finally {
+                    gradePasteQ = null;
+                }
+            };
+        }
+        if (typeof cpyPartKeys === "function") {
+            const prevKeys = cpyPartKeys;
+            cpyPartKeys = function() {
+                const r = prevKeys.apply(this, arguments);
+                return Array.isArray(r) && r.indexOf("quality") < 0 ? r.concat([ "quality" ]) : r;
+            };
+        }
+        if (typeof onSaveOrder === "function") {
+            const prevSave = onSaveOrder;
+            onSaveOrder = async function() {
+                if (!gradeGuard("order")) return false;
+                return prevSave.apply(this, arguments);
+            };
+        }
+        if (typeof saveQuoteDraft === "function") {
+            const prevSaveQ = saveQuoteDraft;
+            saveQuoteDraft = async function() {
+                if (!gradeGuard("quote")) return false;
+                return prevSaveQ.apply(this, arguments);
+            };
+        }
+        if (typeof onApproveQuote === "function") {
+            const prevApprove = onApproveQuote;
+            onApproveQuote = async function() {
+                if (!gradeGuard("quote")) return;
+                return prevApprove.apply(this, arguments);
+            };
+        }
+        document.addEventListener("click", gradeClick, false);
     } catch (e) {}
 })();</script>
 </body>
