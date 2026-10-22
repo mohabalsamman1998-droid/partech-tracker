@@ -1668,6 +1668,7 @@
   .dnote-showlink{margin-top:8px;font-size:12.5px;}
   .dnote-showlink summary{cursor:pointer;color:var(--text-dim);font-weight:700;}
   .dnote-showlink .dnote-in{margin-top:6px;}
+  .dnote-map{display:inline-block;margin-inline-start:6px;padding:2px 10px;border-radius:999px;background:var(--green-dim);border:1px solid var(--green-line);color:var(--green);font-weight:700;font-size:12.5px;text-decoration:none;}
   .dnote-codes{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;}
   .dnote-codes>div{flex:1 1 130px;padding:9px 12px;border-radius:10px;background:var(--surface-2);color:var(--text);border:1px solid var(--green-line);text-align:center;}
   .dnote-codes span{display:block;font-size:11.5px;color:var(--text-dim);margin-bottom:2px;}
@@ -73120,6 +73121,48 @@ function dnoteAddress(order) {
     }
 }
 
+const DNOTE_MAPS_HOSTS = {
+    "maps.app.goo.gl": 1,
+    "goo.gl": 1,
+    "google.com": 1,
+    "www.google.com": 1,
+    "maps.google.com": 1,
+    "google.com.sa": 1,
+    "www.google.com.sa": 1,
+    "maps.google.com.sa": 1
+};
+
+function dnoteMapsUrl(u) {
+    let x;
+    try {
+        x = new URL(u);
+    } catch (e) {
+        return "";
+    }
+    const host = x.hostname.toLowerCase(), p = x.pathname;
+    if (x.protocol !== "https:" && x.protocol !== "http:" || x.username || x.password || !DNOTE_MAPS_HOSTS[host]) return "";
+    const ok = host === "maps.app.goo.gl" ? p.length > 1 : host.indexOf("maps.") === 0 ? true : /^\/maps(\/|$)/.test(p);
+    if (!ok) return "";
+    x.protocol = "https:";
+    return x.href;
+}
+
+function dnoteAddrHtml(text) {
+    const links = [];
+    const rest = String(text == null ? "" : text).replace(/https?:\/\/[A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%]+/gi, function(m) {
+        const t = m.replace(/[.,;:!?'")\]]+$/, ""), u = dnoteMapsUrl(t);
+        if (u) {
+            links.push(u);
+            return m.slice(t.length);
+        }
+        return m;
+    });
+    const clean = rest.replace(/\s{2,}/g, " ").replace(/^[\s،,.;:\-–—]+|[\s،,.;:\-–—]+$/g, "");
+    return (clean || links.length ? escapeHtml(clean) : "—") + links.map(function(u) {
+        return ' <a class="dnote-map" href="' + escapeHtml(u) + '" target="_blank" rel="noopener noreferrer">📍 فتح في خرائط جوجل</a>';
+    }).join("");
+}
+
 function dnoteRoot() {
     return document.getElementById("confirm-root");
 }
@@ -73167,7 +73210,7 @@ function dnoteIssueHtml() {
         return '<div class="dnote-part' + (off ? " dnote-part-off" : "") + '" data-dn-part="' + escapeHtml(p.id) + '">' + '<label class="dnote-pick"><input type="checkbox" data-dn-f="chk"' + (off ? " disabled" : !r || r.on ? " checked" : "") + "><span><b>" + escapeHtml(String(p.description).trim()) + "</b>" + "<small>" + (sup ? escapeHtml(sup.name || "") + " · " : "") + "المطلوب " + Math.max(1, Math.round(Number(p.qty) || 1)) + (off ? " · مُصرَّفة بالكامل بإشعارات أخرى" : " · المتاح " + rem) + "</small></span></label>" + (off ? "" : '<div class="dnote-part-f"><input type="number" class="dnote-in dnote-qty" data-dn-f="qty" min="1" max="' + rem + '" value="' + escapeHtml(r ? r.qty : rem) + '" inputmode="numeric" aria-label="الكمية">' + '<input type="text" class="dnote-in" data-dn-f="pp" maxlength="300" value="' + escapeHtml(r ? r.pp : "") + '" placeholder="نقطة الاستلام (افتراضيًا: المورد/المكتب)" aria-label="نقطة الاستلام"></div>') + "</div>";
     }).join("") : '<p class="dnote-empty">لا توجد قطع قابلة للإدراج.</p>';
     const days = String(F.days || 14);
-    const body = '<label class="dnote-lbl">المندوب</label>' + agentSel + '<label class="dnote-lbl">القطع المطلوب استلامها</label><div class="dnote-parts">' + rows + "</div>" + '<label class="dnote-lbl">عنوان التسليم</label><textarea class="dnote-in" data-dn-f="addr" rows="2" maxlength="500" placeholder="يُؤخذ من سجل العميل إن تُرك فارغًا">' + escapeHtml(F.addr != null ? F.addr : dnoteAddress(o)) + "</textarea>" + '<label class="dnote-lbl">تعليمات للمندوب (اختياري)</label><textarea class="dnote-in" data-dn-f="instr" rows="2" maxlength="1000" placeholder="مثال: اتصل بالمورد قبل الوصول، لا تسلّم إلا بعد فحص القطع…">' + escapeHtml(F.instr || "") + "</textarea>" + '<label class="dnote-lbl">صلاحية الرابط</label><select class="dnote-in" data-dn-f="days">' + [ 7, 14, 30 ].map(function(n) {
+    const body = '<label class="dnote-lbl">المندوب</label>' + agentSel + '<label class="dnote-lbl">القطع المطلوب استلامها</label><div class="dnote-parts">' + rows + "</div>" + '<label class="dnote-lbl">عنوان التسليم</label><textarea class="dnote-in" data-dn-f="addr" rows="2" maxlength="500" placeholder="يُؤخذ من سجل العميل إن تُرك فارغًا — ويمكنك لصق رابط خرائط جوجل هنا (الأفضل الرابط القصير: مشاركة ← نسخ الرابط)">' + escapeHtml(F.addr != null ? F.addr : dnoteAddress(o)) + "</textarea>" + '<label class="dnote-lbl">تعليمات للمندوب (اختياري)</label><textarea class="dnote-in" data-dn-f="instr" rows="2" maxlength="1000" placeholder="مثال: اتصل بالمورد قبل الوصول، لا تسلّم إلا بعد فحص القطع…">' + escapeHtml(F.instr || "") + "</textarea>" + '<label class="dnote-lbl">صلاحية الرابط</label><select class="dnote-in" data-dn-f="days">' + [ 7, 14, 30 ].map(function(n) {
         return '<option value="' + n + '"' + (days === String(n) ? " selected" : "") + ">" + n + " " + (n === 14 ? "يومًا" : "أيام") + "</option>";
     }).join("") + "</select>";
     return dnoteShell(DNOTE_LABEL + " — جديد", "الطلبية " + escapeHtml(o.orderNumber || ""), body, dnoteBtn("رجوع", "list") + dnoteBtn("إصدار الإشعار", "issue", "btn-primary"));
@@ -73339,7 +73382,7 @@ function dnoteItemHtml(it, stage, sealed) {
 function dnoteDetailHtml() {
     const d = dnote.cur, n = d.note, items = d.items || [], sigs = d.signatures || [], evs = d.events || [];
     const st = DNOTE_STAGES[n.stage] || [ n.stage, "info" ];
-    const head = '<div class="dnote-head">' + dnotePill(st[0], st[1]) + (n.outcome ? dnotePill(DNOTE_OUTCOMES[n.outcome] || n.outcome, n.outcome === "complete" ? "ok" : n.outcome === "failed" ? "bad" : "warn") : "") + "</div>" + '<div class="dnote-meta">' + "<div><span>المندوب</span><b>" + escapeHtml(n.agent_name || "") + "</b></div>" + "<div><span>العميل</span><b>" + escapeHtml(n.customer_name || "—") + "</b></div>" + '<div><span>جوال العميل</span><b dir="ltr">' + escapeHtml(n.customer_phone || "—") + "</b></div>" + "<div><span>العنوان</span><b>" + escapeHtml(n.delivery_address || "—") + "</b></div>" + "<div><span>ينتهي الرابط</span><b>" + (n.stage === "done" ? "لا ينتهي (إيصال)" : escapeHtml(dnoteTime(n.expires_at))) + "</b></div>" + "<div><span>محاولات تعذّر التسليم</span><b>" + Number(n.delivery_attempts || 0) + "</b></div>" + (n.agent_code && n.stage === "pickup" ? '<div><span>رمز استلام المندوب</span><b dir="ltr">' + escapeHtml(n.agent_code) + "</b>" + (Number(n.agent_code_fails) > 0 ? '<small class="dnote-why">محاولات خاطئة: ' + Number(n.agent_code_fails) + "</small>" : "") + "</div>" : "") + (n.cust_code && (n.stage === "pickup" || n.stage === "delivery") ? '<div><span>رمز تأكيد العميل (للعميل وحده)</span><b dir="ltr">' + escapeHtml(n.cust_code) + "</b>" + (Number(n.cust_code_fails) > 0 ? '<small class="dnote-why">محاولات خاطئة: ' + Number(n.cust_code_fails) + "</small>" : "") + "</div>" : "") + "</div>" + (n.instructions ? '<div class="dnote-instr"><b>تعليمات:</b> ' + escapeHtml(n.instructions) + "</div>" : "") + (n.cancel_reason ? '<div class="dnote-err">سبب الإلغاء: ' + escapeHtml(n.cancel_reason) + "</div>" : "") + (n.stage === "pickup" && Number(n.agent_code_fails) >= 5 ? '<div class="dnote-err">🔒 مقفول: تجاوز المندوب (أو غيره) عدد محاولات رمز الاستلام — اضغط «🔄 رابط جديد» ثم أرسل الرابط والرمز الجديدين للمندوب.</div>' : "") + (n.stage === "delivery" && Number(n.cust_code_fails) >= 5 ? '<div class="dnote-err">🔒 مقفول: تجاوز عدد محاولات رمز العميل — اضغط «🔄 رابط جديد» ثم أرسل الرمز الجديد للعميل والرابط الجديد للمندوب.</div>' : "");
+    const head = '<div class="dnote-head">' + dnotePill(st[0], st[1]) + (n.outcome ? dnotePill(DNOTE_OUTCOMES[n.outcome] || n.outcome, n.outcome === "complete" ? "ok" : n.outcome === "failed" ? "bad" : "warn") : "") + "</div>" + '<div class="dnote-meta">' + "<div><span>المندوب</span><b>" + escapeHtml(n.agent_name || "") + "</b></div>" + "<div><span>العميل</span><b>" + escapeHtml(n.customer_name || "—") + "</b></div>" + '<div><span>جوال العميل</span><b dir="ltr">' + escapeHtml(n.customer_phone || "—") + "</b></div>" + "<div><span>العنوان</span><b>" + dnoteAddrHtml(n.delivery_address) + "</b></div>" + "<div><span>ينتهي الرابط</span><b>" + (n.stage === "done" ? "لا ينتهي (إيصال)" : escapeHtml(dnoteTime(n.expires_at))) + "</b></div>" + "<div><span>محاولات تعذّر التسليم</span><b>" + Number(n.delivery_attempts || 0) + "</b></div>" + (n.agent_code && n.stage === "pickup" ? '<div><span>رمز استلام المندوب</span><b dir="ltr">' + escapeHtml(n.agent_code) + "</b>" + (Number(n.agent_code_fails) > 0 ? '<small class="dnote-why">محاولات خاطئة: ' + Number(n.agent_code_fails) + "</small>" : "") + "</div>" : "") + (n.cust_code && (n.stage === "pickup" || n.stage === "delivery") ? '<div><span>رمز تأكيد العميل (للعميل وحده)</span><b dir="ltr">' + escapeHtml(n.cust_code) + "</b>" + (Number(n.cust_code_fails) > 0 ? '<small class="dnote-why">محاولات خاطئة: ' + Number(n.cust_code_fails) + "</small>" : "") + "</div>" : "") + "</div>" + (n.instructions ? '<div class="dnote-instr"><b>تعليمات:</b> ' + escapeHtml(n.instructions) + "</div>" : "") + (n.cancel_reason ? '<div class="dnote-err">سبب الإلغاء: ' + escapeHtml(n.cancel_reason) + "</div>" : "") + (n.stage === "pickup" && Number(n.agent_code_fails) >= 5 ? '<div class="dnote-err">🔒 مقفول: تجاوز المندوب (أو غيره) عدد محاولات رمز الاستلام — اضغط «🔄 رابط جديد» ثم أرسل الرابط والرمز الجديدين للمندوب.</div>' : "") + (n.stage === "delivery" && Number(n.cust_code_fails) >= 5 ? '<div class="dnote-err">🔒 مقفول: تجاوز عدد محاولات رمز العميل — اضغط «🔄 رابط جديد» ثم أرسل الرمز الجديد للعميل والرابط الجديد للمندوب.</div>' : "");
     const acts = [];
     if (n.stage === "pickup") {
         acts.push('<a class="btn btn-primary btn-sm dnote-b" data-dn-wa href="' + escapeHtml(dnoteWa(n.agent_phone, dnoteAgentMsg(n))) + '" target="_blank" rel="noopener">💬 للمندوب</a>', dnoteCustAction(n, items, "btn-ghost", "💬 للعميل"), dnoteBtn("📋 نسخ رابط المندوب", "copy-agent"));

@@ -86,6 +86,7 @@
   .btn.ghost{background:#fff;color:var(--ink);border:1.5px solid var(--line)}
   .btn.warn{background:#fff;color:var(--red);border:1.5px solid var(--red)}
   .btn+.btn{margin-top:10px}
+  .mapbtn{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:8px;min-height:46px;border-radius:12px;background:var(--green-d);color:#fff;font-weight:800;font-size:15px;text-decoration:none}
   .link{background:none;border:0;color:var(--green-d);font:inherit;font-weight:700;cursor:pointer;padding:4px 0;text-decoration:underline}
   table.t{width:100%;border-collapse:collapse;font-size:13.5px}
   table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 6px;text-align:right;vertical-align:top}
@@ -171,6 +172,24 @@ function ltrNums(text){
   while((m = re.exec(s))){ if(m.index > last) out.push(s.slice(last, m.index)); out.push(h('bdi', { dir: 'ltr', text: m[0] })); last = m.index + m[0].length; }
   if(last < s.length) out.push(s.slice(last));
   return out;
+}
+// رابط خرائط جوجل داخل عنوان التسليم (إن وُضع): يُعرض زرًا يفتح الموقع مباشرة؛ أي رابط آخر يبقى نصًا ولا يُفتح (مواقع جوجل للخرائط المعروفة فقط)
+var MAPS_HOSTS = { 'maps.app.goo.gl': 1, 'goo.gl': 1, 'google.com': 1, 'www.google.com': 1, 'maps.google.com': 1, 'google.com.sa': 1, 'www.google.com.sa': 1, 'maps.google.com.sa': 1 };
+function mapsUrl(u){
+  var x; try{ x = new URL(u); }catch(e){ return ''; }
+  var host = x.hostname.toLowerCase(), p = x.pathname;
+  if((x.protocol !== 'https:' && x.protocol !== 'http:') || x.username || x.password || !MAPS_HOSTS[host]) return '';
+  var ok = host === 'maps.app.goo.gl' ? p.length > 1 : (host.indexOf('maps.') === 0 ? true : /^\/maps(\/|$)/.test(p));
+  if(!ok) return '';
+  x.protocol = 'https:'; return x.href;
+}
+function splitAddress(text){
+  var links = [], rest = String(text == null ? '' : text).replace(/https?:\/\/[A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%]+/gi, function(m){
+    var t = m.replace(/[.,;:!?'")\]]+$/, ''), u = mapsUrl(t);
+    if(u){ links.push(u); return m.slice(t.length); }
+    return m;
+  });
+  return { text: rest.replace(/\s{2,}/g, ' ').replace(/^[\s،,.;:\-–—]+|[\s،,.;:\-–—]+$/g, ''), links: links };
 }
 function lsKey(s){ return 'dn:' + s + ':' + TOKEN.slice(0, 16); }
 function lsGet(s){ try{ return localStorage.getItem(lsKey(s)); }catch(e){ return null; } }
@@ -410,7 +429,7 @@ function renderDelivery(d){
   body.appendChild(h('div', { class: 'callout ok' }, h('b', { text: '✅ تم تسجيل استلامك. ' }), 'القطع أدناه في عهدتك ومسؤوليتك حتى يؤكّد العميل استلامها.'));
   if(note.instructions) body.appendChild(h('div', { class: 'callout info' }, h('b', { text: 'تعليمات الإدارة: ' }), note.instructions));
   body.appendChild(h('div', { class: 'callout warn' }, h('b', { text: 'عند مقابلة العميل: ' }), 'دعه يفحص القطع أدناه، وبعد أن يطمئن لها اسأله عن ', h('b', { text: 'رمز التأكيد (٤ أرقام)' }), ' الذي وصله من PARTECH على جواله، وسجّل ما استلمه ثم اكتب الرمز في آخر الصفحة. ', h('b', { text: 'لا تطلب الرمز قبل أن يفحص القطع.' })));
-  if(note.delivery_address) body.appendChild(h('div', { class: 'callout info' }, h('b', { text: 'عنوان التسليم: ' }), note.delivery_address));
+  if(note.delivery_address){ var ad = splitAddress(note.delivery_address); body.appendChild(h('div', { class: 'callout info' }, h('b', { text: 'عنوان التسليم: ' }), ad.text, ad.links.map(function(u){ return h('a', { class: 'mapbtn', href: u, target: '_blank', rel: 'noopener noreferrer' }, '📍 فتح الموقع في خرائط جوجل'); }))); }
   if(note.customer_phone) body.appendChild(h('a', { class: 'link', href: telHref(note.customer_phone), text: '📞 اتصال بالعميل' }));
   if((d.short || []).length){
     body.appendChild(h('div', { class: 'callout warn' }, h('b', { text: 'قطع لم تُستلم من الموردين (لن تصل ضمن هذه الشحنة): ' }), h('ul', { style: 'margin:6px 18px 0;padding:0' }, d.short.map(function(s){ return h('li', { text: s.description + ' — ' + (s.status === 'partial' ? 'ينقص ' + s.short_qty : s.status === 'rejected' ? 'لم تُستلم (غير مطابقة/تالفة)' : 'غير متوفرة (' + s.short_qty + ')') }); }))));
