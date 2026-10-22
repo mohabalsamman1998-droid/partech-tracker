@@ -1569,6 +1569,8 @@
   /* SLIM BEGIN css */
   /* تخفيف التعليمات والشرح (SLIM): أصناف حصرية للتلميحات + الصنف الذي تضعه الوحدة على العناصر المطابقة بالنص */
   .att-banner-sub, .qr-note, .vcat-via, .epcl-hint2, .att-pick-tip, .slim-hide{display:none !important;}
+  /* زر «📥 كتالوج الأرقام» (استيراد ملفات الكتالوج الضخمة بالصندوق): الكتالوجان محمّلان بالكامل بقاعدة البيانات، فلا حاجة له يوميًا (طلب المالك 2026-10-22) */
+  #btn-import-oem-alts, #oem-alt-import-status{display:none !important;}
   /* SLIM END css */
   /* TAXINV BEGIN css */
   /* ===== TAXINV — الفاتورة الضريبية (المرحلة الأولى) — كل القواعد بنطاق .taxinv-* =====
@@ -71672,11 +71674,22 @@ const SUPCOPY_TITLE = "*PARTECH*";
 
 const SUPCOPY_ANCHOR = '<span class="section-title">تفاصيل الطلبية</span>';
 
+const SUPCOPY_LABEL = "📤 إرسال للمورد";
+
+const SUPCOPY_WA_MAX = 8e3;
+
+function supcopyWaUrl(text) {
+    const t = String(text == null ? "" : text);
+    if (!t.trim()) return "";
+    const u = "https://wa.me/?text=" + encodeURIComponent(t);
+    return u.length > SUPCOPY_WA_MAX ? "" : u;
+}
+
 function supcopyInject(h, src) {
     const i = String(h).indexOf(SUPCOPY_ANCHOR);
     if (i < 0) return h;
     const j = i + SUPCOPY_ANCHOR.length;
-    return h.slice(0, j) + '<button type="button" class="btn btn-ghost btn-sm supcopy-btn" id="supcopy-' + src + '-btn" data-supcopy="' + src + '">📤 نسخ للمورد</button>' + h.slice(j);
+    return h.slice(0, j) + '<button type="button" class="btn btn-ghost btn-sm supcopy-btn" id="supcopy-' + src + '-btn" data-supcopy="' + src + '">' + SUPCOPY_LABEL + "</button>" + h.slice(j);
 }
 
 function supcopySource(src, id) {
@@ -71756,11 +71769,13 @@ function supcopyDialog(order) {
         notes: true
     };
     const hasCost = supcopyHas(order, "cost"), hasNotes = supcopyHas(order, "notes");
-    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true" data-supcopy-dialog>' + '<div class="modal-title">📤 نسخ للمورد</div>' + (hasCost ? '<label class="supcopy-opt"><input type="checkbox" data-supcopy-opt="cost"><span>إظهار أسعار الشراء</span></label>' : "") + (hasNotes ? '<label class="supcopy-opt"><input type="checkbox" data-supcopy-opt="notes" checked><span>إظهار ملاحظات القطع</span></label>' : "") + '<textarea class="supcopy-preview" data-supcopy-preview readonly rows="10" dir="rtl" aria-label="معاينة النص"></textarea>' + '<div class="modal-footer-actions" style="margin-top:14px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" data-supcopy-close>إغلاق</button>' + '<button type="button" class="btn btn-primary" data-supcopy-copy>نسخ</button>' + "</div>" + "</div>" + "</div>";
+    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true" data-supcopy-dialog>' + '<div class="modal-title">' + SUPCOPY_LABEL + "</div>" + (hasCost ? '<label class="supcopy-opt"><input type="checkbox" data-supcopy-opt="cost"><span>إظهار أسعار الشراء</span></label>' : "") + (hasNotes ? '<label class="supcopy-opt"><input type="checkbox" data-supcopy-opt="notes" checked><span>إظهار ملاحظات القطع</span></label>' : "") + '<textarea class="supcopy-preview" data-supcopy-preview readonly rows="10" dir="rtl" aria-label="معاينة النص"></textarea>' + '<div class="modal-footer-actions" style="margin-top:14px;justify-content:flex-end;flex-wrap:wrap;">' + '<button type="button" class="btn btn-ghost" data-supcopy-close>إغلاق</button>' + '<button type="button" class="btn btn-ghost" data-supcopy-copy>نسخ</button>' + '<a class="btn btn-primary" data-supcopy-wa href="#" target="_blank" rel="noopener" style="text-decoration:none;">💬 واتساب</a>' + "</div>" + "</div>" + "</div>";
     root.classList.add("modal-open");
     const pv = root.querySelector("[data-supcopy-preview]");
+    const wa = root.querySelector("[data-supcopy-wa]");
     const paint = function() {
         pv.value = supcopyBuildText(order, st);
+        wa.setAttribute("href", supcopyWaUrl(pv.value) || "#");
     };
     paint();
     root.querySelectorAll("[data-supcopy-opt]").forEach(function(c) {
@@ -71791,6 +71806,17 @@ function supcopyDialog(order) {
             } catch (e) {}
             showToast("تعذّر النسخ تلقائيًا — حدّد النص من المعاينة وانسخه يدويًا", "error");
         }
+    });
+    wa.addEventListener("click", async function(e) {
+        if (supcopyWaUrl(pv.value)) return;
+        e.preventDefault();
+        let ok = false;
+        try {
+            ok = await writeTextToClipboard(pv.value);
+        } catch (er) {
+            ok = false;
+        }
+        showToast(ok ? "النص طويل — تم نسخه، الصقه في واتساب" : "النص طويل — حدّده من المعاينة وانسخه ثم الصقه في واتساب", ok ? "ok" : "error");
     });
     return true;
 }
@@ -71836,7 +71862,7 @@ function supcopyOpen(src, id) {
                     if (!h || !order || !order.id) return h;
                     const anchor = '<p class="modal-sub" style="margin-top:10px;">للاطلاع فقط';
                     const i = h.lastIndexOf(anchor);
-                    const btn = '<div class="supcopy-view-row"><button type="button" class="btn btn-ghost btn-sm" data-supcopy="supply" data-supcopy-id="' + escapeHtml(order.id) + '">📤 نسخ للمورد</button></div>';
+                    const btn = '<div class="supcopy-view-row"><button type="button" class="btn btn-ghost btn-sm" data-supcopy="supply" data-supcopy-id="' + escapeHtml(order.id) + '">' + SUPCOPY_LABEL + "</button></div>";
                     return i < 0 ? h : h.slice(0, i) + btn + h.slice(i);
                 } catch (e) {
                     return h;
