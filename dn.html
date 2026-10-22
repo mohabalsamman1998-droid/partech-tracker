@@ -303,7 +303,7 @@ function renderAgent(d){
   items.forEach(function(it){ var k = it.pickup_point || it.supplier_name || 'مكتب PARTECH'; if(!groups[k]){ groups[k] = { name: it.supplier_name, point: k, phone: it.supplier_phone, items: [] }; order.push(k); } groups[k].items.push(it); });
   var idx = 0, body = h('div', { class: 'sec' });
   if(note.instructions) body.appendChild(h('div', { class: 'callout info' }, h('b', { text: 'تعليمات الإدارة: ' }), note.instructions));
-  body.appendChild(h('div', { class: 'callout warn' }, h('b', { text: 'مهمتك: ' }), 'استلم القطع من كل جهة أدناه، وحدّد حالة كل قطعة بصدق (كاملة/جزئية/غير متوفرة/مرفوضة). من لحظة تأكيدك تصبح القطع المستلمة ', h('b', { text: 'في عهدتك ومسؤوليتك' }), ' حتى تسليمها للعميل.'));
+  body.appendChild(h('div', { class: 'callout warn' }, 'استلم القطع من كل جهة وحدّد حالة كل قطعة، ثم أكّد برمز الاستلام. بعد التأكيد تصبح القطع ', h('b', { text: 'في عهدتك ومسؤوليتك' }), '.'));
   order.forEach(function(k){
     var g = groups[k];
     var gh = h('div', { class: 'group-h' }, h('div', null, h('span', null, '📍 من: ', ltrNums(g.name || g.point)), g.point && g.point !== g.name ? h('small', null, ltrNums(g.point)) : null), g.phone ? h('a', { href: telHref(g.phone), text: '📞 اتصال' }) : null);
@@ -332,7 +332,7 @@ function renderAgent(d){
   var codeIn = h('input', { type: 'text', id: 'acode', inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'one-time-code', placeholder: '٤ أرقام', 'aria-label': 'رمز الاستلام', dir: 'ltr', style: 'text-align:center;letter-spacing:8px;font-weight:800;font-size:22px', oninput: function(e){ var v = toLatinDigits(e.target.value).replace(/\D/g, '').slice(0, 4); if(v !== e.target.value) e.target.value = v; updateProgress(); } });
   seal.appendChild(h('div', null, h('label', { class: 'f', text: 'ملاحظات (إخلاء المسؤولية)' }), noteIn));
   seal.appendChild(h('div', { class: 'stmt', style: 'margin-top:12px' }, d.statements.agent));
-  seal.appendChild(h('div', { style: 'margin-top:12px' }, h('label', { class: 'f', text: 'رمز الاستلام (٤ أرقام وصلك على جوالك مع الرابط)' }), codeIn, h('div', { class: 'state', id: 'acodeState', 'aria-live': 'polite', text: 'إدخالك للرمز تأكيد منك باستلام القطع وتحمّلك مسؤوليتها.' })));
+  seal.appendChild(h('div', { style: 'margin-top:12px' }, h('label', { class: 'f', text: 'رمز الاستلام (٤ أرقام وصلك على جوالك مع الرابط)' }), codeIn, h('div', { class: 'state', id: 'acodeState', 'aria-live': 'polite', text: '' })));
   seal.appendChild(h('div', { class: 'sig-note' }, 'يُسجَّل وقت التأكيد وجهازك، وموقعك الحالي إن سمحت.'));
   seal.appendChild(h('div', { style: 'margin-top:14px' }, h('button', { type: 'button', class: 'btn', id: 'sealBtn', disabled: true, onclick: sealAgent }, '✅ تأكيد استلام القطع')));
   var sheet = h('div', { class: 'sheet' }, head(note), meta(note), h('div', { class: 'stick', id: 'prog' }, h('div', { style: 'flex:1' }, h('span', { text: '' }), h('div', { class: 'progress' }, h('i'))), h('span', { text: '' })), body, seal);
@@ -426,9 +426,9 @@ function custCard(it, i){
 function renderDelivery(d){
   S.mode = 'delivery'; var note = d.note, items = d.items || [], cards = [];
   var body = h('div', { class: 'sec' });
-  body.appendChild(h('div', { class: 'callout ok' }, h('b', { text: '✅ تم تسجيل استلامك. ' }), 'القطع أدناه في عهدتك ومسؤوليتك حتى يؤكّد العميل استلامها.'));
+  body.appendChild(h('div', { class: 'callout ok' }, h('b', { text: '✅ تم تسجيل استلامك' }), ' — القطع في عهدتك ومسؤوليتك.'));
   if(note.instructions) body.appendChild(h('div', { class: 'callout info' }, h('b', { text: 'تعليمات الإدارة: ' }), note.instructions));
-  body.appendChild(h('div', { class: 'callout warn' }, h('b', { text: 'عند مقابلة العميل: ' }), 'دعه يفحص القطع أدناه، وبعد أن يطمئن لها اسأله عن ', h('b', { text: 'رمز التأكيد (٤ أرقام)' }), ' الذي وصله من PARTECH على جواله، وسجّل ما استلمه ثم اكتب الرمز في آخر الصفحة. ', h('b', { text: 'لا تطلب الرمز قبل أن يفحص القطع.' })));
+  body.appendChild(h('div', { class: 'callout warn' }, 'بعد أن يفحص العميل القطع اطلب منه ', h('b', { text: 'رمز التأكيد (٤ أرقام)' }), '، وسجّل ما استلمه ثم اكتب الرمز.'));
   if(note.delivery_address){ var ad = splitAddress(note.delivery_address); body.appendChild(h('div', { class: 'callout info' }, h('b', { text: 'عنوان التسليم: ' }), ad.text, ad.links.map(function(u){ return h('a', { class: 'mapbtn', href: u, target: '_blank', rel: 'noopener noreferrer' }, '📍 فتح الموقع في خرائط جوجل'); }))); }
   if(note.customer_phone) body.appendChild(h('a', { class: 'link', href: telHref(note.customer_phone), text: '📞 اتصال بالعميل' }));
   if((d.short || []).length){
@@ -442,8 +442,8 @@ function renderDelivery(d){
   var codeIn = h('input', { type: 'text', id: 'ccode', inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'off', placeholder: '٤ أرقام', 'aria-label': 'رمز العميل', dir: 'ltr', style: 'text-align:center;letter-spacing:8px;font-weight:800;font-size:22px', oninput: function(e){ var v = toLatinDigits(e.target.value).replace(/\D/g, '').slice(0, 4); if(v !== e.target.value) e.target.value = v; custUpdate(); } });
   seal.appendChild(h('div', null, h('label', { class: 'f', text: 'ملاحظات (إخلاء المسؤولية)' }), noteIn));
   seal.appendChild(h('div', { class: 'stmt', style: 'margin-top:12px' }, d.statements.customer));
-  seal.appendChild(h('div', { style: 'margin-top:12px' }, h('label', { class: 'f', text: 'رمز العميل (٤ أرقام وصلت جوال العميل من PARTECH)' }), codeIn, h('div', { class: 'state', id: 'ccodeState', 'aria-live': 'polite', text: 'اكتب الرمز الذي يقوله لك العميل بعد فحصه القطع.' })));
-  seal.appendChild(h('div', { class: 'sig-note' }, 'إدخال العميل لرمزه (عبر المندوب) يُعدّ توقيعه الإلكتروني وتأكيدًا لاستلام القطع كما سُجّلت. يُسجَّل وقت التأكيد وجهازك، وموقعك الحالي إن سمحت.'));
+  seal.appendChild(h('div', { style: 'margin-top:12px' }, h('label', { class: 'f', text: 'رمز العميل (٤ أرقام وصلت جوال العميل من PARTECH)' }), codeIn, h('div', { class: 'state', id: 'ccodeState', 'aria-live': 'polite', text: '' })));
+  seal.appendChild(h('div', { class: 'sig-note' }, 'يُسجَّل وقت التأكيد وجهازك، وموقعك الحالي إن سمحت.'));
   seal.appendChild(h('div', { style: 'margin-top:14px' }, h('button', { type: 'button', class: 'btn', id: 'csealBtn', disabled: true, onclick: sealCustomer }, '✅ تأكيد تسليم القطع')));
   seal.appendChild(h('div', { style: 'margin-top:10px' }, h('button', { type: 'button', class: 'btn warn', onclick: reportFail }, '⚠️ تعذّر التسليم')));
   setView(h('div', { class: 'sheet' }, head(note), meta(note, [['العميل', note.customer_name || '—'], ['جوال العميل', note.customer_phone || '—']]), h('div', { class: 'stick', id: 'cprog' }, h('div', { style: 'flex:1' }, h('span', { text: '' }), h('div', { class: 'progress' }, h('i'))), h('span', { text: '' })), body, seal));

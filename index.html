@@ -1663,11 +1663,7 @@
   .dnote-t{color:var(--text-faint);font-size:11.5px;display:inline-block;margin-inline-end:6px;}
   .dnote-ask{font-size:14px;line-height:1.7;}
   @media (max-width:520px){ .dnote-meta{grid-template-columns:1fr;} }
-  .dnote-linkcard{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 14px;border-radius:12px;background:var(--green-dim);border:1px solid var(--green-line);font-size:14px;}
-  .dnote-linkcard small{color:var(--text-dim);flex-basis:100%;}
-  .dnote-showlink{margin-top:8px;font-size:12.5px;}
-  .dnote-showlink summary{cursor:pointer;color:var(--text-dim);font-weight:700;}
-  .dnote-showlink .dnote-in{margin-top:6px;}
+  a.dnote-b{text-decoration:none;}
   .dnote-map{display:inline-block;margin-inline-start:6px;padding:2px 10px;border-radius:999px;background:var(--green-dim);border:1px solid var(--green-line);color:var(--green);font-weight:700;font-size:12.5px;text-decoration:none;}
   .dnote-codes{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;}
   .dnote-codes>div{flex:1 1 130px;padding:9px 12px;border-radius:10px;background:var(--surface-2);color:var(--text);border:1px solid var(--green-line);text-align:center;}
@@ -73210,7 +73206,7 @@ function dnoteIssueHtml() {
         return '<div class="dnote-part' + (off ? " dnote-part-off" : "") + '" data-dn-part="' + escapeHtml(p.id) + '">' + '<label class="dnote-pick"><input type="checkbox" data-dn-f="chk"' + (off ? " disabled" : !r || r.on ? " checked" : "") + "><span><b>" + escapeHtml(String(p.description).trim()) + "</b>" + "<small>" + (sup ? escapeHtml(sup.name || "") + " · " : "") + "المطلوب " + Math.max(1, Math.round(Number(p.qty) || 1)) + (off ? " · مُصرَّفة بالكامل بإشعارات أخرى" : " · المتاح " + rem) + "</small></span></label>" + (off ? "" : '<div class="dnote-part-f"><input type="number" class="dnote-in dnote-qty" data-dn-f="qty" min="1" max="' + rem + '" value="' + escapeHtml(r ? r.qty : rem) + '" inputmode="numeric" aria-label="الكمية">' + '<input type="text" class="dnote-in" data-dn-f="pp" maxlength="300" value="' + escapeHtml(r ? r.pp : "") + '" placeholder="نقطة الاستلام (افتراضيًا: المورد/المكتب)" aria-label="نقطة الاستلام"></div>') + "</div>";
     }).join("") : '<p class="dnote-empty">لا توجد قطع قابلة للإدراج.</p>';
     const days = String(F.days || 14);
-    const body = '<label class="dnote-lbl">المندوب</label>' + agentSel + '<label class="dnote-lbl">القطع المطلوب استلامها</label><div class="dnote-parts">' + rows + "</div>" + '<label class="dnote-lbl">عنوان التسليم</label><textarea class="dnote-in" data-dn-f="addr" rows="2" maxlength="500" placeholder="يُؤخذ من سجل العميل إن تُرك فارغًا — ويمكنك لصق رابط خرائط جوجل هنا (الأفضل الرابط القصير: مشاركة ← نسخ الرابط)">' + escapeHtml(F.addr != null ? F.addr : dnoteAddress(o)) + "</textarea>" + '<label class="dnote-lbl">تعليمات للمندوب (اختياري)</label><textarea class="dnote-in" data-dn-f="instr" rows="2" maxlength="1000" placeholder="مثال: اتصل بالمورد قبل الوصول، لا تسلّم إلا بعد فحص القطع…">' + escapeHtml(F.instr || "") + "</textarea>" + '<label class="dnote-lbl">صلاحية الرابط</label><select class="dnote-in" data-dn-f="days">' + [ 7, 14, 30 ].map(function(n) {
+    const body = '<label class="dnote-lbl">المندوب</label>' + agentSel + '<label class="dnote-lbl">القطع المطلوب استلامها</label><div class="dnote-parts">' + rows + "</div>" + '<label class="dnote-lbl">عنوان التسليم</label><textarea class="dnote-in" data-dn-f="addr" rows="2" maxlength="500" placeholder="من سجل العميل، أو الصق رابط خرائط جوجل">' + escapeHtml(F.addr != null ? F.addr : dnoteAddress(o)) + "</textarea>" + '<label class="dnote-lbl">تعليمات للمندوب (اختياري)</label><textarea class="dnote-in" data-dn-f="instr" rows="2" maxlength="1000" placeholder="مثال: اتصل بالمورد قبل الوصول، لا تسلّم إلا بعد فحص القطع…">' + escapeHtml(F.instr || "") + "</textarea>" + '<label class="dnote-lbl">صلاحية الرابط</label><select class="dnote-in" data-dn-f="days">' + [ 7, 14, 30 ].map(function(n) {
         return '<option value="' + n + '"' + (days === String(n) ? " selected" : "") + ">" + n + " " + (n === 14 ? "يومًا" : "أيام") + "</option>";
     }).join("") + "</select>";
     return dnoteShell(DNOTE_LABEL + " — جديد", "الطلبية " + escapeHtml(o.orderNumber || ""), body, dnoteBtn("رجوع", "list") + dnoteBtn("إصدار الإشعار", "issue", "btn-primary"));
@@ -73310,10 +73306,12 @@ async function dnoteIssue() {
 
 function dnoteShareHtml() {
     const n = dnote.share, items = dnote.shareItems || [], link = dnoteLink(n.token);
-    const codes = n.stage === "pickup" ? '<div class="dnote-codes"><div><span>رمز استلام المندوب</span><b dir="ltr">' + escapeHtml(n.agent_code || "") + '</b></div><div><span>رمز تأكيد العميل</span><b dir="ltr">' + escapeHtml(n.cust_code || "") + "</b></div></div>" : n.stage === "delivery" ? '<div class="dnote-codes"><div><span>رمز تأكيد العميل (الجديد)</span><b dir="ltr">' + escapeHtml(n.cust_code || "") + "</b></div></div>" : "";
-    const hint = n.stage === "done" ? "أرسل الإيصال للعميل." : n.stage === "delivery" ? "أرسل الرابط الجديد للمندوب، وأرسل للعميل قائمة القطع مع رمز التأكيد الجديد (بلا رابط)." : "للمندوب: الرابط + رمز الاستلام. للعميل: قائمة القطع + رمز التأكيد فقط (بلا رابط) — يعطي العميل الرمز للمندوب بعد فحص القطع.";
-    const body = '<div class="dnote-ok">✅ ' + (dnote.shareKind === "regen" ? "رابط جديد لـ" : "تم إصدار ") + "<b>" + escapeHtml(n.no) + "</b> — المندوب <b>" + escapeHtml(n.agent_name || "") + "</b></div>" + '<label class="dnote-lbl">' + (n.stage === "done" ? "رابط الإيصال" : "رابط المندوب") + '</label><div class="dnote-linkcard"><span>🔗</span><b>الرابط جاهز</b><small>أرسله بالواتساب أو انسخه</small></div><details class="dnote-showlink"><summary>إظهار الرابط</summary><input type="text" class="dnote-in dnote-link" readonly dir="ltr" value="' + escapeHtml(link) + '" data-dn-link></details>' + codes + '<p class="modal-sub">' + hint + (n.stage === "done" ? " رابط الإيصال لا تنتهي صلاحيته." : " يعمل الرابط حتى " + escapeHtml(dnoteTime(n.expires_at)) + ".") + "</p>";
-    return dnoteShell("🔗 رابط الإشعار", escapeHtml(n.no), body, dnoteBtn("إغلاق", "close") + dnoteBtn("التفاصيل", "open", "btn-ghost", ' data-dn-id="' + escapeHtml(n.id) + '"') + dnoteBtn("📋 نسخ الرابط", "copy-agent") + dnoteCustAction(n, items, n.stage === "done" ? "btn-primary" : "btn-ghost", n.stage === "done" ? "💬 إرسال الإيصال للعميل" : "💬 للعميل") + (n.stage === "done" ? "" : '<a class="btn btn-primary btn-sm dnote-b" data-dn-wa href="' + escapeHtml(dnoteWa(n.agent_phone, dnoteAgentMsg(n))) + '" target="_blank" rel="noopener">💬 للمندوب</a>'));
+    const box = function(label, code) {
+        return "<div><span>" + label + '</span><b dir="ltr">' + escapeHtml(code || "") + "</b></div>";
+    };
+    const codes = n.stage === "pickup" ? '<div class="dnote-codes">' + box("رمز المندوب", n.agent_code) + box("رمز العميل", n.cust_code) + "</div>" : n.stage === "delivery" ? '<div class="dnote-codes">' + box("رمز العميل", n.cust_code) + "</div>" : "";
+    const body = '<div class="dnote-ok">✅ ' + (dnote.shareKind === "regen" ? "رابط جديد لـ" : "تم إصدار ") + "<b>" + escapeHtml(n.no) + "</b> — " + escapeHtml(n.agent_name || "") + "</div>" + codes + '<input type="hidden" data-dn-link value="' + escapeHtml(link) + '">';
+    return dnoteShell("🔗 رابط الإشعار", escapeHtml(n.no), body, (n.stage === "done" ? "" : '<a class="btn btn-primary btn-sm dnote-b" data-dn-wa href="' + escapeHtml(dnoteWa(n.agent_phone, dnoteAgentMsg(n))) + '" target="_blank" rel="noopener">💬 للمندوب</a>') + dnoteCustAction(n, items, "btn-primary", n.stage === "done" ? "💬 إرسال الإيصال للعميل" : "💬 للعميل") + dnoteBtn("التفاصيل", "open", "btn-ghost", ' data-dn-id="' + escapeHtml(n.id) + '"') + dnoteBtn("إغلاق", "close"));
 }
 
 function dnoteEventText(ev) {
@@ -73610,7 +73608,7 @@ function dnoteAct(btn) {
       case "regen":
         dnote.prompt = {
             title: "🔄 رابط جديد",
-            text: dnote.cur.note.stage === "done" ? "يتوقف رابط الإيصال الحالي فورًا (لو تسرّب) ويُصدَر رابط جديد للإيصال." : dnote.cur.note.stage === "delivery" ? "يتوقف رابط المندوب الحالي فورًا ويتجدّد رمز العميل، ثم ترسل الرابط الجديد للمندوب (بلا رمز)، والرمز الجديد للعميل مع قائمة القطع." : "يتوقف الرابط الحالي فورًا ويتجدّد الرمزان (رمز المندوب ورمز العميل)، ثم ترسل الرابط ورمز الاستلام للمندوب، والرمز الجديد للعميل مع قائمة القطع.",
+            text: dnote.cur.note.stage === "done" ? "يتوقف رابط الإيصال الحالي ويُصدَر رابط جديد." : dnote.cur.note.stage === "delivery" ? "يتوقف الرابط الحالي ويتجدّد رمز العميل. أرسل الرابط للمندوب (بلا رمز) والرمز للعميل." : "يتوقف الرابط الحالي ويتجدّد الرمزان. أرسل الرابط ورمز الاستلام للمندوب والرمز للعميل.",
             field: null,
             cta: "إصدار رابط جديد",
             danger: false,
@@ -73634,7 +73632,7 @@ function dnoteAct(btn) {
       case "cancel":
         dnote.prompt = {
             title: "⛔ إلغاء الإشعار",
-            text: dnote.cur.note.pickup_sealed_at ? "المندوب أكّد استلام القطع وهي بعهدته: الإلغاء يُغلق الرابط ويحرّر الكمية للإصدار، لكنه لا يسجّل إعادة القطع — بعد الإلغاء سجّل «↩️ تسليم المرتجع» لكل قطعة أعادها. اكتب سبب الإلغاء." : "يُغلق الرابط فورًا ولا يعود يعمل. اكتب سبب الإلغاء.",
+            text: dnote.cur.note.pickup_sealed_at ? "المندوب أكّد استلام القطع وهي بعهدته: الإلغاء لا يسجّل إعادتها — سجّل «↩️ تسليم المرتجع» بعده. اكتب السبب." : "يُغلق الرابط فورًا. اكتب السبب.",
             field: "سبب الإلغاء (إلزامي)",
             cta: "تأكيد الإلغاء",
             danger: true,
@@ -73656,7 +73654,7 @@ function dnoteAct(btn) {
             const scope = arg === "pickup" ? "pickup" : "delivery";
             dnote.prompt = {
                 title: "↩️ إعادة فتح " + (scope === "pickup" ? "الاستلام" : "التسليم"),
-                text: scope === "pickup" ? "يُعلَّم تأكيد المندوب «مُلغى» ويعود الرابط لمرحلة الاستلام برمزين جديدين (يبقى القديم بالسجل). اكتب السبب." : "يُعلَّم تأكيد العميل «مُلغى» ويعود الإشعار لمرحلة التسليم برابط جديد للمندوب ورمز عميل جديد (يتوقف رابط الإيصال القديم الذي أُرسل للعميل، ويبقى تأكيده القديم بالسجل). اكتب السبب.",
+                text: scope === "pickup" ? "يعود الإشعار لمرحلة الاستلام برابط ورمزين جدد. اكتب السبب." : "يعود الإشعار لمرحلة التسليم برابط جديد للمندوب ورمز عميل جديد. اكتب السبب.",
                 field: "سبب إعادة الفتح (إلزامي)",
                 cta: "إعادة الفتح",
                 danger: false,
