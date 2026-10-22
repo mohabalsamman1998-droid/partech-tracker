@@ -59,8 +59,8 @@
   .pn bdi{font-weight:700;color:var(--ink2)}
   .seg{display:grid;grid-template-columns:repeat(var(--cols,4),1fr);gap:6px;margin-top:10px}
   .seg button{min-height:46px;border:1.5px solid var(--line);background:#fff;border-radius:11px;font:inherit;font-weight:700;font-size:13px;color:var(--ink2);cursor:pointer;padding:4px 2px;line-height:1.25}
-  .seg button.on.ok{background:var(--green);border-color:var(--green);color:#fff}
-  .seg button.on.warn{background:#d98a00;border-color:#d98a00;color:#fff}
+  .seg button.on.ok{background:var(--green-d);border-color:var(--green-d);color:#fff}
+  .seg button.on.warn{background:#a85f00;border-color:#a85f00;color:#fff}
   .seg button.on.bad{background:var(--red);border-color:var(--red);color:#fff}
   .seg button.on.gray{background:#475569;border-color:#475569;color:#fff}
   .more{margin-top:10px;display:grid;gap:8px}
@@ -74,8 +74,10 @@
   .stepper b{min-width:54px;text-align:center;font-size:17px}
   .state{font-size:12.5px;margin-top:6px;color:var(--muted);min-height:18px}
   .state.ok{color:var(--green-d)} .state.warn{color:var(--amber)} .state.bad{color:var(--red)}
-  .sig{border:2px dashed #94a3a0;border-radius:12px;background:#fbfdfc;touch-action:none;width:100%;height:170px;display:block}
-  .sig-bar{display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:12.5px;color:var(--muted)}
+  .sig-note{margin-top:12px;font-size:12.5px;color:var(--muted)}
+  .esig{height:84px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--green-d)}
+  .esig span{width:38px;height:38px;border-radius:50%;background:var(--green-bg);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800}
+  .esig small{margin:0}
   .stmt{background:#f6faf7;border:1px solid var(--line);border-radius:12px;padding:11px 13px;font-size:13.5px;color:var(--ink2);margin:10px 0}
   .chk{display:flex;gap:10px;align-items:flex-start;font-size:14px;margin:8px 0;cursor:pointer}
   .chk input{width:22px;height:22px;margin-top:2px;accent-color:var(--green);flex:0 0 auto}
@@ -163,6 +165,13 @@ function sendWith(name, p){
   return rpc(name, Object.assign({ t: TOKEN }, p)).catch(function(){ return { ok: false, error: 'network', message: 'تعذّر الإرسال — تأكّد من الاتصال وحاول ثانية' }; });
 }
 function toLatinDigits(s){ return String(s || '').replace(/[٠-٩]/g, function(c){ return String(c.charCodeAt(0) - 1632); }).replace(/[۰-۹]/g, function(c){ return String(c.charCodeAt(0) - 1776); }); }
+// أرقام الجوال بالنص الحر (+966 55 123 4567) تُعرض ضمن <bdi dir="ltr"> كي لا تنعكس مجموعاتها داخل الصفحة العربية
+function ltrNums(text){
+  var out = [], s = String(text == null ? '' : text), re = /\+?\d[\d\s\-]{5,}\d/g, last = 0, m;
+  while((m = re.exec(s))){ if(m.index > last) out.push(s.slice(last, m.index)); out.push(h('bdi', { dir: 'ltr', text: m[0] })); last = m.index + m[0].length; }
+  if(last < s.length) out.push(s.slice(last));
+  return out;
+}
 function lsKey(s){ return 'dn:' + s + ':' + TOKEN.slice(0, 16); }
 function lsGet(s){ try{ return localStorage.getItem(lsKey(s)); }catch(e){ return null; } }
 function lsSet(s, v){ try{ if(v == null) localStorage.removeItem(lsKey(s)); else localStorage.setItem(lsKey(s), v); }catch(e){} }
@@ -176,42 +185,6 @@ var REASONS = {
   ret: ['القطعة تالفة', 'غير مطابقة لطلبي', 'لا أرغب بها', 'أخرى']
 };
 
-/* ---------- لوحة التوقيع ---------- */
-function SigPad(){
-  var c = h('canvas', { class: 'sig', 'aria-label': 'مربع التوقيع' });
-  var ctx = null, drawing = false, ink = 0, last = null, onchange = null;
-  function size(){
-    var r = c.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2);
-    var keep = (c.width && ink) ? c.toDataURL() : null;
-    c.width = Math.max(300, Math.round(r.width * dpr)); c.height = Math.round(170 * dpr);
-    ctx = c.getContext('2d'); ctx.lineWidth = 2.6 * dpr; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#10201a';
-    if(keep){ var im = new Image(); im.onload = function(){ ctx.drawImage(im, 0, 0, c.width, c.height); }; im.src = keep; }
-  }
-  function pos(ev){ var r = c.getBoundingClientRect(); return { x: (ev.clientX - r.left) * c.width / r.width, y: (ev.clientY - r.top) * c.height / r.height }; }
-  c.addEventListener('pointerdown', function(ev){ if(!ctx) size(); drawing = true; last = pos(ev); try{ c.setPointerCapture(ev.pointerId); }catch(e){} ev.preventDefault(); });
-  c.addEventListener('pointermove', function(ev){
-    if(!drawing) return; var p = pos(ev); ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke();
-    ink += Math.abs(p.x - last.x) + Math.abs(p.y - last.y); last = p; ev.preventDefault(); if(onchange) onchange();
-  });
-  function end(){ drawing = false; last = null; if(onchange) onchange(); }
-  c.addEventListener('pointerup', end); c.addEventListener('pointercancel', end); c.addEventListener('pointerleave', function(){ if(drawing) end(); });
-  setTimeout(size, 0); window.addEventListener('resize', function(){ if(!ink) size(); });
-  return {
-    el: c,
-    empty: function(){ return ink < 220; },
-    clear: function(){ ink = 0; ctx && ctx.clearRect(0, 0, c.width, c.height); if(onchange) onchange(); },
-    onchange: function(f){ onchange = f; },
-    png: function(){
-      // تصغير إلى 560×190 تقريبًا للبقاء تحت حد الخادم (≈ 50 ألف حرف)
-      var w = 560, hgt = Math.round(w * c.height / c.width), t = document.createElement('canvas'); t.width = w; t.height = hgt;
-      var tc = t.getContext('2d'); tc.fillStyle = '#fff'; tc.fillRect(0, 0, w, hgt); tc.drawImage(c, 0, 0, w, hgt);
-      var url = t.toDataURL('image/png');
-      if(url.length > 65000){ t.width = 380; t.height = Math.round(380 * c.height / c.width); tc = t.getContext('2d'); tc.fillStyle = '#fff'; tc.fillRect(0, 0, t.width, t.height); tc.drawImage(c, 0, 0, t.width, t.height); url = t.toDataURL('image/png'); }
-      return url;
-    }
-  };
-}
-
 /* ---------- الهيكل المشترك ---------- */
 function head(note){
   return h('div', { class: 'doc-head' },
@@ -222,7 +195,7 @@ function head(note){
 function meta(note, extra){
   var cells = [['رقم الطلبية', note.order_number], ['السيارة', note.car || '—'], ['تاريخ الإصدار', fmt(note.created_at)], ['المندوب', note.agent_name]];
   (extra || []).forEach(function(x){ cells.push(x); });
-  return h('div', { class: 'meta' }, cells.map(function(c){ return h('div', null, h('span', { text: c[0] }), h('b', { text: c[1] })); }));
+  return h('div', { class: 'meta' }, cells.map(function(c){ return h('div', null, h('span', { text: c[0] }), h('b', null, ltrNums(c[1]))); }));
 }
 function setView(node){ app.textContent = ''; app.appendChild(node); window.scrollTo(0, 0); }
 function message(icon, title, text){
@@ -270,7 +243,7 @@ function paintItem(it){
     var t = { saved: l.status === 'pending' ? 'اختر حالة هذا البند' : '✓ تم الحفظ', saving: 'جارٍ الحفظ…', need: 'اكتب/اختر السبب ليُحفظ', err: '⚠️ لم يُحفظ — حاول ثانية' }[l.sync];
     st.textContent = t; st.className = 'state ' + ({ saved: l.status === 'pending' ? '' : 'ok', saving: '', need: 'warn', err: 'bad' }[l.sync] || '');
   }
-  n.querySelectorAll('.seg button').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-s') === l.status); });
+  n.querySelectorAll('.seg button').forEach(function(b){ var on = b.getAttribute('data-s') === l.status; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
   // تُعاد بناء حقول البند فقط عند تغيّر الحالة/السبب/الكمية — لا عند الكتابة بحقلي «السبب الآخر» و«الملاحظة» (وإلا فقد الحقل التركيز بعد كل حرف)
   var more = n.querySelector('.more'), sig = l.status + '|' + l.reason + '|' + l.qty;
   if(more && more.getAttribute('data-sig') !== sig){ more.setAttribute('data-sig', sig); more.textContent = ''; more.appendChild(agentMore(it)); }
@@ -303,8 +276,7 @@ function updateProgress(){
 }
 function canSeal(){
   var d = S.data, items = d.items || [];
-  var name = (document.getElementById('sname') || {}).value || '', chk = (document.getElementById('sagree') || {}).checked;
-  return items.length > 0 && items.every(agentValid) && name.trim().length >= 3 && chk && S.sig && !S.sig.empty() && !S.busy;
+  return items.length > 0 && items.every(agentValid) && /^\d{4}$/.test((document.getElementById('acode') || {}).value || '') && !S.busy && !S.locked;
 }
 function renderAgent(d){
   S.mode = 'agent'; var note = d.note, items = d.items || [];
@@ -312,10 +284,10 @@ function renderAgent(d){
   items.forEach(function(it){ var k = it.pickup_point || it.supplier_name || 'مكتب PARTECH'; if(!groups[k]){ groups[k] = { name: it.supplier_name, point: k, phone: it.supplier_phone, items: [] }; order.push(k); } groups[k].items.push(it); });
   var idx = 0, body = h('div', { class: 'sec' });
   if(note.instructions) body.appendChild(h('div', { class: 'callout info' }, h('b', { text: 'تعليمات الإدارة: ' }), note.instructions));
-  body.appendChild(h('div', { class: 'callout warn' }, h('b', { text: 'مهمتك: ' }), 'استلم القطع من كل جهة أدناه، وحدّد حالة كل قطعة بصدق (كاملة/جزئية/غير متوفرة/مرفوضة). من لحظة توقيعك تصبح القطع المستلمة ', h('b', { text: 'في عهدتك ومسؤوليتك' }), ' حتى تسليمها للعميل.'));
+  body.appendChild(h('div', { class: 'callout warn' }, h('b', { text: 'مهمتك: ' }), 'استلم القطع من كل جهة أدناه، وحدّد حالة كل قطعة بصدق (كاملة/جزئية/غير متوفرة/مرفوضة). من لحظة تأكيدك تصبح القطع المستلمة ', h('b', { text: 'في عهدتك ومسؤوليتك' }), ' حتى تسليمها للعميل.'));
   order.forEach(function(k){
     var g = groups[k];
-    var gh = h('div', { class: 'group-h' }, h('div', null, h('span', { text: '📍 من: ' + (g.name || g.point) }), g.point && g.point !== g.name ? h('small', { text: g.point }) : null), g.phone ? h('a', { href: telHref(g.phone), text: '📞 اتصال' }) : null);
+    var gh = h('div', { class: 'group-h' }, h('div', null, h('span', null, '📍 من: ', ltrNums(g.name || g.point)), g.point && g.point !== g.name ? h('small', null, ltrNums(g.point)) : null), g.phone ? h('a', { href: telHref(g.phone), text: '📞 اتصال' }) : null);
     var grp = h('div', { class: 'group' }, gh);
     g.items.forEach(function(it){
       idx++; var l = agentLocal(it);
@@ -327,7 +299,7 @@ function renderAgent(d){
             it.part_number ? h('div', { class: 'pn' }, 'رقم القطعة: ', h('bdi', { dir: 'ltr', text: it.part_number })) : null)),
         h('div', { class: 'seg', style: '--cols:' + (it.qty > 1 ? 4 : 3) },
           [['picked', 'ok', '✅ استلمتها'], ['partial', 'warn', '◐ جزء منها'], ['missing', 'bad', '✕ غير متوفرة'], ['rejected', 'gray', '⛔ رفضتها']].filter(function(o){ return o[0] !== 'partial' || it.qty > 1; }).map(function(o){
-            return h('button', { type: 'button', 'data-s': o[0], class: o[1] + (l.status === o[0] ? ' on' : ''), onclick: function(){ l.status = o[0]; l.reason = ''; l.custom = ''; queueSave(it); paintItem(it); } }, o[2]);
+            return h('button', { type: 'button', 'data-s': o[0], 'aria-pressed': l.status === o[0] ? 'true' : 'false', class: o[1] + (l.status === o[0] ? ' on' : ''), onclick: function(){ l.status = o[0]; l.reason = ''; l.custom = ''; queueSave(it); paintItem(it); } }, o[2]);
           })),
         h('div', { class: 'more' }, agentMore(it)),
         h('div', { class: 'state' }));
@@ -335,19 +307,15 @@ function renderAgent(d){
     });
     body.appendChild(grp);
   });
-  var seal = h('div', { class: 'sec' }, h('h3', { text: '✍️ توقيع الاستلام' }));
-  var nameIn = h('input', { type: 'text', id: 'sname', placeholder: 'اسمك الثلاثي', maxlength: '80', value: lsGet('agentname') || note.agent_name || '', oninput: updateProgress });
-  var pad = S.sig = SigPad(); pad.onchange(updateProgress);
+  var seal = h('div', { class: 'sec' }, h('h3', { text: '✅ تأكيد الاستلام' }));
   var noteIn = h('textarea', { id: 'snote', placeholder: 'ملاحظات عامة (اختياري) — مثال: تأخر المورد، حالة التغليف…', maxlength: '900' });
-  var agree = h('input', { type: 'checkbox', id: 'sagree', onchange: updateProgress });
-  seal.appendChild(h('div', null, h('label', { class: 'f', text: 'الاسم' }), nameIn));
-  seal.appendChild(h('div', { style: 'margin-top:10px' }, h('label', { class: 'f', text: 'ملاحظات (إخلاء المسؤولية)' }), noteIn));
+  // رمز الاستلام: 4 أرقام أرسلتها PARTECH لجوال المندوب مع الرابط — إدخاله هو تأكيد المندوب
+  var codeIn = h('input', { type: 'text', id: 'acode', inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'one-time-code', placeholder: '٤ أرقام', 'aria-label': 'رمز الاستلام', dir: 'ltr', style: 'text-align:center;letter-spacing:8px;font-weight:800;font-size:22px', oninput: function(e){ var v = toLatinDigits(e.target.value).replace(/\D/g, '').slice(0, 4); if(v !== e.target.value) e.target.value = v; updateProgress(); } });
+  seal.appendChild(h('div', null, h('label', { class: 'f', text: 'ملاحظات (إخلاء المسؤولية)' }), noteIn));
   seal.appendChild(h('div', { class: 'stmt', style: 'margin-top:12px' }, d.statements.agent));
-  seal.appendChild(h('label', { class: 'chk' }, agree, h('span', { text: 'أقرّ وأوافق على ما سبق.' })));
-  seal.appendChild(h('label', { class: 'f', text: 'وقّع بإصبعك داخل المربع' }));
-  seal.appendChild(pad.el);
-  seal.appendChild(h('div', { class: 'sig-bar' }, h('span', { text: 'يُسجَّل وقت التوقيع وجهازك، وموقعك الحالي إن سمحت.' }), h('button', { type: 'button', class: 'link', onclick: function(){ pad.clear(); } }, 'مسح')));
-  seal.appendChild(h('div', { style: 'margin-top:14px' }, h('button', { type: 'button', class: 'btn', id: 'sealBtn', disabled: true, onclick: sealAgent }, '✍️ توقيع وإنهاء الاستلام')));
+  seal.appendChild(h('div', { style: 'margin-top:12px' }, h('label', { class: 'f', text: 'رمز الاستلام (٤ أرقام وصلك على جوالك مع الرابط)' }), codeIn, h('div', { class: 'state', id: 'acodeState', 'aria-live': 'polite', text: 'إدخالك للرمز تأكيد منك باستلام القطع وتحمّلك مسؤوليتها.' })));
+  seal.appendChild(h('div', { class: 'sig-note' }, 'يُسجَّل وقت التأكيد وجهازك، وموقعك الحالي إن سمحت.'));
+  seal.appendChild(h('div', { style: 'margin-top:14px' }, h('button', { type: 'button', class: 'btn', id: 'sealBtn', disabled: true, onclick: sealAgent }, '✅ تأكيد استلام القطع')));
   var sheet = h('div', { class: 'sheet' }, head(note), meta(note), h('div', { class: 'stick', id: 'prog' }, h('div', { style: 'flex:1' }, h('span', { text: '' }), h('div', { class: 'progress' }, h('i'))), h('span', { text: '' })), body, seal);
   setView(sheet);
   items.forEach(function(it){ paintItem(it); });
@@ -370,21 +338,29 @@ function confirmModal(title, text, okLabel, onOk){
 function sealAgent(){
   if(!canSeal()) return;
   var d = S.data;
-  confirmModal('تأكيد توقيع الاستلام', 'بعد التوقيع لا يمكن تعديل حالة القطع، وتنتقل القطع المستلمة إلى عهدتك ومسؤوليتك. هل أنت متأكد؟', 'نعم، وقّعت واستلمت', function(){
-    S.busy = true; var b = document.getElementById('sealBtn'); b.disabled = true; b.textContent = 'جارٍ التوقيع…';
+  confirmModal('تأكيد الاستلام', 'بعد التأكيد لا يمكن تعديل حالة القطع، وتنتقل القطع المستلمة إلى عهدتك ومسؤوليتك. هل أنت متأكد؟', 'نعم، استلمت وأؤكد', function(){
+    S.busy = true; var b = document.getElementById('sealBtn'); b.disabled = true; b.textContent = 'جارٍ التأكيد…';
     getGeo().then(function(geo){
       var items = d.items.map(function(it){ var l = agentLocal(it); return { id: it.id, status: l.status, qty: l.status === 'partial' ? l.qty : undefined, reason: l.status === 'picked' ? undefined : effReason(l), note: (l.note || '').trim() || undefined }; });
-      var name = document.getElementById('sname').value.trim();
-      return sendWith('dn_agent_seal', { name: name, signature: S.sig.png(), note: (document.getElementById('snote').value || '').trim() || undefined, geo: geo || undefined, items: items }).then(function(r){
+      return sendWith('dn_agent_seal', { code: document.getElementById('acode').value, note: (document.getElementById('snote').value || '').trim() || undefined, geo: geo || undefined, items: items }).then(function(r){
         S.busy = false;
-        if(!r || r.ok === false){ b.textContent = '✍️ توقيع وإنهاء الاستلام'; updateProgress(); toast((r && r.message) || 'تعذّر التوقيع'); return; }
-        lsSet('agentname', name); lsSet('agent', '1'); S.agentSealed = true; S.local = {}; itemNodes = {}; render(r);
+        if(!r || r.ok === false){
+          b.textContent = '✅ تأكيد استلام القطع';
+          if(r && (r.error === 'bad_code' || r.error === 'locked')){
+            var ci = document.getElementById('acode'), cs = document.getElementById('acodeState');
+            if(r.error === 'locked') S.locked = true;
+            if(ci){ ci.value = ''; try{ ci.focus(); }catch(e){} }
+            if(cs){ cs.className = 'state bad'; cs.textContent = (r.error === 'locked' ? '🔒 ' : '⚠️ ') + (r.message || 'رمز الاستلام غير صحيح') + (r.error === 'locked' ? ' — لا يمكن المتابعة من هذا الرابط حتى تجدّد PARTECH الرابط.' : ''); }
+          }
+          updateProgress(); toast((r && r.message) || 'تعذّر التأكيد'); return;
+        }
+        S.local = {}; itemNodes = {}; render(r);
       });
     });
   });
 }
 
-/* ---------- مرحلة العميل: تأكيد الاستلام ---------- */
+/* ---------- مرحلة التسليم (شاشة المندوب): يسجّل ما استلمه العميل ثم يُدخل رمز العميل بعد أن يفحص العميل القطع ---------- */
 function custLocal(it){
   var l = S.local[it.id];
   if(!l){ l = S.local[it.id] = { choice: '', acc: Math.max(1, it.qty_picked - 1), reason: '', custom: '', note: '' }; }
@@ -402,106 +378,84 @@ function custQty(it){ var l = custLocal(it); return l.choice === 'all' ? [it.qty
 function custUpdate(){
   var d = S.data, items = d.items || [], p = document.getElementById('cprog');
   var done = items.filter(custValid).length;
-  if(p){ p.querySelector('i').style.width = (items.length ? Math.round(done * 100 / items.length) : 0) + '%'; p.querySelector('span').textContent = 'تم تأكيد ' + done + ' من ' + items.length; }
-  var b = document.getElementById('csealBtn'); if(b) b.disabled = !(items.every(custValid) && ((document.getElementById('cname') || {}).value || '').trim().length >= 3 && /^\d{6}$/.test((document.getElementById('ccode') || {}).value || '') && (document.getElementById('cagree') || {}).checked && S.sig && !S.sig.empty() && !S.busy && !S.locked);
+  if(p){ p.querySelector('i').style.width = (items.length ? Math.round(done * 100 / items.length) : 0) + '%'; p.querySelector('span').textContent = 'تم تسجيل ' + done + ' من ' + items.length; }
+  var b = document.getElementById('csealBtn'); if(b) b.disabled = !(items.every(custValid) && /^\d{4}$/.test((document.getElementById('ccode') || {}).value || '') && !S.busy && !S.locked);
 }
 function custCard(it, i){
   var l = custLocal(it), node = h('div', { class: 'item', style: 'border-top:1px solid var(--line);border-radius:12px;margin-bottom:10px' });
   function paint(){
     node.textContent = '';
     node.appendChild(h('div', { class: 'item-top' }, h('span', { class: 'num', text: String(i) }),
-      h('div', { class: 'item-title' }, h('b', { text: it.description }), h('div', { class: 'chips' }, h('span', { class: 'chip q', text: 'الكمية المستلمة من المندوب: ' + it.qty_picked }), it.used === true ? h('span', { class: 'chip a', text: 'مستعملة' }) : null), it.part_number ? h('div', { class: 'pn' }, 'رقم القطعة: ', h('bdi', { dir: 'ltr', text: it.part_number })) : null)));
-    node.appendChild(h('div', { class: 'seg', style: '--cols:3' }, [['all', 'ok', '✅ استلمتها كاملة'], ['part', 'warn', '◐ استلمت جزءًا'], ['none', 'bad', '↩️ أرجعتها']].map(function(o){
-      return h('button', { type: 'button', class: o[1] + (l.choice === o[0] ? ' on' : ''), onclick: function(){ if(o[0] === 'part' && it.qty_picked < 2){ toast('كمية هذه القطعة واحدة'); return; } l.choice = o[0]; l.reason = ''; l.custom = ''; paint(); custUpdate(); } }, o[2]);
+      h('div', { class: 'item-title' }, h('b', { text: it.description }), h('div', { class: 'chips' }, h('span', { class: 'chip q', text: 'العدد بعهدتك: ' + it.qty_picked }), it.used === true ? h('span', { class: 'chip a', text: 'مستعملة' }) : null), it.part_number ? h('div', { class: 'pn' }, 'رقم القطعة: ', h('bdi', { dir: 'ltr', text: it.part_number })) : null)));
+    node.appendChild(h('div', { class: 'seg', style: '--cols:3' }, [['all', 'ok', '✅ استلمها كاملة'], ['part', 'warn', '◐ استلم جزءًا'], ['none', 'bad', '↩️ أرجعها']].map(function(o){
+      return h('button', { type: 'button', 'aria-pressed': l.choice === o[0] ? 'true' : 'false', class: o[1] + (l.choice === o[0] ? ' on' : ''), onclick: function(){ if(o[0] === 'part' && it.qty_picked < 2){ toast('كمية هذه القطعة واحدة'); return; } l.choice = o[0]; l.reason = ''; l.custom = ''; paint(); custUpdate(); } }, o[2]);
     })));
     var more = h('div', { class: 'more' });
-    if(l.choice === 'part') more.appendChild(h('div', null, h('label', { class: 'f', text: 'كم قطعة استلمت؟ (من ' + it.qty_picked + ')' }), h('div', { class: 'stepper' },
-      h('button', { type: 'button', onclick: function(){ if(l.acc > 1){ l.acc--; paint(); custUpdate(); } } }, '−'), h('b', { text: String(l.acc) }), h('button', { type: 'button', onclick: function(){ if(l.acc < it.qty_picked - 1){ l.acc++; paint(); custUpdate(); } } }, '+'))));
+    if(l.choice === 'part') more.appendChild(h('div', null, h('label', { class: 'f', text: 'كم قطعة استلم العميل؟ (من ' + it.qty_picked + ')' }), h('div', { class: 'stepper' },
+      h('button', { type: 'button', 'aria-label': 'أقل', onclick: function(){ if(l.acc > 1){ l.acc--; paint(); custUpdate(); } } }, '−'), h('b', { text: String(l.acc) }), h('button', { type: 'button', 'aria-label': 'أكثر', onclick: function(){ if(l.acc < it.qty_picked - 1){ l.acc++; paint(); custUpdate(); } } }, '+'))));
     if(l.choice === 'part' || l.choice === 'none'){
       more.appendChild(h('div', null, h('label', { class: 'f', text: 'سبب إرجاع ' + (l.choice === 'none' ? 'القطعة' : 'الباقي') + ' (إلزامي)' }),
-        h('select', { onchange: function(e){ l.reason = e.target.value; paint(); custUpdate(); } }, h('option', { value: '', text: '— اختر السبب —' }), REASONS.ret.map(function(r){ return h('option', { value: r, text: r, selected: l.reason === r }); }))));
+        h('select', { 'aria-label': 'سبب الإرجاع', onchange: function(e){ l.reason = e.target.value; paint(); custUpdate(); } }, h('option', { value: '', text: '— اختر السبب —' }), REASONS.ret.map(function(r){ return h('option', { value: r, text: r, selected: l.reason === r }); }))));
       if(l.reason === 'أخرى') more.appendChild(h('input', { type: 'text', placeholder: 'اكتب السبب', maxlength: '280', value: l.custom, oninput: function(e){ l.custom = e.target.value; custUpdate(); } }));
     }
     if(l.choice) more.appendChild(h('div', null, h('label', { class: 'f', text: 'ملاحظة على هذه القطعة (اختياري)' }), h('input', { type: 'text', placeholder: 'مثال: خدش بسيط، التغليف مفتوح…', maxlength: '500', value: l.note, oninput: function(e){ l.note = e.target.value; } })));
     node.appendChild(more);
   }
+  node.repaint = paint;
   paint(); return node;
 }
-function renderCustomer(d){
-  S.mode = 'customer'; var note = d.note, items = d.items || [];
-  var agentDevice = (S.agentSealed || lsGet('agent') === '1') && S.view !== 'customer-confirm';
-  if(agentDevice){ return renderAgentDone(d); }
+function renderDelivery(d){
+  S.mode = 'delivery'; var note = d.note, items = d.items || [], cards = [];
   var body = h('div', { class: 'sec' });
-  body.appendChild(h('div', { class: 'callout ok' }, h('b', { text: 'مرحبًا ' + (note.customer_name || '') + ' 👋 ' }), 'وصلك المندوب ' + note.agent_name + ' بالقطع أدناه. افحصها أمامه ثم أكّد استلامك لكل قطعة، ووقّع.'));
-  if(note.agent_phone) body.appendChild(h('a', { class: 'link', href: telHref(note.agent_phone), text: '📞 اتصال بالمندوب ' + note.agent_name }));
+  body.appendChild(h('div', { class: 'callout ok' }, h('b', { text: '✅ تم تسجيل استلامك. ' }), 'القطع أدناه في عهدتك ومسؤوليتك حتى يؤكّد العميل استلامها.'));
+  if(note.instructions) body.appendChild(h('div', { class: 'callout info' }, h('b', { text: 'تعليمات الإدارة: ' }), note.instructions));
+  body.appendChild(h('div', { class: 'callout warn' }, h('b', { text: 'عند مقابلة العميل: ' }), 'دعه يفحص القطع أدناه، وبعد أن يطمئن لها اسأله عن ', h('b', { text: 'رمز التأكيد (٤ أرقام)' }), ' الذي وصله من PARTECH على جواله، وسجّل ما استلمه ثم اكتب الرمز في آخر الصفحة. ', h('b', { text: 'لا تطلب الرمز قبل أن يفحص القطع.' })));
+  if(note.delivery_address) body.appendChild(h('div', { class: 'callout info' }, h('b', { text: 'عنوان التسليم: ' }), note.delivery_address));
+  if(note.customer_phone) body.appendChild(h('a', { class: 'link', href: telHref(note.customer_phone), text: '📞 اتصال بالعميل' }));
   if((d.short || []).length){
-    body.appendChild(h('div', { class: 'callout warn' }, h('b', { text: 'قطع لم تصل ضمن هذه الشحنة: ' }), h('ul', { style: 'margin:6px 18px 0;padding:0' }, d.short.map(function(s){ return h('li', { text: s.description + ' — ' + (s.status === 'partial' ? 'ينقص ' + s.short_qty : s.status === 'rejected' ? 'لم تُستلم (غير مطابقة/تالفة)' : 'غير متوفرة حاليًا (' + s.short_qty + ')') }); })), h('div', { text: 'ستتواصل معك PARTECH بشأنها.' })));
+    body.appendChild(h('div', { class: 'callout warn' }, h('b', { text: 'قطع لم تُستلم من الموردين (لن تصل ضمن هذه الشحنة): ' }), h('ul', { style: 'margin:6px 18px 0;padding:0' }, d.short.map(function(s){ return h('li', { text: s.description + ' — ' + (s.status === 'partial' ? 'ينقص ' + s.short_qty : s.status === 'rejected' ? 'لم تُستلم (غير مطابقة/تالفة)' : 'غير متوفرة (' + s.short_qty + ')') }); }))));
   }
-  items.forEach(function(it, i){ body.appendChild(custCard(it, i + 1)); });
-  var seal = h('div', { class: 'sec' }, h('h3', { text: '✍️ توقيع العميل' }));
-  var nameIn = h('input', { type: 'text', id: 'cname', placeholder: 'اسمك الثلاثي', maxlength: '80', value: lsGet('custname') || note.customer_name || '', oninput: custUpdate });
-  var pad = S.sig = SigPad(); pad.onchange(custUpdate);
+  body.appendChild(h('button', { type: 'button', class: 'btn ghost', style: 'margin-bottom:12px', id: 'allBtn', onclick: function(){ items.forEach(function(it){ var l = custLocal(it); l.choice = 'all'; l.reason = ''; l.custom = ''; }); cards.forEach(function(c){ c.repaint(); }); custUpdate(); } }, '✅ العميل استلم كل القطع كاملة'));
+  items.forEach(function(it, i){ var c = custCard(it, i + 1); cards.push(c); body.appendChild(c); });
+  var seal = h('div', { class: 'sec' }, h('h3', { text: '✅ تأكيد تسليم القطع' }));
   var noteIn = h('textarea', { id: 'cnote', placeholder: 'ملاحظات عامة (اختياري) — أي ملاحظة على حالة القطع أو التغليف تُدوَّن هنا لإخلاء المسؤولية…', maxlength: '900' });
-  var agree = h('input', { type: 'checkbox', id: 'cagree', onchange: custUpdate });
-  // رمز التأكيد: سرّ العميل (يرسله له الموظف على واتساب) — لا يعرفه المندوب، فلا يستطيع التوقيع عنه
-  var codeIn = h('input', { type: 'text', id: 'ccode', inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'one-time-code', placeholder: '٦ أرقام', 'aria-label': 'رمز التأكيد', dir: 'ltr', style: 'text-align:center;letter-spacing:6px;font-weight:800', oninput: function(e){ var v = toLatinDigits(e.target.value).replace(/\D/g, '').slice(0, 6); if(v !== e.target.value) e.target.value = v; custUpdate(); } });
-  seal.appendChild(h('div', null, h('label', { class: 'f', text: 'الاسم' }), nameIn));
-  seal.appendChild(h('div', { style: 'margin-top:10px' }, h('label', { class: 'f', text: 'رمز التأكيد (أرسلته لك PARTECH على واتساب)' }), codeIn, h('div', { class: 'state', id: 'ccodeState', 'aria-live': 'polite', text: 'إن لم يصلك الرمز اطلبه من PARTECH ولا تعطِه للمندوب.' })));
-  seal.appendChild(h('div', { style: 'margin-top:10px' }, h('label', { class: 'f', text: 'ملاحظات (إخلاء المسؤولية)' }), noteIn));
+  // رمز العميل: 4 أرقام وصلت جوال العميل من PARTECH مع قائمة القطع؛ يُفصح عنه العميل للمندوب بعد أن يفحص القطع فيدخله هنا
+  var codeIn = h('input', { type: 'text', id: 'ccode', inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'off', placeholder: '٤ أرقام', 'aria-label': 'رمز العميل', dir: 'ltr', style: 'text-align:center;letter-spacing:8px;font-weight:800;font-size:22px', oninput: function(e){ var v = toLatinDigits(e.target.value).replace(/\D/g, '').slice(0, 4); if(v !== e.target.value) e.target.value = v; custUpdate(); } });
+  seal.appendChild(h('div', null, h('label', { class: 'f', text: 'ملاحظات (إخلاء المسؤولية)' }), noteIn));
   seal.appendChild(h('div', { class: 'stmt', style: 'margin-top:12px' }, d.statements.customer));
-  seal.appendChild(h('label', { class: 'chk' }, agree, h('span', { text: 'أقرّ وأوافق على ما سبق.' })));
-  seal.appendChild(h('label', { class: 'f', text: 'وقّع بإصبعك داخل المربع' }));
-  seal.appendChild(pad.el);
-  seal.appendChild(h('div', { class: 'sig-bar' }, h('span', { text: 'يُسجَّل وقت التوقيع وجهازك، وموقعك الحالي إن سمحت.' }), h('button', { type: 'button', class: 'link', onclick: function(){ pad.clear(); } }, 'مسح')));
-  seal.appendChild(h('div', { style: 'margin-top:14px' }, h('button', { type: 'button', class: 'btn', id: 'csealBtn', disabled: true, onclick: sealCustomer }, '✍️ تأكيد الاستلام والتوقيع')));
-  // منفذ نجاة لمندوب وصل لهذه الشاشة بلا علامة جهازه (تخزين محجوب/ردّ ضائع): رابط صغير بتأكيد، لا زر بارز أمام العميل
-  var imAgent = h('div', { class: 'foot noprint', style: 'padding-top:0' }, h('button', { type: 'button', class: 'link', style: 'font-size:12px;font-weight:400;color:var(--muted)', onclick: function(){
-    confirmModal('هل أنت مندوب التوصيل؟', 'ستظهر لك شاشة المندوب (تعذّر التسليم / مشاركة الرابط). لا تضغط «نعم» إن كنت العميل.', 'نعم، أنا المندوب', function(){ S.agentSealed = true; S.view = 'customer'; renderAgentDone(S.data); });
-  } }, 'هل أنت المندوب؟'));
-  setView(h('div', null, h('div', { class: 'sheet' }, head(note), meta(note), h('div', { class: 'stick', id: 'cprog' }, h('div', { style: 'flex:1' }, h('span', { text: '' }), h('div', { class: 'progress' }, h('i'))), h('span', { text: '' })), body, seal), imAgent));
+  seal.appendChild(h('div', { style: 'margin-top:12px' }, h('label', { class: 'f', text: 'رمز العميل (٤ أرقام وصلت جوال العميل من PARTECH)' }), codeIn, h('div', { class: 'state', id: 'ccodeState', 'aria-live': 'polite', text: 'اكتب الرمز الذي يقوله لك العميل بعد فحصه القطع.' })));
+  seal.appendChild(h('div', { class: 'sig-note' }, 'إدخال العميل لرمزه (عبر المندوب) يُعدّ توقيعه الإلكتروني وتأكيدًا لاستلام القطع كما سُجّلت. يُسجَّل وقت التأكيد وجهازك، وموقعك الحالي إن سمحت.'));
+  seal.appendChild(h('div', { style: 'margin-top:14px' }, h('button', { type: 'button', class: 'btn', id: 'csealBtn', disabled: true, onclick: sealCustomer }, '✅ تأكيد تسليم القطع')));
+  seal.appendChild(h('div', { style: 'margin-top:10px' }, h('button', { type: 'button', class: 'btn warn', onclick: reportFail }, '⚠️ تعذّر التسليم')));
+  setView(h('div', { class: 'sheet' }, head(note), meta(note, [['العميل', note.customer_name || '—'], ['جوال العميل', note.customer_phone || '—']]), h('div', { class: 'stick', id: 'cprog' }, h('div', { style: 'flex:1' }, h('span', { text: '' }), h('div', { class: 'progress' }, h('i'))), h('span', { text: '' })), body, seal));
   custUpdate();
 }
 function sealCustomer(){
   var d = S.data, b = document.getElementById('csealBtn'); if(b.disabled) return;
-  confirmModal('تأكيد الاستلام', 'بعد التوقيع لا يمكن تعديل ما سجّلته. راجع القطع جيدًا. هل أنت متأكد؟', 'نعم، أؤكد الاستلام', function(){
+  confirmModal('تأكيد تسليم القطع', 'تأكّد أن العميل فحص القطع وأن ما سجّلته مطابق لما استلمه فعلًا. بعد التأكيد لا يمكن التعديل. هل أنت متأكد؟', 'نعم، أؤكد التسليم', function(){
     S.busy = true; b.disabled = true; b.textContent = 'جارٍ التسجيل…';
     getGeo().then(function(geo){
       var items = d.items.map(function(it){ var l = custLocal(it), q = custQty(it); return { id: it.id, accepted: q[0], returned: q[1], reason: q[1] > 0 ? custEff(l) : undefined, note: (l.note || '').trim() || undefined }; });
-      var name = document.getElementById('cname').value.trim();
-      return sendWith('dn_customer_seal', { name: name, code: document.getElementById('ccode').value, signature: S.sig.png(), note: (document.getElementById('cnote').value || '').trim() || undefined, geo: geo || undefined, items: items }).then(function(r){
+      return sendWith('dn_customer_seal', { code: document.getElementById('ccode').value, note: (document.getElementById('cnote').value || '').trim() || undefined, geo: geo || undefined, items: items }).then(function(r){
         S.busy = false;
         if(!r || r.ok === false){
-          b.textContent = '✍️ تأكيد الاستلام والتوقيع';
+          b.textContent = '✅ تأكيد تسليم القطع';
           if(r && (r.error === 'bad_code' || r.error === 'locked')){
             var ci = document.getElementById('ccode'), cs = document.getElementById('ccodeState');
             if(r.error === 'locked') S.locked = true;
             if(ci){ ci.value = ''; try{ ci.focus(); }catch(e){} }
-            if(cs){ cs.className = 'state bad'; cs.textContent = (r.error === 'locked' ? '🔒 ' : '⚠️ ') + (r.message || 'رمز التأكيد غير صحيح') + (r.error === 'locked' ? ' — لا يمكن المتابعة من هذا الرابط حتى تجدّد PARTECH الرابط.' : ''); }
+            if(cs){ cs.className = 'state bad'; cs.textContent = (r.error === 'locked' ? '🔒 ' : '⚠️ ') + (r.message || 'رمز العميل غير صحيح') + (r.error === 'locked' ? ' — لا يمكن المتابعة من هذا الرابط حتى تجدّد PARTECH الرابط.' : ''); }
           }
           custUpdate(); toast((r && r.message) || 'تعذّر التسجيل'); return;
         }
-        lsSet('custname', name); S.local = {}; render(r);
+        S.local = {}; render(r);
       });
     });
   });
 }
-/* شاشة المندوب بعد الاستلام: تسليم الجوال للعميل/مشاركة الرابط/تعذّر التسليم */
-function renderAgentDone(d){
-  var note = d.note, items = d.items || [];
-  var body = h('div', { class: 'sec' },
-    h('div', { class: 'callout ok' }, h('b', { text: '✅ تم تسجيل استلامك. ' }), 'القطع أدناه الآن في عهدتك ومسؤوليتك حتى يؤكّد العميل استلامه.'),
-    h('table', { class: 't' }, h('tr', null, h('th', { text: 'القطعة' }), h('th', { text: 'الكمية' })), items.map(function(it){ return h('tr', null, h('td', { text: it.description }), h('td', { text: String(it.qty_picked) })); })));
-  if((d.short || []).length) body.appendChild(h('div', { class: 'callout warn' }, h('b', { text: 'لم تُستلم من الموردين: ' }), d.short.map(function(s){ return s.description + ' (' + s.short_qty + ')'; }).join('، ')));
-  body.appendChild(h('div', { class: 'callout info' }, 'عند التسليم: ', h('b', { text: 'سلّم جوالك للعميل' }), ' ليكتب ', h('b', { text: 'رمز التأكيد' }), ' (أرسلته له PARTECH على واتساب — لا تطلبه منه ولا تعرفه) ثم يؤكد الاستلام ويوقّع، أو أرسل له نفس الرابط ليفتحه على جواله.'));
-  var share = function(){ var url = location.href, text = 'تأكيد استلام طلبك من PARTECH — الرابط: ' + url; if(navigator.share){ navigator.share({ title: 'تأكيد استلام', text: 'تأكيد استلام طلبك من PARTECH', url: url }).catch(function(){}); } else { window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank', 'noopener'); } };
-  body.appendChild(h('button', { type: 'button', class: 'btn', onclick: function(){ S.view = 'customer-confirm'; renderCustomer(S.data); } }, '📱 تسليم الجوال للعميل لتأكيد الاستلام'));
-  body.appendChild(h('button', { type: 'button', class: 'btn ghost', onclick: share }, '📲 إرسال الرابط للعميل'));
-  body.appendChild(h('button', { type: 'button', class: 'btn warn', onclick: reportFail }, '⚠️ تعذّر التسليم'));
-  setView(h('div', { class: 'sheet' }, head(note), meta(note), body));
-}
 function reportFail(){
-  var ta = h('textarea', { placeholder: 'اكتب السبب (مثال: العميل لا يرد، العنوان غير واضح)…', maxlength: '500' });
-  var ov = h('div', { class: 'overlay' }, h('div', { class: 'modal' }, h('h4', { text: 'تعذّر التسليم' }), ta,
+  var ta = h('textarea', { placeholder: 'اكتب السبب (مثال: العميل لا يرد، العنوان غير واضح)…', maxlength: '500', 'aria-label': 'سبب تعذّر التسليم' });
+  var ov = h('div', { class: 'overlay' }, h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'تعذّر التسليم' }, h('h4', { text: 'تعذّر التسليم' }), ta,
     h('button', { type: 'button', class: 'btn', style: 'margin-top:12px', onclick: function(e){ var btn = e.currentTarget, t = ta.value.trim(); if(btn.disabled) return; if(!t){ toast('اكتب السبب'); return; } btn.disabled = true; sendWith('dn_report', { kind: 'delivery_failed', text: t }).then(function(r){ if(r && r.ok === false){ btn.disabled = false; toast(r.message || 'تعذّر الإرسال'); return; } ov.remove(); toast('تم إبلاغ الإدارة'); }); } }, 'إرسال للإدارة'),
     h('button', { type: 'button', class: 'btn ghost', onclick: function(){ ov.remove(); } }, 'رجوع')));
   document.body.appendChild(ov);
@@ -520,11 +474,11 @@ function renderReceipt(d){
   });
   var sb = h('div', { class: 'sigbox' }, ['agent', 'customer'].map(function(party){
     var s = sigs.filter(function(x){ return x.party === party; }).pop();
-    return h('div', null, h('b', { text: party === 'agent' ? 'المندوب' : 'العميل' }), s ? [h('img', { src: s.image, alt: 'توقيع' }), h('b', { text: s.name }), h('small', { text: fmt(s.at) })] : h('small', { text: '— لا توقيع —' }));
+    return h('div', null, h('b', { text: party === 'agent' ? 'المندوب' : 'العميل' }), s ? [s.image ? h('img', { src: s.image, alt: 'توقيع' }) : h('div', { class: 'esig' }, h('span', { text: '✔' }), h('small', { text: party === 'agent' ? 'إقرار إلكتروني برمز الاستلام' : 'تأكيد إلكتروني برمز العميل (أدخله المندوب بحضوره)' })), h('b', { text: s.name }), h('small', { text: fmt(s.at) })] : h('small', { text: '— لا تأكيد —' }));
   }));
   var body = h('div', { class: 'sec' }, h('div', { class: 'callout ' + oc[0] }, h('b', { text: oc[1] }), note.delivered_at ? h('div', { text: 'وقت التسليم: ' + fmt(note.delivered_at) }) : null),
     h('table', { class: 't' }, h('tr', null, h('th', { text: 'القطعة' }), h('th', { text: 'العدد' }), h('th', { text: 'الاستلام من المورد' }), h('th', { text: 'تسليم العميل' })), rows));
-  var stmts = h('div', { class: 'sec' }, h('h3', { text: 'التوقيعات والإقرارات' }), sb);
+  var stmts = h('div', { class: 'sec' }, h('h3', { text: 'التأكيدات والإقرارات' }), sb);
   sigs.forEach(function(s){ stmts.appendChild(h('div', { class: 'stmt' }, h('b', { text: (s.party === 'agent' ? 'إقرار المندوب: ' : 'إقرار العميل: ') }), s.statement, s.note ? h('div', { style: 'margin-top:6px' }, h('b', { text: 'ملاحظات ' + (s.party === 'agent' ? 'المندوب' : 'العميل') + ': ' }), s.note) : null)); });
   var act = h('div', { class: 'sec noprint' }, h('button', { type: 'button', class: 'btn ghost', onclick: function(){ window.print(); } }, '🖨️ طباعة / حفظ PDF'));
   setView(h('div', { class: 'sheet' }, head(note), meta(note, [['العميل', note.customer_name || '—']]), body, stmts, act));
@@ -536,12 +490,14 @@ function render(d){
   if(!d || d.ok !== true){ message('🔒', d && d.error === 'network' ? 'تعذّر الاتصال' : 'الرابط غير صالح', (d && d.message) || 'الرابط غير صحيح أو انتهى. اطلب رابطًا جديدًا من PARTECH.'); return; }
   S.view = d.view; try{ document.title = 'إشعار تسليم ' + ((d.note && d.note.no) || '') + ' · PARTECH'; }catch(e){}
   if(d.view === 'agent') renderAgent(d);
-  else if(d.view === 'customer') renderCustomer(d);
+  else if(d.view === 'delivery') renderDelivery(d);
   else if(d.view === 'receipt') renderReceipt(d);
   else if(d.view === 'cancelled') message('🚫', 'تم إلغاء هذا الإشعار', 'أُلغي إشعار التسليم ' + ((d.note && d.note.no) || '') + '. تواصل مع PARTECH للتفاصيل.');
   else if(d.view === 'expired') message('⌛', 'انتهت صلاحية الرابط', 'انتهت مدة صلاحية هذا الرابط. اطلب من PARTECH رابطًا جديدًا.');
   else message('⚠️', 'تعذّر العرض', 'حاول لاحقًا.');
 }
+window.addEventListener('hashchange', function(){ location.reload(); });
+document.addEventListener('keydown', function(e){ if(e.key === 'Escape'){ var o = document.querySelector('.overlay'); if(o) o.remove(); } });
 if(!/^[0-9a-f]{64}$/.test(TOKEN)){ message('🔒', 'الرابط ناقص', 'افتح الرابط كاملًا كما وصلك من PARTECH.'); return; }
 rpc('dn_view', { t: TOKEN }).then(render).catch(function(){
   app.textContent = ''; app.appendChild(h('div', { class: 'sheet center' }, h('div', { class: 'big', text: '📡' }), h('h3', { text: 'تعذّر الاتصال' }), h('p', { text: 'تأكّد من الإنترنت ثم أعد المحاولة.' }), h('button', { type: 'button', class: 'btn', onclick: function(){ location.reload(); } }, 'إعادة المحاولة')));
