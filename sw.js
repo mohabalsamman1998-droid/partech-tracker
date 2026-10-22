@@ -12,7 +12,7 @@
 // بياخذ دايمًا آخر نسخة منشورة، والكاش مجرد شبكة أمان لما الشبكة تفشل أو تتأخر. هذا مهم لأن
 // النشر متكرر والتحديث لازم يوصل بدون أي خطوة من المستخدم.
 
-// build-id: 87239f13e9de
+// build-id: 79c5c0bc8b9c
 const SHELL_CACHE = 'partech-shell-v1';
 const SHELL_URLS = [
   './',
@@ -89,6 +89,8 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
   // ملف الـservice worker نفسه لازم يوصل من الشبكة دايمًا حتى يقدر يتحدّث
   if (url.pathname.endsWith('/sw.js')) return;
+  // صفحة «إشعار التسليم» العامة (dn.html) للمندوب/العميل: يتولاها المتصفح مباشرة — لا كاش ولا استبدال فتحها دون شبكة بواجهة الموظفين
+  if (url.pathname.endsWith('/dn.html')) return;
 
   // ملفات البيانات الكبيرة اللي بتتغيّر بالنشرات بس (vds.json جدول الشاصيات ~270KB مضغوط، parts-tree.json شجرة كتالوج القطع ~65KB مضغوط): الكاش أولًا مع تحديث بالخلفية — بدل ما تنحمّل من جديد بكل جلسة
   if (url.pathname.endsWith('/vds.json') || url.pathname.endsWith('/parts-tree.json')) {
