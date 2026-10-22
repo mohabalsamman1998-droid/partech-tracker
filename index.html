@@ -1529,7 +1529,7 @@
   #ops-kpi .ops-periods, #ops-kpi-scrapyard .ops-periods{display:none;}
   #ops-kpi.ops-periods-open .ops-periods, #ops-kpi-scrapyard.ops-periods-open .ops-periods{display:flex;}
   #ops-kpi .ops-tiles::before{display:none;}
-  .ops-periods-toggle{background:none;border:1px solid var(--border);border-radius:999px;padding:4px 12px;font-family:inherit;font-size:12.5px;font-weight:700;color:var(--text);cursor:pointer;margin-inline-start:auto;margin-inline-end:8px;}
+  .ops-periods-toggle{background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:4px 12px;font-family:inherit;font-size:12.5px;font-weight:700;color:var(--text);cursor:pointer;margin-inline-start:auto;margin-inline-end:8px;}
   /* بطاقات المستحقات بالرئيسية (#kpi-row): مصغّرة بصف واحد وفوق مؤشر الأداء؛ البطاقة المفتوحة (تفصيل) تمتد صفًّا كاملًا */
   #kpi-row{grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:6px;margin-bottom:10px;}
   #kpi-row .kpi-card{padding:6px 10px;border-radius:10px;}
@@ -1543,6 +1543,12 @@
   .scrapyard-kpi-row .kpi-value{font-size:14px;line-height:1.3;}
   .acct2-fab{display:none !important;}
   #ops-kpi .ops-foot, #ops-kpi-scrapyard .ops-foot{display:none;}
+  /* الأزرار لا تُترك شفافة (طلب المالك): ghost/danger-ghost بخلفية مصمتة؛ وخلفية نوافذ المستندات (عرض سعر/فاتورة/كشف) مصمتة بالشاشة كي لا يظهر محتوى الصفحة تحت شريط الأزرار (الطباعة كما هي) */
+  .btn-ghost,.btn-danger-ghost{background:var(--surface-2);}
+  @media screen{
+    .doc-overlay{background:var(--bg);}
+    .doc-overlay .doc-toolbar-title{color:var(--text);}
+  }
   /* HOMEKPI END css */
   /* SUPTGT BEGIN css */
   /* توجيه طلب التوريد (SUPTGT): منتقي الوجهة بالحوار وبعرض طلب التوريد، وشارة الوجهة بالصف */
@@ -1552,6 +1558,18 @@
   .suptgt-view-line .suptgt-label{margin:0;}
   .supply-req-target{font-size:11.5px;font-weight:700;color:var(--green);margin-inline-start:6px;white-space:nowrap;}
   /* SUPTGT END css */
+  /* SUPCOPY BEGIN css */
+  /* زر «نسخ للمورد» ونافذته (SUPCOPY): خيارات الإظهار + معاينة النص */
+  .supcopy-opt{display:flex;align-items:center;gap:8px;margin:8px 0;font-size:14px;cursor:pointer;}
+  .supcopy-opt input{width:18px;height:18px;accent-color:var(--green);flex:0 0 auto;}
+  .supcopy-preview{display:block;width:100%;box-sizing:border-box;margin-top:8px;min-height:170px;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-family:inherit;font-size:13px;line-height:1.7;resize:vertical;direction:rtl;white-space:pre-wrap;}
+  .supcopy-view-row{margin:10px 0;}
+  .supcopy-btn{margin-inline-start:8px;}
+  /* SUPCOPY END css */
+  /* SLIM BEGIN css */
+  /* تخفيف التعليمات والشرح (SLIM): أصناف حصرية للتلميحات + الصنف الذي تضعه الوحدة على العناصر المطابقة بالنص */
+  .att-banner-sub, .qr-note, .vcat-via, .epcl-hint2, .att-pick-tip, .slim-hide{display:none !important;}
+  /* SLIM END css */
   /* TAXINV BEGIN css */
   /* ===== TAXINV — الفاتورة الضريبية (المرحلة الأولى) — كل القواعد بنطاق .taxinv-* =====
      CONTRACT-ADDENDUM-D: الورقة هي نفسها ورقة الفاتورة القديمة (.doc-sheet و.doc-header-band و.doc-brand-col و.doc-logo-img و.doc-co-info و.doc-identity-* و.doc-billto
@@ -71647,6 +71665,295 @@ async function suptgtDirectRequest(orderId, target) {
                 });
             } catch (e) {}
         }, false);
+    } catch (e) {}
+})();
+
+const SUPCOPY_TITLE = "*PARTECH*";
+
+const SUPCOPY_ANCHOR = '<span class="section-title">تفاصيل الطلبية</span>';
+
+function supcopyInject(h, src) {
+    const i = String(h).indexOf(SUPCOPY_ANCHOR);
+    if (i < 0) return h;
+    const j = i + SUPCOPY_ANCHOR.length;
+    return h.slice(0, j) + '<button type="button" class="btn btn-ghost btn-sm supcopy-btn" id="supcopy-' + src + '-btn" data-supcopy="' + src + '">📤 نسخ للمورد</button>' + h.slice(j);
+}
+
+function supcopySource(src, id) {
+    try {
+        if (src === "order") return typeof draft !== "undefined" ? draft : null;
+        if (src === "quote") return typeof quoteDraft !== "undefined" ? quoteDraft : null;
+        if (src === "supply") {
+            const list = typeof scrapyardSharedState !== "undefined" && scrapyardSharedState && scrapyardSharedState.supplyRequests || [];
+            return list.find(function(o) {
+                return o && o.id === id;
+            }) || null;
+        }
+    } catch (e) {}
+    return null;
+}
+
+function supcopyParts(order) {
+    const all = order ? typeof orderActiveParts === "function" ? orderActiveParts(order) : order.parts || [] : [];
+    return (all || []).filter(function(p) {
+        return p && !p.returned && String(p.description || "").trim() !== "";
+    });
+}
+
+function supcopyHas(order, key) {
+    return supcopyParts(order).some(function(p) {
+        return key === "cost" ? Number(p.costPrice) > 0 : String(p.notes || "").trim() !== "";
+    });
+}
+
+function supcopyBuildText(order, o) {
+    const opt = o || {};
+    const parts = supcopyParts(order);
+    if (!parts.length) return "";
+    const lines = [ SUPCOPY_TITLE, "طلب قطع غيار" ];
+    const car = typeof orderCarLabel === "function" ? orderCarLabel(order) : "";
+    if (car) lines.push("السيارة: " + car);
+    const vin = String(order && order.vin || "").trim();
+    if (vin) lines.push("VIN: " + vin);
+    lines.push("");
+    lines.push("القطع المطلوبة:");
+    let total = 0, priced = 0;
+    parts.forEach(function(p, i) {
+        const qty = Number(p.qty) > 0 ? Math.floor(Number(p.qty)) || 1 : 1;
+        const kind = p.used === true ? " (مستعمل)" : p.used === false ? " (جديد)" : "";
+        lines.push(i + 1 + ". " + String(p.description).trim() + kind + " × " + qty);
+        const pn = String(p.partNumber || "").trim();
+        if (pn) lines.push("   رقم القطعة: " + pn);
+        const note = String(p.notes || "").trim();
+        if (opt.notes && note) lines.push("   ملاحظة: " + note.replace(/\s*\n\s*/g, " "));
+        const cost = Number(p.costPrice) || 0;
+        if (opt.cost && cost > 0) {
+            lines.push("   سعر الشراء: " + fmtNum(cost) + " ريال" + (qty > 1 ? " للواحدة" : ""));
+            total += cost * qty;
+            priced++;
+        }
+    });
+    if (opt.cost && priced) {
+        lines.push("");
+        lines.push("إجمالي سعر الشراء: " + fmtNum(total) + " ريال");
+    }
+    return lines.join("\n");
+}
+
+function supcopyClose() {
+    const root = document.getElementById("confirm-root");
+    if (root) {
+        root.innerHTML = "";
+        root.classList.remove("modal-open");
+    }
+}
+
+function supcopyDialog(order) {
+    const root = document.getElementById("confirm-root");
+    if (!root) return false;
+    const st = {
+        cost: false,
+        notes: true
+    };
+    const hasCost = supcopyHas(order, "cost"), hasNotes = supcopyHas(order, "notes");
+    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true" data-supcopy-dialog>' + '<div class="modal-title">📤 نسخ للمورد</div>' + (hasCost ? '<label class="supcopy-opt"><input type="checkbox" data-supcopy-opt="cost"><span>إظهار أسعار الشراء</span></label>' : "") + (hasNotes ? '<label class="supcopy-opt"><input type="checkbox" data-supcopy-opt="notes" checked><span>إظهار ملاحظات القطع</span></label>' : "") + '<textarea class="supcopy-preview" data-supcopy-preview readonly rows="10" dir="rtl" aria-label="معاينة النص"></textarea>' + '<div class="modal-footer-actions" style="margin-top:14px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" data-supcopy-close>إغلاق</button>' + '<button type="button" class="btn btn-primary" data-supcopy-copy>نسخ</button>' + "</div>" + "</div>" + "</div>";
+    root.classList.add("modal-open");
+    const pv = root.querySelector("[data-supcopy-preview]");
+    const paint = function() {
+        pv.value = supcopyBuildText(order, st);
+    };
+    paint();
+    root.querySelectorAll("[data-supcopy-opt]").forEach(function(c) {
+        c.addEventListener("change", function() {
+            st[c.getAttribute("data-supcopy-opt")] = !!c.checked;
+            paint();
+        });
+    });
+    root.querySelector("[data-close-confirm]").addEventListener("click", function(e) {
+        if (e.target.hasAttribute("data-close-confirm")) supcopyClose();
+    });
+    root.querySelector("[data-supcopy-close]").addEventListener("click", supcopyClose);
+    root.querySelector("[data-supcopy-copy]").addEventListener("click", async function() {
+        let ok = false;
+        try {
+            ok = await writeTextToClipboard(pv.value);
+        } catch (e) {
+            ok = false;
+        }
+        if (ok) {
+            supcopyClose();
+            showToast("تم نسخ نص الطلب للمورد", "ok");
+        } else {
+            try {
+                pv.removeAttribute("readonly");
+                pv.focus();
+                pv.select();
+            } catch (e) {}
+            showToast("تعذّر النسخ تلقائيًا — حدّد النص من المعاينة وانسخه يدويًا", "error");
+        }
+    });
+    return true;
+}
+
+function supcopyOpen(src, id) {
+    const order = supcopySource(src, id);
+    if (!order || !supcopyParts(order).length) {
+        showToast("لا توجد قطع لنسخها", "error");
+        return false;
+    }
+    return supcopyDialog(order);
+}
+
+(function supcopyInstall() {
+    try {
+        if (typeof modalHtml === "function") {
+            const prevModalHtml = modalHtml;
+            modalHtml = function() {
+                const h = prevModalHtml.apply(this, arguments);
+                try {
+                    return supcopyInject(h, "order");
+                } catch (e) {
+                    return h;
+                }
+            };
+        }
+        if (typeof quoteModalHtml === "function") {
+            const prevQuoteHtml = quoteModalHtml;
+            quoteModalHtml = function() {
+                const h = prevQuoteHtml.apply(this, arguments);
+                try {
+                    return supcopyInject(h, "quote");
+                } catch (e) {
+                    return h;
+                }
+            };
+        }
+        if (typeof supplyRequestViewHtml === "function") {
+            const prevViewHtml = supplyRequestViewHtml;
+            supplyRequestViewHtml = function(order) {
+                const h = prevViewHtml.apply(this, arguments);
+                try {
+                    if (!h || !order || !order.id) return h;
+                    const anchor = '<p class="modal-sub" style="margin-top:10px;">للاطلاع فقط';
+                    const i = h.lastIndexOf(anchor);
+                    const btn = '<div class="supcopy-view-row"><button type="button" class="btn btn-ghost btn-sm" data-supcopy="supply" data-supcopy-id="' + escapeHtml(order.id) + '">📤 نسخ للمورد</button></div>';
+                    return i < 0 ? h : h.slice(0, i) + btn + h.slice(i);
+                } catch (e) {
+                    return h;
+                }
+            };
+        }
+        document.addEventListener("click", function(ev) {
+            try {
+                const t = ev.target;
+                const b = t && t.closest ? t.closest("[data-supcopy]") : null;
+                if (!b) return;
+                ev.preventDefault();
+                supcopyOpen(b.getAttribute("data-supcopy"), b.getAttribute("data-supcopy-id"));
+            } catch (e) {
+                console.error("supcopy:", e);
+            }
+        }, false);
+    } catch (e) {}
+})();
+
+const SLIM_RULES = [ [ ".pcat-hint", [ "اكتب رقم الشاصي (17 خانة)", "يصل الشاصي إلى الموقع الذي", "الكتالوجات الخارجية: Megazip", "اكتب رقم الهيكل (VIN) أو الصقه", "يرسل الرقم إلى NHTSA", "القطع التي أضفتها بنظام" ] ], [ ".add-part-hint", [ "اختر السيارة من البحث أعلاه", "اكتب أول حرف من اسم السيارة", "اكتب حرفا إضافيا لتضييق", "اكتب أول حرف من الموديل لتظهر", "الشاص ينطبق على أكثر من موديل — اضغط", "اختر سنة الصنع لتظهر الفئات", "الفئات المتوفرة لموديل", "الترافيك (Egress) لا يمكن قياسه", "اختر النوع أعلاه ليظهر" ] ], [ "#car-gate-level-hint", [ "يتحدد تلقائيا من الفئة والسنة", "تلقائي من الفئة والسنة", "اخترته بنفسك" ] ], [ ".modal-sub", [ "حدد الماركة والموديل وسنة الصنع", "قبل أن تبدأ طلب التسعير، حدد السيارة", "قبل أن تبدأ الطلبية، حدد السيارة", "البيانات تحفظ تلقائيا عند الضغط", "البيانات تحفظ عند الضغط", "اختر الإجراء المطلوب لهذه", "للاطلاع فقط — يختفي الطلب من القائمة", "تتبع مستمر تلقائي — نقطة كل دقيقتين تقريبا", "فترات الظهور على الموقع (من وإلى) — محسوبة من نقاط" ] ], [ ".kpiw-note", [ "تحسب الطلبية بيوم إنشائها", "تحسب الطلبية بيوم اكتمال تسعيرها لأول مرة", "تحسب الطلبية بيوم أول مرة انضغط فيها" ] ], [ ".expense-empty-hint", [ "الناجحة تحتسب بيوم أول توريد", "«التسعير للزبون» = لحظة" ] ], [ "#pn-search-hint", [ "اكتب اسم القطعة (مثلا" ] ], [ ".empty-sub", [ "جرب تغيير الفلتر أو ابدأ طلبية", "جرب تغيير الفلتر أو كلمة البحث.", "تظهر هنا الطلبيات التي تؤرشفها" ] ], [ ".epcl-stdetail", [ "يغطي الكتالوج المصور تويوتا", "الكتالوج المصور يعمل على جهاز المكتب" ] ], [ ".vcat-plate-cap", [ "لا إطار تمييز على هذه الصفحة: طابق رقم النداء", "اضغط الصورة لتكبيرها. لا إطار تمييز", "اضغط الصورة لتكبيرها، واضغط قطعة", "الإطار الأحمر = مكان القطعة المختارة" ] ], [ ".epcl-lb-note", [ "اللوحة كاملة — اختر قطعة من القائمة" ] ], [ ".employee-map-legend > span", [ "🟢 خلال آخر دقيقتين" ] ], [ ".att-hint", [ "يحتسب وصوله من أول إشارة داخل الموقع", "الافتراضي وقت بداية الدوام أي بلا تأخير", "اتركه فارغا ليبدأ لحظة التأخر", "اتركه فارغا ليتبع الافتراضي", "اتركه فارغا ليتبع وقت الشركة", "يحتسب حضوره تلقائيا من تتبع التطبيق", "لكل موظف موقعه. تغييره لا يمس الأيام", "يمكن تخصيص وقت لموظف معين", "من يصل بعد المهلة يحسب تأخيره", "بعد هذه المدة بلا وصول يظهر", "نقاط التتبع قبل هذا الوقت لا تعد وصولا", "نقطة التتبع بدقة أسوأ من هذا الرقم" ] ] ];
+
+const SLIM_INDEX = {};
+
+const SLIM_DIA = new RegExp("[" + String.fromCharCode(1611) + "-" + String.fromCharCode(1618) + "]", "g");
+
+function slimNorm(s) {
+    return String(s == null ? "" : s).replace(SLIM_DIA, "").replace(/\s+/g, " ").trim();
+}
+
+(function slimIndex() {
+    SLIM_RULES.forEach(function(r) {
+        SLIM_INDEX[r[0]] = r[1].map(slimNorm);
+    });
+})();
+
+function slimHit(scope, text) {
+    const g = SLIM_INDEX[scope];
+    if (!g) return false;
+    const t = slimNorm(text);
+    for (let i = 0; i < g.length; i++) {
+        if (t.indexOf(g[i]) === 0) return true;
+    }
+    return false;
+}
+
+function slimApply(el, scope) {
+    if (!el || !el.classList) return;
+    if (slimHit(scope, el.textContent)) el.classList.add("slim-hide"); else if (el.classList.contains("slim-hide")) {
+        let any = false;
+        Object.keys(SLIM_INDEX).forEach(function(sc) {
+            try {
+                if (el.matches(sc) && slimHit(sc, el.textContent)) any = true;
+            } catch (e) {}
+        });
+        if (!any) el.classList.remove("slim-hide");
+    }
+}
+
+function slimTouch(el) {
+    if (!el || el.nodeType !== 1) return;
+    Object.keys(SLIM_INDEX).forEach(function(sc) {
+        try {
+            const c = el.closest ? el.closest(sc) : null;
+            if (c) slimApply(c, sc);
+        } catch (e) {}
+    });
+}
+
+function slimSweep(root) {
+    if (!root || root.nodeType !== 1) return;
+    Object.keys(SLIM_INDEX).forEach(function(sc) {
+        try {
+            if (root.matches && root.matches(sc)) slimApply(root, sc);
+            const list = root.querySelectorAll ? root.querySelectorAll(sc) : [];
+            for (let i = 0; i < list.length; i++) slimApply(list[i], sc);
+        } catch (e) {}
+    });
+}
+
+(function slimInstall() {
+    try {
+        if (typeof document === "undefined" || !document.body) return;
+        slimSweep(document.body);
+        if (typeof MutationObserver === "function") {
+            new MutationObserver(function(ms) {
+                const seen = new Set;
+                ms.forEach(function(m) {
+                    try {
+                        if (m.type === "characterData") {
+                            const p = m.target && m.target.parentElement;
+                            if (p && !seen.has(p)) {
+                                seen.add(p);
+                                slimTouch(p);
+                            }
+                            return;
+                        }
+                        const t = m.target;
+                        if (t && t.nodeType === 1 && !seen.has(t)) {
+                            seen.add(t);
+                            slimTouch(t);
+                        }
+                        m.addedNodes.forEach(function(n) {
+                            if (n.nodeType === 1 && !seen.has(n)) {
+                                seen.add(n);
+                                slimTouch(n);
+                                slimSweep(n);
+                            }
+                        });
+                    } catch (e) {}
+                });
+            }).observe(document.body, {
+                childList: true,
+                subtree: true,
+                characterData: true
+            });
+        }
     } catch (e) {}
 })();</script>
 </body>
