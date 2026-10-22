@@ -1587,6 +1587,19 @@
   .grade-missing .grade-pick-label{color:var(--rust);}
   .grade-tag{display:inline-block;font-size:10px;font-weight:700;color:var(--green);background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:0 6px;margin-inline-end:6px;}
   /* GRADE END css */
+  /* SUPALL BEGIN css */
+  /* «المورد لكل القطع» (SUPALL): صف أعلى قائمة القطع — خلفية صلبة ومظهر الحقول القائم، وأهداف لمس مريحة */
+  .suppall-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 10px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);}
+  .suppall-row[hidden]{display:none;}
+  .suppall-label{font-size:12.5px;font-weight:700;color:var(--text-dim);}
+  .suppall-select{flex:1 1 180px;min-width:160px;}
+  .suppall-row input.searchable-select-input.select-empty-warn{border-color:var(--border);background:var(--surface);}
+  .suppall-opt{display:flex;align-items:center;gap:8px;min-height:40px;font-size:12.5px;color:var(--text-dim);cursor:pointer;}
+  .suppall-opt input{width:20px;height:20px;accent-color:var(--green);flex:0 0 auto;}
+  .suppall-status{flex:1 1 100%;display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px;line-height:1.7;color:var(--text);}
+  .suppall-status[hidden]{display:none;}
+  .suppall-undo{border:1px solid var(--border);background:var(--surface);color:var(--text);min-height:36px;padding:6px 14px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;font-family:'Cairo',sans-serif;}
+  /* SUPALL END css */
   /* TAXINV BEGIN css */
   /* ===== TAXINV — الفاتورة الضريبية (المرحلة الأولى) — كل القواعد بنطاق .taxinv-* =====
      CONTRACT-ADDENDUM-D: الورقة هي نفسها ورقة الفاتورة القديمة (.doc-sheet و.doc-header-band و.doc-brand-col و.doc-logo-img و.doc-co-info و.doc-identity-* و.doc-billto
@@ -72445,6 +72458,389 @@ function gradeFillNew(src) {
             };
         }
         document.addEventListener("click", gradeClick, false);
+    } catch (e) {}
+})();
+
+const SUPALL_ANCHORS = {
+    order: '<div id="parts-list" class="parts-list">',
+    quote: '<div id="quote-parts-list" class="parts-list">'
+};
+
+const suppallUndo = {
+    order: null,
+    quote: null
+};
+
+function suppallDraft(src) {
+    try {
+        return src === "quote" ? typeof quoteDraft !== "undefined" ? quoteDraft : null : typeof draft !== "undefined" ? draft : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function suppallAllowed(src) {
+    try {
+        if (src === "quote") return typeof quoteModalRole !== "undefined" && quoteModalRole === "purchasing";
+        return typeof hasElevatedAccess === "function" && !!hasElevatedAccess();
+    } catch (e) {
+        return false;
+    }
+}
+
+function suppallLocked(d, src, p) {
+    try {
+        if (typeof partHasPayKey === "function" && partHasPayKey(p) && p.supplierId) return true;
+        if (src === "quote") return false;
+        if (typeof partSupplied === "function" && partSupplied(d, p)) return true;
+        if (typeof partPaidBucketLocked === "function" && partPaidBucketLocked(d, p)) return true;
+        if (typeof pendingFieldProposal === "function" && (pendingFieldProposal("supplierId", p.id) || pendingFieldProposal("used", p.id))) return true;
+        return false;
+    } catch (e) {
+        return true;
+    }
+}
+
+function suppallParts(d, src) {
+    const list = d && Array.isArray(d.parts) ? d.parts : [];
+    return list.filter(function(p) {
+        if (!p || p.returned || String(p.description || "").trim() === "") return false;
+        if (src !== "quote" && d.partsSelectionEnabled && p.included === false) return false;
+        return true;
+    });
+}
+
+function suppallDecided(src, p) {
+    return !(src === "quote" && (p.used === null || p.used === undefined));
+}
+
+function suppallEligible(d, src) {
+    return suppallParts(d, src).filter(function(p) {
+        return suppallDecided(src, p) && !suppallLocked(d, src, p);
+    });
+}
+
+function suppallSuppliers() {
+    return typeof appData !== "undefined" && appData && appData.suppliers ? appData.suppliers : [];
+}
+
+function suppallHandles(s, p) {
+    return !!s && (p.used ? !!s.handlesUsed : !!s.handlesNew);
+}
+
+function suppallHasSupplier(p) {
+    if (!p || !p.supplierId) return false;
+    return suppallSuppliers().some(function(s) {
+        return s.id === p.supplierId && suppallHandles(s, p);
+    });
+}
+
+function suppallCountLabel(n) {
+    try {
+        if (typeof supplierGroupCountLabel === "function") return supplierGroupCountLabel(n);
+    } catch (e) {}
+    return n + " قطعة";
+}
+
+function suppallShort(s, n) {
+    s = String(s == null ? "" : s);
+    return s.length > n ? s.slice(0, n - 1) + "…" : s;
+}
+
+function suppallRowEl(src) {
+    try {
+        return document.querySelector('.suppall-row[data-suppall-src="' + src + '"]');
+    } catch (e) {
+        return null;
+    }
+}
+
+function suppallIncludeAssigned(src) {
+    try {
+        const row = suppallRowEl(src), all = row ? row.querySelector("[data-suppall-all]") : null;
+        return !!(all && all.checked);
+    } catch (e) {
+        return false;
+    }
+}
+
+function suppallOptions(src) {
+    const d = suppallDraft(src), inc = suppallIncludeAssigned(src);
+    const ps = suppallEligible(d, src);
+    return suppallSuppliers().map(function(s) {
+        const fit = ps.filter(function(p) {
+            return suppallHandles(s, p);
+        });
+        const take = fit.filter(function(p) {
+            return inc || !suppallHasSupplier(p);
+        }).length;
+        const kind = s.handlesNew && s.handlesUsed ? "🏭♻️ مورد وتشليح" : s.handlesUsed ? "♻️ تشليح" : "🏭 مورد";
+        return {
+            s: s,
+            fit: fit.length,
+            take: take,
+            id: s.id,
+            label: s.name || s.phone || "مورد",
+            sublabel: kind + " · " + (take ? suppallCountLabel(take) : "لا قطع بلا مورد")
+        };
+    }).filter(function(o) {
+        return o.fit > 0;
+    }).sort(function(a, b) {
+        return b.take - a.take || String(a.label).localeCompare(String(b.label), "ar");
+    }).map(function(o) {
+        return {
+            id: o.id,
+            label: o.label,
+            sublabel: o.sublabel
+        };
+    });
+}
+
+function suppallAssign(src, supplierId, includeAssigned) {
+    const d = suppallDraft(src);
+    const sup = suppallSuppliers().find(function(s) {
+        return s.id === supplierId;
+    });
+    const r = {
+        applied: 0,
+        replaced: 0,
+        kept: 0,
+        wrongType: 0,
+        locked: 0,
+        undetermined: 0,
+        name: sup ? sup.name || sup.phone || "مورد" : "",
+        changes: []
+    };
+    if (!d || !sup) return r;
+    suppallParts(d, src).forEach(function(p) {
+        if (!suppallDecided(src, p)) {
+            r.undetermined++;
+            return;
+        }
+        if (!suppallHandles(sup, p)) {
+            r.wrongType++;
+            return;
+        }
+        if (suppallLocked(d, src, p)) {
+            r.locked++;
+            return;
+        }
+        const has = suppallHasSupplier(p);
+        if (has && (p.supplierId === sup.id || !includeAssigned)) {
+            r.kept++;
+            return;
+        }
+        r.changes.push({
+            id: p.id,
+            prev: p.supplierId || null,
+            now: sup.id
+        });
+        if (has) r.replaced++;
+        p.supplierId = sup.id;
+        r.applied++;
+    });
+    return r;
+}
+
+function suppallRowHtml(d, src) {
+    if (!suppallAllowed(src)) return "";
+    const hidden = suppallEligible(d, src).length < 2;
+    return '<div class="suppall-row" data-suppall-src="' + src + '"' + (hidden ? " hidden" : "") + ">" + '<span class="suppall-label">المورد لكل القطع</span>' + '<div class="suppall-select">' + searchableSelectHtml("suppall-select-input", [], "", "— اختر المورد —") + "</div>" + '<label class="suppall-opt"><input type="checkbox" data-suppall-all><span>استبدال المورد الحالي أيضًا</span></label>' + '<div class="suppall-status" data-suppall-status role="status" aria-live="polite" hidden></div>' + "</div>";
+}
+
+function suppallInject(h, d, src) {
+    const i = String(h).indexOf(SUPALL_ANCHORS[src]);
+    if (i < 0) return h;
+    const html = suppallRowHtml(d || suppallDraft(src), src);
+    return html ? h.slice(0, i) + html + h.slice(i) : h;
+}
+
+function suppallSync(src) {
+    const row = suppallRowEl(src);
+    if (!row) return;
+    const d = suppallDraft(src);
+    row.hidden = !(suppallAllowed(src) && suppallEligible(d, src).length >= 2);
+}
+
+function suppallSetStatus(row, text, undoable, src) {
+    const st = row ? row.querySelector("[data-suppall-status]") : null;
+    if (!st) return;
+    st.innerHTML = "<span>" + escapeHtml(text) + "</span>" + (undoable ? '<button type="button" class="suppall-undo" data-suppall-undo>تراجع</button>' : "");
+    st.hidden = !text;
+    if (undoable) {
+        const b = st.querySelector("[data-suppall-undo]");
+        if (b) b.addEventListener("click", function() {
+            suppallDoUndo(src);
+        });
+    }
+}
+
+function suppallDetails(r, inc) {
+    const rest = [];
+    if (r.replaced) rest.push("استُبدل مورد " + suppallCountLabel(r.replaced));
+    if (r.kept) rest.push(suppallCountLabel(r.kept) + " لها مورد أصلًا");
+    if (r.wrongType) rest.push(suppallCountLabel(r.wrongType) + " لا يتعامل بها هذا المورد");
+    if (r.undetermined) rest.push(suppallCountLabel(r.undetermined) + " نوعها غير محدد");
+    if (r.locked) rest.push(suppallCountLabel(r.locked) + " موردة أو مقفولة");
+    return rest.join("، ");
+}
+
+function suppallRefresh(src) {
+    try {
+        if (src === "quote") refreshQuotePartsList(); else refreshPartsList();
+    } catch (e) {
+        try {
+            console.error("suppall refresh:", e);
+        } catch (x) {}
+    }
+}
+
+function suppallDoUndo(src) {
+    const u = suppallUndo[src], d = suppallDraft(src), row = suppallRowEl(src);
+    if (!u || !d) {
+        return 0;
+    }
+    let n = 0;
+    u.forEach(function(c) {
+        const p = (d.parts || []).find(function(x) {
+            return x && x.id === c.id;
+        });
+        if (p && p.supplierId === c.now) {
+            p.supplierId = c.prev;
+            n++;
+        }
+    });
+    suppallUndo[src] = null;
+    suppallRefresh(src);
+    suppallSetStatus(row, n ? "تم التراجع عن تعيين المورد لـ " + suppallCountLabel(n) : "لا يمكن التراجع: القطع تغيّرت بعد التعيين", false, src);
+    try {
+        showToast(n ? "تم التراجع" : "لا يمكن التراجع", n ? "ok" : "error");
+    } catch (e) {}
+    return n;
+}
+
+function suppallBind(src) {
+    const row = suppallRowEl(src);
+    if (!row || row.getAttribute("data-suppall-bound") === "1") return;
+    const wrap = row.querySelector(".searchable-select");
+    if (!wrap) return;
+    row.setAttribute("data-suppall-bound", "1");
+    suppallUndo[src] = null;
+    const input = wrap.querySelector(".searchable-select-input");
+    const reset = function() {
+        wrap.setAttribute("data-selected-id", "");
+        if (input) {
+            input.value = "";
+            input.classList.remove("select-empty-warn");
+        }
+    };
+    reset();
+    bindSearchableSelect(wrap, function() {
+        return suppallOptions(src);
+    }, function(id) {
+        if (!id) {
+            reset();
+            return;
+        }
+        const all = row.querySelector("[data-suppall-all]");
+        const inc = !!(all && all.checked);
+        const r = suppallAssign(src, id, inc);
+        reset();
+        if (all) all.checked = false;
+        try {
+            if (input && typeof input.blur === "function") input.blur();
+        } catch (e) {}
+        const det = suppallDetails(r, inc);
+        if (r.applied) {
+            suppallUndo[src] = r.changes;
+            suppallRefresh(src);
+            suppallSetStatus(row, "عُيّن «" + r.name + "» لـ " + suppallCountLabel(r.applied) + (det ? " — " + det : ""), true, src);
+            showToast("تم تعيين «" + suppallShort(r.name, 18) + "» لـ " + suppallCountLabel(r.applied), "ok");
+        } else {
+            suppallUndo[src] = null;
+            const hint = r.kept && !inc ? " — فعّل «استبدال المورد الحالي أيضًا» ثم اختر المورد ثانية لتغييرها" : "";
+            suppallSetStatus(row, "لا توجد قطع مناسبة لتعيين «" + r.name + "»" + (det ? ": " + det : "") + hint, false, src);
+            showToast("لا توجد قطع مناسبة لهذا المورد", "error");
+        }
+    });
+    suppallSync(src);
+}
+
+(function suppallInstall() {
+    try {
+        if (typeof modalHtml === "function") {
+            const prevModalHtml = modalHtml;
+            modalHtml = function(d) {
+                const h = prevModalHtml.apply(this, arguments);
+                try {
+                    return suppallInject(h, d, "order");
+                } catch (e) {
+                    return h;
+                }
+            };
+        }
+        if (typeof quoteModalHtml === "function") {
+            const prevQuoteHtml = quoteModalHtml;
+            quoteModalHtml = function(d) {
+                const h = prevQuoteHtml.apply(this, arguments);
+                try {
+                    return suppallInject(h, d, "quote");
+                } catch (e) {
+                    return h;
+                }
+            };
+        }
+        if (typeof attachModalHandlers === "function") {
+            const prevAttach = attachModalHandlers;
+            attachModalHandlers = function() {
+                const r = prevAttach.apply(this, arguments);
+                try {
+                    suppallBind("order");
+                } catch (e) {}
+                return r;
+            };
+        }
+        if (typeof attachQuoteModalHandlers === "function") {
+            const prevAttachQ = attachQuoteModalHandlers;
+            attachQuoteModalHandlers = function() {
+                const r = prevAttachQ.apply(this, arguments);
+                try {
+                    suppallBind("quote");
+                } catch (e) {}
+                return r;
+            };
+        }
+        if (typeof refreshPartsList === "function") {
+            const prevRp = refreshPartsList;
+            refreshPartsList = function() {
+                const r = prevRp.apply(this, arguments);
+                try {
+                    suppallSync("order");
+                } catch (e) {}
+                return r;
+            };
+        }
+        if (typeof refreshQuotePartsList === "function") {
+            const prevRq = refreshQuotePartsList;
+            refreshQuotePartsList = function() {
+                const r = prevRq.apply(this, arguments);
+                try {
+                    suppallSync("quote");
+                } catch (e) {}
+                return r;
+            };
+        }
+        if (typeof document !== "undefined" && document.addEventListener) {
+            document.addEventListener("input", function(ev) {
+                try {
+                    const t = ev.target;
+                    if (t && t.classList && t.classList.contains("part-desc-input")) {
+                        suppallSync("order");
+                        suppallSync("quote");
+                    }
+                } catch (e) {}
+            }, false);
+        }
     } catch (e) {}
 })();</script>
 </body>
