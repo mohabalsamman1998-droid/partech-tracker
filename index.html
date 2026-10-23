@@ -1839,7 +1839,7 @@
   .modal-card.trk-om .trk-psub{flex:0 0 100%;display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;min-width:0;padding-inline-start:30px;}
   .modal-card.trk-om .part-row.trk-open > .trk-psum > .trk-psub{display:none;}
   .modal-card.trk-om .trk-pn{flex:none;min-width:22px;text-align:center;font-weight:800;color:var(--text-dim);}
-  .modal-card.trk-om .trk-pname{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;font-weight:700;}
+  .modal-card.trk-om .trk-pname{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;font-size:15px;font-weight:700;}
   .modal-card.trk-om .trk-pname-empty{color:var(--text-dim);font-weight:500;}
   .modal-card.trk-om .trk-pq{flex:none;color:var(--text-dim);font-weight:700;}
   .modal-card.trk-om .trk-pp{flex:none;display:inline-flex;align-items:baseline;gap:4px;font-weight:800;font-variant-numeric:tabular-nums;}
@@ -1857,8 +1857,9 @@
   :root[data-theme="light"] .modal-card.trk-om .trk-ptag-pend,:root[data-theme="light"] .modal-card.trk-om .trk-ptag-wait{color:#7A5200;}
   :root[data-theme="light"] .modal-card.trk-om .trk-ptag-used{color:#9A3412;}
   :root:not([data-theme="light"]) .modal-card.trk-om .trk-psell.trk-warn,:root:not([data-theme="light"]) .modal-card.trk-om .trk-ptag-warn{color:color-mix(in srgb,var(--quote-late) 62%,white);}
-  .modal-card.trk-om .part-row.trk-open{border-color:var(--text-dim);}
-  .modal-card.trk-om .part-row.trk-open > *:not(.trk-psum){margin:8px 12px 10px;}
+  .modal-card.trk-om .part-row.trk-open:not(:has(> .part-include-check)){border-color:var(--text-dim);}
+  .modal-card.trk-om .part-row.trk-open:not(:has(> .part-include-check)) > *:not(.trk-psum){margin:8px 12px 10px;}
+  .modal-card.trk-om .part-row.trk-open:not(:has(> .part-include-check)) .part-index-badge{display:none;}
   .modal-card.trk-om .part-row:not(.part-row-returned):not(.trk-open):not(:has(> .part-include-check)) > *:not(.trk-psum){display:none;}
   .modal-card.trk-om .part-row:has(> .part-include-check) > .trk-psum{display:none;}
   .modal-card.trk-om .modal-footer.trk-mf .trk-brk-3{display:none;}
@@ -75259,12 +75260,16 @@ function trackPartSummaryHtml(row) {
     const idx = ((row.querySelector(".part-index-badge") || {}).textContent || "").trim();
     const dEl = row.querySelector(".part-desc-input");
     const name = String(dEl ? dEl.value : (row.querySelector(".field-readonly-desc") || {}).textContent || p && p.description || "").trim();
-    const qty = trackOmVal(row, ".part-qty-input", ".part-price-group > .mini-label:first-child", "qty");
-    const sell = trackOmVal(row, ".part-sell-input", ".mini-label-sell", "sellPrice");
+    const clamp = function(v) {
+        return v !== "" && Number(v) < 0 ? "0" : v;
+    };
+    let qty = trackOmVal(row, ".part-qty-input", ".part-price-group > .mini-label:first-child", "qty");
+    if (qty !== "" && !(Number(qty) > 0)) qty = "1";
+    const sell = clamp(trackOmVal(row, ".part-sell-input", ".mini-label-sell", "sellPrice"));
     let costHtml = "";
     try {
         if (row.querySelector(".mini-label-cost") && hasElevatedAccess()) {
-            const cost = trackOmVal(row, ".part-cost-input", ".mini-label-cost", "costPrice");
+            const cost = clamp(trackOmVal(row, ".part-cost-input", ".mini-label-cost", "costPrice"));
             costHtml = '<span class="trk-pp trk-pcost"><small>شراء</small>' + escapeHtml(trackOmNum(cost)) + "</span>";
         }
     } catch (e) {}
@@ -75290,17 +75295,18 @@ function trackPartSummaryHtml(row) {
     try {
         let m = null;
         if (p && typeof partLeadMeta === "function") m = partLeadMeta(p, draft);
-        if (m && m.kind === "days") tags += tag("trk-ptag-wait", strip(m.label)); else if (!m) {
+        if (m && m.kind === "days") tags += tag("trk-ptag-wait", "خلال " + strip(m.label)); else if (!m) {
             const b = row.querySelector(".part-lead-badge.lead-days");
             if (b) tags += tag("trk-ptag-wait", strip(b.textContent));
         }
     } catch (e) {}
-    const stampEl = row.querySelector(".part-supply-stamp");
-    if (stampEl) tags += tag("", strip(stampEl.textContent));
+    if (row.querySelectorAll) [].slice.call(row.querySelectorAll(".part-supply-stamp")).forEach(function(s) {
+        tags += tag("", strip(s.textContent));
+    });
     if (row.querySelector(".proposal-pending-banner")) tags += tag("trk-ptag-pend", "طلب معلّق");
     const open = !!(row.classList && row.classList.contains("trk-open"));
     const warn = sell === "" ? " trk-warn" : "";
-    return '<span class="trk-pmain"><span class="trk-pn">' + escapeHtml(idx) + '</span><span class="trk-pname' + (name ? "" : " trk-pname-empty") + '">' + escapeHtml(name || "قطعة جديدة") + '</span><span class="trk-pch" aria-hidden="true">' + (open ? "▴" : "▾") + "</span></span>" + '<span class="trk-psub"><span class="trk-pq"><bdi dir="ltr">×' + escapeHtml(qty || "1") + "</bdi></span>" + '<span class="trk-pp trk-psell' + warn + '"><small>بيع</small>' + escapeHtml(trackOmNum(sell)) + "</span>" + costHtml + tags + "</span>";
+    return '<span class="trk-pmain"><span class="trk-pn">' + escapeHtml(idx) + '</span><span dir="auto" class="trk-pname' + (name ? "" : " trk-pname-empty") + '">' + escapeHtml(name || "قطعة جديدة") + '</span><span class="trk-pch" aria-hidden="true">' + (open ? "▴" : "▾") + "</span></span>" + '<span class="trk-psub"><span class="trk-pq"><bdi dir="ltr">×' + escapeHtml(qty || "1") + "</bdi></span>" + '<span class="trk-pp trk-psell' + warn + '"><small>بيع</small>' + escapeHtml(trackOmNum(sell)) + "</span>" + costHtml + tags + "</span>";
 }
 
 function trackOmSetSum(s, row) {
@@ -75368,6 +75374,7 @@ function trackPartsRefresh(list) {
                 inp.focus();
             } catch (e) {}
         }
+        trackOmReveal(fresh);
     } else trackPartsApplyOpen(list);
 }
 
@@ -75428,7 +75435,7 @@ function trackOmStage() {
             c: 2
         };
         return {
-            label: TRACK_STAGES[s - 1].title,
+            label: s === 1 ? "طلب تسعير" : s === 3 ? "طلب توريد" : TRACK_STAGES[s - 1].title,
             c: s
         };
     } catch (e) {
@@ -75586,16 +75593,26 @@ function trackOmSetup(card) {
             } catch (e2) {}
         }, 80);
     };
-    const onDdBlur = function(e) {
-        if (isDd(e.target)) setTimeout(function() {
+    const ddCheck = function() {
+        setTimeout(function() {
             if (!card.querySelector('.searchable-select-dropdown[style*="block"]')) card.classList.remove("trk-ddopen");
         }, 400);
+    };
+    const onDdBlur = function(e) {
+        if (isDd(e.target)) ddCheck();
+    };
+    const onDdPick = function(e) {
+        if (e.target && e.target.closest && e.target.closest(".searchable-select-option")) ddCheck();
     };
     list.addEventListener("click", onListClick);
     list.addEventListener("input", onSync);
     list.addEventListener("change", onSync);
     list.addEventListener("focusin", onDdFocus);
-    list.addEventListener("focusout", onDdBlur);
+    card.addEventListener("focusout", onDdBlur);
+    card.addEventListener("mousedown", onDdPick);
+    card.addEventListener("touchstart", onDdPick, {
+        passive: true
+    });
     card.addEventListener("input", onCard);
     card.addEventListener("change", onCard);
     undo.push(function() {
@@ -75603,7 +75620,9 @@ function trackOmSetup(card) {
         list.removeEventListener("input", onSync);
         list.removeEventListener("change", onSync);
         list.removeEventListener("focusin", onDdFocus);
-        list.removeEventListener("focusout", onDdBlur);
+        card.removeEventListener("focusout", onDdBlur);
+        card.removeEventListener("mousedown", onDdPick);
+        card.removeEventListener("touchstart", onDdPick);
         card.classList.remove("trk-ddopen");
         card.removeEventListener("input", onCard);
         card.removeEventListener("change", onCard);
