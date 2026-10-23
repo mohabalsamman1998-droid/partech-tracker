@@ -1699,6 +1699,7 @@
   #app-root .topbar-actions #btn-open-statistics{order:5;}
   #app-root .topbar-actions .more-menu-wrap{order:6;margin-inline-start:14px;}
   #app-root .topbar-actions #btn-logout{margin-top:8px;}
+  #app-root .topbar-actions .more-menu-popup{inset-inline-start:auto;inset-inline-end:0;}
   .trk-c1,.trk-ygrid .trk-c1{--trk-c:var(--amber);--trk-dim:var(--amber-dim);--trk-line:var(--amber-line);}
   .trk-c2{--trk-c:var(--sg-violet);--trk-dim:var(--sg-violet-dim);--trk-line:var(--sg-violet-line);}
   .trk-c3{--trk-c:var(--supply-req);--trk-dim:var(--supply-req-dim);--trk-line:var(--supply-req-line);}
@@ -74676,6 +74677,12 @@ function trackOnClick(e) {
     try {
         const t = e.target && e.target.closest ? e.target : null;
         if (!t) return;
+        if (t.closest("#btn-open-allorders")) {
+            e.preventDefault();
+            e.stopPropagation();
+            trackAllOpen();
+            return;
+        }
         const lo = t.closest("#btn-logout");
         if (lo) {
             e.preventDefault();
@@ -74824,6 +74831,204 @@ function trackMoveLogout() {
     } catch (e) {
         console.error("TRACK logout move:", e);
     }
+}
+
+let trackAllFilter = "all";
+
+let trackAllSearch = "";
+
+let trackAllFiltersOpen = false;
+
+let trackAllTimer = null;
+
+function trackAllFilterList() {
+    let base = [];
+    try {
+        base = FILTERS.filter(function(f) {
+            return f.id !== "partial" || typeof partialSupplyUiVisible === "function" && partialSupplyUiVisible();
+        });
+    } catch (e) {}
+    return base.concat([ {
+        id: "supplyRequested",
+        label: "طلب توريد"
+    }, {
+        id: "archived",
+        label: "مؤرشفة"
+    }, {
+        id: "justified",
+        label: "المبررة"
+    } ]);
+}
+
+function trackAllList() {
+    const idx = buildCustomerByIdIndex();
+    const f = trackAllFilter, q = trackAllSearch;
+    return (appData.orders || []).filter(function(o) {
+        if (!o || trackBool(o.isQuote)) return false;
+        if (f === "archived") return trackBool(o.archived) && orderMatchesFilterAndSearch(o, "all", q, idx);
+        return orderMatchesFilterAndSearch(o, f, q, idx);
+    }).sort(function(a, b) {
+        return orderNumberSortKey(b) - orderNumberSortKey(a);
+    });
+}
+
+function trackAllViewEl() {
+    let el = trackEl("allorders-view");
+    if (!el) {
+        const arch = trackEl("archive-view");
+        if (!arch || !arch.parentNode) return null;
+        el = document.createElement("div");
+        el.id = "allorders-view";
+        el.style.display = "none";
+        arch.parentNode.insertBefore(el, arch.nextSibling);
+        el.addEventListener("click", trackAllOnClick);
+        el.addEventListener("input", function(e) {
+            const t = e.target;
+            if (!t || !t.hasAttribute || !t.hasAttribute("data-trk-allsearch")) return;
+            clearTimeout(trackAllTimer);
+            const val = t.value;
+            trackAllTimer = setTimeout(function() {
+                trackAllSearch = val;
+                trackAllRender();
+            }, 150);
+        });
+    }
+    return el;
+}
+
+function trackAllShell(el) {
+    el.innerHTML = '<div class="tasks-header"><button type="button" class="btn btn-ghost btn-sm" data-trk-allback>→ رجوع</button><div class="tasks-title">جميع الطلبات</div></div>' + '<section class="toolbar"><div class="filter-toggle-wrap"><button type="button" class="chip" data-trk-allfbtn aria-expanded="false">الفلاتر ▾</button><div class="filter-chips" data-trk-allchips style="display:none;"></div></div>' + '<input class="search-input" type="text" data-trk-allsearch placeholder="ابحث برقم الطلب أو وصف القطعة…" autocomplete="off"></section>' + '<section class="table-container" data-trk-alllist></section>';
+}
+
+function trackAllChips(el) {
+    const box = el.querySelector("[data-trk-allchips]"), btn = el.querySelector("[data-trk-allfbtn]");
+    if (!box || !btn) return;
+    const list = trackAllFilterList();
+    box.innerHTML = list.map(function(f) {
+        return '<button type="button" class="chip' + (trackAllFilter === f.id ? " chip-active" : "") + '" data-trk-allf="' + escapeHtml(f.id) + '" aria-pressed="' + (trackAllFilter === f.id ? "true" : "false") + '">' + escapeHtml(f.label) + "</button>";
+    }).join("");
+    box.style.display = trackAllFiltersOpen ? "flex" : "none";
+    const cur = list.find(function(f) {
+        return f.id === trackAllFilter;
+    });
+    btn.textContent = "الفلاتر" + (trackAllFilter !== "all" && cur ? ": " + cur.label : "") + " ▾";
+    btn.setAttribute("aria-expanded", trackAllFiltersOpen ? "true" : "false");
+}
+
+function trackAllRender() {
+    try {
+        const el = trackEl("allorders-view");
+        if (!el || el.style.display === "none") return;
+        const box = el.querySelector("[data-trk-alllist]");
+        if (!box) return;
+        trackAllChips(el);
+        const orders = trackAllList();
+        box.innerHTML = orders.length ? ordersTableAndCardsHtml(orders, true) : '<div class="empty-state"><div class="empty-title">لا توجد طلبيات مطابقة</div><div class="empty-sub">جرّب تغيير الفلتر أو كلمة البحث.</div></div>';
+        if (orders.length && typeof smxDecorateRows === "function") smxDecorateRows(box);
+    } catch (e) {
+        console.error("TRACK all orders:", e);
+    }
+}
+
+function trackAllOnClick(e) {
+    try {
+        const t = e.target && e.target.closest ? e.target : null;
+        if (!t) return;
+        if (t.closest("[data-trk-allback]")) {
+            trackAllClose();
+            return;
+        }
+        if (t.closest("[data-trk-allfbtn]")) {
+            trackAllFiltersOpen = !trackAllFiltersOpen;
+            const el = trackEl("allorders-view");
+            if (el) trackAllChips(el);
+            return;
+        }
+        const chip = t.closest("[data-trk-allf]");
+        if (chip) {
+            trackAllFilter = chip.getAttribute("data-trk-allf");
+            trackAllFiltersOpen = false;
+            trackAllRender();
+            try {
+                const b = document.querySelector("#allorders-view [data-trk-allfbtn]");
+                if (b) b.focus({
+                    preventScroll: true
+                });
+            } catch (e3) {}
+            return;
+        }
+        const ct = t.closest("[data-contact-open]");
+        if (ct) {
+            e.stopPropagation();
+            const o = (appData.orders || []).find(function(x) {
+                return x.id === ct.getAttribute("data-contact-open");
+            });
+            openContactModal(o ? o.customerPhone : "");
+            return;
+        }
+        const cf = t.closest("[data-confirm-toggle]");
+        if (cf) {
+            e.stopPropagation();
+            confirmToggleConfirmation(cf.getAttribute("data-confirm-toggle"));
+            return;
+        }
+        const ar = t.closest("[data-archive]");
+        if (ar) {
+            e.stopPropagation();
+            archiveOrder(ar.getAttribute("data-archive"));
+            return;
+        }
+        const rs = t.closest("[data-restore]");
+        if (rs) {
+            e.stopPropagation();
+            restoreOrder(rs.getAttribute("data-restore"));
+            return;
+        }
+        const ur = t.closest("[data-unsuccessful-reason]");
+        if (ur) {
+            e.stopPropagation();
+            openUnsuccessfulReasonPicker(ur.getAttribute("data-unsuccessful-reason"));
+            return;
+        }
+        const op = t.closest("[data-open]");
+        if (op) {
+            openModal("edit", op.getAttribute("data-open"));
+            return;
+        }
+    } catch (err) {
+        console.error("TRACK all click:", err);
+    }
+}
+
+async function trackAllOpen() {
+    try {
+        try {
+            if (typeof closeMoreMenu === "function") closeMoreMenu();
+        } catch (e) {}
+        hideAllSecondaryViews();
+        const el = trackAllViewEl();
+        if (!el) return;
+        trackAllFilter = "all";
+        trackAllSearch = "";
+        trackAllFiltersOpen = false;
+        trackAllShell(el);
+        el.style.display = "block";
+        if (typeof archivedOrdersHydration !== "undefined" && archivedOrdersHydration) {
+            try {
+                await archivedOrdersHydration;
+            } catch (e) {}
+        }
+        trackAllRender();
+    } catch (e) {
+        console.error("TRACK all open:", e);
+    }
+}
+
+function trackAllClose() {
+    const el = trackEl("allorders-view");
+    if (el) el.style.display = "none";
+    const v = trackEl("orders-view");
+    if (v) v.style.display = "";
 }
 
 function trackYardData() {
@@ -74978,6 +75183,20 @@ function trackAcctApply() {
                 } catch (e) {
                     trackFail(e);
                 }
+                try {
+                    trackAllRender();
+                } catch (e2) {}
+                return r;
+            };
+        }
+        if (typeof hideAllSecondaryViews === "function") {
+            const prev = hideAllSecondaryViews;
+            hideAllSecondaryViews = function() {
+                const r = prev.apply(this, arguments);
+                try {
+                    const a = trackEl("allorders-view");
+                    if (a) a.style.display = "none";
+                } catch (e) {}
                 return r;
             };
         }
@@ -75176,6 +75395,19 @@ function trackAcctApply() {
             view.classList.add("trk-on");
         }
         trackMoveLogout();
+        try {
+            const pop = trackEl("more-menu-popup");
+            if (pop && !trackEl("btn-open-allorders")) {
+                const b = document.createElement("button");
+                b.id = "btn-open-allorders";
+                b.type = "button";
+                b.className = "btn btn-ghost";
+                b.textContent = "جميع الطلبات";
+                pop.insertBefore(b, pop.firstChild);
+            }
+        } catch (e) {
+            console.error("TRACK all-orders menu:", e);
+        }
         document.addEventListener("click", trackOnClick, true);
         document.addEventListener("change", trackOnChange, false);
     } catch (e) {
