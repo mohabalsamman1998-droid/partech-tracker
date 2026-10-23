@@ -1872,6 +1872,28 @@
   body:has(.modal-card.trk-om) .toast-root{bottom:calc(112px + env(safe-area-inset-bottom,0px));}
   body:has(.modal-card.trk-om) .toast{pointer-events:none;}
   @media (max-height:480px){.modal-card.trk-om .modal-header{position:static;}.modal-card.trk-om #trk-bar-due{display:none;}}
+  /* ===== نافذة السيارة (class trk-car): الأساسي فقط + الفئة والمستوى مطويّان + شريط ثابت ===== */
+  .modal-card.trk-car{--trk-car-pad:22px;padding-bottom:0;padding-inline:var(--trk-car-pad);}
+  @media (max-width:760px){.modal-card.trk-car{--trk-car-pad:14px;}}
+  .modal-backdrop:has(> .modal-card.trk-car){scroll-padding-bottom:120px;}
+  .modal-card.trk-car .modal-sub{display:none;}
+  .modal-card.trk-car .modal-title{margin-bottom:12px;}
+  .modal-card.trk-car .field{margin-bottom:10px;}
+  .modal-card.trk-car #car-gate-vin-field{margin-top:0 !important;}
+  .modal-card.trk-car .field-label{font-size:13px;margin-bottom:4px;}
+  .modal-card.trk-car .field input[type="text"],.modal-card.trk-car .field select{min-height:44px;}
+  .modal-card.trk-car .trk-car-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin-bottom:10px;}
+  .modal-card.trk-car .trk-car-row > .field{margin-bottom:0;min-width:0;}
+  .modal-card.trk-car .chip{min-height:44px;padding:8px 14px;font-size:14px;}
+  .modal-card.trk-car .car-gate-chips{max-height:none;margin:0 0 10px !important;}
+  .modal-card.trk-car #car-gate-make-chips > .add-part-hint:only-child,.modal-card.trk-car #car-gate-model-chips > .add-part-hint:only-child{display:none;}
+  .modal-card.trk-car:not(.trk-car-more-open) .trk-car-more{display:none;}
+  .modal-card.trk-car #trk-car-fold{display:block;width:100%;min-height:44px;margin:0 0 10px;padding:8px 12px;text-align:start;white-space:normal;line-height:1.5;font-size:13px;color:var(--text-dim);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);}
+  .modal-card.trk-car .trk-car-fl{display:block;}
+  .modal-card.trk-car .trk-car-fs{display:block;margin-top:2px;font-weight:700;color:var(--text);}
+  .modal-card.trk-car .trk-car-bar{position:sticky;bottom:0;z-index:6;flex-wrap:nowrap;justify-content:stretch !important;margin:12px calc(-1 * var(--trk-car-pad)) 0 !important;padding:10px var(--trk-car-pad) calc(12px + env(safe-area-inset-bottom));background:var(--surface);border-top:1px solid var(--border);border-radius:0 0 var(--radius) var(--radius);}
+  .modal-card.trk-car .trk-car-bar .btn{flex:1 1 0;min-width:0;min-height:48px;margin:0;font-size:14px;}
+  .modal-card.trk-car .trk-car-bar #car-gate-ok-btn{flex:2 1 0;font-size:15px;font-weight:800;}
   .modal-card.track-noacct .customer-pay-block,.modal-card.track-noacct #cost-split-row-wrap{display:none !important;}
   /* TRACK END css */
   /* TAXINV BEGIN css */
@@ -75768,6 +75790,159 @@ function trackOrderModalApply() {
     }
 }
 
+function trackCarSummary(card) {
+    const q = function(s) {
+        return card.querySelector(s);
+    };
+    const parts = [];
+    const unk = q("#car-gate-trim-chips [data-car-gate-trim-unknown].chip-active"), ti = q("#car-gate-trim");
+    if (unk) parts.push("الفئة غير معروفة"); else if (ti && ti.value && ti.value.trim()) parts.push("الفئة " + ti.value.trim());
+    const lv = q("#car-gate-level-chips .chip-active");
+    if (lv && lv.textContent.trim()) parts.push("المستوى " + lv.textContent.trim());
+    return parts.join(" · ") || "غير محدّدة";
+}
+
+function trackCarUpdate(card) {
+    try {
+        const fb = card.querySelector("#trk-car-fold");
+        if (!fb) return;
+        if (card.querySelector("#car-gate-trim-hint .text-rust")) card.classList.add("trk-car-more-open");
+        const open = card.classList.contains("trk-car-more-open");
+        const h = '<span class="trk-car-fl">الفئة والمستوى (اختياري) ' + (open ? "▴" : "▾") + '</span><span class="trk-car-fs">' + escapeHtml(trackCarSummary(card)) + "</span>";
+        if (fb._trkH !== h) {
+            fb.innerHTML = h;
+            fb._trkH = h;
+        }
+    } catch (e) {
+        console.error("TRACK car dialog update:", e);
+    }
+}
+
+function trackCarSetup(card) {
+    const q = function(s) {
+        return card.querySelector(s);
+    };
+    const title = q(".modal-title"), vinF = q("#car-gate-vin-field"), vin = q("#car-gate-vin"), makeS = q("#car-gate-make-search"), modelF = q("#car-gate-model-field"), yearF = q("#car-gate-year-field"), chips = q("#car-gate-model-chips");
+    const trimF = q("#car-gate-trim-field"), levelF = q("#car-gate-level-field"), bar = q(".modal-footer-actions");
+    if (!title || !vinF || !vin || !makeS || !modelF || !yearF || !chips || !trimF || !levelF || !bar || bar.parentNode !== card) return;
+    const undo = card._trkUndo = [];
+    const noIcon = function(t) {
+        return String(t || "").replace(/^[\p{Extended_Pictographic}️‍\s]+/u, "").trim();
+    };
+    const t0 = title.textContent;
+    title.textContent = noIcon(t0) || t0;
+    undo.push(function() {
+        title.textContent = t0;
+    });
+    const vl = vinF.querySelector(":scope > .field-label");
+    if (vl) {
+        const v0 = vl.textContent;
+        vl.textContent = "رقم الشاص VIN (اختياري)";
+        undo.push(function() {
+            vl.textContent = v0;
+        });
+    }
+    const vp = vin.getAttribute("placeholder");
+    vin.setAttribute("placeholder", "الصقه لتعبئة السيارة تلقائيًا");
+    undo.push(function() {
+        if (vp == null) vin.removeAttribute("placeholder"); else vin.setAttribute("placeholder", vp);
+    });
+    const mp = makeS.getAttribute("placeholder");
+    if (mp) {
+        makeS.setAttribute("placeholder", noIcon(mp) || mp);
+        undo.push(function() {
+            makeS.setAttribute("placeholder", mp);
+        });
+    }
+    const row = document.createElement("div");
+    row.className = "trk-car-row";
+    const yNext = yearF.nextSibling;
+    card.insertBefore(row, modelF);
+    row.appendChild(modelF);
+    row.appendChild(yearF);
+    card.insertBefore(chips, row.nextSibling);
+    undo.push(function() {
+        modelF.appendChild(chips);
+        card.insertBefore(yearF, yNext && yNext.parentNode === card ? yNext : bar);
+        card.insertBefore(modelF, yearF);
+        row.remove();
+    });
+    const more = document.createElement("div");
+    more.className = "trk-car-more";
+    card.insertBefore(more, trimF);
+    more.appendChild(trimF);
+    more.appendChild(levelF);
+    const fb = document.createElement("button");
+    fb.type = "button";
+    fb.id = "trk-car-fold";
+    fb.className = "btn btn-ghost";
+    fb.addEventListener("click", function() {
+        card.classList.toggle("trk-car-more-open");
+        trackCarUpdate(card);
+    });
+    card.insertBefore(fb, more);
+    undo.push(function() {
+        card.insertBefore(trimF, more);
+        card.insertBefore(levelF, more);
+        more.remove();
+        fb.remove();
+        card.classList.remove("trk-car-more-open");
+    });
+    bar.classList.add("trk-car-bar");
+    undo.push(function() {
+        bar.classList.remove("trk-car-bar");
+    });
+    const onAny = function() {
+        trackCarUpdate(card);
+    };
+    card.addEventListener("click", onAny);
+    card.addEventListener("input", onAny);
+    card.addEventListener("change", onAny);
+    undo.push(function() {
+        card.removeEventListener("click", onAny);
+        card.removeEventListener("input", onAny);
+        card.removeEventListener("change", onAny);
+    });
+    if (typeof MutationObserver === "function") {
+        const obs = new MutationObserver(onAny);
+        [ "#car-gate-trim-chips", "#car-gate-level-chips", "#car-gate-trim-hint" ].forEach(function(s) {
+            const e = q(s);
+            if (e) obs.observe(e, {
+                childList: true
+            });
+        });
+        undo.push(function() {
+            obs.disconnect();
+        });
+    }
+    trackCarUpdate(card);
+    card.classList.add("trk-car");
+}
+
+function trackCarApply() {
+    let card = null;
+    try {
+        const dlg = document.querySelector("#confirm-root [data-car-gate]");
+        card = dlg ? dlg.querySelector(".modal-card") : null;
+        if (!card || card._trkCar) return;
+        card._trkCar = true;
+        trackCarSetup(card);
+    } catch (e) {
+        console.error("TRACK car dialog:", e);
+        try {
+            if (card) {
+                card.classList.remove("trk-car");
+                (card._trkUndo || []).slice().reverse().forEach(function(f) {
+                    try {
+                        f();
+                    } catch (e2) {}
+                });
+                card._trkUndo = [];
+            }
+        } catch (e3) {}
+    }
+}
+
 function trackYardData() {
     let quotes = [], reqs = [];
     try {
@@ -76059,6 +76234,14 @@ function trackAcctApply() {
                 trackAcctApply();
                 trackFooterApply();
                 trackOrderModalApply();
+                return r;
+            };
+        }
+        if (typeof openCarGate === "function") {
+            const prev = openCarGate;
+            openCarGate = function() {
+                const r = prev.apply(this, arguments);
+                trackCarApply();
                 return r;
             };
         }
