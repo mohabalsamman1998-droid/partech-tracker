@@ -1879,6 +1879,15 @@
   .modal-card.trk-payo .section-sales > .totals-row{order:1;}
   .modal-card.trk-payo .section-sales > .customer-pay-block{order:2;margin:14px 0 0;}
   .modal-card.trk-payo .section-sales > #cost-split-row-wrap{order:3;margin-top:14px;}
+  .modal-card.trk-payo .section-sales > #acct2-order-card{order:4;margin:14px 0 0;padding:8px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);}
+  .modal-card.trk-payo #acct2-order-card.trk-docs{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;}
+  .modal-card.trk-payo #acct2-order-card.trk-docs > .section-head{order:1;flex:0 0 auto;margin:0;cursor:pointer;}
+  .modal-card.trk-payo #acct2-order-card.trk-docs > .acct2-card-sub{order:2;flex:1 1 0;min-width:0;margin:0;font-size:14px;cursor:pointer;}
+  .modal-card.trk-payo #acct2-order-card.trk-docs:not(.trk-docs-open):has(> .acct2-card-sub) > .section-head{display:none;}
+  .modal-card.trk-payo #acct2-order-card.trk-docs::after{content:'+ إضافة';order:3;margin-inline-start:auto;display:inline-flex;align-items:center;min-height:44px;padding:6px 16px;font-size:13px;font-weight:700;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:999px;cursor:pointer;}
+  .modal-card.trk-payo #acct2-order-card.trk-docs.trk-docs-open::after{content:'إخفاء';}
+  .modal-card.trk-payo #acct2-order-card.trk-docs:not(.trk-docs-open) > :not(.section-head):not(.acct2-card-sub){display:none;}
+  .modal-card.trk-payo #acct2-order-card.trk-docs.trk-docs-open > :not(.section-head):not(.acct2-card-sub){order:4;flex:1 1 100%;}
   .modal-card.trk-payo .trk-pay .payment-summary-row{display:none;}
   .modal-card.trk-payo .supplier-pay-block.trk-pay{margin:0 0 14px;}
   .modal-card.trk-payo .supplier-pay-block.trk-pay .supplier-pay-total{display:none;}
@@ -1947,6 +1956,10 @@
   body.trk-base .tasks-header > .btn{flex:0 0 auto;width:auto !important;max-width:none !important;min-height:44px;padding:8px 16px;font-size:14px;}
   body.trk-base .tasks-header > .tasks-title{flex:1 1 auto;min-width:0;text-align:start;font-size:18px;}
   /* عزل الشاشات بالشكل واللون وفق معنى الاتجاه بالتطبيق: العملاء = واردة (أخضر)، الموردين = صادرة (قرميدي)، والباقي محايد */
+  /* حقل السيارة بنافذتي الطلبية/التسعير: الاسم كاملًا بسطر مستقل (لا يُعصر بين الأزرار) والزرّان تحته بعرض متساوٍ */
+  body.trk-base [id$="-car-field"] .phone-field-row{flex-wrap:wrap;}
+  body.trk-base [id$="-car-field"] .car-summary{flex:1 1 100%;font-size:15px;line-height:1.5;}
+  body.trk-base [id$="-car-field"] .phone-field-row > .icon-btn{flex:1 1 0;min-width:0;min-height:44px;white-space:nowrap;}
   body.trk-base .tasks-header{border-inline-start:4px solid var(--border);padding-inline-start:12px;}
   body.trk-base #customers-view .tasks-header{border-inline-start-color:var(--green);}
   body.trk-base #suppliers-view .tasks-header{border-inline-start-color:var(--rust);}
@@ -1954,6 +1967,8 @@
   body.trk-base [class*="-item-row"] > [class*="-row-main"]{flex-wrap:wrap;}
   body.trk-base .trk-row-actions{flex:1 1 100%;display:flex;gap:8px;margin-top:4px;}
   body.trk-base .trk-row-actions > .icon-btn{flex:1 1 0;min-width:0;min-height:44px;padding:8px 4px;font-size:13px;white-space:nowrap;}
+  /* طلب المالك 2026-10-24: زرّا «نسخ القطع / لصق القطع» ملغيان — زر «نسخ الطلبية» يكفي (العنصران يبقيان بالصفحة بمعالجاتهما وتُخفيهما CSS فقط) */
+  body.trk-base .modal-footer .parts-clipboard-mini{display:none !important;}
   .modal-card.track-noacct .customer-pay-block,.modal-card.track-noacct #cost-split-row-wrap{display:none !important;}
   /* TRACK END css */
   /* TAXINV BEGIN css */
@@ -75850,16 +75865,16 @@ function trackOrderModalApply() {
     }
 }
 
-const TRACK_NOICON_SEL = '.btn, .chip, .icon-btn, [class*="title"], [class*="label"], h1, h2, h3, .more-menu-popup button, .menu-item';
+const TRACK_NOICON_SEL = 'button, [role="button"], .btn, .chip, .icon-btn, [class*="title"], [class*="label"], [class*="summary"], [class*="elapsed"], h1, h2, h3, label, .more-menu-popup button, .menu-item';
 
 function trackNoIconText(t) {
-    return String(t || "").replace(/^[\s]*[\p{Extended_Pictographic}][\p{Extended_Pictographic}️‍⃣\s]*/u, "");
+    return String(t || "").replace(/^[\s]*[\p{Extended_Pictographic}][\p{Extended_Pictographic}️‍⃣\s]*/u, "").replace(/[\s]*[\p{Extended_Pictographic}][\p{Extended_Pictographic}️‍⃣\s]*$/u, "");
 }
 
 function trackNoIconsEl(el) {
     if (!el || el.nodeType !== 1 || el.hasAttribute("data-keep-icon")) return;
-    if (el.classList.contains("icon-btn") && el.children.length === 0) {
-        const al = el.getAttribute("aria-label") || "", tx = String(el.textContent || "").trim();
+    if ((el.classList.contains("icon-btn") || el.tagName === "BUTTON") && !el.classList.contains("corner-mini-btn") && el.children.length === 0) {
+        const al = el.getAttribute("aria-label") || (String(el.getAttribute("title") || "").length <= 16 ? el.getAttribute("title") : "") || "", tx = String(el.textContent || "").trim();
         if (tx && al.length > 1 && trackNoIconText(tx) === "") {
             el.textContent = al;
             return;
@@ -76023,11 +76038,27 @@ function trackPayEnsure(block) {
     block.classList.add("trk-pay");
 }
 
+function trackDocsApply(card) {
+    const dc = card.querySelector("#acct2-order-card"), sec = card.querySelector(".section-sales"), wrap = card.querySelector("#cost-split-row-wrap");
+    if (!dc || !sec || !wrap) return;
+    if (dc.parentNode !== sec) sec.insertBefore(dc, wrap.nextSibling);
+    if (!dc._trkDocs) {
+        dc._trkDocs = true;
+        dc.classList.add("trk-docs");
+        dc.addEventListener("click", function(e) {
+            if (e.target === dc || e.target.closest && e.target.closest(".section-head, .acct2-card-sub")) dc.classList.toggle("trk-docs-open");
+        });
+    }
+}
+
 function trackPayApply() {
     try {
         const card = document.querySelector("#modal-root .modal-card");
         if (!card || !card.querySelector("#add-payment-btn")) return;
         card.classList.add("trk-payo");
+        try {
+            trackDocsApply(card);
+        } catch (e3) {}
         [].slice.call(card.querySelectorAll(".customer-pay-block, .supplier-pay-block")).forEach(function(b) {
             try {
                 trackPayEnsure(b);
