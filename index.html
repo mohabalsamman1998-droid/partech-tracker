@@ -1674,14 +1674,14 @@
   /* TRACK BEGIN css */
   /* مسار الطلبيات (TRACK): ألوان من متغيّرات التطبيق فقط (تتبدّل مع الوضع النهاري/الليلي)، أزرار مصمتة، مقاسات الجوال أولًا */
   #orders-view.trk-on{display:flex;flex-direction:column;}
-  #orders-view.trk-on > #trk-new{order:0;}
   #orders-view.trk-on > #kpi-row{order:1;}
   #orders-view.trk-on > #trk-root{order:2;}
   #orders-view.trk-on > #ops-kpi{order:3;}
-  #orders-view.trk-on > #trk-head{order:4;}
+  #orders-view.trk-on > #trk-new{order:4;}
   #orders-view.trk-on > #trk-searchbar{order:5;}
-  #orders-view.trk-on > #quotes-list-section{order:6;}
-  #orders-view.trk-on > #orders-list-section{order:7;}
+  #orders-view.trk-on > #trk-head{order:6;}
+  #orders-view.trk-on > #quotes-list-section{order:7;}
+  #orders-view.trk-on > #orders-list-section{order:8;}
   #orders-view.trk-on > div:last-child{order:9;}
   #orders-view.trk-on > .top-toggle-row{display:none;}
   #orders-view.trk-on:not(.trk-chart) > #ops-kpi{display:none;}
@@ -1721,17 +1721,18 @@
   .trk-l1,.trk-l2{font-size:13px;line-height:1.3;color:var(--text-dim);}
   .trk-late{display:inline-block;padding:1px 10px;font-weight:800;color:var(--amber-ink);background:var(--quote-late);border-radius:999px;}
   .trk-arrow{direction:ltr;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text-faint);font-size:22px;line-height:1;}
-  .trk-l3{margin-top:2px;font-size:13px;line-height:1.3;font-weight:700;color:var(--text);}
+  .trk-l3,.trk-kind{margin-top:2px;font-size:13px;line-height:1.3;font-weight:700;color:var(--text);}
   .trk-note{padding:2px 4px 0;font-size:13px;font-weight:700;color:var(--text-dim);}
-  .trk-new{direction:ltr;display:flex;gap:8px;margin:0 0 10px;}
-  .trk-newbtn{direction:rtl;flex:1;min-height:48px;font:inherit;font-size:15px;font-weight:800;border:0;border-radius:var(--radius-sm);cursor:pointer;}
+  .trk-new{margin:8px 0 4px;}
+  .trk-newbtn{display:block;width:100%;min-height:48px;font:inherit;font-size:15px;font-weight:800;border:0;border-radius:var(--radius-sm);cursor:pointer;}
   .trk-new1{background:var(--amber);color:var(--amber-ink);}
   .trk-new2{background:var(--sg-violet);color:var(--sg-ink);}
   .trk-head{margin:6px 0 0;}
   .trk-subs{display:flex;flex-wrap:wrap;gap:8px;padding:10px 0 4px;}
   .trk-empty{padding:18px;text-align:center;color:var(--text-dim);font-size:15px;}
-  .trk-searchbar{margin:8px 0 4px;}
-  .trk-search{width:100%;box-sizing:border-box;min-height:46px;padding:10px 14px;font:inherit;font-size:15px;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);}
+  .trk-searchbar{display:flex;gap:8px;align-items:center;margin:8px 0 4px;}
+  .trk-fbtn{flex:none;min-height:46px;white-space:nowrap;}
+  .trk-search{flex:1;min-width:0;width:100%;box-sizing:border-box;min-height:46px;padding:10px 14px;font:inherit;font-size:15px;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);}
   .trk-act{min-height:44px;padding:6px 14px;margin-inline-start:6px;font:inherit;font-size:14px;font-weight:800;color:var(--sg-ink);background:var(--sg-violet);border:0;border-radius:var(--radius-sm);cursor:pointer;}
   #orders-view.trk-s1 #quotes-table-container .quote-row{border-inline-start:6px solid var(--amber);}
   #orders-view.trk-s1 #quotes-table-container .quote-row.quote-row-critical{border-inline-start-color:var(--quote-late);}
@@ -73894,6 +73895,10 @@ let trackSub = {
 
 let trackPeriodOpen = false;
 
+let trackFiltersOpen = false;
+
+let trackYardPeriodOpen = false;
+
 let trackYardSel = 0;
 
 let trackLastHtml = {
@@ -74107,6 +74112,19 @@ function trackAvgLabel(orders, range, ready) {
     }
 }
 
+function trackKindsCounts(orders, range, ready) {
+    try {
+        if (!ready || !trackHydrated()) return null;
+        const d = opsKpiCompute(orders, ready, range, typeof opsKpiKinds !== "undefined" ? opsKpiKinds : null);
+        return d && d.kindsReady && d.totals ? {
+            n: d.totals.pricedNew,
+            u: d.totals.pricedUsed
+        } : null;
+    } catch (e) {
+        return null;
+    }
+}
+
 function trackAcctOpen(o) {
     try {
         if (!o) return true;
@@ -74189,6 +74207,7 @@ function trackCardHtml(s, sum, extra) {
     } else if (s === 2) {
         big = wait ? "…" : String(sum[2].now);
         l1 = flow(sum[2].flow, "دخلت", sum[2].flowKnown, 2);
+        if (sum.kinds) l3 = '<span class="trk-kind">جديد <bdi dir="ltr">' + sum.kinds.n + '</bdi></span><span class="trk-kind">مستخدم <bdi dir="ltr">' + sum.kinds.u + "</bdi></span>";
     } else if (s === 3) {
         big = wait ? "…" : String(sum[3].now);
         l1 = flow(sum[3].flow, "أُرسلت", sum[3].flowKnown, 3);
@@ -74204,6 +74223,8 @@ let trackFlowMemo = {
     key: "",
     v: {}
 };
+
+let trackYardMemo = null;
 
 function trackMemoFlow(sum) {
     const key = String(opsKpiPeriod) + "|" + String(opsKpiDay);
@@ -74301,11 +74322,11 @@ function trackRender() {
             sum.err = false;
         }
         sum.avg = trackAvgLabel(orders, range, ready);
+        sum.kinds = trackKindsCounts(orders, range, ready);
+        if (sum.kinds) trackFlowMemo.v.kinds = sum.kinds; else if (trackFlowMemo.v.kinds) sum.kinds = trackFlowMemo.v.kinds;
         const elev = trackIsElevated();
         const topHtml = '<div class="trk-top">' + '<button type="button" class="trk-btn" data-trk-period aria-expanded="' + (trackPeriodOpen ? "true" : "false") + '">الفترة: ' + escapeHtml(trackPeriodLabel()) + " ▾</button>" + (elev ? '<button type="button" class="trk-btn" data-trk-chart aria-expanded="' + (trackChartOn() ? "true" : "false") + '">الرسم البياني</button>' : "") + "</div>" + (trackPeriodOpen ? trackPeriodPopHtml() : "");
         const bodyHtml = '<div class="trk-grid">' + '<div class="trk-cap trk-cap-now">الآن</div><div></div><div class="trk-cap trk-cap-per">في الفترة</div>' + trackCardHtml(1, sum) + '<div class="trk-arrow"><span>›</span></div>' + trackCardHtml(2, sum) + '<div class="trk-arrow"><span>›</span></div>' + trackCardHtml(3, sum) + '<div class="trk-arrow"><span>›</span></div>' + trackCardHtml(4, sum) + "</div>" + "";
-        const nw = trackEl("trk-new");
-        if (nw && !nw.firstChild) nw.innerHTML = '<button type="button" class="trk-newbtn trk-new1" data-trk-new="quote">+ طلب تسعير</button><button type="button" class="trk-newbtn trk-new2" data-trk-new="order">+ طلبية جديدة</button>';
         const top = trackPart(host, "trk-tophost"), body = trackPart(host, "trk-bodyhost");
         if (topHtml !== trackLastHtml.top) {
             const act = document.activeElement;
@@ -74375,7 +74396,7 @@ function trackHeadHtml(sel, searching) {
         return '<button type="button" class="trk-chip' + (on ? " trk-chip-on" : "") + '" data-trk-sub="' + sb[0] + '" aria-pressed="' + (on ? "true" : "false") + '">' + escapeHtml(sb[1]) + (sb[0] === "all" ? "" : " " + n) + "</button>";
     }).join("");
     const note = sel === 4 && trackPayAnyTime(subNow) ? '<div class="trk-note">كل الفترات</div>' : "";
-    return (chips ? '<div class="trk-subs">' + chips + "</div>" : "") + note + '<div class="trk-empty" style="display:none;">لا توجد طلبات في هذه المرحلة</div>';
+    return (chips && trackFiltersOpen ? '<div class="trk-subs">' + chips + "</div>" : "") + note + '<div class="trk-empty" style="display:none;">لا توجد طلبات في هذه المرحلة</div>';
 }
 
 function trackSearchEl() {
@@ -74386,7 +74407,7 @@ function trackSearchEl() {
         el = document.createElement("div");
         el.id = "trk-searchbar";
         el.className = "trk-searchbar";
-        el.innerHTML = '<input type="search" class="trk-search" id="trk-search" placeholder="ابحث برقم الطلب أو وصف القطعة…" autocomplete="off" aria-label="بحث">';
+        el.innerHTML = '<button type="button" class="trk-btn trk-fbtn" data-trk-filters aria-expanded="false" style="display:none;">الفلاتر ▾</button><input type="search" class="trk-search" id="trk-search" placeholder="ابحث برقم الطلب أو وصف القطعة…" autocomplete="off" aria-label="بحث">';
         sec.parentNode.insertBefore(el, sec);
         const inp = el.querySelector("input");
         inp.addEventListener("input", function() {
@@ -74552,8 +74573,29 @@ function trackApply() {
         const sb2 = trackSearchEl();
         if (sb2) {
             sb2.style.display = sel >= 2 || searching ? "" : "none";
+            const fb = sb2.querySelector("[data-trk-filters]"), subs = TRACK_SUBS[sel];
+            if (fb) {
+                const has = !searching && !!subs;
+                fb.style.display = has ? "" : "none";
+                if (has) {
+                    const cur = trackSub[sel] || "all", lab = (subs.find(function(x) {
+                        return x[0] === cur;
+                    }) || [])[1];
+                    fb.textContent = "الفلاتر" + (cur !== "all" && lab ? ": " + lab : "") + " ▾";
+                    fb.setAttribute("aria-expanded", trackFiltersOpen ? "true" : "false");
+                }
+            }
             const inp = sb2.querySelector("input"), so = trackEl("search-input");
             if (inp && so && inp.value !== so.value && document.activeElement !== inp) inp.value = so.value;
+        }
+        const nwEl = trackEl("trk-new");
+        if (nwEl) {
+            const kind = searching ? "" : sel === 1 ? "quote" : sel === 2 ? "order" : "";
+            if (nwEl.getAttribute("data-kind") !== kind) {
+                nwEl.setAttribute("data-kind", kind);
+                nwEl.innerHTML = kind === "quote" ? '<button type="button" class="trk-newbtn trk-new1" data-trk-new="quote">+ طلب تسعير</button>' : kind === "order" ? '<button type="button" class="trk-newbtn trk-new2" data-trk-new="order">+ طلبية جديدة</button>' : "";
+            }
+            nwEl.style.display = kind ? "" : "none";
         }
         view.classList.toggle("trk-none", vis === 0);
         const head = trackHeadEl();
@@ -74594,6 +74636,7 @@ function trackClearSearch() {
 }
 
 function trackSelectStage(s) {
+    trackFiltersOpen = false;
     const hadSearch = !!(typeof currentSearch === "string" && currentSearch.trim());
     if (hadSearch) {
         trackClearSearch();
@@ -74685,10 +74728,40 @@ function trackOnClick(e) {
             }
             return;
         }
+        if (t.closest("#trk-searchbar [data-trk-filters]")) {
+            trackFiltersOpen = !trackFiltersOpen;
+            trackApply();
+            return;
+        }
         const sub = t.closest("#trk-head [data-trk-sub]");
         if (sub && trackSel) {
             trackSub[trackSel] = sub.getAttribute("data-trk-sub");
+            trackFiltersOpen = false;
             trackApply();
+            try {
+                const fb = document.querySelector("#trk-searchbar [data-trk-filters]");
+                if (fb) fb.focus({
+                    preventScroll: true
+                });
+            } catch (e3) {}
+            return;
+        }
+        if (t.closest("#trk-yard [data-trk-yperiod]")) {
+            trackYardPeriodOpen = !trackYardPeriodOpen;
+            trackYardApply();
+            return;
+        }
+        const yp = t.closest("#trk-yard [data-trk-ypick]");
+        if (yp) {
+            opsKpiPeriod = yp.getAttribute("data-trk-ypick");
+            trackYardPeriodOpen = false;
+            try {
+                renderOpsKpi({
+                    animate: false,
+                    force: true
+                });
+            } catch (e2) {}
+            trackYardApply();
             return;
         }
         const yard = t.closest("[data-trk-yard]");
@@ -74745,6 +74818,48 @@ function trackYardData() {
     };
 }
 
+function trackYardPeriodId() {
+    try {
+        const list = opsKpiPeriodsFor(false);
+        return list.some(function(p) {
+            return p.id === opsKpiPeriod;
+        }) ? opsKpiPeriod : "today";
+    } catch (e) {
+        return "today";
+    }
+}
+
+function trackYardKpi() {
+    try {
+        if (!opsKpiScrap || !opsKpiScrap.readyMap) return null;
+        const range = kpiwOpsRange(trackYardPeriodId(), "", false, Date.now());
+        const d = opsKpiCompute(opsKpiScrap.orders, opsKpiScrap.readyMap, range, opsKpiScrap.kindsMap || null);
+        if (!d || !d.totals) return null;
+        return {
+            avg: d.totals.avgMin != null ? opsKpiShortDuration(d.totals.avgMin) : "",
+            n: d.kindsReady ? d.totals.pricedNew : null,
+            u: d.kindsReady ? d.totals.pricedUsed : null
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
+function trackYardTopHtml() {
+    try {
+        const list = opsKpiPeriodsFor(false), cur = trackYardPeriodId();
+        const label = (list.find(function(p) {
+            return p.id === cur;
+        }) || {}).label || "";
+        const pop = trackYardPeriodOpen ? '<div class="trk-pop" role="group" aria-label="الفترة">' + list.map(function(p) {
+            return '<button type="button" class="trk-chip' + (p.id === cur ? " trk-chip-on" : "") + '" data-trk-ypick="' + escapeHtml(p.id) + '" aria-pressed="' + (p.id === cur ? "true" : "false") + '">' + escapeHtml(p.label) + "</button>";
+        }).join("") + "</div>" : "";
+        return '<div class="trk-top"><button type="button" class="trk-btn" data-trk-yperiod aria-expanded="' + (trackYardPeriodOpen ? "true" : "false") + '">الفترة: ' + escapeHtml(label) + " ▾</button></div>" + pop;
+    } catch (e) {
+        return "";
+    }
+}
+
 function trackYardPick(n) {
     try {
         const open = scrapyardHomeOpenSection === "quotes";
@@ -74771,11 +74886,15 @@ function trackYardApply() {
         const d = trackYardData();
         if (!trackYardSel) trackYardSel = scrapyardHomeOpenSection === "quotes" && d.reqs > 0 ? 2 : 1;
         const open = scrapyardHomeOpenSection === "quotes";
-        const card = function(n, label, big, l1, l2) {
+        const card = function(n, label, big, l1, l2, l3) {
             const sel = open && trackYardSel === n;
-            return '<button type="button" class="trk-card trk-c' + (n === 1 ? "1" : "3") + (sel ? " trk-sel" : "") + '" data-trk-yard="' + n + '" aria-pressed="' + (sel ? "true" : "false") + '">' + '<span class="trk-lab">' + escapeHtml(label) + '</span><span class="trk-num num">' + big + '</span><span class="trk-l1">' + (l1 || "&nbsp;") + '</span><span class="trk-l2">' + (l2 || "&nbsp;") + "</span></button>";
+            return '<button type="button" class="trk-card trk-c' + (n === 1 ? "1" : "3") + (sel ? " trk-sel" : "") + '" data-trk-yard="' + n + '" aria-pressed="' + (sel ? "true" : "false") + '">' + '<span class="trk-lab">' + escapeHtml(label) + '</span><span class="trk-num num">' + big + '</span><span class="trk-l1">' + (l1 || "&nbsp;") + '</span><span class="trk-l2">' + (l2 || "&nbsp;") + "</span>" + (l3 || "") + "</button>";
         };
-        const html = '<div class="trk-ygrid">' + card(1, "طلبات التسعير", d.pending, d.priced > 0 ? d.priced + " مسعّرة بانتظار الاعتماد" : "", d.late > 0 ? '<span class="trk-late">' + d.late + " متأخر</span>" : "") + '<div class="trk-arrow"><span>›</span></div>' + card(2, "طلبات التوريد", d.reqs, "", d.mine > 0 ? "موجّه لك " + d.mine : "") + "</div>";
+        const kp = trackYardKpi();
+        if (kp && (kp.n !== null || kp.avg)) trackYardMemo = kp;
+        const kk = kp && (kp.n !== null || kp.avg) ? kp : trackYardMemo;
+        const l3 = kk ? (kk.n !== null && kk.n !== undefined ? '<span class="trk-kind">جديد <bdi dir="ltr">' + kk.n + '</bdi></span><span class="trk-kind">مستخدم <bdi dir="ltr">' + kk.u + "</bdi></span>" : "") + (kk.avg ? '<span class="trk-l3">متوسط التسعير <bdi dir="ltr">' + escapeHtml(kk.avg) + "</bdi></span>" : "") : "";
+        const html = trackYardTopHtml() + '<div class="trk-ygrid">' + card(1, "طلبات التسعير", d.pending, d.priced > 0 ? d.priced + " مسعّرة بانتظار الاعتماد" : "", d.late > 0 ? '<span class="trk-late">' + d.late + " متأخر</span>" : "", l3) + '<div class="trk-arrow"><span>›</span></div>' + card(2, "طلبات التوريد", d.reqs, "", d.mine > 0 ? "موجّه لك " + d.mine : "") + "</div>";
         let host = root.querySelector("#trk-yard");
         if (!host) {
             host = document.createElement("div");
@@ -74854,7 +74973,7 @@ function trackAcctApply() {
                     if (trackIsFull()) {
                         trackRender();
                         trackApply();
-                    }
+                    } else if (trackIsYard()) trackYardApply();
                 } catch (e) {
                     trackFail(e);
                 }
@@ -74883,7 +75002,10 @@ function trackAcctApply() {
                         4: "all"
                     };
                     trackPeriodOpen = false;
+                    trackFiltersOpen = false;
                     trackYardSel = 0;
+                    trackYardPeriodOpen = false;
+                    trackYardMemo = null;
                     trackResetHtml();
                     trackFlowMemo = {
                         key: "",
@@ -75010,6 +75132,7 @@ function trackAcctApply() {
                 nEl = document.createElement("div");
                 nEl.id = "trk-new";
                 nEl.className = "trk-new";
+                nEl.style.display = "none";
                 view.insertBefore(nEl, view.firstChild);
             }
             if (!trackEl("trk-root")) {
