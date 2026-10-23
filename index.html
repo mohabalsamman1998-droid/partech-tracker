@@ -1698,6 +1698,7 @@
   #app-root .topbar-actions #btn-open-treasury{order:4;}
   #app-root .topbar-actions #btn-open-statistics{order:5;}
   #app-root .topbar-actions .more-menu-wrap{order:6;margin-inline-start:14px;}
+  #app-root .topbar-actions #btn-logout{margin-top:8px;}
   .trk-c1,.trk-ygrid .trk-c1{--trk-c:var(--amber);--trk-dim:var(--amber-dim);--trk-line:var(--amber-line);}
   .trk-c2{--trk-c:var(--sg-violet);--trk-dim:var(--sg-violet-dim);--trk-line:var(--sg-violet-line);}
   .trk-c3{--trk-c:var(--supply-req);--trk-dim:var(--supply-req-dim);--trk-line:var(--supply-req-line);}
@@ -74030,13 +74031,8 @@ function trackSubMatch(o, stage, sub) {
     return true;
 }
 
-function trackPayAnyTime(sub) {
-    return sub === "waitCust" || sub === "waitSup";
-}
-
-function trackInStage(o, sel, sub, ready, range) {
+function trackInStage(o, sel, sub) {
     if (trackStageNow(o) !== sel) return false;
-    if (sel === 4 && !trackPayAnyTime(sub) && !trackInRange(trackEnterMs(o, 4, ready), range)) return false;
     return trackSubMatch(o, sel, sub);
 }
 
@@ -74395,8 +74391,8 @@ function trackHeadHtml(sel, searching) {
         const on = subNow === sb[0];
         return '<button type="button" class="trk-chip' + (on ? " trk-chip-on" : "") + '" data-trk-sub="' + sb[0] + '" aria-pressed="' + (on ? "true" : "false") + '">' + escapeHtml(sb[1]) + (sb[0] === "all" ? "" : " " + n) + "</button>";
     }).join("");
-    const note = sel === 4 && trackPayAnyTime(subNow) ? '<div class="trk-note">كل الفترات</div>' : "";
-    return (chips && trackFiltersOpen ? '<div class="trk-subs">' + chips + "</div>" : "") + note + '<div class="trk-empty" style="display:none;">' + (sel === 4 && !trackPayAnyTime(subNow) ? "لا توجد طلبات موردة في هذه الفترة" : "لا توجد طلبات في هذه المرحلة") + "</div>";
+    const note = sel === 4 ? '<div class="trk-note">كل الفترات</div>' : "";
+    return (chips && trackFiltersOpen ? '<div class="trk-subs">' + chips + "</div>" : "") + note + '<div class="trk-empty" style="display:none;">' + "لا توجد طلبات في هذه المرحلة" + "</div>";
 }
 
 function trackSearchEl() {
@@ -74680,6 +74676,13 @@ function trackOnClick(e) {
     try {
         const t = e.target && e.target.closest ? e.target : null;
         if (!t) return;
+        const lo = t.closest("#btn-logout");
+        if (lo) {
+            e.preventDefault();
+            e.stopPropagation();
+            trackLogout();
+            return;
+        }
         const supply = t.closest("[data-trk-supply]");
         if (supply) {
             e.preventDefault();
@@ -74792,6 +74795,34 @@ function trackOnChange(e) {
         }
     } catch (err) {
         console.error("TRACK change:", err);
+    }
+}
+
+function trackLogout() {
+    try {
+        if (typeof closeMoreMenu === "function") closeMoreMenu();
+    } catch (e) {}
+    confirmAction({
+        title: "تسجيل الخروج؟",
+        message: "تأكيد أول: هل تريد الخروج من حسابك؟",
+        confirmLabel: "نعم، تابع",
+        onConfirm: function() {
+            handleLogout();
+        }
+    });
+}
+
+function trackMoveLogout() {
+    try {
+        const lo = trackEl("btn-logout"), pop = trackEl("more-menu-popup");
+        if (!lo || !pop || lo.parentNode === pop) return;
+        const old = lo.parentNode;
+        pop.appendChild(lo);
+        lo.className = "btn btn-ghost";
+        lo.textContent = "تسجيل خروج";
+        if (old && old !== pop && old.children.length === 0) old.style.display = "none";
+    } catch (e) {
+        console.error("TRACK logout move:", e);
     }
 }
 
@@ -75144,6 +75175,7 @@ function trackAcctApply() {
             }
             view.classList.add("trk-on");
         }
+        trackMoveLogout();
         document.addEventListener("click", trackOnClick, true);
         document.addEventListener("change", trackOnChange, false);
     } catch (e) {
