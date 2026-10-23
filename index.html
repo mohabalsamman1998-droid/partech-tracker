@@ -1748,16 +1748,15 @@
   #orders-view.trk-on #table-container tr td:first-child{box-shadow:inset -6px 0 0 var(--trk-edge,var(--surface-2));}
   #orders-view.trk-on #table-container .order-card{border-inline-start:6px solid var(--trk-edge,var(--border));}
   .trk-yard{margin:0 0 12px;}
-  .trk-ygrid{direction:ltr;display:grid;grid-template-columns:minmax(0,1fr) 22px minmax(0,1fr);align-items:stretch;}
+  .trk-ygrid{direction:ltr;display:grid;grid-template-columns:minmax(0,1fr) 22px minmax(0,1fr) 22px minmax(0,1fr);align-items:stretch;}
   #scrapyard-root:has(> #trk-yard) #btn-toggle-scrapyard-quotes{display:none;}
   #scrapyard-root:has(> #trk-yard){display:flex;flex-direction:column;}
   #scrapyard-root:has(> #trk-yard) > header.topbar{order:1;}
   #scrapyard-root:has(> #trk-yard) > #trk-yard{order:2;}
-  #scrapyard-root:has(> #trk-yard) > .top-toggle-row{order:3;}
+  #scrapyard-root:has(> #trk-yard) > .top-toggle-row{display:none;}
+  #scrapyard-root:has(> #trk-yard) > header.topbar .btn{min-height:44px;}
   #scrapyard-root:has(> #trk-yard) > .scrapyard-kpi-row{order:4;}
   #scrapyard-root:has(> #trk-yard) > [id^="scrapyard-home-"]{order:5;}
-  #scrapyard-root:has(> #trk-yard) > .top-toggle-row{flex-wrap:wrap;}
-  #scrapyard-root:has(> #trk-yard) > .top-toggle-row .btn{flex:1 1 30%;min-width:96px;min-height:44px;font-size:13px;white-space:normal;overflow:visible;text-overflow:clip;}
   #scrapyard-root:has(> #trk-yard) > #ops-kpi-scrapyard{display:none;}
   .modal-card.track-noacct .customer-pay-block,.modal-card.track-noacct #cost-split-row-wrap{display:none !important;}
   /* TRACK END css */
@@ -75047,6 +75046,9 @@ function trackYardData() {
         pending: pending.length,
         priced: quotes.length - pending.length,
         late: pending.filter(trackIsLate).length,
+        approved: (appData.orders || []).filter(function(o) {
+            return !trackBool(o.isQuote) && trackBool(o.wasQuote);
+        }).length,
         reqs: reqs.length,
         mine: me ? reqs.filter(function(o) {
             return String(o.supplyTargetEmail || "").toLowerCase() === me;
@@ -75098,17 +75100,34 @@ function trackYardTopHtml() {
 
 function trackYardPick(n) {
     try {
-        const open = scrapyardHomeOpenSection === "quotes";
-        if (open && trackYardSel === n) {
+        const key = n === 2 ? "approved" : "quotes";
+        const open = scrapyardHomeOpenSection === key;
+        if (open && (n === 2 || trackYardSel === n)) {
             scrapyardHomeOpenSection = null;
         } else {
             trackYardSel = n;
-            scrapyardHomeOpenSection = "quotes";
+            scrapyardHomeOpenSection = key;
         }
         renderScrapyardHomeView();
         if (scrapyardHomeOpenSection === "quotes" && typeof refreshScrapyardHomeQuotes === "function") refreshScrapyardHomeQuotes();
     } catch (e) {
         console.error("TRACK yard:", e);
+    }
+}
+
+function trackYardNav(root) {
+    try {
+        const acts = root.querySelector("header.topbar > div:last-child");
+        if (!acts) return;
+        [ "tasks", "settlement" ].forEach(function(k) {
+            const b = root.querySelector("#btn-toggle-scrapyard-" + k);
+            if (b && b.parentNode !== acts) {
+                b.className = "btn btn-ghost btn-sm btn-with-badge";
+                acts.insertBefore(b, acts.firstChild);
+            }
+        });
+    } catch (e) {
+        console.error("TRACK yard nav:", e);
     }
 }
 
@@ -75120,17 +75139,18 @@ function trackYardApply() {
         const row = root.querySelector(".top-toggle-row");
         if (!row || !row.parentNode) return;
         const d = trackYardData();
-        if (!trackYardSel) trackYardSel = scrapyardHomeOpenSection === "quotes" && d.reqs > 0 ? 2 : 1;
-        const open = scrapyardHomeOpenSection === "quotes";
+        if (!trackYardSel) trackYardSel = scrapyardHomeOpenSection === "quotes" && d.reqs > 0 ? 3 : 1;
+        const secNow = scrapyardHomeOpenSection;
         const card = function(n, label, big, l1, l2, l3) {
-            const sel = open && trackYardSel === n;
-            return '<button type="button" class="trk-card trk-c' + (n === 1 ? "1" : "3") + (sel ? " trk-sel" : "") + '" data-trk-yard="' + n + '" aria-pressed="' + (sel ? "true" : "false") + '">' + '<span class="trk-lab">' + escapeHtml(label) + '</span><span class="trk-num num">' + big + '</span><span class="trk-l1">' + (l1 || "&nbsp;") + '</span><span class="trk-l2">' + (l2 || "&nbsp;") + "</span>" + (l3 || "") + "</button>";
+            const sel = n === 2 ? secNow === "approved" : secNow === "quotes" && trackYardSel === n;
+            return '<button type="button" class="trk-card trk-c' + n + (sel ? " trk-sel" : "") + '" data-trk-yard="' + n + '" aria-pressed="' + (sel ? "true" : "false") + '">' + '<span class="trk-lab">' + escapeHtml(label) + '</span><span class="trk-num num">' + big + '</span><span class="trk-l1">' + (l1 || "&nbsp;") + '</span><span class="trk-l2">' + (l2 || "&nbsp;") + "</span>" + (l3 || "") + "</button>";
         };
         const kp = trackYardKpi();
         if (kp && (kp.n !== null || kp.avg)) trackYardMemo = kp;
         const kk = kp && (kp.n !== null || kp.avg) ? kp : trackYardMemo;
         const l3 = kk ? (kk.n !== null && kk.n !== undefined ? '<span class="trk-kind">جديد <bdi dir="ltr">' + kk.n + '</bdi></span><span class="trk-kind">مستخدم <bdi dir="ltr">' + kk.u + "</bdi></span>" : "") + (kk.avg ? '<span class="trk-l3">متوسط التسعير <bdi dir="ltr">' + escapeHtml(kk.avg) + "</bdi></span>" : "") : "";
-        const html = trackYardTopHtml() + '<div class="trk-ygrid">' + card(1, "طلبات التسعير", d.pending, d.priced > 0 ? d.priced + " مسعّرة بانتظار الاعتماد" : "", d.late > 0 ? '<span class="trk-late">' + d.late + " متأخر</span>" : "", l3) + '<div class="trk-arrow"><span>›</span></div>' + card(2, "طلبات التوريد", d.reqs, "", d.mine > 0 ? "موجّه لك " + d.mine : "") + "</div>";
+        const html = trackYardTopHtml() + '<div class="trk-ygrid">' + card(1, "طلبات التسعير", d.pending, d.priced > 0 ? d.priced + " مسعّرة بانتظار الاعتماد" : "", d.late > 0 ? '<span class="trk-late">' + d.late + " متأخر</span>" : "", l3) + '<div class="trk-arrow"><span>›</span></div>' + card(2, "المسعّر", d.approved) + '<div class="trk-arrow"><span>›</span></div>' + card(3, "طلبات التوريد", d.reqs, "", d.mine > 0 ? "موجّه لك " + d.mine : "") + "</div>";
+        trackYardNav(root);
         let host = root.querySelector("#trk-yard");
         if (!host) {
             host = document.createElement("div");
@@ -75150,7 +75170,7 @@ function trackYardApply() {
                 r.classList.toggle("trk-off", trackYardSel === 1);
             });
             list.querySelectorAll(".quote-row:not(.supply-req-row)").forEach(function(r) {
-                r.classList.toggle("trk-off", trackYardSel === 2);
+                r.classList.toggle("trk-off", trackYardSel === 3);
             });
         }
     } catch (e) {
