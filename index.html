@@ -1872,6 +1872,40 @@
   body:has(.modal-card.trk-om) .toast-root{bottom:calc(112px + env(safe-area-inset-bottom,0px));}
   body:has(.modal-card.trk-om) .toast{pointer-events:none;}
   @media (max-height:480px){.modal-card.trk-om .modal-header{position:static;}.modal-card.trk-om #trk-bar-due{display:none;}}
+  /* ===== دفعات الزبون (واردة) والمورد (صادرة): الإجمالي | المدفوع | المتبقي + حالة + شريط تقدّم ===== */
+  .modal-card.trk-payo .section-sales{display:flex;flex-direction:column;}
+  .modal-card.trk-payo .section-sales > *{order:5;}
+  .modal-card.trk-payo .section-sales > .section-head{order:0;}
+  .modal-card.trk-payo .section-sales > .totals-row{order:1;}
+  .modal-card.trk-payo .section-sales > .customer-pay-block{order:2;margin:14px 0 0;}
+  .modal-card.trk-payo .section-sales > #cost-split-row-wrap{order:3;margin-top:14px;}
+  .modal-card.trk-payo .trk-pay .payment-summary-row{display:none;}
+  .modal-card.trk-payo .supplier-pay-block.trk-pay{margin:0 0 14px;}
+  .modal-card.trk-payo .supplier-pay-block.trk-pay .supplier-pay-total{display:none;}
+  .modal-card.trk-payo .trk-pay .pay-block-head{align-items:center;flex-wrap:wrap;margin-bottom:10px;}
+  .modal-card.trk-payo .trk-pay .pay-block-head .section-title{font-size:15px;}
+  .modal-card.trk-payo .trk-pay .pay-block-tag{font-size:13px;padding:2px 10px;}
+  .trk-pay-chip{margin-inline-start:auto;padding:2px 12px;font-size:13px;font-weight:800;color:var(--text-dim);background:var(--surface);border:1px solid var(--border);border-radius:999px;}
+  .trk-pay-chip.trk-s-part,.trk-pay-chip.trk-s-over{color:var(--amber);border-color:var(--amber-line);}
+  .trk-pay-chip.trk-s-done{color:var(--green);border-color:var(--green-line);}
+  .trk-pay-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0 0 10px;background:var(--surface);border:1px solid var(--border-soft);border-radius:var(--radius-sm);overflow:hidden;}
+  .trk-pay-cell{padding:8px 6px;text-align:center;min-width:0;}
+  .trk-pay-cell + .trk-pay-cell{border-inline-start:1px solid var(--border-soft);}
+  .trk-pay-l{display:block;font-size:13px;font-weight:700;color:var(--text-dim);}
+  .trk-pay-v{display:block;font-size:17px;font-weight:800;font-family:'Cairo',sans-serif;font-variant-numeric:tabular-nums;color:var(--text);white-space:nowrap;}
+  .trk-pay-v small{font-size:13px;font-weight:600;color:var(--text-dim);}
+  .trk-pc-p .trk-pay-v,.trk-pc-r.trk-done .trk-pay-v{color:var(--green);}
+  .trk-pc-r .trk-pay-v{color:var(--amber);}
+  .trk-pay-bar{grid-column:1 / -1;height:6px;background:var(--surface-2);}
+  .trk-pay-bar i{display:block;height:100%;background:var(--green);}
+  .trk-bar-out i{background:var(--rust);}
+  .trk-pay-sub{grid-column:1 / -1;padding:6px 10px;font-size:13px;font-weight:700;color:var(--text-dim);border-top:1px solid var(--border-soft);}
+  .modal-card.trk-payo .trk-pay [id="add-payment-btn"]{display:block;width:100%;min-height:48px;margin:0 0 4px;font-size:14px;font-weight:700;}
+  .modal-card.trk-payo .trk-pay .supplier-pay-actions .btn{flex:1 1 0;min-height:48px;font-size:14px;font-weight:700;}
+  :root[data-theme="light"] .modal-card.trk-payo .trk-pc-p .trk-pay-v,:root[data-theme="light"] .modal-card.trk-payo .trk-pc-r.trk-done .trk-pay-v,:root[data-theme="light"] .modal-card.trk-payo .trk-pay-chip.trk-s-done{color:#0A6B3C;}
+  :root[data-theme="light"] .modal-card.trk-payo .trk-pc-r .trk-pay-v,:root[data-theme="light"] .modal-card.trk-payo .trk-pay-chip.trk-s-part,:root[data-theme="light"] .modal-card.trk-payo .trk-pay-chip.trk-s-over{color:#7A5200;}
+  :root[data-theme="light"] .modal-card.trk-payo .customer-pay-block.trk-pay .section-title,:root[data-theme="light"] .modal-card.trk-payo .customer-pay-block.trk-pay .pay-tag-in{color:#0A6B3C;}
+  :root[data-theme="light"] .modal-card.trk-payo .supplier-pay-block.trk-pay .section-title,:root[data-theme="light"] .modal-card.trk-payo .supplier-pay-block.trk-pay .pay-tag-out{color:#9A3412;}
   /* ===== نافذة السيارة (class trk-car): الأساسي فقط + الفئة والمستوى مطويّان + شريط ثابت ===== */
   .modal-card.trk-car{--trk-car-pad:22px;padding-bottom:0;padding-inline:var(--trk-car-pad);}
   @media (max-width:760px){.modal-card.trk-car{--trk-car-pad:14px;}}
@@ -75790,6 +75824,102 @@ function trackOrderModalApply() {
     }
 }
 
+function trackPayNum(s) {
+    const n = Number(String(s == null ? "" : s).replace(/ر\.س/g, "").replace(/[^\d.]/g, ""));
+    return isNaN(n) ? 0 : n;
+}
+
+function trackPayMoney(n) {
+    return (Math.round((Number(n) || 0) * 100) / 100).toLocaleString("en-US");
+}
+
+function trackPayFigures(block) {
+    const q = function(s) {
+        return block.querySelector(s);
+    };
+    if (block.classList.contains("customer-pay-block")) {
+        const paidEl = q("#total-paid-display"), remEl = q("#customer-remaining-display"), lbl = q("#customer-remaining-label");
+        if (!paidEl || !remEl) return null;
+        const paid = trackPayNum(paidEl.textContent), rem = trackPayNum(remEl.textContent), excess = !!(lbl && /زيادة/.test(lbl.textContent));
+        return {
+            kind: "in",
+            total: excess ? Math.max(0, paid - rem) : paid + rem,
+            paid: paid,
+            rem: excess ? 0 : rem,
+            over: excess ? rem : 0,
+            due: 0,
+            adv: 0
+        };
+    }
+    const tot = q(".supplier-pay-total .num");
+    if (!tot) return null;
+    const total = trackPayNum(tot.textContent);
+    let paid = 0, due = 0, adv = 0;
+    [].slice.call(block.querySelectorAll(".payment-summary-row > span")).forEach(function(sp) {
+        const lab = String((sp.firstChild || {}).textContent || ""), v = trackPayNum((sp.querySelector(".num") || {}).textContent);
+        if (/المسدّد/.test(lab)) paid = v; else if (/مستحق الآن/.test(lab)) due = v; else if (/لم يصل/.test(lab)) adv = v;
+    });
+    return {
+        kind: "out",
+        total: total,
+        paid: paid,
+        rem: Math.max(0, total - paid),
+        over: 0,
+        due: due,
+        adv: adv
+    };
+}
+
+function trackPayState(f) {
+    return f.over > 0 ? "s-over" : f.total > 0 && f.rem < .005 ? "s-done" : f.paid > 0 ? "s-part" : "s-none";
+}
+
+function trackPayEnsure(block) {
+    const f = trackPayFigures(block), head = block.querySelector(":scope > .pay-block-head");
+    if (!f || !head) return;
+    let strip = block.querySelector(":scope > .trk-pay-strip");
+    if (!strip) {
+        strip = document.createElement("div");
+        strip.className = "trk-pay-strip";
+        head.parentNode.insertBefore(strip, head.nextSibling);
+    }
+    const st = trackPayState(f);
+    const cell = function(cls, lab, val) {
+        return '<div class="trk-pay-cell ' + cls + '"><span class="trk-pay-l">' + lab + '</span><b class="trk-pay-v">' + trackPayMoney(val) + "<small> ر.س</small></b></div>";
+    };
+    const pct = f.total > 0 ? Math.max(0, Math.min(100, Math.round(f.paid / f.total * 100))) : 0;
+    const sub = [ f.due > 0 ? "مستحق الآن " + trackPayMoney(f.due) : "", f.adv > 0 ? "لم يصل بعد " + trackPayMoney(f.adv) : "" ].filter(Boolean).join(" · ");
+    const h = cell("trk-pc-t", "الإجمالي", f.total) + cell("trk-pc-p", f.kind === "in" ? "المدفوع" : "المسدّد", f.paid) + (f.over > 0 ? cell("trk-pc-r trk-over", "زيادة", f.over) : cell("trk-pc-r" + (st === "s-done" ? " trk-done" : ""), "المتبقي", f.rem)) + '<div class="trk-pay-bar' + (f.kind === "out" ? " trk-bar-out" : "") + '"><i style="width:' + pct + '%"></i></div>' + (sub ? '<div class="trk-pay-sub">' + escapeHtml(sub) + "</div>" : "");
+    if (strip._trkH !== h) {
+        strip.innerHTML = h;
+        strip._trkH = h;
+    }
+    let chip = head.querySelector(".trk-pay-chip");
+    if (!chip) {
+        chip = document.createElement("span");
+        head.appendChild(chip);
+    }
+    const ct = f.over > 0 ? "زيادة" : st === "s-done" ? "مكتمل" : st === "s-part" ? "جزئي" : "لا دفعات";
+    chip.className = "trk-pay-chip trk-" + st;
+    if (chip.textContent !== ct) chip.textContent = ct;
+    block.classList.add("trk-pay");
+}
+
+function trackPayApply() {
+    try {
+        const card = document.querySelector("#modal-root .modal-card");
+        if (!card || !card.querySelector("#add-payment-btn")) return;
+        card.classList.add("trk-payo");
+        [].slice.call(card.querySelectorAll(".customer-pay-block, .supplier-pay-block")).forEach(function(b) {
+            try {
+                trackPayEnsure(b);
+            } catch (e2) {
+                b.classList.remove("trk-pay");
+            }
+        });
+    } catch (e) {}
+}
+
 function trackCarSummary(card) {
     const q = function(s) {
         return card.querySelector(s);
@@ -76234,6 +76364,7 @@ function trackAcctApply() {
                 trackAcctApply();
                 trackFooterApply();
                 trackOrderModalApply();
+                trackPayApply();
                 return r;
             };
         }
@@ -76252,6 +76383,7 @@ function trackAcctApply() {
                 trackAcctApply();
                 trackFooterApply();
                 trackOrderModalApply();
+                trackPayApply();
                 return r;
             };
         }
