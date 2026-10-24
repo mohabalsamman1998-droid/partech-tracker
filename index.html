@@ -1708,16 +1708,19 @@
   .trk-c4{--trk-c:var(--green);--trk-dim:var(--green-dim);--trk-line:var(--green-line);}
   .trk-root{margin:0 0 12px;}
   .trk-perf{margin:0 0 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;}
-  .trk-pcells{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));direction:rtl;}
-  .trk-pc{display:flex;flex-direction:column;align-items:center;gap:0;padding:8px 4px 8px;text-align:center;border-top:3px solid var(--border);}
+  .trk-pcells{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.5fr) minmax(0,1fr);direction:rtl;}
+  .trk-pc{appearance:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;margin:0;padding:8px 4px 8px;font:inherit;color:inherit;text-align:center;background:var(--surface-2);border:0;border-top:3px solid var(--border);cursor:pointer;}
+  .trk-pc:active,.trk-pcb:active,.trk-pavg:active{filter:brightness(1.15);}
+  .trk-pcb{appearance:none;position:relative;margin:0;padding:3px 6px;font:inherit;font-size:13px;font-weight:700;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:999px;cursor:pointer;}
+  .trk-pcb::after{content:'';position:absolute;inset:-7px -3px;}
   .trk-pc + .trk-pc{border-inline-start:1px solid var(--border);}
   .trk-pc-a{border-top-color:var(--text-dim);}
   .trk-pc-b{border-top-color:var(--sg-violet);}
   .trk-pc-c{border-top-color:var(--green);}
   .trk-pcn{font-size:22px;font-weight:800;line-height:1.25;color:var(--text);font-variant-numeric:tabular-nums;}
   .trk-pcl{font-size:13px;font-weight:700;color:var(--text-dim);}
-  .trk-pcs{font-size:13px;font-weight:700;color:var(--text);}
-  .trk-pavg{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 12px;border-top:1px solid var(--border);border-inline-start:3px solid var(--amber);font-size:13px;font-weight:700;color:var(--text-dim);}
+  .trk-pcs{display:flex;flex-wrap:wrap;justify-content:center;gap:4px;margin-top:4px;font-size:13px;font-weight:700;color:var(--text);}
+  .trk-pavg{appearance:none;display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;min-height:44px;margin:0;padding:6px 12px;font:inherit;text-align:start;background:var(--surface-2);cursor:pointer;border:0;border-top:1px solid var(--border);border-inline-start:3px solid var(--amber);font-size:13px;font-weight:700;color:var(--text-dim);}
   .trk-pavg b{color:var(--text);font-weight:800;}
   .trk-top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 10px;}
   .trk-btn{min-height:44px;padding:8px 14px;font:inherit;font-size:14px;font-weight:700;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;}
@@ -74367,12 +74370,12 @@ function trackPerfHtml(p, period) {
     const v = function(x) {
         return x == null ? "…" : String(x);
     };
-    const cell = function(cls, big, lab, sub) {
-        return '<div class="trk-pc ' + cls + '"><span class="trk-pcn num">' + big + '</span><span class="trk-pcl">' + lab + "</span>" + (sub ? '<span class="trk-pcs">' + sub + "</span>" : "") + "</div>";
+    const tap = function(cls, id, big, lab) {
+        return '<button type="button" class="trk-pc ' + cls + '" data-trk-perf="' + id + '"><span class="trk-pcn num">' + big + '</span><span class="trk-pcl">' + lab + " ‹</span></button>";
     };
     const hasKinds = p && p.n != null && p.u != null;
-    const sub = hasKinds ? '<bdi dir="ltr">' + p.n + '</bdi> جديد · <bdi dir="ltr">' + p.u + "</bdi> مستخدم" : "";
-    return '<div class="trk-perf" aria-label="مؤشر الأداء"><div class="trk-pcells">' + cell("trk-pc-a", v(p && p.created), "طلبيات") + cell("trk-pc-b", v(p && p.priced), "مسعّرة", sub) + cell("trk-pc-c", v(p && p.success), "ناجحة") + '</div><div class="trk-pavg"><span>متوسط وقت التسعير</span><b>' + (p && p.avg != null ? escapeHtml(p.avg) : "…") + "</b></div></div>";
+    const kinds = hasKinds ? '<span class="trk-pcs"><button type="button" class="trk-pcb" data-trk-perf="pricedNew"><bdi dir="ltr">' + p.n + '</bdi> جديد</button><button type="button" class="trk-pcb" data-trk-perf="pricedUsed"><bdi dir="ltr">' + p.u + "</bdi> مستخدم</button></span>" : "";
+    return '<div class="trk-perf" aria-label="مؤشر الأداء"><div class="trk-pcells">' + tap("trk-pc-a", "created", v(p && p.created), "طلبيات") + '<div class="trk-pc trk-pc-b"><span class="trk-pcn num">' + v(p && p.priced) + '</span><span class="trk-pcl">مسعّرة</span>' + kinds + "</div>" + tap("trk-pc-c", "success", v(p && p.success), "ناجحة") + '</div><button type="button" class="trk-pavg" data-trk-perf="avgTime"><span>متوسط وقت التسعير ‹</span><b>' + (p && p.avg != null ? escapeHtml(p.avg) : "…") + "</b></button></div>";
 }
 
 function trackKindsCounts(orders, range, ready) {
@@ -74948,6 +74951,17 @@ function trackOnClick(e) {
             e.preventDefault();
             e.stopPropagation();
             trackLogout();
+            return;
+        }
+        const pf = t.closest("[data-trk-perf]");
+        if (pf) {
+            e.preventDefault();
+            e.stopPropagation();
+            let ok = false;
+            try {
+                ok = typeof kpiwOpenOpsList === "function" && kpiwOpenOpsList(pf.getAttribute("data-trk-perf"));
+            } catch (e2) {}
+            if (!ok) showToast("بيانات الفترة لم تُحمَّل بعد — جرّب بعد لحظات", "error");
             return;
         }
         const supply = t.closest("[data-trk-supply]");
