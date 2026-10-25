@@ -1560,8 +1560,11 @@
   /* SUPTGT END css */
   /* SUPCOPY BEGIN css */
   /* زر «نسخ للمورد» ونافذته (SUPCOPY): خيارات الإظهار + معاينة النص */
-  .supcopy-opt{display:flex;align-items:center;gap:8px;margin:8px 0;font-size:14px;cursor:pointer;}
-  .supcopy-opt input{width:18px;height:18px;accent-color:var(--green);flex:0 0 auto;}
+  .supcopy-opt{display:flex;align-items:center;gap:10px;margin:0;min-height:44px;font-size:14px;cursor:pointer;}
+  .supcopy-opt input{width:20px;height:20px;accent-color:var(--green);flex:0 0 auto;}
+  .supcopy-words-label{margin:10px 0 6px;font-size:13px;color:var(--text-dim);}
+  .supcopy-words{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px;}
+  .supcopy-word[aria-pressed="true"]::before{content:'✓';margin-inline-end:6px;font-weight:800;}
   .supcopy-preview{display:block;width:100%;box-sizing:border-box;margin-top:8px;min-height:170px;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-family:inherit;font-size:13px;line-height:1.7;resize:vertical;direction:rtl;white-space:pre-wrap;}
   .supcopy-view-row{margin:10px 0;}
   .supcopy-btn{margin-inline-start:8px;}
@@ -72296,6 +72299,62 @@ function supcopyHas(order, key) {
     });
 }
 
+const SUPCOPY_WORDS = [ [ "new", "جديد" ], [ "used", "مستعمل" ], [ "oem", "أصلي" ], [ "first", "درجة أولى" ], [ "any", "المتوفر" ] ];
+
+const SUPCOPY_WORDS_DEFAULT = {
+    new: false,
+    used: true,
+    oem: true,
+    first: true,
+    any: true
+};
+
+const SUPCOPY_WORDS_KEY = "partech-supcopy-words";
+
+function supcopyWordLabel(k) {
+    const x = SUPCOPY_WORDS.filter(function(w) {
+        return w[0] === k;
+    })[0];
+    return x ? x[1] : "";
+}
+
+function supcopyWordsLoad() {
+    const w = Object.assign({}, SUPCOPY_WORDS_DEFAULT);
+    try {
+        const raw = JSON.parse(localStorage.getItem(SUPCOPY_WORDS_KEY) || "null");
+        if (raw && typeof raw === "object") SUPCOPY_WORDS.forEach(function(x) {
+            if (typeof raw[x[0]] === "boolean") w[x[0]] = raw[x[0]];
+        });
+    } catch (e) {}
+    return w;
+}
+
+function supcopyWordsSave(w) {
+    try {
+        localStorage.setItem(SUPCOPY_WORDS_KEY, JSON.stringify(w));
+    } catch (e) {}
+}
+
+function supcopyPartKeys(p) {
+    const k = [ p && p.used ? "used" : "new" ];
+    if (p && Object.prototype.hasOwnProperty.call(SUPCOPY_QUALITY, p.quality)) k.push(p.quality);
+    return k;
+}
+
+function supcopyWordsPresent(order) {
+    const seen = {};
+    supcopyParts(order).forEach(function(p) {
+        supcopyPartKeys(p).forEach(function(k) {
+            seen[k] = true;
+        });
+    });
+    return SUPCOPY_WORDS.filter(function(x) {
+        return seen[x[0]];
+    }).map(function(x) {
+        return x[0];
+    });
+}
+
 function supcopyBuildText(order, o) {
     const opt = o || {};
     const parts = supcopyParts(order);
@@ -72308,12 +72367,12 @@ function supcopyBuildText(order, o) {
     lines.push("");
     lines.push("القطع المطلوبة:");
     let total = 0, priced = 0;
+    const wd = opt.words || SUPCOPY_WORDS_DEFAULT;
     parts.forEach(function(p, i) {
         const qty = Number(p.qty) > 0 ? Math.floor(Number(p.qty)) || 1 : 1;
-        const tags = [];
-        if (p.used === true) tags.push("مستعمل");
-        const ql = Object.prototype.hasOwnProperty.call(SUPCOPY_QUALITY, p.quality) ? SUPCOPY_QUALITY[p.quality] : "";
-        if (ql) tags.push(ql);
+        const tags = supcopyPartKeys(p).filter(function(k) {
+            return wd[k];
+        }).map(supcopyWordLabel);
         const kind = tags.length ? " (" + tags.join(" · ") + ")" : "";
         lines.push(i + 1 + ". " + String(p.description).trim() + kind + " × " + qty);
         const pn = String(p.partNumber || "").trim();
@@ -72347,10 +72406,15 @@ function supcopyDialog(order) {
     if (!root) return false;
     const st = {
         cost: false,
-        notes: true
+        notes: true,
+        words: supcopyWordsLoad()
     };
+    const present = supcopyWordsPresent(order);
+    const wordsHtml = present.length ? '<div class="supcopy-words-label">الكلمات بجانب كل قطعة</div><div class="supcopy-words" role="group" aria-label="الكلمات بجانب كل قطعة">' + present.map(function(k) {
+        return '<button type="button" class="chip supcopy-word' + (st.words[k] ? " chip-active" : "") + '" data-supcopy-word="' + k + '" aria-pressed="' + (st.words[k] ? "true" : "false") + '">' + supcopyWordLabel(k) + "</button>";
+    }).join("") + "</div>" : "";
     const hasCost = supcopyHas(order, "cost"), hasNotes = supcopyHas(order, "notes");
-    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true" data-supcopy-dialog>' + '<div class="modal-title">' + SUPCOPY_LABEL + "</div>" + (hasCost ? '<label class="supcopy-opt"><input type="checkbox" data-supcopy-opt="cost"><span>إظهار أسعار الشراء</span></label>' : "") + (hasNotes ? '<label class="supcopy-opt"><input type="checkbox" data-supcopy-opt="notes" checked><span>إظهار ملاحظات القطع</span></label>' : "") + '<textarea class="supcopy-preview" data-supcopy-preview readonly rows="10" dir="rtl" aria-label="معاينة النص"></textarea>' + '<div class="modal-footer-actions" style="margin-top:14px;justify-content:flex-end;flex-wrap:wrap;">' + '<button type="button" class="btn btn-ghost" data-supcopy-close>إغلاق</button>' + '<button type="button" class="btn btn-ghost" data-supcopy-copy>نسخ</button>' + '<a class="btn btn-primary" data-supcopy-wa href="#" target="_blank" rel="noopener" style="text-decoration:none;">💬 واتساب</a>' + "</div>" + "</div>" + "</div>";
+    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true" data-supcopy-dialog>' + '<div class="modal-title">' + SUPCOPY_LABEL + "</div>" + wordsHtml + (hasCost ? '<label class="supcopy-opt"><input type="checkbox" data-supcopy-opt="cost"><span>إظهار أسعار الشراء</span></label>' : "") + (hasNotes ? '<label class="supcopy-opt"><input type="checkbox" data-supcopy-opt="notes" checked><span>إظهار ملاحظات القطع</span></label>' : "") + '<textarea class="supcopy-preview" data-supcopy-preview readonly rows="10" dir="rtl" aria-label="معاينة النص"></textarea>' + '<div class="modal-footer-actions" style="margin-top:14px;justify-content:flex-end;flex-wrap:wrap;">' + '<button type="button" class="btn btn-ghost" data-supcopy-close>إغلاق</button>' + '<button type="button" class="btn btn-ghost" data-supcopy-copy>نسخ</button>' + '<a class="btn btn-primary" data-supcopy-wa href="#" target="_blank" rel="noopener" style="text-decoration:none;">💬 واتساب</a>' + "</div>" + "</div>" + "</div>";
     root.classList.add("modal-open");
     const pv = root.querySelector("[data-supcopy-preview]");
     const wa = root.querySelector("[data-supcopy-wa]");
@@ -72362,6 +72426,16 @@ function supcopyDialog(order) {
     root.querySelectorAll("[data-supcopy-opt]").forEach(function(c) {
         c.addEventListener("change", function() {
             st[c.getAttribute("data-supcopy-opt")] = !!c.checked;
+            paint();
+        });
+    });
+    root.querySelectorAll("[data-supcopy-word]").forEach(function(b) {
+        b.addEventListener("click", function() {
+            const k = b.getAttribute("data-supcopy-word");
+            st.words[k] = !st.words[k];
+            b.setAttribute("aria-pressed", st.words[k] ? "true" : "false");
+            b.classList.toggle("chip-active", !!st.words[k]);
+            supcopyWordsSave(st.words);
             paint();
         });
     });
