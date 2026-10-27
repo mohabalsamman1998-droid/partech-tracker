@@ -1702,7 +1702,8 @@
   .dnote-pick{min-height:44px;align-items:center;}
   /* ===== لوحة «التوصيل» (طلب المالك 2026-10-25): شريط الرئيسية + شاشة بخط مراحل التوصيل ===== */
   .dnote-pill-tl{background:var(--surface-2);border-color:var(--sg-teal);color:var(--sg-teal);}
-  .dnote-strip-host{margin:10px 0 0;}
+  .dnote-strip-host{margin:0 0 10px;}
+  .dnote-strip-host:empty{display:none;}
   .dnote-strip{appearance:none;display:flex;align-items:center;gap:10px;width:100%;min-height:48px;margin:0;padding:6px 12px;font:inherit;text-align:start;color:var(--text);background:var(--surface);border:1px solid var(--border);border-inline-start:6px solid var(--sg-teal);border-radius:var(--radius-sm);cursor:pointer;}
   .dnote-strip:active{filter:brightness(1.15);}
   .dnote-strip-t{font-size:14px;font-weight:800;white-space:nowrap;}
@@ -1827,7 +1828,7 @@
   .trk-chip{min-height:44px;padding:8px 14px;font:inherit;font-size:13.5px;font-weight:700;color:var(--text-dim);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;cursor:pointer;}
   .trk-chip-on{color:var(--text);border-color:var(--text-dim);}
   .trk-date{min-height:44px;padding:6px 10px;font:inherit;font-size:14px;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);}
-  .trk-perf + .trk-grid{padding-top:10px;border-top:1px dashed var(--border);}
+  .trk-perf ~ .trk-grid{padding-top:10px;border-top:1px dashed var(--border);}
   .trk-grid{direction:ltr;display:grid;grid-template-columns:minmax(0,1fr) 22px minmax(0,1fr) 22px minmax(0,1fr) 22px minmax(0,1fr);row-gap:6px;align-items:stretch;}
   .trk-cap{direction:rtl;text-align:center;font-size:13px;color:var(--text-dim);border-bottom:2px solid var(--border);padding-bottom:3px;}
   .trk-cap-now{grid-column:1 / 6;}
@@ -2250,6 +2251,11 @@
   .trk-prq .part-row > .part-desc-wrap > .media-strip:empty{display:none;}
   .trk-prq .part-row:not(.trk-notes-open) > .part-desc-wrap > .part-notes-input:placeholder-shown:not(:focus),.trk-prq .part-row:not(.trk-notes-open) > .part-desc-wrap > .part-purchasing-notes-input:placeholder-shown:not(:focus){display:none;}
   .trk-prq .part-row.trk-notes-open > .part-desc-wrap > .trk-notebtn,.trk-prq .part-row > .part-desc-wrap > .part-notes-input:focus ~ .trk-notebtn,.trk-prq .part-row > .part-desc-wrap > .part-purchasing-notes-input:focus ~ .trk-notebtn,.trk-prq .part-row > .part-desc-wrap > .part-notes-input:not(:placeholder-shown) ~ .trk-notebtn,.trk-prq .part-row > .part-desc-wrap > .part-purchasing-notes-input:not(:placeholder-shown) ~ .trk-notebtn{display:none;}
+  /* رقم القطعة عند الطلب فقط (طلب المالك 2026-10-27): سطر الخانة (التسمية + الحقل + زر البحث) مطوي ما دام الحقل فارغًا وبلا تركيز ولم يُفتح الكتالوج ولم يُضغط «+ رقم القطعة»؛ الزر مكانه ويختفي حين تظهر الخانة */
+  .trk-pr .part-row:not(.trk-pn-open):not(.trk-cat-open):not(:has(.part-pn-input:focus)):not(:has(.part-pn-input:not(:placeholder-shown))) .part-pn-block > .part-pn-row{display:none;}
+  .trk-pr .trk-pnbtn{align-self:flex-start;flex:0 0 auto;min-height:44px;padding:0 12px;font:inherit;font-size:13px;font-weight:700;color:var(--text-dim);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;cursor:pointer;}
+  .trk-pr .part-row.trk-pn-open .trk-pnbtn,.trk-pr .part-row.trk-cat-open .trk-pnbtn,.trk-pr .part-row:has(.part-pn-input:focus) .trk-pnbtn,.trk-pr .part-row:has(.part-pn-input:not(:placeholder-shown)) .trk-pnbtn{display:none;}
+  .trk-prq .part-row > .part-desc-wrap > .trk-pnbtn{order:8;flex:0 0 auto;}
   /* TRACK END css */
   /* PDOC BEGIN css */
   /* PDOC: مستندات العملاء والموردين — كل قاعدة بسابقة pdoc- ، لا ألوان صلبة خارج المتغيرات، وكل الأزرار مصمتة */
@@ -74838,7 +74844,8 @@ function dnoteBoardRender() {
 
 function dnoteStripInner() {
     const B = dnoteBoard, c = dnoteBoardCounts();
-    const pills = c.pickup + c.delivery ? (c.pickup ? '<span class="dnote-pill dnote-pill-warn">بانتظار المندوب ' + c.pickup + "</span>" : "") + (c.delivery ? '<span class="dnote-pill dnote-pill-tl">مع المندوب ' + c.delivery + "</span>" : "") : '<span class="dnote-strip-none">' + (B.at ? "لا طلبيات الآن" : B.err ? "تعذّر التحميل — اضغط للمحاولة" : "جارٍ التحميل…") + "</span>";
+    if (!(c.pickup + c.delivery)) return "";
+    const pills = (c.pickup ? '<span class="dnote-pill dnote-pill-warn">بانتظار المندوب ' + c.pickup + "</span>" : "") + (c.delivery ? '<span class="dnote-pill dnote-pill-tl">مع المندوب ' + c.delivery + "</span>" : "");
     const pills2 = pills + (B.err && B.at ? '<span class="dnote-strip-none">لم يتحدّث</span>' : "");
     return '<button type="button" class="dnote-strip" data-dnote-board><span class="dnote-strip-t">في التوصيل</span><span class="dnote-strip-c">' + pills2 + '</span><span class="dnote-strip-go">عرض ‹</span></button>';
 }
@@ -77147,7 +77154,7 @@ function trackRender() {
         if (perf) trackFlowMemo.v.perf = perf; else if (trackFlowMemo.v.perf) perf = trackFlowMemo.v.perf;
         const elev = trackIsElevated();
         const topHtml = '<div class="trk-top">' + '<button type="button" class="trk-btn" data-trk-period aria-expanded="' + (trackPeriodOpen ? "true" : "false") + '">الفترة: ' + escapeHtml(trackPeriodLabel()) + " ▾</button>" + (elev ? '<button type="button" class="trk-btn" data-trk-chart aria-expanded="' + (trackChartOn() ? "true" : "false") + '">الرسم البياني</button>' : "") + "</div>" + (trackPeriodOpen ? trackPeriodPopHtml() : "");
-        const bodyHtml = trackDueBannerHtml() + trackPerfHtml(perf) + '<div class="trk-grid">' + '<div class="trk-cap trk-cap-now">الآن</div><div></div><div class="trk-cap trk-cap-per">في الفترة</div>' + trackCardHtml(1, sum) + '<div class="trk-arrow"><span>›</span></div>' + trackCardHtml(2, sum) + '<div class="trk-arrow"><span>›</span></div>' + trackCardHtml(3, sum) + '<div class="trk-arrow"><span>›</span></div>' + trackCardHtml(4, sum) + "</div>" + trackDeliveryStrip();
+        const bodyHtml = trackDueBannerHtml() + trackPerfHtml(perf) + trackDeliveryStrip() + '<div class="trk-grid">' + '<div class="trk-cap trk-cap-now">الآن</div><div></div><div class="trk-cap trk-cap-per">في الفترة</div>' + trackCardHtml(1, sum) + '<div class="trk-arrow"><span>›</span></div>' + trackCardHtml(2, sum) + '<div class="trk-arrow"><span>›</span></div>' + trackCardHtml(3, sum) + '<div class="trk-arrow"><span>›</span></div>' + trackCardHtml(4, sum) + "</div>";
         const top = trackPart(host, "trk-tophost"), body = trackPart(host, "trk-bodyhost");
         if (topHtml !== trackLastHtml.top) {
             const act = document.activeElement;
@@ -79167,7 +79174,8 @@ function trackOrderModalApply() {
 
 const trackPrOpen = {
     cat: new Set,
-    note: new Set
+    note: new Set,
+    pn: new Set
 };
 
 let trackPrBusy = false, trackPrDead = false, trackPrObs = null;
@@ -79208,6 +79216,16 @@ function trackPrApply() {
                     if (cb) cb.remove();
                     row.classList.remove("trk-cat-open");
                 }
+                const pni = pnb ? pnb.querySelector(".part-pn-input") : null;
+                let pb = row.querySelector(".trk-pnbtn");
+                if (pni) {
+                    if (!pb) pb = trackPrBtn("trk-pnbtn", "+ رقم القطعة");
+                    if (pb.nextElementSibling !== pnb) pnb.insertAdjacentElement("beforebegin", pb);
+                    row.classList.toggle("trk-pn-open", trackPrOpen.pn.has(key));
+                } else {
+                    if (pb) pb.remove();
+                    row.classList.remove("trk-pn-open");
+                }
                 if (pair[1]) {
                     const ni = row.querySelector(".part-notes-input, .part-purchasing-notes-input");
                     let nb = row.querySelector(".trk-notebtn");
@@ -79242,11 +79260,11 @@ function trackPrOff() {
             const list = document.getElementById(id);
             if (!list) return;
             list.classList.remove("trk-pr", "trk-prq");
-            [].slice.call(list.querySelectorAll(".trk-catbtn, .trk-notebtn")).forEach(function(b) {
+            [].slice.call(list.querySelectorAll(".trk-catbtn, .trk-notebtn, .trk-pnbtn")).forEach(function(b) {
                 b.remove();
             });
-            [].slice.call(list.querySelectorAll(".trk-cat-open, .trk-notes-open")).forEach(function(r) {
-                r.classList.remove("trk-cat-open", "trk-notes-open");
+            [].slice.call(list.querySelectorAll(".trk-cat-open, .trk-notes-open, .trk-pn-open")).forEach(function(r) {
+                r.classList.remove("trk-cat-open", "trk-notes-open", "trk-pn-open");
             });
         });
     } catch (e) {}
@@ -79265,11 +79283,22 @@ function trackPrSchedule() {
 function trackPrOnClick(ev) {
     if (trackPrDead) return;
     try {
-        const b = ev.target && ev.target.closest ? ev.target.closest(".trk-catbtn, .trk-notebtn") : null;
+        const b = ev.target && ev.target.closest ? ev.target.closest(".trk-catbtn, .trk-notebtn, .trk-pnbtn") : null;
         if (!b) return;
         const row = b.closest(".part-row"), list = row ? row.closest(".trk-pr") : null;
         if (!list) return;
         ev.preventDefault();
+        if (b.classList.contains("trk-pnbtn")) {
+            trackPrOpen.pn.add(trackPrKey(list, row));
+            trackPrApply();
+            const pi = row.querySelector(".part-pn-input");
+            if (pi) {
+                try {
+                    pi.focus();
+                } catch (e) {}
+            }
+            return;
+        }
         const key = trackPrKey(list, row), cat = b.classList.contains("trk-catbtn"), set = cat ? trackPrOpen.cat : trackPrOpen.note;
         const open = !set.has(key);
         if (open) set.add(key); else set.delete(key);
@@ -79301,6 +79330,7 @@ function trackPrInstall() {
                 if (root.querySelector("#quote-parts-list, #parts-list")) trackPrSchedule(); else {
                     trackPrOpen.cat.clear();
                     trackPrOpen.note.clear();
+                    trackPrOpen.pn.clear();
                 }
             });
             trackPrObs.observe(root, {
