@@ -2321,6 +2321,17 @@
   .pdoc-prof-t{font-size:14px;font-weight:800;}
   .pdoc-prof-s{flex:1 1 120px;min-width:0;font-size:13px;color:var(--text-dim);overflow-wrap:anywhere;}
   .pdoc-prof-h .pdoc-prof-b{flex:0 0 auto;min-width:88px;}
+  /* قراءة استمارة المركبة بعارض صور الطلب: لوحة تحت الصورة، وعند فتحها يُخفى شريط التنقل ويصغر العرض ليتسع المحتوى */
+  .pdoc-v{display:flex;flex-direction:column;gap:8px;min-width:0;}
+  .pdoc-v .pdoc-v-go{width:100%;flex:none;}
+  .media-viewer.pdoc-v-open .media-viewer-foot{display:none;}
+  .media-viewer.pdoc-v-open .media-viewer-stage{min-height:110px;}
+  .media-viewer.pdoc-v-open .media-viewer-stage img{max-height:24vh;}
+  .pdoc-v .pdoc-ex{margin-top:0;max-height:54vh;max-height:54dvh;overflow-y:auto;overscroll-behavior:contain;}
+  .pdoc-v .pdoc-fx{flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px 10px;}
+  .pdoc-v .pdoc-fx-l{flex:0 0 84px;}
+  .pdoc-v .pdoc-fx-i{flex:1 1 0;min-width:0;}
+  .pdoc-v .pdoc-fx-r{flex:1 1 100%;}
   /* PDOC END css */
   /* TAXINV BEGIN css */
   /* ===== TAXINV — الفاتورة الضريبية (المرحلة الأولى) — كل القواعد بنطاق .taxinv-* =====
@@ -75757,6 +75768,12 @@ function pdocExErr(code) {
     return PDOC_EX_MSG[code] || "تعذّرت قراءة المستند — حاول مرة أخرى";
 }
 
+function pdocExCall(body) {
+    return withTimeout(sb.functions.invoke("pdoc-extract", {
+        body: body
+    }), 95e3, "extract");
+}
+
 function pdocExKeys(sh) {
     if (sh.kind !== "customer") return PDOC_EX_ORDER.slice();
     const out = [];
@@ -75856,11 +75873,9 @@ async function pdocExStart(did) {
     };
     pdocRender();
     try {
-        const r = await withTimeout(sb.functions.invoke("pdoc-extract", {
-            body: {
-                doc_id: did
-            }
-        }), 95e3, "extract");
+        const r = await pdocExCall({
+            doc_id: did
+        });
         if (pdocSheet !== sh || !sh.ex || sh.ex.did !== did) return;
         if (r && r.error) {
             const st = r.error.context && r.error.context.status;
@@ -76269,6 +76284,345 @@ function pdocOnInput(ev) {
         pdocSchedule();
     } catch (e) {
         console.error("PDOC install:", e);
+    }
+})();
+
+const PDOC_V_LABELS = {
+    vin: "رقم الهيكل",
+    make: "الماركة",
+    model: "الموديل",
+    year: "سنة الصنع"
+};
+
+const PDOC_V_ORDER = [ "vin", "make", "model", "year" ];
+
+const PDOC_V_RE = {
+    vin: /^[A-HJ-NPR-Z0-9]{17}$/,
+    year: /^(19[5-9][0-9]|20[0-9]{2})$/
+};
+
+function pdocVCtx() {
+    try {
+        const v = typeof mediaViewer !== "undefined" ? mediaViewer : null;
+        if (!v || v.local || v.key !== "_block" || !pdocOn()) return null;
+        const row = mediaRowById(v.orderId, v.ids[v.idx]);
+        if (!row || row.media_type !== "image" || !row.id) return null;
+        let prefix = "", d = null;
+        if (typeof draft !== "undefined" && draft && draft.id === v.orderId) {
+            prefix = "order";
+            d = draft;
+        } else if (typeof quoteDraft !== "undefined" && quoteDraft && quoteDraft.id === v.orderId) {
+            prefix = "quote";
+            d = quoteDraft;
+        }
+        if (!d) return null;
+        const inp = document.getElementById(prefix + "-vin-input");
+        if (!inp || inp.readOnly) return null;
+        return {
+            v: v,
+            row: row,
+            prefix: prefix,
+            d: d,
+            inp: inp
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
+function pdocVState(ctx) {
+    return ctx.v.pdocV && ctx.v.pdocV.mid === ctx.row.id ? ctx.v.pdocV : null;
+}
+
+function pdocVExisting(ctx) {
+    const c = (typeof normalizeCar === "function" ? normalizeCar(ctx.d.car) : ctx.d.car) || {};
+    return {
+        vin: normalizeVin(ctx.inp.value),
+        make: String(c.make || ""),
+        model: String(c.model || ""),
+        year: c.year ? String(c.year) : ""
+    };
+}
+
+function pdocVBuild(ctx, data) {
+    const cur = pdocVExisting(ctx), f = data.fields || {}, rows = [];
+    let same = 0;
+    const make0 = typeof carCanonMake === "function" && f.make ? carCanonMake(f.make) : f.make || "";
+    PDOC_V_ORDER.forEach(function(k) {
+        let v = f[k];
+        if (v === undefined || v === null || v === "") return;
+        v = String(v);
+        try {
+            if (k === "make" && typeof carCanonMake === "function") v = carCanonMake(v) || v;
+            if (k === "model" && typeof carCanonModel === "function") v = carCanonModel(make0 || cur.make, v) || v;
+        } catch (e) {}
+        const c = String(cur[k] || "");
+        if (c && c.toLowerCase() === v.toLowerCase()) {
+            same++;
+            return;
+        }
+        rows.push({
+            key: k,
+            val: v,
+            cur: c,
+            on: !c
+        });
+    });
+    return {
+        mid: ctx.row.id,
+        phase: "review",
+        rows: rows,
+        same: same,
+        plate: String(f.plate || ""),
+        rejected: (data.rejected || []).length
+    };
+}
+
+function pdocVValid(r) {
+    const v = String(r.val || "").trim();
+    return !!v && (!PDOC_V_RE[r.key] || PDOC_V_RE[r.key].test(r.key === "vin" ? v.toUpperCase() : v));
+}
+
+function pdocVCanFill(p) {
+    return !!p && p.phase === "review" && p.rows.some(function(r) {
+        return r.on && pdocVValid(r);
+    });
+}
+
+function pdocVHtml(ctx) {
+    const p = pdocVState(ctx);
+    if (!p || p.phase === "idle") return '<button type="button" class="btn btn-primary pdoc-b pdoc-v-go" data-pdoc-v-act="start">قراءة الاستمارة</button>';
+    if (p.phase === "consent") return '<div class="pdoc-ex"><div class="pdoc-note">لقراءة الاستمارة تُرسَل الصورة إلى خدمة كلود (شركة أنثروبيك) ولا تُحفظ لديها. تظهر البيانات كاقتراحات تراجعها بنفسك، ولا يُحفظ شيء قبل أن تحفظ الطلبية. متابعة؟</div><div class="pdoc-fx-a"><button type="button" class="btn btn-primary pdoc-b" data-pdoc-v-act="consent-ok">متابعة</button><button type="button" class="btn pdoc-b" data-pdoc-v-act="close">إلغاء</button></div></div>';
+    if (p.phase === "loading") return '<div class="pdoc-ex"><div class="pdoc-note">جارٍ قراءة الاستمارة... تُرسَل الصورة لخدمة كلود للقراءة</div></div>';
+    if (p.phase === "error") return '<div class="pdoc-ex"><div class="pdoc-err">' + escapeHtml(p.msg) + '</div><div class="pdoc-fx-a"><button type="button" class="btn pdoc-b" data-pdoc-v-act="close">إغلاق</button></div></div>';
+    let h = '<div class="pdoc-ex"><div class="pdoc-lbl">بيانات مقترحة من الاستمارة</div>';
+    p.rows.forEach(function(r) {
+        const bad = r.on && !pdocVValid(r);
+        h += '<div class="pdoc-fx"><span class="pdoc-fx-l">' + escapeHtml(PDOC_V_LABELS[r.key]) + "</span>" + '<input type="text" class="pdoc-fx-i' + (bad ? " pdoc-fx-bad" : "") + '" data-pdoc-v-fx="' + r.key + '" value="' + escapeHtml(r.val) + '"' + (r.key === "vin" ? ' dir="ltr" autocapitalize="characters" spellcheck="false" maxlength="30"' : r.key === "year" ? ' dir="ltr" inputmode="numeric" maxlength="4"' : "") + (r.on ? "" : " disabled") + ' autocomplete="off">' + (r.cur ? '<div class="pdoc-fx-r"><span class="pdoc-fx-cur">الحالي: ' + escapeHtml(r.cur) + '</span><button type="button" class="chip pdoc-chip pdoc-fx-t' + (r.on ? " pdoc-chip-on" : "") + '" data-pdoc-v-act="toggle" data-pdoc-v-key="' + r.key + '" aria-pressed="' + (r.on ? "true" : "false") + '">استبدال الحالي</button></div>' : "") + "</div>";
+    });
+    if (!p.rows.length) h += '<div class="pdoc-note">' + (p.same ? "البيانات المقروءة مطابقة لما هو مسجّل" : p.plate ? "لا بيانات جديدة للطلبية" : "لم أجد بيانات واضحة بالاستمارة") + "</div>";
+    if (p.plate) h += '<div class="pdoc-fx-name"><span class="pdoc-fx-cur">رقم اللوحة بالاستمارة: ' + escapeHtml(p.plate) + '</span><button type="button" class="btn pdoc-b" data-pdoc-v-act="copy-plate">نسخ</button></div>';
+    if (p.rejected) h += '<div class="pdoc-note">تجاهلتُ ' + p.rejected + " من البيانات لأن صيغتها غير صحيحة</div>";
+    if (p.rows.length) h += '<div class="pdoc-note">لا يُحفظ شيء قبل أن تحفظ الطلبية بنفسك</div>';
+    h += '<div class="pdoc-fx-a">' + (p.rows.length ? '<button type="button" class="btn btn-primary pdoc-b pdoc-fill" data-pdoc-v-act="fill"' + (pdocVCanFill(p) ? "" : " disabled") + ">تعبئة</button>" : "") + '<button type="button" class="btn pdoc-b" data-pdoc-v-act="close">' + (p.rows.length ? "إلغاء" : "إغلاق") + "</button></div></div>";
+    return h;
+}
+
+function pdocVApply() {
+    try {
+        const card = document.querySelector("#confirm-root .media-viewer");
+        if (!card) return;
+        const old = card.querySelector(".pdoc-v");
+        if (old) old.remove();
+        card.classList.remove("pdoc-v-open");
+        const ctx = pdocVCtx();
+        if (!ctx) return;
+        const stage = card.querySelector(".media-viewer-stage");
+        if (!stage) return;
+        stage.insertAdjacentHTML("afterend", '<div class="pdoc-v">' + pdocVHtml(ctx) + "</div>");
+        const p = pdocVState(ctx);
+        card.classList.toggle("pdoc-v-open", !!(p && p.phase !== "idle"));
+        if (!card.__pdvBound) {
+            card.__pdvBound = true;
+            card.addEventListener("click", pdocVOnClick);
+            card.addEventListener("input", pdocVOnInput);
+        }
+    } catch (e) {
+        console.error("PDOC vehicle form:", e);
+    }
+}
+
+async function pdocVRun(ctx0) {
+    const v = ctx0.v, mid = ctx0.row.id;
+    let st = null;
+    try {
+        const r = await pdocExCall({
+            source: "order_media",
+            id: mid
+        });
+        if (r && r.error) {
+            const s = r.error.context && r.error.context.status;
+            st = {
+                phase: "error",
+                msg: s === 404 ? pdocExErr("not-configured") : pdocExErr("")
+            };
+        } else if (!r || !r.data || r.data.ok !== true) st = {
+            phase: "error",
+            msg: pdocExErr(r && r.data && r.data.code)
+        }; else {
+            const ctx = pdocVCtx();
+            if (!ctx || ctx.v !== v || ctx.row.id !== mid) return;
+            st = pdocVBuild(ctx, r.data);
+        }
+    } catch (e) {
+        st = {
+            phase: "error",
+            msg: /TIMEOUT/.test(String(e && e.message)) ? "انتهت المهلة — حاول مرة أخرى" : pdocExErr("")
+        };
+    }
+    if (typeof mediaViewer === "undefined" || mediaViewer !== v || !v.pdocV || v.pdocV.mid !== mid || v.pdocV.phase !== "loading") return;
+    v.pdocV = Object.assign({
+        mid: mid
+    }, st);
+    pdocVApply();
+}
+
+function pdocVFill(ctx, p) {
+    if (!pdocVCanFill(p)) {
+        showToast("لا توجد بيانات صالحة للتعبئة", "error");
+        return;
+    }
+    const vals = {};
+    let bad = 0;
+    p.rows.forEach(function(r) {
+        if (!r.on) return;
+        const t = String(r.val || "").trim();
+        if (pdocVValid(r)) vals[r.key] = r.key === "vin" ? t.toUpperCase() : t; else if (t) bad++;
+    });
+    if (bad) showToast("تجاهلتُ " + bad + " من الحقول بصيغة غير صحيحة", "error");
+    const d = ctx.d, prefix = ctx.prefix, vinInput = ctx.inp;
+    closeMediaViewer();
+    let n = 0;
+    if (vals.vin) {
+        d.vin = vals.vin;
+        vinInput.value = vals.vin;
+        vinInput.classList.add("pdoc-filled");
+        vinInput.addEventListener("input", function() {
+            vinInput.classList.remove("pdoc-filled");
+        }, {
+            once: true
+        });
+        if (typeof refreshVinHint === "function") refreshVinHint(prefix, vals.vin);
+        n++;
+    }
+    const base = normalizeCar(d.car) || {};
+    const carBits = !!(vals.make || vals.model || vals.year);
+    const runDecode = vinLooksValid(normalizeVin(d.vin)) && !(base.make && base.model && base.year);
+    if ((carBits || runDecode) && typeof openCarGate === "function") pdocVOpenGate(ctx, vals, runDecode); else showToast(n ? "تمت التعبئة — احفظ الطلبية بعد المراجعة" : "لم تُعبّأ حقول", n ? "ok" : "error");
+}
+
+function pdocVOpenGate(ctx, vals, runDecode) {
+    const d = ctx.d, prefix = ctx.prefix;
+    const getDraft = prefix === "quote" ? function() {
+        return quoteDraft;
+    } : function() {
+        return draft;
+    };
+    const openedFor = d.id, openedVin = normalizeVin(d.vin);
+    const base = normalizeCar(d.car) || {};
+    const make = vals.make ? carCanonMake(vals.make) || vals.make : base.make || "";
+    const model = vals.model ? carCanonModel(make, vals.model) || vals.model : base.model || "";
+    const year = vals.year ? Number(vals.year) : base.year || null;
+    const keep = make === (base.make || "") && model === (base.model || "");
+    openCarGate({
+        title: d.car ? "تغيير السيارة" : "اختيار السيارة",
+        sub: "راجع السيارة المقروءة من الاستمارة ثم احفظها",
+        confirmLabel: "حفظ السيارة",
+        car: {
+            make: make,
+            model: model,
+            year: year,
+            trim: keep ? base.trim || "" : "",
+            level: keep ? base.level || "" : ""
+        },
+        vin: d.vin,
+        onChosen: function(car, vin) {
+            const cur = getDraft();
+            if (!cur || cur.id !== openedFor) return;
+            cur.car = car;
+            if (vin !== openedVin) {
+                if (vin) cur.vin = vin; else delete cur.vin;
+                const vi = document.getElementById(prefix + "-vin-input");
+                if (vi) {
+                    vi.value = vin;
+                    if (typeof refreshVinHint === "function") refreshVinHint(prefix, vin);
+                }
+            }
+            refreshCarField(prefix, cur);
+        }
+    });
+    const gi = document.getElementById("car-gate-vin");
+    if (gi && runDecode) gi.dispatchEvent(new Event("input", {
+        bubbles: true
+    }));
+}
+
+function pdocVOnClick(ev) {
+    const a = ev.target && ev.target.closest ? ev.target.closest("[data-pdoc-v-act]") : null;
+    if (!a) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    try {
+        const ctx = pdocVCtx();
+        if (!ctx) return;
+        const act = a.getAttribute("data-pdoc-v-act"), p = pdocVState(ctx);
+        if (act === "start") {
+            ctx.v.pdocV = {
+                mid: ctx.row.id,
+                phase: pdocExConsented() ? "loading" : "consent"
+            };
+            pdocVApply();
+            if (ctx.v.pdocV.phase === "loading") pdocVRun(ctx);
+        } else if (act === "consent-ok") {
+            if (!p || p.phase !== "consent") return;
+            pdocExConsent();
+            ctx.v.pdocV = {
+                mid: ctx.row.id,
+                phase: "loading"
+            };
+            pdocVApply();
+            pdocVRun(ctx);
+        } else if (act === "close") {
+            ctx.v.pdocV = null;
+            pdocVApply();
+        } else if (act === "toggle") {
+            const r = p && p.rows && p.rows.find(function(x) {
+                return x.key === a.getAttribute("data-pdoc-v-key");
+            });
+            if (r) {
+                r.on = !r.on;
+                pdocVApply();
+            }
+        } else if (act === "fill") {
+            if (p && p.phase === "review") pdocVFill(ctx, p);
+        } else if (act === "copy-plate") {
+            if (p && p.plate) writeTextToClipboard(p.plate).then(function(ok) {
+                showToast(ok ? "تم نسخ رقم اللوحة" : "تعذّر النسخ", ok ? "ok" : "error");
+            }, function() {
+                showToast("تعذّر النسخ", "error");
+            });
+        }
+    } catch (e) {
+        console.error("PDOC vehicle click:", e);
+    }
+}
+
+function pdocVOnInput(ev) {
+    const t = ev.target, k = t && t.getAttribute ? t.getAttribute("data-pdoc-v-fx") : null;
+    if (!k) return;
+    const ctx = pdocVCtx(), p = ctx ? pdocVState(ctx) : null;
+    const r = p && p.rows ? p.rows.find(function(x) {
+        return x.key === k;
+    }) : null;
+    if (!r) return;
+    r.val = t.value;
+    t.classList.toggle("pdoc-fx-bad", r.on && !pdocVValid(r));
+    const fb = document.querySelector('#confirm-root .pdoc-v [data-pdoc-v-act="fill"]');
+    if (fb) fb.disabled = !pdocVCanFill(p);
+}
+
+(function pdocVInstall() {
+    try {
+        if (typeof mediaRenderViewer !== "function" || mediaRenderViewer.__pdocV) return;
+        const prev = mediaRenderViewer;
+        mediaRenderViewer = function() {
+            const r = prev.apply(this, arguments);
+            pdocVApply();
+            return r;
+        };
+        mediaRenderViewer.__pdocV = true;
+    } catch (e) {
+        console.error("PDOC vehicle install:", e);
     }
 })();
 
