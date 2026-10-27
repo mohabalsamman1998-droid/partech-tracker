@@ -75092,6 +75092,7 @@ const PDOC_EX_TYPES = [ "cr", "vat", "addr" ];
 
 const PDOC_EX_LABELS = {
     cr_number: "السجل التجاري",
+    unified_number: "الرقم الوطني الموحد",
     vat_number: "الرقم الضريبي",
     street: "الشارع",
     building_no: "رقم المبنى",
@@ -75105,6 +75106,7 @@ const PDOC_EX_ORDER = [ "cr_number", "vat_number", "street", "building_no", "add
 
 const PDOC_EX_RE = {
     cr_number: /^[0-9]{10}$/,
+    unified_number: /^7[0-9]{9}$/,
     vat_number: /^3[0-9]{13}3$/,
     building_no: /^[0-9]{4}$/,
     additional_no: /^[0-9]{4}$/,
@@ -75756,9 +75758,14 @@ function pdocExErr(code) {
 }
 
 function pdocExKeys(sh) {
-    return PDOC_EX_ORDER.filter(function(k) {
-        return !(sh.kind === "customer" && k === "additional_no");
+    if (sh.kind !== "customer") return PDOC_EX_ORDER.slice();
+    const out = [];
+    PDOC_EX_ORDER.forEach(function(k) {
+        if (k === "additional_no") return;
+        out.push(k);
+        if (k === "cr_number") out.push("unified_number");
     });
+    return out;
 }
 
 function pdocExisting(sh) {
@@ -75768,7 +75775,9 @@ function pdocExisting(sh) {
             const c = (appData.customers || []).find(function(x) {
                 return x.id === sh.id;
             }) || {};
+            out.idType = c.additionalId ? String(c.additionalIdType || "").toUpperCase() : "";
             out.cr_number = c.additionalId || "";
+            out.unified_number = c.additionalId || "";
             out.vat_number = c.vatNumber || "";
             out.street = c.addressStreet || "";
             out.building_no = c.addressBuildingNo || "";
@@ -75790,13 +75799,18 @@ function pdocExisting(sh) {
 }
 
 function pdocExBuild(sh, did, data) {
-    const cur = pdocExisting(sh), f = data.fields || {}, rows = [];
+    const cur = pdocExisting(sh), f = Object.assign({}, data.fields || {}), rows = [];
     let same = 0;
+    if (sh.kind === "supplier" && f.unified_number) {
+        if (!f.cr_number) f.cr_number = f.unified_number;
+        delete f.unified_number;
+    }
     pdocExKeys(sh).forEach(function(k) {
         const v = f[k];
         if (v === undefined || v === null || v === "") return;
         const c = String(cur[k] || "");
-        if (c && c === String(v)) {
+        const other = sh.kind === "customer" && c && (k === "cr_number" && cur.idType === "700" || k === "unified_number" && cur.idType !== "700");
+        if (c && c === String(v) && !other) {
             same++;
             return;
         }
@@ -75804,6 +75818,7 @@ function pdocExBuild(sh, did, data) {
             key: k,
             val: String(v),
             cur: c,
+            curTag: other ? k === "cr_number" ? "(رقم موحد)" : "(سجل تجاري)" : "",
             on: !c
         });
     });
@@ -75889,7 +75904,7 @@ function pdocExHtml(ex) {
     let h = '<div class="pdoc-ex"><div class="pdoc-lbl">بيانات مقترحة من المستند</div>';
     ex.rows.forEach(function(r) {
         const num = !!PDOC_EX_RE[r.key], bad = !pdocExValid(r) && r.on;
-        h += '<div class="pdoc-fx"><span class="pdoc-fx-l">' + escapeHtml(PDOC_EX_LABELS[r.key]) + "</span>" + '<input type="text" class="pdoc-fx-i' + (bad ? " pdoc-fx-bad" : "") + '" data-pdoc-fx="' + r.key + '" value="' + escapeHtml(r.val) + '"' + (num ? ' inputmode="numeric" dir="ltr"' : "") + (r.on ? "" : " disabled") + ' autocomplete="off">' + (r.cur ? '<div class="pdoc-fx-r"><span class="pdoc-fx-cur">الحالي: ' + escapeHtml(r.cur) + '</span><button type="button" class="chip pdoc-chip pdoc-fx-t' + (r.on ? " pdoc-chip-on" : "") + '" data-pdoc-act="ex-toggle" data-pdoc-key="' + r.key + '" aria-pressed="' + (r.on ? "true" : "false") + '">استبدال الحالي</button></div>' : "") + "</div>";
+        h += '<div class="pdoc-fx"><span class="pdoc-fx-l">' + escapeHtml(PDOC_EX_LABELS[r.key]) + "</span>" + '<input type="text" class="pdoc-fx-i' + (bad ? " pdoc-fx-bad" : "") + '" data-pdoc-fx="' + r.key + '" value="' + escapeHtml(r.val) + '"' + (num ? ' inputmode="numeric" dir="ltr"' : "") + (r.on ? "" : " disabled") + ' autocomplete="off">' + (r.cur ? '<div class="pdoc-fx-r"><span class="pdoc-fx-cur">الحالي: ' + escapeHtml(r.cur) + (r.curTag ? " " + r.curTag : "") + '</span><button type="button" class="chip pdoc-chip pdoc-fx-t' + (r.on ? " pdoc-chip-on" : "") + '" data-pdoc-act="ex-toggle" data-pdoc-key="' + r.key + '" aria-pressed="' + (r.on ? "true" : "false") + '">استبدال الحالي</button></div>' : "") + "</div>";
     });
     if (!ex.rows.length) h += '<div class="pdoc-note">' + (ex.same ? "البيانات المقروءة مطابقة لما هو مسجّل" : "لم أجد بيانات واضحة بالمستند") + "</div>";
     if (ex.name) h += '<div class="pdoc-fx-name"><span class="pdoc-fx-cur">اسم المنشأة بالمستند: ' + escapeHtml(ex.name) + '</span><button type="button" class="btn pdoc-b" data-pdoc-act="ex-copy-name">نسخ الاسم</button></div>';
@@ -75993,19 +76008,20 @@ async function pdocFillCustomer(sh, vals) {
         };
         let n = 0;
         if (vals.vat_number && put("vat_number", vals.vat_number)) n++;
-        if (vals.cr_number) {
+        const idKind = vals.cr_number ? "CRN" : vals.unified_number ? "700" : "";
+        if (idKind) {
             const sel = box.querySelector('[data-taxinv-ck="additional_id_type"]');
-            if (sel && sel.querySelector('option[value="CRN"]')) {
-                sel.value = "CRN";
+            if (sel && sel.querySelector('option[value="' + idKind + '"]')) {
+                sel.value = idKind;
                 sel.classList.add("pdoc-filled");
-                if (put("additional_id", vals.cr_number)) n++;
-            } else showToast("نوع المعرّف «سجل تجاري» غير متاح بكرت العميل", "error");
+                if (put("additional_id", vals.cr_number || vals.unified_number)) n++;
+            } else showToast(idKind === "CRN" ? "نوع المعرّف «سجل تجاري» غير متاح بكرت العميل" : "نوع المعرّف «الرقم الوطني الموحد» غير متاح بكرت العميل", "error");
         }
         [ [ "street", "address_street" ], [ "building_no", "address_building_no" ], [ "district", "address_district" ], [ "city", "address_city" ], [ "postal_code", "address_postal_code" ] ].forEach(function(p) {
             if (vals[p[0]] && put(p[1], vals[p[0]])) n++;
         });
         const kind = box.querySelector('[data-taxinv-ck="customer_kind"]');
-        if (kind && !kind.value && (vals.cr_number || vals.vat_number)) {
+        if (kind && !kind.value && (vals.cr_number || vals.unified_number || vals.vat_number)) {
             kind.value = "business";
             kind.classList.add("pdoc-filled");
         }
@@ -76014,7 +76030,7 @@ async function pdocFillCustomer(sh, vals) {
                 block: "center"
             });
         } catch (e) {}
-        showToast(n ? "تمت التعبئة — راجع الحقول ثم اضغط «حفظ البيانات الضريبية»" : "لم تُعبّأ حقول", n ? "ok" : "error");
+        showToast(n ? "تمت التعبئة — راجع الحقول ثم اضغط «حفظ البيانات الضريبية»" + (vals.cr_number && vals.unified_number ? " (عُبّئ السجل فقط: للعميل معرّف إضافي واحد)" : "") : "لم تُعبّأ حقول", n ? "ok" : "error");
     } catch (e) {
         console.error("PDOC fill:", e);
         showToast("تعذّرت التعبئة", "error");
