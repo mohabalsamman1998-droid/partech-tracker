@@ -21458,10 +21458,10 @@ var PTX_TAXINV = function() {
         quotationTitle: "عرض أسعار — ليس فاتورة ضريبية",
         statementTitle: "كشف حساب العميل — مستند داخلي وليس فاتورة ضريبية",
         legacyBadge: "مستند قديم — ليس فاتورة ضريبية",
-        confirmIssue: "بعد الإصدار لا يمكن تعديل الفاتورة أو حذفها، والتصحيح يكون بإشعار دائن",
+        confirmIssue: "بعد الإصدار لا يمكن تعديل الفاتورة أو حذفها، والتصحيح يكون بإرجاع الفاتورة أو تعديلها",
         vatInclusive: "المبلغ شامل ضريبة القيمة المضافة 15%",
         returnPolicy: [ "لا يتم إرجاع البضاعة المباعة إلا مع وجود الفاتورة الأصلية", "يجب إبراز الفاتورة الأصل عند المراجعة" ],
-        changedAfterIssue: "تغيّر الطلب بعد إصدار الفاتورة — أصدر إشعارًا دائنًا/مدينًا",
+        changedAfterIssue: "تغيّر الطلب بعد إصدار الفاتورة — أرجع الفاتورة أو عدّلها",
         copyOriginal: "نسخة طبق الأصل",
         columns: {
             n: "م",
@@ -22377,14 +22377,14 @@ var PTX_TAXINV = function() {
             errors.push({
                 field: "reason_code",
                 code: "REASON",
-                message: "اختر سبب إصدار الإشعار"
+                message: "اختر سبب الإرجاع"
             });
         }
         if (!invoice || invoice.doc_kind !== "simplified" && invoice.doc_kind !== "standard") {
             errors.push({
                 field: "invoice",
                 code: "ORIGINAL",
-                message: "الإشعار الدائن يُصدر على فاتورة ضريبية فقط"
+                message: "الإرجاع يتم على فاتورة ضريبية فقط"
             });
         }
         if (sel.length === 0) {
@@ -22430,7 +22430,7 @@ var PTX_TAXINV = function() {
                 errors.push({
                     field: "selections",
                     code: "QTY_EXCEEDS",
-                    message: "كمية الإشعار للبند «" + r.name + "» تتجاوز المتبقي (" + r.qty_left + ")"
+                    message: "كمية الإرجاع للبند «" + r.name + "» تتجاوز المتبقي (" + r.qty_left + ")"
                 });
                 continue;
             }
@@ -22457,7 +22457,7 @@ var PTX_TAXINV = function() {
                 errors.push({
                     field: "selections",
                     code: "AMOUNT_EXCEEDS",
-                    message: "مبلغ الإشعار للبند «" + r.name + "» يتجاوز المتبقي (" + formatHalalas(r.inc_left) + ")"
+                    message: "مبلغ الإرجاع للبند «" + r.name + "» يتجاوز المتبقي (" + formatHalalas(r.inc_left) + ")"
                 });
                 continue;
             }
@@ -22465,7 +22465,7 @@ var PTX_TAXINV = function() {
                 errors.push({
                     field: "selections",
                     code: "ZERO",
-                    message: "مبلغ الإشعار للبند «" + r.name + "» صفر"
+                    message: "مبلغ الإرجاع للبند «" + r.name + "» صفر"
                 });
                 continue;
             }
@@ -22674,14 +22674,14 @@ var PTX_TAXINV = function() {
             errors.push({
                 field: "reason_code",
                 code: "REASON",
-                message: "اختر سبب إصدار الإشعار"
+                message: "اختر سبب التعديل"
             });
         }
         if (!invoice || invoice.doc_kind !== "simplified" && invoice.doc_kind !== "standard") {
             errors.push({
                 field: "invoice",
                 code: "ORIGINAL",
-                message: "الإشعار المدين يُصدر على فاتورة ضريبية فقط"
+                message: "التعديل بالزيادة يتم على فاتورة ضريبية فقط"
             });
         }
         if (sel.length === 0) {
@@ -24256,7 +24256,7 @@ const TAXINV_DETAIL_TEXT = {
     "seller:legal_name_ar_arabic": "الاسم القانوني يجب أن يحوي حروفًا عربية",
     "seller:building_no": "رقم المبنى يجب أن يكون 4 أرقام",
     "seller:postal_code": "الرمز البريدي يجب أن يكون 5 أرقام",
-    debit_note_elevated_only: "إشعار المدين للإدارة فقط"
+    debit_note_elevated_only: "تعديل الفاتورة للإدارة فقط"
 };
 
 function taxinvErrText(e) {
@@ -24432,7 +24432,7 @@ function taxinvInvoiceBtnText(d) {
     const live = taxinvLiveInvoice(c.list);
     if (!live) return base;
     const sum = taxinvSummary(live, c.list);
-    return base + " " + live.doc_number + (sum.notes.length ? " · " + sum.notes.length + " إشعار" : "");
+    return base + " " + live.doc_number + (sum.notes.length ? " · " + sum.notes.length + " إرجاع/تعديل" : "");
 }
 
 function taxinvInvoiceBtnLabel(d) {
@@ -24461,7 +24461,7 @@ function taxinvBannerInner(d) {
         try {
             setTimeout(() => {
                 try {
-                    showToast("الطلبية تغيّرت بعد فاتورتها " + live.doc_number + " — " + (cur < sum.outstanding ? "أصدر إشعارًا دائنًا" : "راجع الإدارة"), "error");
+                    showToast("الطلبية تغيّرت بعد فاتورتها " + live.doc_number + " — " + (cur < sum.outstanding ? "أرجع الفاتورة" : "راجع الإدارة"), "error");
                 } catch (e) {}
             }, 0);
         } catch (e) {}
@@ -24470,9 +24470,9 @@ function taxinvBannerInner(d) {
     const oid = escapeHtml(d.id);
     const regBtn = '<button type="button" class="btn btn-sm btn-ghost" data-taxinv-act="open-register" data-taxinv-search="' + escapeHtml(live.doc_number) + '">سجل الفواتير</button>';
     if (cur < sum.outstanding) {
-        return '<div class="taxinv-banner"><span>تغيّر الطلب بعد إصدار الفاتورة ' + num + " — أصدر إشعارًا دائنًا<br><small>" + escapeHtml(figures) + "</small></span>" + '<button type="button" class="btn btn-sm btn-primary" data-taxinv-act="open-cn" data-taxinv-order="' + oid + '">إصدار إشعار دائن</button>' + regBtn + "</div>";
+        return '<div class="taxinv-banner"><span>تغيّر الطلب بعد إصدار الفاتورة ' + num + " — أرجع الفاتورة (تخفيض)<br><small>" + escapeHtml(figures) + "</small></span>" + '<button type="button" class="btn btn-sm btn-primary" data-taxinv-act="open-cn" data-taxinv-order="' + oid + '">إرجاع الفاتورة</button>' + regBtn + "</div>";
     }
-    return '<div class="taxinv-banner"><span>ارتفع إجمالي الطلب بعد إصدار الفاتورة ' + num + " — الفاتورة الصادرة لا تُعدَّل. للزيادة: أصدر إشعارًا دائنًا بكامل الفاتورة (إلغاء) ثم أصدر فاتورة جديدة للطلب" + (hasElevatedAccess() ? " أو أصدر إشعارًا مدينًا بالفرق" : " (أو يُصدر المدير إشعارًا مدينًا)") + "<br><small>" + escapeHtml(figures) + "</small></span>" + '<button type="button" class="btn btn-sm btn-primary" data-taxinv-act="open-cn-all" data-taxinv-order="' + oid + '">إلغاء الفاتورة بإشعار دائن</button>' + (hasElevatedAccess() ? '<button type="button" class="btn btn-sm btn-ghost" data-taxinv-act="open-dn" data-taxinv-order="' + oid + '">إصدار إشعار مدين</button>' : "") + '<button type="button" class="btn btn-sm btn-ghost" data-taxinv-act="open-doc" data-taxinv-order="' + oid + '">عرض الفاتورة</button>' + regBtn + "</div>";
+    return '<div class="taxinv-banner"><span>ارتفع إجمالي الطلب بعد إصدار الفاتورة ' + num + " — الفاتورة الصادرة لا تُعدَّل. للزيادة: أرجع الفاتورة كاملة (إلغاء) ثم أصدر فاتورة جديدة للطلب" + (hasElevatedAccess() ? " أو عدّل الفاتورة بالزيادة بالفرق" : " (أو يعدّلها المدير بالزيادة)") + "<br><small>" + escapeHtml(figures) + "</small></span>" + '<button type="button" class="btn btn-sm btn-primary" data-taxinv-act="open-cn-all" data-taxinv-order="' + oid + '">إرجاع الفاتورة كاملة (إلغاء)</button>' + (hasElevatedAccess() ? '<button type="button" class="btn btn-sm btn-ghost" data-taxinv-act="open-dn" data-taxinv-order="' + oid + '">تعديل الفاتورة (زيادة)</button>' : "") + '<button type="button" class="btn btn-sm btn-ghost" data-taxinv-act="open-doc" data-taxinv-order="' + oid + '">عرض الفاتورة</button>' + regBtn + "</div>";
 }
 
 function taxinvOutageActive() {
@@ -25040,7 +25040,7 @@ function taxinvFormHtml(st) {
     if (st.customerLinked) {
         h += '<label class="taxinv-choice" style="margin-top:10px;"><span><input type="checkbox" data-taxinv-f="saveToCustomer"' + (st.saveToCustomer ? " checked" : "") + "> حفظ بيانات المشتري في سجل العميل (الاسم والجوال لا يتغيّران)</span></label>";
     }
-    h += '<ul class="taxinv-errors" id="taxinv-errors"></ul>' + '<div class="taxinv-hint">المبلغ شامل ضريبة القيمة المضافة 15%. بعد الإصدار لا يمكن تعديل الفاتورة أو حذفها، والتصحيح يكون بإشعار دائن.</div>';
+    h += '<ul class="taxinv-errors" id="taxinv-errors"></ul>' + '<div class="taxinv-hint">المبلغ شامل ضريبة القيمة المضافة 15%. بعد الإصدار لا يمكن تعديل الفاتورة أو حذفها، والتصحيح يكون بإرجاع الفاتورة أو تعديلها.</div>';
     return h;
 }
 
@@ -25058,9 +25058,9 @@ function taxinvIssuedShellHtml(st) {
     const cm = taxinvCurrentMode();
     const canCredit = !!(sum && sum.remaining > 0);
     const canDebit = !!(canCredit && hasElevatedAccess());
-    const otherSeriesHint = sum && sum.remaining > 0 && inv.mode === "prelaunch" && cm === "live" ? '<div class="taxinv-form no-print"><div class="taxinv-hint" style="margin:0;">هذه فاتورة من تسلسل ما قبل التسجيل (رقمها رقم الطلب). أي إشعار دائن أو مدين عليها يبقى بنفس التسلسل ولا يدخل التسلسل الرسمي. ولإصدار فاتورة رسمية (INV-) لهذا الطلب ألغِ هذه الفاتورة أولًا بإشعار دائن كامل — والمحاسب هو من يقرّر ذلك لتوريد سبق التاريخ.</div></div>' : "";
+    const otherSeriesHint = sum && sum.remaining > 0 && inv.mode === "prelaunch" && cm === "live" ? '<div class="taxinv-form no-print"><div class="taxinv-hint" style="margin:0;">هذه فاتورة من تسلسل ما قبل التسجيل (رقمها رقم الطلب). أي إرجاع أو تعديل عليها يبقى بنفس التسلسل ولا يدخل التسلسل الرسمي. ولإصدار فاتورة رسمية (INV-) لهذا الطلب ألغِ هذه الفاتورة أولًا بإرجاعها كاملة — والمحاسب هو من يقرّر ذلك لتوريد سبق التاريخ.</div></div>' : "";
     const tabs = (st.docs || []).length > 1 ? '<div class="taxinv-tabs no-print">' + st.docs.slice().sort((a, b) => (Number(a.icv) || 0) - (Number(b.icv) || 0)).map(d => '<button type="button" class="taxinv-tab' + (d.id === st.currentId ? " taxinv-tab-on" : "") + '" data-taxinv-act="tab" data-taxinv-id="' + escapeHtml(d.id) + '">' + escapeHtml((PTX_TAXINV.kinds[d.doc_kind] ? PTX_TAXINV.kinds[d.doc_kind].ar : d.doc_kind) + " " + d.doc_number) + "</button>").join("") + "</div>" : "";
-    return '<div class="doc-overlay" data-taxinv-root="issued">' + '<div class="doc-toolbar no-print">' + '<div class="doc-toolbar-title">' + escapeHtml(m.titleAr + " " + m.docNumber) + " — طلبية " + escapeHtml(st.orderNumber) + (st.orderGone ? taxinvOrdersSettled() ? " (محذوفة)" : " (غير محمّلة بعد)" : "") + "</div>" + '<div class="doc-toolbar-actions">' + '<button type="button" class="btn btn-danger-ghost btn-sm" data-taxinv-act="close">' + (st.back === "register" ? "رجوع للسجل" : "إغلاق") + "</button>" + (canCredit ? '<button type="button" class="btn btn-ghost btn-sm" data-taxinv-act="open-cn-dialog">إصدار إشعار دائن</button>' : "") + (canDebit ? '<button type="button" class="btn btn-ghost btn-sm" data-taxinv-act="open-dn-dialog">إصدار إشعار مدين</button>' : "") + (st.legacy ? '<button type="button" class="btn btn-ghost btn-sm" data-taxinv-act="legacy">عرض المستند القديم</button>' : "") + '<button type="button" class="btn btn-ghost btn-sm" id="taxinv-copy-btn" data-taxinv-act="copy">نسخ نص للواتساب</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="taxinv-share-btn" data-taxinv-act="share">📤 مشاركة</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="taxinv-pdf-btn" data-taxinv-act="pdf">📄 تحميل PDF</button>' + '<button type="button" class="btn btn-primary btn-sm" id="taxinv-print-btn" data-taxinv-act="print">طباعة</button>' + "</div>" + "</div>" + tabs + otherSeriesHint + (sum && sum.credited > 0 ? '<div class="taxinv-form no-print"><div class="taxinv-hint" style="margin:0;">أُصدر على هذه الفاتورة ' + sum.notes.length + " إشعار — المتبقي بعد الإشعارات الدائنة: <b>" + taxinvMoney(sum.remaining) + " ر.س</b></div></div>" : "") + '<div id="taxinv-sheet-wrap">' + taxinvSheetHtml(inv, {
+    return '<div class="doc-overlay" data-taxinv-root="issued">' + '<div class="doc-toolbar no-print">' + '<div class="doc-toolbar-title">' + escapeHtml(m.titleAr + " " + m.docNumber) + " — طلبية " + escapeHtml(st.orderNumber) + (st.orderGone ? taxinvOrdersSettled() ? " (محذوفة)" : " (غير محمّلة بعد)" : "") + "</div>" + '<div class="doc-toolbar-actions">' + '<button type="button" class="btn btn-danger-ghost btn-sm" data-taxinv-act="close">' + (st.back === "register" ? "رجوع للسجل" : "إغلاق") + "</button>" + (canCredit ? '<button type="button" class="btn btn-ghost btn-sm" data-taxinv-act="open-cn-dialog">إرجاع الفاتورة</button>' : "") + (canDebit ? '<button type="button" class="btn btn-ghost btn-sm" data-taxinv-act="open-dn-dialog">تعديل الفاتورة (زيادة)</button>' : "") + (st.legacy ? '<button type="button" class="btn btn-ghost btn-sm" data-taxinv-act="legacy">عرض المستند القديم</button>' : "") + '<button type="button" class="btn btn-ghost btn-sm" id="taxinv-copy-btn" data-taxinv-act="copy">نسخ نص للواتساب</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="taxinv-share-btn" data-taxinv-act="share">📤 مشاركة</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="taxinv-pdf-btn" data-taxinv-act="pdf">📄 تحميل PDF</button>' + '<button type="button" class="btn btn-primary btn-sm" id="taxinv-print-btn" data-taxinv-act="print">طباعة</button>' + "</div>" + "</div>" + tabs + otherSeriesHint + (sum && sum.credited > 0 ? '<div class="taxinv-form no-print"><div class="taxinv-hint" style="margin:0;">أُصدر على هذه الفاتورة ' + sum.notes.length + " إرجاع/تعديل — المتبقي بعد الإرجاع: <b>" + taxinvMoney(sum.remaining) + " ر.س</b></div></div>" : "") + '<div id="taxinv-sheet-wrap">' + taxinvSheetHtml(inv, {
         copy: st.justIssued !== inv.id
     }) + "</div>" + "</div>";
 }
@@ -25704,7 +25704,7 @@ function taxinvOpenCreditDialog(opts) {
     const notes = taxinvNotesOf(st.docs, inv.id);
     const rem = PTX_TAXINV.creditableRemaining(inv, notes);
     if (!rem.some(r => r.inc_left > 0)) {
-        showToast("لا يوجد متبقٍ للإشعار على هذه الفاتورة", "error");
+        showToast("لا يوجد متبقٍ للإرجاع على هذه الفاتورة", "error");
         return;
     }
     const defaults = opts.cancelAll ? {} : taxinvCreditDefaults(inv, rem, taxinvOrder(st.orderId));
@@ -25777,7 +25777,7 @@ function taxinvCnCompute() {
                 s.unit_inc = v;
             } else {
                 const nv = r.newUnit === null || r.newUnit === "" ? NaN : Number(r.newUnit);
-                const cur = r.unit_cur, curAr = r.pcDone ? "الحالي (بعد الإشعارات السابقة) " : "الأصلي ";
+                const cur = r.unit_cur, curAr = r.pcDone ? "الحالي (بعد الإرجاعات السابقة) " : "الأصلي ";
                 if (isNaN(nv) || nv < 0) {
                     local.push("البند «" + r.name + "»: اكتب السعر الجديد للوحدة (أقل من " + curAr + taxinvMoney(taxinvH(cur)) + ")");
                     return;
@@ -25792,7 +25792,7 @@ function taxinvCnCompute() {
                     return;
                 }
                 if (nv < cur / 2) warns.push("البند «" + r.name + "»: السعر الجديد أقل من نصف السعر " + (r.pcDone ? "الحالي" : "الأصلي") + " — تأكد أنك كتبت السعر الجديد للوحدة وليس مبلغ التخفيض");
-                if (r.pcDone) warns.push("البند «" + r.name + "»: سبق إشعار «تغيير القيمة» على هذا البند — السعر الجديد يُقاس من السعر الحالي " + taxinvMoney(taxinvH(cur)) + " (الأصلي " + taxinvMoney(taxinvH(r.unit_orig)) + ")");
+                if (r.pcDone) warns.push("البند «" + r.name + "»: سبق إرجاع «تغيير القيمة» على هذا البند — السعر الجديد يُقاس من السعر الحالي " + taxinvMoney(taxinvH(cur)) + " (الأصلي " + taxinvMoney(taxinvH(r.unit_orig)) + ")");
                 s.qty = r.qty;
                 s.unit_inc = per;
             }
@@ -25839,7 +25839,7 @@ function taxinvCnTimingHint(inv) {
         const ymd = String(inv && inv.issued_date || "");
         if (!PTX_TAXINV.time.isIsoDate(ymd)) return "";
         const lim = new Date(Date.UTC(+ymd.slice(0, 4), +ymd.slice(5, 7), 15)).toISOString().slice(0, 10);
-        return PTX_TAXINV.time.todayRiyadh(new Date) > lim ? "تنبيه: مرّت 15 يومًا على نهاية شهر الفاتورة — تحقق من تاريخ الحدث (إرجاع/إلغاء) الذي يُصدر الإشعار بسببه" : "";
+        return PTX_TAXINV.time.todayRiyadh(new Date) > lim ? "تنبيه: مرّت 15 يومًا على نهاية شهر الفاتورة — تحقق من تاريخ الحدث (إرجاع/إلغاء) الذي يُصدر الإرجاع بسببه" : "";
     } catch (e) {
         return "";
     }
@@ -25849,7 +25849,7 @@ function taxinvCnSumHtml(calc) {
     const tot = calc.draft && calc.ok ? calc.draft.halalas : null;
     const warn = (calc.warns || []).map(w => '<div class="taxinv-cn-warn">' + escapeHtml(w) + "</div>").join("");
     if (!tot) return '<div class="taxinv-cn-sum" style="color:var(--rust);">' + (calc.errors.length ? calc.errors.map(escapeHtml).join("<br>") : "اختر بندًا واحدًا على الأقل") + "</div>" + warn;
-    return '<div class="taxinv-cn-sum">الإجمالي قبل الضريبة: <b>' + taxinvMoney(tot.taxable) + "</b> — الضريبة: <b>" + taxinvMoney(tot.vat) + "</b> — إجمالي الإشعار: <b>" + taxinvMoney(tot.total_inc) + " ر.س</b></div>" + warn;
+    return '<div class="taxinv-cn-sum">الإجمالي قبل الضريبة: <b>' + taxinvMoney(tot.taxable) + "</b> — الضريبة: <b>" + taxinvMoney(tot.vat) + "</b> — إجمالي الإرجاع: <b>" + taxinvMoney(tot.total_inc) + " ر.س</b></div>" + warn;
 }
 
 function taxinvRowValText(calc, r) {
@@ -25868,12 +25868,12 @@ function taxinvCreditDialogHtml() {
         let priceCell;
         if (pc && r.isFee) priceCell = '<input type="number" step="0.01" min="0" data-taxinv-cn="pcamt" data-i="' + i + '" value="' + escapeHtml(r.pcAmt === null ? "" : String(r.pcAmt)) + '" placeholder="حتى ' + escapeHtml(taxinvMoney(r.inc_left)) + '"' + dis + ">"; else if (pc) priceCell = '<input type="number" step="0.01" min="0" data-taxinv-cn="newunit" data-i="' + i + '" value="' + escapeHtml(r.newUnit === null ? "" : String(r.newUnit)) + '" placeholder="' + escapeHtml(taxinvMoney(taxinvH(r.unit_cur))) + '"' + dis + ">" + '<div class="taxinv-cn-orig">' + (r.pcDone ? "السعر الحالي " + escapeHtml(taxinvMoney(taxinvH(r.unit_cur))) + " (الأصلي " + escapeHtml(taxinvMoney(taxinvH(r.unit_orig))) + ")" : "السعر الأصلي " + escapeHtml(taxinvMoney(taxinvH(r.unit_orig)))) + "</div>"; else if (r.isFee) priceCell = '<input type="number" step="0.01" min="0" data-taxinv-cn="unit" data-i="' + i + '" value="' + escapeHtml(String(r.unit !== null ? r.unit : r.inc_left / 100)) + '"' + dis + ">"; else priceCell = escapeHtml(taxinvMoney(taxinvH(r.pcDone ? r.unit_cur : r.unit_orig))) + (r.pcDone ? '<div class="taxinv-cn-orig">بعد تغيير القيمة السابق (الأصلي ' + escapeHtml(taxinvMoney(taxinvH(r.unit_orig))) + ")</div>" : "");
         const priceLabel = r.isFee ? pc ? "مبلغ التخفيض من الرسوم (شامل الضريبة)" : "المبلغ المسترد (شامل الضريبة)" : pc ? "السعر الجديد للوحدة (شامل الضريبة)" : "سعر الوحدة (شامل الضريبة)";
-        return "<tr>" + '<td data-l="تحديد"><input type="checkbox" data-taxinv-cn="on" data-i="' + i + '"' + (r.on ? " checked" : "") + (exhausted ? " disabled" : "") + "></td>" + '<td class="taxinv-name">' + escapeHtml(r.name) + "</td>" + '<td data-l="الكمية المتبقية">' + escapeHtml(r.isFee ? "—" : PTX_TAXINV.fmt.qty(r.qty_left)) + "</td>" + '<td data-l="المتبقي (شامل الضريبة)">' + escapeHtml(taxinvMoney(r.inc_left)) + "</td>" + '<td data-l="' + (pc && !r.isFee ? "عدد الوحدات المخفَّضة" : "كمية الإشعار") + '">' + (r.isFee ? "1" : '<input type="number" step="any" min="0" data-taxinv-cn="qty" data-i="' + i + '" value="' + escapeHtml(String(r.qty)) + '"' + dis + ">") + "</td>" + '<td data-l="' + priceLabel + '">' + priceCell + "</td>" + '<td data-l="قيمة الإشعار لهذا البند" class="taxinv-cn-rowval" id="taxinv-cn-rv-' + i + '">' + escapeHtml(taxinvRowValText(calc, r)) + "</td>" + "</tr>";
+        return "<tr>" + '<td data-l="تحديد"><input type="checkbox" data-taxinv-cn="on" data-i="' + i + '"' + (r.on ? " checked" : "") + (exhausted ? " disabled" : "") + "></td>" + '<td class="taxinv-name">' + escapeHtml(r.name) + "</td>" + '<td data-l="الكمية المتبقية">' + escapeHtml(r.isFee ? "—" : PTX_TAXINV.fmt.qty(r.qty_left)) + "</td>" + '<td data-l="المتبقي (شامل الضريبة)">' + escapeHtml(taxinvMoney(r.inc_left)) + "</td>" + '<td data-l="' + (pc && !r.isFee ? "عدد الوحدات المخفَّضة" : "كمية الإرجاع") + '">' + (r.isFee ? "1" : '<input type="number" step="any" min="0" data-taxinv-cn="qty" data-i="' + i + '" value="' + escapeHtml(String(r.qty)) + '"' + dis + ">") + "</td>" + '<td data-l="' + priceLabel + '">' + priceCell + "</td>" + '<td data-l="قيمة الإرجاع لهذا البند" class="taxinv-cn-rowval" id="taxinv-cn-rv-' + i + '">' + escapeHtml(taxinvRowValText(calc, r)) + "</td>" + "</tr>";
     }).join("");
-    const hint = pc ? '<div class="taxinv-legal">أدخل <b>السعر الجديد للوحدة</b> (لا مبلغ التخفيض): يُصدر الإشعار بالفرق بين السعر الحالي (الأصلي إن لم يسبق تغيير) والجديد × عدد الوحدات. مثال: وحدة بـ65.00 أصبحت 60.00 ⟸ إشعار بـ5.00 للوحدة. وللرسوم اكتب مبلغ التخفيض نفسه. الحقول فارغة عمدًا حتى تكتب أنت.</div>' : "";
+    const hint = pc ? '<div class="taxinv-legal">أدخل <b>السعر الجديد للوحدة</b> (لا مبلغ التخفيض): يُصدر الإرجاع بالفرق بين السعر الحالي (الأصلي إن لم يسبق تغيير) والجديد × عدد الوحدات. مثال: وحدة بـ65.00 أصبحت 60.00 ⟸ إشعار بـ5.00 للوحدة. وللرسوم اكتب مبلغ التخفيض نفسه. الحقول فارغة عمدًا حتى تكتب أنت.</div>' : "";
     const timing = taxinvCnTimingHint(calc.inv);
-    const confirmLines = cn.confirming && calc.draft && calc.ok ? '<div class="taxinv-cn-confirm"><b>سيصدر الإشعار بهذه البنود:</b><ul>' + calc.draft.lines.map(l => "<li>" + escapeHtml(l.name) + " — " + escapeHtml(PTX_TAXINV.fmt.qty(l.qty)) + " × " + escapeHtml(taxinvUnitText(l.unit_inc)) + " = <b>" + escapeHtml(taxinvMoney(taxinvH(l.line_inc))) + " ر.س</b></li>").join("") + "</ul></div>" : "";
-    return '<div class="modal-backdrop" data-taxinv-dialog="cn"><div class="modal-card taxinv-dialog-card" role="dialog" aria-modal="true">' + '<div class="modal-title">إشعار دائن على الفاتورة ' + escapeHtml(cn.invNumber) + "</div>" + '<div class="modal-sub">الفاتورة الأصلية لا تتغيّر؛ الإشعار مستند مستقل برقم تسلسلي خاص به.</div>' + '<div class="taxinv-grid" style="margin-top:12px;">' + '<label class="taxinv-field"><span class="taxinv-field-label">سبب الإشعار</span><select data-taxinv-cn="reason">' + reasons + "</select></label>" + '<label class="taxinv-field"><span class="taxinv-field-label">توضيح (اختياري)</span><input type="text" data-taxinv-cn="reasonText" value="' + escapeHtml(cn.reasonText) + '" dir="auto" maxlength="500"></label>' + "</div>" + '<div class="taxinv-actions"><button type="button" class="btn btn-sm btn-ghost" data-taxinv-act="cn-all">تحديد كل البنود المتبقية (إلغاء الفاتورة كاملة)</button></div>' + hint + '<div class="taxinv-cn-wrap"><table class="taxinv-cn-table"><thead><tr><th></th><th>البند</th><th>الكمية المتبقية</th><th>المتبقي (شامل الضريبة)</th><th>' + (pc ? "عدد الوحدات المخفَّضة" : "كمية الإشعار") + "</th><th>" + (pc ? "السعر الجديد للوحدة (شامل الضريبة)" : "السعر شامل الضريبة") + "</th><th>قيمة الإشعار لهذا البند</th></tr></thead><tbody>" + rowsHtml + "</tbody></table></div>" + '<div id="taxinv-cn-sum">' + taxinvCnSumHtml(calc) + "</div>" + (timing ? '<div class="taxinv-legal" style="color:var(--rust);">' + escapeHtml(timing) + "</div>" : "") + '<div class="taxinv-legal">المهلة النظامية لإصدار الإشعار الدائن 15 يومًا من نهاية الشهر الذي وقع فيه الحدث.</div>' + confirmLines + '<div class="modal-footer-actions" id="taxinv-cn-foot" style="margin-top:14px;justify-content:flex-end;">' + (cn.confirming ? '<span style="flex:1;font-weight:700;font-size:13px;">بعد الإصدار لا يمكن تعديل الإشعار أو حذفه. تأكيد الإصدار؟</span><button type="button" class="btn btn-ghost" data-taxinv-act="cn-back">رجوع</button><button type="button" class="btn btn-danger" id="taxinv-cn-confirm" data-taxinv-act="cn-confirm"' + (cn.busy ? " disabled" : "") + ">" + (cn.busy ? "جاري الإصدار…" : "تأكيد الإصدار") + "</button>" : '<button type="button" class="btn btn-ghost" data-taxinv-act="cn-cancel">إلغاء</button><button type="button" class="btn btn-primary" data-taxinv-act="cn-issue"' + (calc.ok && calc.draft ? "" : " disabled") + ">إصدار الإشعار الدائن</button>") + "</div></div></div>";
+    const confirmLines = cn.confirming && calc.draft && calc.ok ? '<div class="taxinv-cn-confirm"><b>سيصدر الإرجاع بهذه البنود:</b><ul>' + calc.draft.lines.map(l => "<li>" + escapeHtml(l.name) + " — " + escapeHtml(PTX_TAXINV.fmt.qty(l.qty)) + " × " + escapeHtml(taxinvUnitText(l.unit_inc)) + " = <b>" + escapeHtml(taxinvMoney(taxinvH(l.line_inc))) + " ر.س</b></li>").join("") + "</ul></div>" : "";
+    return '<div class="modal-backdrop" data-taxinv-dialog="cn"><div class="modal-card taxinv-dialog-card" role="dialog" aria-modal="true">' + '<div class="modal-title">إرجاع الفاتورة ' + escapeHtml(cn.invNumber) + "</div>" + '<div class="modal-sub">الفاتورة الأصلية لا تتغيّر؛ يصدر بالإرجاع مستند رسمي مستقل اسمه «إشعار دائن» برقم تسلسلي خاص به.</div>' + '<div class="taxinv-grid" style="margin-top:12px;">' + '<label class="taxinv-field"><span class="taxinv-field-label">سبب الإرجاع</span><select data-taxinv-cn="reason">' + reasons + "</select></label>" + '<label class="taxinv-field"><span class="taxinv-field-label">توضيح (اختياري)</span><input type="text" data-taxinv-cn="reasonText" value="' + escapeHtml(cn.reasonText) + '" dir="auto" maxlength="500"></label>' + "</div>" + '<div class="taxinv-actions"><button type="button" class="btn btn-sm btn-ghost" data-taxinv-act="cn-all">تحديد كل البنود المتبقية (إلغاء الفاتورة كاملة)</button></div>' + hint + '<div class="taxinv-cn-wrap"><table class="taxinv-cn-table"><thead><tr><th></th><th>البند</th><th>الكمية المتبقية</th><th>المتبقي (شامل الضريبة)</th><th>' + (pc ? "عدد الوحدات المخفَّضة" : "كمية الإرجاع") + "</th><th>" + (pc ? "السعر الجديد للوحدة (شامل الضريبة)" : "السعر شامل الضريبة") + "</th><th>قيمة الإرجاع لهذا البند</th></tr></thead><tbody>" + rowsHtml + "</tbody></table></div>" + '<div id="taxinv-cn-sum">' + taxinvCnSumHtml(calc) + "</div>" + (timing ? '<div class="taxinv-legal" style="color:var(--rust);">' + escapeHtml(timing) + "</div>" : "") + '<div class="taxinv-legal">المهلة النظامية للإرجاع (إشعار دائن) 15 يومًا من نهاية الشهر الذي وقع فيه الحدث.</div>' + confirmLines + '<div class="modal-footer-actions" id="taxinv-cn-foot" style="margin-top:14px;justify-content:flex-end;">' + (cn.confirming ? '<span style="flex:1;font-weight:700;font-size:13px;">بعد الإصدار لا يمكن تعديل المستند أو حذفه. تأكيد الإصدار؟</span><button type="button" class="btn btn-ghost" data-taxinv-act="cn-back">رجوع</button><button type="button" class="btn btn-danger" id="taxinv-cn-confirm" data-taxinv-act="cn-confirm"' + (cn.busy ? " disabled" : "") + ">" + (cn.busy ? "جاري الإصدار…" : "تأكيد الإصدار") + "</button>" : '<button type="button" class="btn btn-ghost" data-taxinv-act="cn-cancel">إلغاء</button><button type="button" class="btn btn-primary" data-taxinv-act="cn-issue"' + (calc.ok && calc.draft ? "" : " disabled") + ">إصدار الإرجاع</button>") + "</div></div></div>";
 }
 
 function taxinvRenderCreditDialog() {
@@ -25957,7 +25957,7 @@ async function taxinvIssueCreditNote() {
             cn.busy = false;
             cn.confirming = false;
             if (taxinvCn === cn) taxinvRenderCreditDialog();
-            showToast("تعذّر إصدار الإشعار الدائن: " + taxinvErrText(e), "error");
+            showToast("تعذّر إرجاع الفاتورة: " + taxinvErrText(e), "error");
             return;
         }
     }
@@ -25965,10 +25965,10 @@ async function taxinvIssueCreditNote() {
         cn.busy = false;
         cn.confirming = false;
         taxinvRenderCreditDialog();
-        showToast("تعذّر إصدار الإشعار الدائن: استجابة غير متوقعة", "error");
+        showToast("تعذّر إرجاع الفاتورة: استجابة غير متوقعة", "error");
         return;
     }
-    showToast(doc.replayed ? "هذا الإشعار صدر سابقًا — عُرضت نسخته " + doc.doc_number : "تم إصدار الإشعار الدائن " + doc.doc_number, "ok");
+    showToast(doc.replayed ? "صدر هذا المستند سابقًا — عُرضت نسخته " + doc.doc_number : "تم إرجاع الفاتورة — إشعار دائن " + doc.doc_number, "ok");
     taxinvAfterNote(st, doc);
 }
 
@@ -25977,14 +25977,14 @@ function taxinvOpenDebitDialog(opts) {
     const st = taxinvState;
     const inv = taxinvCurrentDoc();
     if (!hasElevatedAccess()) {
-        showToast("إشعار المدين للإدارة فقط", "error");
+        showToast("تعديل الفاتورة للإدارة فقط", "error");
         return;
     }
     if (!st || st.mode !== "issued" || !inv || inv.doc_kind !== "simplified" && inv.doc_kind !== "standard") return;
     const prior = taxinvNotesOf(st.docs, inv.id);
     const rem = PTX_TAXINV.debitableRemaining(inv, prior);
     if (!rem.some(r => r.inc_room > 0)) {
-        showToast("لا يوجد متبقٍ للإشعار المدين على هذه الفاتورة", "error");
+        showToast("لا يوجد متبقٍ للتعديل على هذه الفاتورة", "error");
         return;
     }
     const rows = (inv.lines || []).map(L => {
@@ -26059,7 +26059,7 @@ function taxinvDnCompute() {
 function taxinvDnSumHtml(calc) {
     const tot = calc.draft && calc.ok ? calc.draft.halalas : null;
     if (!tot) return '<div class="taxinv-cn-sum" style="color:var(--rust);">' + (calc.errors.length ? calc.errors.map(escapeHtml).join("<br>") : "اكتب مبلغ الإضافة على بند واحد على الأقل") + "</div>";
-    return '<div class="taxinv-cn-sum">الإجمالي قبل الضريبة: <b>' + taxinvMoney(tot.taxable) + "</b> — الضريبة: <b>" + taxinvMoney(tot.vat) + "</b> — إجمالي الإشعار المدين: <b>" + taxinvMoney(tot.total_inc) + " ر.س</b></div>";
+    return '<div class="taxinv-cn-sum">الإجمالي قبل الضريبة: <b>' + taxinvMoney(tot.taxable) + "</b> — الضريبة: <b>" + taxinvMoney(tot.vat) + "</b> — إجمالي التعديل: <b>" + taxinvMoney(tot.total_inc) + " ر.س</b></div>";
 }
 
 function taxinvDebitDialogHtml() {
@@ -26068,7 +26068,7 @@ function taxinvDebitDialogHtml() {
     const reasons = TAXINV_DN_REASONS.map(k => '<option value="' + k + '"' + (dn.reason === k ? " selected" : "") + ">" + escapeHtml(PTX_TAXINV.reasons[k]) + "</option>").join("");
     const rowsHtml = dn.rows.map((r, i) => {
         const none = r.inc_room <= 0;
-        return "<tr>" + '<td class="taxinv-name">' + escapeHtml(r.name) + "</td>" + '<td data-l="الإجمالي الأصلي (شامل الضريبة)">' + escapeHtml(taxinvMoney(r.inc_orig)) + "</td>" + '<td data-l="أُضيف سابقًا بإشعارات مدينة">' + escapeHtml(taxinvMoney(r.inc_debited)) + "</td>" + '<td data-l="أقصى ما يمكن إضافته">' + escapeHtml(taxinvMoney(r.inc_room)) + "</td>" + '<td data-l="المبلغ المُضاف (شامل الضريبة)"><input type="number" step="0.01" min="0" data-taxinv-dn="amt" data-i="' + i + '" value="' + escapeHtml(String(r.amount)) + '" placeholder="0.00"' + (none ? " disabled" : "") + "></td>" + "</tr>";
+        return "<tr>" + '<td class="taxinv-name">' + escapeHtml(r.name) + "</td>" + '<td data-l="الإجمالي الأصلي (شامل الضريبة)">' + escapeHtml(taxinvMoney(r.inc_orig)) + "</td>" + '<td data-l="أُضيف سابقًا بتعديلات">' + escapeHtml(taxinvMoney(r.inc_debited)) + "</td>" + '<td data-l="أقصى ما يمكن إضافته">' + escapeHtml(taxinvMoney(r.inc_room)) + "</td>" + '<td data-l="المبلغ المُضاف (شامل الضريبة)"><input type="number" step="0.01" min="0" data-taxinv-dn="amt" data-i="' + i + '" value="' + escapeHtml(String(r.amount)) + '" placeholder="0.00"' + (none ? " disabled" : "") + "></td>" + "</tr>";
     }).join("");
     let diffHint = "";
     try {
@@ -26081,8 +26081,8 @@ function taxinvDebitDialogHtml() {
     } catch (e) {
         diffHint = "";
     }
-    const confirmLines = dn.confirming && calc.draft && calc.ok ? '<div class="taxinv-cn-confirm"><b>سيصدر الإشعار المدين بهذه البنود:</b><ul>' + calc.draft.lines.map(l => "<li>" + escapeHtml(l.name) + " — <b>" + escapeHtml(taxinvMoney(taxinvH(l.line_inc))) + " ر.س</b></li>").join("") + "</ul></div>" : "";
-    return '<div class="modal-backdrop" data-taxinv-dialog="dn"><div class="modal-card taxinv-dialog-card" role="dialog" aria-modal="true">' + '<div class="modal-title">إشعار مدين على الفاتورة ' + escapeHtml(dn.invNumber) + "</div>" + '<div class="modal-sub">يضيف مبلغًا على الفاتورة الصادرة (زيادة سعر أو بند ناقص). الفاتورة الأصلية لا تتغيّر، والإشعار مستند مستقل برقم تسلسلي خاص به. للإدارة فقط.</div>' + '<div class="taxinv-grid" style="margin-top:12px;">' + '<label class="taxinv-field"><span class="taxinv-field-label">سبب الإشعار</span><select data-taxinv-dn="reason">' + reasons + "</select></label>" + '<label class="taxinv-field"><span class="taxinv-field-label">توضيح (اختياري)</span><input type="text" data-taxinv-dn="reasonText" value="' + escapeHtml(dn.reasonText) + '" dir="auto" maxlength="500"></label>' + "</div>" + diffHint + '<div class="taxinv-legal">اكتب المبلغ المُضاف شامل الضريبة على البند المعني؛ البنود الفارغة لا تدخل الإشعار. لا يتجاوز المبلغ المُضاف على بند قيمته الأصلية في الفاتورة.</div>' + '<div class="taxinv-cn-wrap"><table class="taxinv-cn-table taxinv-dn-table"><thead><tr><th>البند</th><th>الإجمالي الأصلي</th><th>أُضيف سابقًا</th><th>أقصى ما يمكن إضافته</th><th>المبلغ المُضاف (شامل الضريبة)</th></tr></thead><tbody>' + rowsHtml + "</tbody></table></div>" + '<div id="taxinv-dn-sum">' + taxinvDnSumHtml(calc) + "</div>" + confirmLines + '<div class="modal-footer-actions" id="taxinv-dn-foot" style="margin-top:14px;justify-content:flex-end;">' + (dn.confirming ? '<span style="flex:1;font-weight:700;font-size:13px;">بعد الإصدار لا يمكن تعديل الإشعار أو حذفه. تأكيد الإصدار؟</span><button type="button" class="btn btn-ghost" data-taxinv-act="dn-back">رجوع</button><button type="button" class="btn btn-danger" id="taxinv-dn-confirm" data-taxinv-act="dn-confirm"' + (dn.busy ? " disabled" : "") + ">" + (dn.busy ? "جاري الإصدار…" : "تأكيد الإصدار") + "</button>" : '<button type="button" class="btn btn-ghost" data-taxinv-act="dn-cancel">إلغاء</button><button type="button" class="btn btn-primary" data-taxinv-act="dn-issue"' + (calc.ok && calc.draft ? "" : " disabled") + ">إصدار الإشعار المدين</button>") + "</div></div></div>";
+    const confirmLines = dn.confirming && calc.draft && calc.ok ? '<div class="taxinv-cn-confirm"><b>سيصدر التعديل بهذه البنود:</b><ul>' + calc.draft.lines.map(l => "<li>" + escapeHtml(l.name) + " — <b>" + escapeHtml(taxinvMoney(taxinvH(l.line_inc))) + " ر.س</b></li>").join("") + "</ul></div>" : "";
+    return '<div class="modal-backdrop" data-taxinv-dialog="dn"><div class="modal-card taxinv-dialog-card" role="dialog" aria-modal="true">' + '<div class="modal-title">تعديل الفاتورة (زيادة) ' + escapeHtml(dn.invNumber) + "</div>" + '<div class="modal-sub">يضيف مبلغًا على الفاتورة الصادرة (زيادة سعر أو بند ناقص). الفاتورة الأصلية لا تتغيّر، ويصدر بالتعديل مستند رسمي مستقل اسمه «إشعار مدين» برقم تسلسلي خاص به. للإدارة فقط.</div>' + '<div class="taxinv-grid" style="margin-top:12px;">' + '<label class="taxinv-field"><span class="taxinv-field-label">سبب التعديل</span><select data-taxinv-dn="reason">' + reasons + "</select></label>" + '<label class="taxinv-field"><span class="taxinv-field-label">توضيح (اختياري)</span><input type="text" data-taxinv-dn="reasonText" value="' + escapeHtml(dn.reasonText) + '" dir="auto" maxlength="500"></label>' + "</div>" + diffHint + '<div class="taxinv-legal">اكتب المبلغ المُضاف شامل الضريبة على البند المعني؛ البنود الفارغة لا تدخل التعديل. لا يتجاوز المبلغ المُضاف على بند قيمته الأصلية في الفاتورة.</div>' + '<div class="taxinv-cn-wrap"><table class="taxinv-cn-table taxinv-dn-table"><thead><tr><th>البند</th><th>الإجمالي الأصلي</th><th>أُضيف سابقًا</th><th>أقصى ما يمكن إضافته</th><th>المبلغ المُضاف (شامل الضريبة)</th></tr></thead><tbody>' + rowsHtml + "</tbody></table></div>" + '<div id="taxinv-dn-sum">' + taxinvDnSumHtml(calc) + "</div>" + confirmLines + '<div class="modal-footer-actions" id="taxinv-dn-foot" style="margin-top:14px;justify-content:flex-end;">' + (dn.confirming ? '<span style="flex:1;font-weight:700;font-size:13px;">بعد الإصدار لا يمكن تعديل المستند أو حذفه. تأكيد الإصدار؟</span><button type="button" class="btn btn-ghost" data-taxinv-act="dn-back">رجوع</button><button type="button" class="btn btn-danger" id="taxinv-dn-confirm" data-taxinv-act="dn-confirm"' + (dn.busy ? " disabled" : "") + ">" + (dn.busy ? "جاري الإصدار…" : "تأكيد الإصدار") + "</button>" : '<button type="button" class="btn btn-ghost" data-taxinv-act="dn-cancel">إلغاء</button><button type="button" class="btn btn-primary" data-taxinv-act="dn-issue"' + (calc.ok && calc.draft ? "" : " disabled") + ">إصدار التعديل</button>") + "</div></div></div>";
 }
 
 function taxinvRenderDebitDialog() {
@@ -26109,7 +26109,7 @@ async function taxinvIssueDebitNote() {
     const dn = taxinvDn, st = taxinvState;
     if (!dn || !st || dn.busy) return;
     if (!hasElevatedAccess()) {
-        showToast("إشعار المدين للإدارة فقط", "error");
+        showToast("تعديل الفاتورة للإدارة فقط", "error");
         return;
     }
     const calc = taxinvDnCompute();
@@ -26145,7 +26145,7 @@ async function taxinvIssueDebitNote() {
             dn.busy = false;
             dn.confirming = false;
             if (taxinvDn === dn) taxinvRenderDebitDialog();
-            showToast("تعذّر إصدار الإشعار المدين: " + taxinvErrText(e), "error");
+            showToast("تعذّر تعديل الفاتورة: " + taxinvErrText(e), "error");
             return;
         }
     }
@@ -26153,10 +26153,10 @@ async function taxinvIssueDebitNote() {
         dn.busy = false;
         dn.confirming = false;
         taxinvRenderDebitDialog();
-        showToast("تعذّر إصدار الإشعار المدين: استجابة غير متوقعة", "error");
+        showToast("تعذّر تعديل الفاتورة: استجابة غير متوقعة", "error");
         return;
     }
-    showToast(doc.replayed ? "هذا الإشعار صدر سابقًا — عُرضت نسخته " + doc.doc_number : "تم إصدار الإشعار المدين " + doc.doc_number, "ok");
+    showToast(doc.replayed ? "صدر هذا المستند سابقًا — عُرضت نسخته " + doc.doc_number : "تم تعديل الفاتورة — إشعار مدين " + doc.doc_number, "ok");
     taxinvAfterNote(st, doc);
 }
 
@@ -26518,7 +26518,7 @@ function taxinvSellerAskConfirm() {
     const prevProfile = taxinvSeller && taxinvSeller.profile;
     const effPrev = prevProfile && prevProfile.vat_effective_from ? String(prevProfile.vat_effective_from) : "";
     const immediate = !!(effNew && today && effNew <= today && effNew !== effPrev);
-    foot.innerHTML = '<span style="flex:1;font-weight:700;font-size:13px;">راجع الاسم القانوني والرقم الضريبي — تُنسخ هذه البيانات داخل كل فاتورة تصدر بعد الحفظ ولا تُصحَّح على فاتورة صدرت إلا بإشعار دائن وفاتورة جديدة. ' + "التسجيل الضريبي ساري من <b>" + escapeHtml(effWords) + "</b>: الفواتير قبله بأرقام الطلبات، ومنه تبدأ الأرقام الرسمية <b>INV-000001</b>." + (immediate ? ' <b style="color:var(--rust);">تنبيه: هذا التاريخ هو اليوم أو في الماضي — الفاتورة التالية ستكون رسمية (INV-000001) ولا يمكن تغيير هذا التاريخ بعد صدور أول فاتورة رسمية.</b>' : "") + " حفظ؟</span>" + '<button type="button" class="btn btn-ghost" data-taxinv-act="seller-back">رجوع</button>' + '<button type="button" class="btn btn-primary" id="taxinv-sf-save" data-taxinv-act="seller-save-go">' + (immediate ? "أؤكد التاريخ والحفظ" : "تأكيد الحفظ") + "</button>";
+    foot.innerHTML = '<span style="flex:1;font-weight:700;font-size:13px;">راجع الاسم القانوني والرقم الضريبي — تُنسخ هذه البيانات داخل كل فاتورة تصدر بعد الحفظ ولا تُصحَّح على فاتورة صدرت إلا بإرجاع الفاتورة وإصدار فاتورة جديدة. ' + "التسجيل الضريبي ساري من <b>" + escapeHtml(effWords) + "</b>: الفواتير قبله بأرقام الطلبات، ومنه تبدأ الأرقام الرسمية <b>INV-000001</b>." + (immediate ? ' <b style="color:var(--rust);">تنبيه: هذا التاريخ هو اليوم أو في الماضي — الفاتورة التالية ستكون رسمية (INV-000001) ولا يمكن تغيير هذا التاريخ بعد صدور أول فاتورة رسمية.</b>' : "") + " حفظ؟</span>" + '<button type="button" class="btn btn-ghost" data-taxinv-act="seller-back">رجوع</button>' + '<button type="button" class="btn btn-primary" id="taxinv-sf-save" data-taxinv-act="seller-save-go">' + (immediate ? "أؤكد التاريخ والحفظ" : "تأكيد الحفظ") + "</button>";
 }
 
 function taxinvSellerBack() {
@@ -27581,11 +27581,11 @@ var PTX_ACCT = function() {
         },
         steps: {
             step1: "أُرجعت القطعة",
-            step2: "صدر إشعار دائن",
+            step2: "صدر الإرجاع (إشعار دائن)",
             step3: "رُدّ المبلغ للعميل",
             noInvoice: "لا فاتورة",
             noRefund: "لا يوجد رد",
-            step2Pending: "لم يصدر إشعار دائن بعد",
+            step2Pending: "لم يصدر الإرجاع بعد",
             step3Pending: "لم يُردّ المبلغ للعميل بعد",
             done: "تم",
             waiting: "بانتظار"
@@ -27600,24 +27600,24 @@ var PTX_ACCT = function() {
             text: "فاتورة صالحة لم يُرجَع منها شيء."
         }, {
             term: "مرتجع جزئي",
-            text: "رجع جزء من الفاتورة وصدر إشعار دائن بقيمته؛ الباقي ساري."
+            text: "رجع جزء من الفاتورة وصدر إرجاع بقيمته؛ الباقي ساري."
         }, {
             term: "مرتجعة بالكامل",
-            text: "رجعت قيمة الفاتورة كلها بإشعار دائن."
+            text: "رجعت قيمة الفاتورة كلها بإرجاع (إشعار دائن)."
         }, {
             term: "أُضيف عليها",
-            text: "زاد سعر الفاتورة بعد إصدارها فصدر إشعار مدين بالزيادة."
+            text: "زاد سعر الفاتورة بعد إصدارها فصدر تعديل بالزيادة (إشعار مدين)."
         }, {
             term: "قبل التسجيل",
             text: "مستند صدر قبل بدء التسجيل الضريبي (1 نوفمبر 2026)؛ لا يدخل إقرار الضريبة."
         }, {
             term: "يحتاج إجراء",
-            text: "بالفاتورة أو بطلبها شيء ناقص: إشعار لم يصدر أو مبلغ لم يُرد أو فاتورة لم تُصدر. سببه مكتوب تحت الحالة."
+            text: "بالفاتورة أو بطلبها شيء ناقص: إرجاع لم يصدر أو مبلغ لم يُرد أو فاتورة لم تُصدر. سببه مكتوب تحت الحالة."
         }, {
-            term: "إشعار دائن",
-            text: "ورقة رسمية تُخفّض قيمة الفاتورة (مرتجع أو تخفيض سعر)."
+            term: "إرجاع الفاتورة (إشعار دائن)",
+            text: "ورقة رسمية تُخفّض قيمة الفاتورة: مرتجع أو تخفيض سعر أو إلغاء."
         }, {
-            term: "إشعار مدين",
+            term: "تعديل الفاتورة (إشعار مدين)",
             text: "ورقة رسمية تزيد قيمة الفاتورة بعد صدورها."
         }, {
             term: "ضريبة الفواتير الرسمية",
@@ -27681,22 +27681,22 @@ var PTX_ACCT = function() {
         actions: {
             missing_invoice: "سُلّم بلا فاتورة ضريبية",
             legacy_cash: "فاتورة نقدية قديمة — تحتاج فاتورة ضريبية",
-            order_changed_cn: "تغيّر الطلب بعد الفاتورة — يحتاج إشعار دائن (تخفيض)",
-            order_changed_dn: "ارتفع الطلب بعد الفاتورة — يحتاج إشعار مدين (زيادة)",
+            order_changed_cn: "تغيّر الطلب بعد الفاتورة — يحتاج إرجاع (تخفيض)",
+            order_changed_dn: "ارتفع الطلب بعد الفاتورة — يحتاج تعديل (زيادة)",
             return_pending: "مرتجع بانتظار الرد",
             advance_no_invoice: "مبلغ مقبوض مقدّمًا بلا فاتورة"
         },
         actionNotes: {
             legacyTail: " · ضريبتها مستحقة",
             refund: "رد المبلغ للعميل ",
-            noCredit: "لم يصدر إشعار دائن (تخفيض)"
+            noCredit: "لم يصدر الإرجاع (تخفيض)"
         },
         cardReasons: {
-            order_changed_cn: "الطلب نقص بعد الفاتورة — يحتاج إشعار دائن (تخفيض)",
-            order_changed_dn: "الطلب زاد بعد الفاتورة — يحتاج إشعار مدين (زيادة)",
-            return_both: "مرتجع: لم يُرد المبلغ للعميل ولم يصدر إشعار دائن",
+            order_changed_cn: "الطلب نقص بعد الفاتورة — يحتاج إرجاع (تخفيض)",
+            order_changed_dn: "الطلب زاد بعد الفاتورة — يحتاج تعديل (زيادة)",
+            return_both: "مرتجع: لم يُرد المبلغ للعميل ولم يصدر الإرجاع",
             return_refund: "مرتجع: لم يُرد المبلغ للعميل بعد",
-            return_cn: "مرتجع: لم يصدر إشعار دائن (تخفيض) بعد",
+            return_cn: "مرتجع: لم يصدر الإرجاع (تخفيض) بعد",
             other: "بهذه الفاتورة أو بطلبها إجراء ناقص"
         },
         taxLine: "ضريبة الفواتير الرسمية: ",
