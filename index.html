@@ -2210,9 +2210,11 @@
   /* ===== صف القطعة بنافذتي الطلبية والتسعير (طلب المالك 2026-10-27): الكتالوج خلف زر بجانب رقم القطعة، الملاحظات عند الحاجة فقط، سطر واحد للثانويات ===== */
   .trk-pr .part-pn-row{gap:8px;align-items:center;}
   .trk-pr .trk-catbtn{align-self:flex-start;}
-  .trk-pr .part-pn-input{flex:1 1 100px;min-width:0;}
+  .trk-pr .part-pn-input{flex:1 1 150px;min-width:0;}
   .trk-pr .part-pn-input,.trk-pr .part-desc-input,.trk-pr .part-notes-input,.trk-pr .part-purchasing-notes-input{min-height:44px;}
-  .trk-pr .part-pn-find{flex:0 0 auto;min-height:44px;padding:0 12px;font-size:13px;white-space:nowrap;color:var(--text);}
+  .trk-pr .part-pn-find{flex:0 0 100%;min-height:44px;padding:0 12px;font-size:13px;color:var(--text);}
+  .trk-pr .part-row:has(.trk-catbtn):not(.trk-cat-open) .part-pn-find{display:none;}
+  .trk-pr .trk-catbtn{padding:0 10px;font-weight:600;color:var(--text-dim);background:var(--surface);border:0;}
   .trk-pr .epcl-auto{font-size:13px;}
   .trk-pr .epcl-auto-x{min-width:44px;min-height:44px;}
   .trk-pr .grade-tag,.trk-pr .part-notes-readonly,.trk-pr .part-index-badge{font-size:13px;}
@@ -2238,9 +2240,9 @@
   .trk-prq .part-row > .part-desc-wrap > .part-pn-block{display:contents;}
   .trk-prq .part-row > .part-desc-wrap > .part-pn-block > *{order:4;flex:0 0 100%;min-width:0;margin:0;}
   .trk-prq .part-row > .part-desc-wrap > .part-condition-badge{order:7;flex:0 0 auto;}
-  .trk-prq .part-row > .part-desc-wrap > .trk-catbtn{order:8;flex:0 0 auto;}
-  .trk-prq .part-row > .part-desc-wrap > .trk-notebtn{order:9;flex:0 0 auto;}
-  .trk-prq .part-row > .part-media-btn{order:10;flex:0 0 auto;align-self:auto;min-height:44px;padding:0 12px;}
+  .trk-prq .part-row > .part-desc-wrap > .trk-catbtn{order:10;flex:0 0 auto;}
+  .trk-prq .part-row > .part-desc-wrap > .trk-notebtn{order:8;flex:0 0 auto;}
+  .trk-prq .part-row > .part-media-btn{order:9;flex:0 0 auto;align-self:auto;min-height:44px;padding:0 12px;}
   .trk-prq .part-row > .part-desc-wrap > .part-notes-input,.trk-prq .part-row > .part-desc-wrap > .part-purchasing-notes-input,.trk-prq .part-row > .part-desc-wrap > .part-notes-readonly{order:11;}
   .trk-prq .part-row > .part-desc-wrap > .part-pn-block > .epcl-strip{order:12;}
   .trk-prq .part-row:not(.trk-cat-open) > .part-desc-wrap > .part-pn-block > .epcl-strip{order:4;}
@@ -75058,6 +75060,1202 @@ function dnoteBoardOnClick(ev) {
     } catch (e) {}
 })();
 
+const PDOC_BUCKET = "party-docs";
+
+const PDOC_MAX_BYTES = 10 * 1024 * 1024;
+
+const PDOC_URL_SECONDS = 120;
+
+const PDOC_TYPES = [ {
+    id: "cr",
+    ar: "سجل تجاري",
+    cls: "pdoc-t-cr"
+}, {
+    id: "vat",
+    ar: "شهادة ضريبية",
+    cls: "pdoc-t-vat"
+}, {
+    id: "addr",
+    ar: "عنوان وطني",
+    cls: "pdoc-t-addr"
+}, {
+    id: "id",
+    ar: "هوية",
+    cls: "pdoc-t-id"
+}, {
+    id: "other",
+    ar: "أخرى",
+    cls: "pdoc-t-other"
+} ];
+
+const PDOC_EX_TYPES = [ "cr", "vat", "addr" ];
+
+const PDOC_EX_LABELS = {
+    cr_number: "السجل التجاري",
+    vat_number: "الرقم الضريبي",
+    street: "الشارع",
+    building_no: "رقم المبنى",
+    additional_no: "الرقم الإضافي",
+    district: "الحي",
+    city: "المدينة",
+    postal_code: "الرمز البريدي"
+};
+
+const PDOC_EX_ORDER = [ "cr_number", "vat_number", "street", "building_no", "additional_no", "district", "city", "postal_code" ];
+
+const PDOC_EX_RE = {
+    cr_number: /^[0-9]{10}$/,
+    vat_number: /^3[0-9]{13}3$/,
+    building_no: /^[0-9]{4}$/,
+    additional_no: /^[0-9]{4}$/,
+    postal_code: /^[0-9]{5}$/
+};
+
+const PDOC_EX_MSG = {
+    "not-configured": "ميزة الاستخراج غير مفعّلة بعد",
+    rate: "تجاوزت الحد المسموح بالساعة — حاول لاحقًا",
+    quota: "بلغ الحد اليومي لاستخراج البيانات",
+    busy: "الخدمة مشغولة — حاول بعد قليل",
+    "too-large": "الملف كبير على القراءة — صغّر الصورة أو اختر PDF أصغر",
+    unsupported: "نوع الملف غير مدعوم للاستخراج",
+    forbidden: "ليست لديك صلاحية",
+    unauthorized: "انتهت الجلسة — أعد فتح التطبيق",
+    "not-found": "تعذّر إيجاد الملف"
+};
+
+let pdocDead = false, pdocBusy = false, pdocObs = [], pdocCounts = {}, pdocCountsAt = 0, pdocCountsLoading = false, pdocSheet = null, pdocInputsMade = false, pdocPickGen = 0;
+
+function pdocType(id) {
+    for (let i = 0; i < PDOC_TYPES.length; i++) {
+        if (PDOC_TYPES[i].id === id) return PDOC_TYPES[i];
+    }
+    return PDOC_TYPES[3];
+}
+
+function pdocOn() {
+    try {
+        return !pdocDead && typeof sb !== "undefined" && !!sb && typeof currentUserRole !== "undefined" && currentUserRole === "full";
+    } catch (e) {
+        return false;
+    }
+}
+
+function pdocDate(iso) {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    return String(d.getDate()).padStart(2, "0") + "/" + String(d.getMonth() + 1).padStart(2, "0") + "/" + d.getFullYear();
+}
+
+function pdocSizeText(n) {
+    n = Number(n) || 0;
+    if (n >= 1024 * 1024) return Math.round(n / (1024 * 1024) * 10) / 10 + " ميغابايت";
+    return Math.max(1, Math.round(n / 1024)) + " كيلوبايت";
+}
+
+function pdocWho(email) {
+    let nm = "";
+    try {
+        nm = typeof displayNameForEmail === "function" ? String(displayNameForEmail(email) || "") : "";
+    } catch (e) {
+        nm = "";
+    }
+    return nm || String(email || "").split("@")[0];
+}
+
+function pdocPartyName(kind, id) {
+    try {
+        const list = kind === "supplier" ? appData.suppliers || [] : appData.customers || [];
+        const p = list.find(function(x) {
+            return x.id === id;
+        });
+        return p && (p.name || p.phone) || (kind === "supplier" ? "مورد" : "عميل");
+    } catch (e) {
+        return "";
+    }
+}
+
+function pdocErrText(e) {
+    const m = String(e && (e.message || e.error_description) || e || "");
+    if (/TIMEOUT/i.test(m)) return "انتهت المهلة — تحقق من الاتصال وحاول مرة أخرى";
+    if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return "تعذّر الاتصال — تحقق من الإنترنت وحاول مرة أخرى";
+    if (/exceeded the maximum allowed size|too large|Payload/i.test(m)) return "الملف أكبر من 10 ميغابايت";
+    if (/mime type|not supported/i.test(m)) return "نوع الملف غير مدعوم (PDF أو صورة فقط)";
+    if (/row-level security|غير متاح|permission denied/i.test(m)) return "ليست لديك صلاحية على المستندات";
+    const ar = m.match(/[؀-ۿ][؀-ۿ\s()0-9]*[؀-ۿ)]/);
+    return ar ? ar[0] : "تعذّر تنفيذ الطلب — حاول مرة أخرى";
+}
+
+function pdocRpc(name, p, soft) {
+    return withTimeout(sb.rpc(name, {
+        p: p || {}
+    }), 25e3, name).then(function(r) {
+        if (r && r.error) {
+            const msg = String(r.error.message || "") + " " + String(r.error.code || "");
+            if (/PGRST202|Could not find the function|does not exist/i.test(msg)) {
+                if (!soft) pdocOff();
+            }
+            const e = new Error(r.error.message || "rpc");
+            e.code = r.error.code;
+            throw e;
+        }
+        return r ? r.data : null;
+    });
+}
+
+function pdocOff() {
+    pdocDead = true;
+    try {
+        pdocObs.forEach(function(o) {
+            o.disconnect();
+        });
+        pdocObs = [];
+    } catch (e) {}
+    try {
+        [].slice.call(document.querySelectorAll(".pdoc-btn")).forEach(function(b) {
+            b.remove();
+        });
+    } catch (e) {}
+    try {
+        pdocClose();
+    } catch (e) {}
+}
+
+function pdocKey(kind, id) {
+    return kind + ":" + id;
+}
+
+function pdocLoadCounts(force) {
+    if (!pdocOn() || pdocCountsLoading) return;
+    if (!force && pdocCountsAt && Date.now() - pdocCountsAt < 18e4) return;
+    pdocCountsLoading = true;
+    pdocRpc("party_docs_counts", {}).then(function(d) {
+        const next = {};
+        (d && d.rows || []).forEach(function(r) {
+            next[pdocKey(r.kind, r.id)] = {
+                n: Number(r.n) || 0,
+                types: r.types || []
+            };
+        });
+        pdocCounts = next;
+        pdocCountsAt = Date.now();
+        pdocSchedule();
+    }).then(null, function(e) {
+        if (e && /غير متاح/.test(String(e.message || ""))) pdocOff();
+        pdocCountsAt = Date.now() - 12e4;
+    }).then(function() {
+        pdocCountsLoading = false;
+    });
+}
+
+function pdocBtnHtml(n) {
+    return "مستندات" + (n > 0 ? '<span class="pdoc-n">' + n + "</span>" : "");
+}
+
+function pdocApply() {
+    if (!pdocOn() || typeof document === "undefined" || !document.querySelectorAll) return;
+    let anyRow = false;
+    try {
+        [ [ "customer", "#customers-items-list .task-item-row[data-customer-id]", "data-customer-id", ".customer-row-main", ".customer-edit-btn" ], [ "supplier", "#suppliers-items-list .task-item-row[data-supplier-id]", "data-supplier-id", ".supplier-row-main", ".supplier-edit-btn" ] ].forEach(function(spec) {
+            [].slice.call(document.querySelectorAll(spec[1])).forEach(function(row) {
+                const id = row.getAttribute(spec[2]), main = row.querySelector(":scope > " + spec[3]), edit = main ? main.querySelector(".task-item-remove-btn, .customer-save-btn, .supplier-save-btn, input") : null;
+                let b = row.querySelector(".pdoc-btn");
+                if (!main || edit) {
+                    if (b) b.remove();
+                    return;
+                }
+                anyRow = true;
+                const c = pdocCounts[pdocKey(spec[0], id)], n = c ? c.n : 0, html = pdocBtnHtml(n);
+                if (!b) {
+                    b = document.createElement("button");
+                    b.type = "button";
+                    b.className = "icon-btn pdoc-btn";
+                    b.setAttribute("data-pdoc-kind", spec[0]);
+                    b.setAttribute("data-pdoc-id", id);
+                    b.setAttribute("aria-label", "مستندات");
+                    b.innerHTML = html;
+                    b.setAttribute("data-pdoc-n", String(n));
+                    const host = main.querySelector(":scope > .trk-row-actions") || main, anchor = host.querySelector(":scope > " + spec[4]);
+                    if (anchor) host.insertBefore(b, anchor); else host.appendChild(b);
+                } else {
+                    if (b.getAttribute("data-pdoc-n") !== String(n)) {
+                        b.innerHTML = html;
+                        b.setAttribute("data-pdoc-n", String(n));
+                    }
+                    if (b.getAttribute("data-pdoc-id") !== id) {
+                        b.setAttribute("data-pdoc-id", id);
+                        b.setAttribute("data-pdoc-kind", spec[0]);
+                    }
+                    const host = main.querySelector(":scope > .trk-row-actions");
+                    if (host && b.parentNode !== host) {
+                        const anchor = host.querySelector(":scope > " + spec[4]);
+                        if (anchor) host.insertBefore(b, anchor); else host.appendChild(b);
+                    }
+                }
+            });
+        });
+        if (anyRow && (!pdocCountsAt || Date.now() - pdocCountsAt > 18e4)) pdocLoadCounts(false);
+    } catch (e) {
+        console.error("PDOC apply:", e);
+    }
+}
+
+function pdocSchedule() {
+    if (pdocBusy || pdocDead) return;
+    pdocBusy = true;
+    const go = function() {
+        pdocBusy = false;
+        pdocApply();
+    };
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(go); else setTimeout(go, 0);
+}
+
+function pdocRoot() {
+    let r = document.getElementById("pdoc-root");
+    if (!r) {
+        r = document.createElement("div");
+        r.id = "pdoc-root";
+        document.body.appendChild(r);
+    }
+    return r;
+}
+
+function pdocClose() {
+    pdocSheet = null;
+    pdocPickGen++;
+    const r = document.getElementById("pdoc-root");
+    if (r) {
+        r.innerHTML = "";
+        r.classList.remove("pdoc-open");
+    }
+    document.removeEventListener("keydown", pdocOnKey, true);
+    pdocSchedule();
+}
+
+function pdocOnKey(ev) {
+    if (ev.key === "Escape" && pdocSheet && !document.querySelector("#confirm-root.modal-open")) {
+        ev.stopPropagation();
+        pdocClose();
+    }
+}
+
+function pdocOpen(kind, id) {
+    if (!pdocOn()) return;
+    pdocEnsureInputs();
+    pdocSheet = {
+        kind: kind,
+        id: id,
+        docs: [],
+        loading: true,
+        error: "",
+        form: null,
+        busy: false,
+        link: null,
+        prep: false,
+        ex: null,
+        prof: kind === "supplier" ? {
+            loading: true,
+            data: null,
+            open: false,
+            form: null,
+            filled: [],
+            busy: false,
+            na: false
+        } : null
+    };
+    pdocRender();
+    document.addEventListener("keydown", pdocOnKey, true);
+    const sh = pdocSheet;
+    if (kind === "supplier") {
+        pdocRpc("party_profile_get", {
+            party_id: id
+        }, true).then(function(d) {
+            if (pdocSheet !== sh) return;
+            sh.prof.data = d && d.profile ? d.profile : null;
+            sh.prof.loading = false;
+            pdocRender();
+        }).then(null, function() {
+            if (pdocSheet !== sh) return;
+            sh.prof.loading = false;
+            sh.prof.na = true;
+            pdocRender();
+        });
+    }
+    pdocRpc("party_docs_list", {
+        kind: kind,
+        party_id: id
+    }).then(function(d) {
+        if (pdocSheet !== sh) return;
+        sh.docs = d && d.docs || [];
+        sh.loading = false;
+        pdocSyncCount(sh);
+        pdocRender();
+    }).then(null, function(e) {
+        if (pdocSheet !== sh) return;
+        sh.loading = false;
+        sh.error = pdocErrText(e);
+        pdocRender();
+    });
+}
+
+function pdocSyncCount(sh) {
+    const types = [];
+    sh.docs.forEach(function(d) {
+        if (types.indexOf(d.doc_type) < 0) types.push(d.doc_type);
+    });
+    pdocCounts[pdocKey(sh.kind, sh.id)] = {
+        n: sh.docs.length,
+        types: types.sort()
+    };
+    pdocSchedule();
+}
+
+function pdocDocHtml(d) {
+    const t = pdocType(d.doc_type), title = d.doc_type === "other" ? d.label || t.ar : t.ar + (d.label ? " — " + d.label : "");
+    const kindTxt = d.mime === "application/pdf" ? "PDF" : "صورة";
+    const meta = [ pdocDate(d.created_at), pdocWho(d.uploaded_by), kindTxt, pdocSizeText(d.size) ].filter(Boolean).join(" · ");
+    const link = pdocSheet && pdocSheet.link && pdocSheet.link.id === d.id ? pdocSheet.link.url : "";
+    return '<div class="pdoc-doc ' + t.cls + '" data-pdoc-doc="' + escapeHtml(d.id) + '">' + '<div class="pdoc-doc-t">' + escapeHtml(title) + "</div>" + '<div class="pdoc-doc-m">' + escapeHtml(meta) + "</div>" + '<div class="pdoc-doc-a">' + (link ? '<a class="btn btn-primary pdoc-b" href="' + escapeHtml(link) + '" target="_blank" rel="noopener">اضغط لفتح الملف</a>' : '<button type="button" class="btn btn-primary pdoc-b" data-pdoc-act="open" data-pdoc-did="' + escapeHtml(d.id) + '">فتح</button>') + '<button type="button" class="btn pdoc-b" data-pdoc-act="download" data-pdoc-did="' + escapeHtml(d.id) + '">تنزيل</button>' + (PDOC_EX_TYPES.indexOf(d.doc_type) >= 0 && !(pdocSheet && pdocSheet.prof && pdocSheet.prof.na) ? '<button type="button" class="btn pdoc-b pdoc-exb" data-pdoc-act="extract" data-pdoc-did="' + escapeHtml(d.id) + '"' + (pdocSheet && pdocSheet.ex && pdocSheet.ex.phase === "loading" ? " disabled" : "") + ">استخراج</button>" : "") + (d.can_delete ? '<button type="button" class="btn btn-danger pdoc-b" data-pdoc-act="delete" data-pdoc-did="' + escapeHtml(d.id) + '">حذف</button>' : "") + "</div>" + (pdocSheet && pdocSheet.ex && pdocSheet.ex.did === d.id ? pdocExHtml(pdocSheet.ex) : "") + "</div>";
+}
+
+function pdocFormHtml(f) {
+    const chips = PDOC_TYPES.map(function(t) {
+        return '<button type="button" class="chip pdoc-chip ' + t.cls + (f.type === t.id ? " pdoc-chip-on" : "") + '" data-pdoc-act="type" data-pdoc-type="' + t.id + '" aria-pressed="' + (f.type === t.id ? "true" : "false") + '">' + t.ar + "</button>";
+    }).join("");
+    const file = f.file ? '<div class="pdoc-file"><span class="pdoc-file-n">' + escapeHtml(f.file.name) + '</span><span class="pdoc-file-s">' + escapeHtml((f.file.mime === "application/pdf" ? "PDF" : "صورة") + " · " + pdocSizeText(f.file.size)) + '</span><button type="button" class="btn pdoc-b pdoc-file-x" data-pdoc-act="unpick">إزالة</button></div>' : pdocSheet && pdocSheet.prep ? '<div class="pdoc-note">جارٍ تجهيز الملف...</div>' : "";
+    return '<div class="pdoc-form">' + '<div class="pdoc-lbl">نوع المستند</div><div class="pdoc-types">' + chips + "</div>" + (f.type === "other" ? '<input type="text" class="pdoc-other" maxlength="80" placeholder="اسم المستند (مثال: عقد توريد)" value="' + escapeHtml(f.label) + '" data-pdoc-in="label" autocomplete="off">' : "") + '<div class="pdoc-lbl">الملف</div>' + '<div class="pdoc-pick"><button type="button" class="btn pdoc-b" data-pdoc-act="pick-file">اختيار ملف</button><button type="button" class="btn pdoc-b" data-pdoc-act="pick-cam">تصوير بالكاميرا</button></div>' + file + '<div class="pdoc-note">PDF أو صورة، حتى 10 ميغابايت</div></div>';
+}
+
+function pdocCanUpload(sh) {
+    const f = sh && sh.form;
+    return !!(f && f.type && f.file && !sh.busy && !sh.prep && (f.type !== "other" || String(f.label || "").trim()));
+}
+
+function pdocRender() {
+    const sh = pdocSheet, r = pdocRoot();
+    if (!sh) {
+        r.innerHTML = "";
+        r.classList.remove("pdoc-open");
+        return;
+    }
+    const kindAr = sh.kind === "supplier" ? "المورد" : "العميل";
+    let body;
+    if (sh.loading) body = '<div class="pdoc-note">جارٍ التحميل...</div>'; else if (sh.error && !sh.docs.length) body = '<div class="pdoc-err">' + escapeHtml(sh.error) + "</div>"; else body = pdocProfHtml(sh) + (sh.form ? pdocFormHtml(sh.form) : "") + (sh.docs.length ? sh.docs.map(pdocDocHtml).join("") : sh.form ? "" : '<div class="pdoc-empty">لا توجد مستندات بعد</div>');
+    const bar = sh.form ? '<button type="button" class="btn btn-primary pdoc-b pdoc-go" data-pdoc-act="upload"' + (pdocCanUpload(sh) ? "" : " disabled") + ">" + (sh.busy ? "جارٍ الرفع..." : "رفع الملف") + '</button><button type="button" class="btn pdoc-b pdoc-cancel" data-pdoc-act="cancel"' + (sh.busy ? " disabled" : "") + ">إلغاء</button>" : '<button type="button" class="btn btn-primary pdoc-b pdoc-add" data-pdoc-act="add"' + (sh.loading || sh.error && !sh.docs.length ? " disabled" : "") + ">+ إرفاق مستند</button>";
+    const keepScroll = r.querySelector(".pdoc-body") ? r.querySelector(".pdoc-body").scrollTop : 0;
+    r.innerHTML = '<div class="pdoc-back" data-pdoc-act="backdrop"><div class="pdoc-card" role="dialog" aria-modal="true" aria-label="مستندات ' + escapeHtml(kindAr) + '">' + '<div class="pdoc-head"><div class="pdoc-title">مستندات ' + escapeHtml(kindAr) + '<span class="pdoc-who">' + escapeHtml(pdocPartyName(sh.kind, sh.id)) + '</span></div><button type="button" class="btn pdoc-b pdoc-x" data-pdoc-act="close">إغلاق</button></div>' + '<div class="pdoc-body">' + body + '</div><div class="pdoc-bar">' + bar + "</div></div></div>";
+    r.classList.add("pdoc-open");
+    const bd = r.querySelector(".pdoc-body");
+    if (bd && keepScroll) bd.scrollTop = keepScroll;
+}
+
+function pdocFindDoc(did) {
+    return pdocSheet ? pdocSheet.docs.find(function(d) {
+        return d.id === did;
+    }) : null;
+}
+
+function pdocEnsureInputs() {
+    if (pdocInputsMade || document.getElementById("pdoc-in-file")) {
+        pdocInputsMade = true;
+        return;
+    }
+    const mk = function(id, accept, capture) {
+        const el = document.createElement("input");
+        el.type = "file";
+        el.id = id;
+        el.accept = accept;
+        el.style.display = "none";
+        if (capture) el.setAttribute("capture", "environment");
+        el.addEventListener("change", function() {
+            const fl = el.files && el.files[0];
+            el.value = "";
+            if (fl) pdocPick(fl);
+        });
+        document.body.appendChild(el);
+    };
+    mk("pdoc-in-file", "application/pdf,image/*", false);
+    mk("pdoc-in-cam", "image/*", true);
+    pdocInputsMade = true;
+}
+
+function pdocBaseName(name) {
+    const n = String(name || "").replace(/^.*[\\/]/, "").replace(/\.[A-Za-z0-9]{1,5}$/, "").replace(/[\u0000-\u001f<>:"|?*]/g, "").trim();
+    return n.slice(0, 80);
+}
+
+function pdocJpeg(img, w0, h0, maxSide, q) {
+    const s = Math.min(1, maxSide / Math.max(w0, h0));
+    const w = Math.min(4096, Math.max(16, Math.round(w0 * s))), h = Math.min(4096, Math.max(16, Math.round(h0 * s)));
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    const g = c.getContext("2d");
+    g.fillStyle = "#fff";
+    g.fillRect(0, 0, w, h);
+    g.drawImage(img, 0, 0, w, h);
+    return new Promise(function(resolve, reject) {
+        c.toBlob(function(b) {
+            c.width = 0;
+            c.height = 0;
+            if (b) resolve(b); else reject(new Error("encode"));
+        }, "image/jpeg", q);
+    });
+}
+
+async function pdocPrepareImage(file) {
+    const url = URL.createObjectURL(file);
+    try {
+        const img = new Image;
+        img.decoding = "async";
+        img.src = url;
+        try {
+            await img.decode();
+        } catch (e) {
+            throw new Error("decode");
+        }
+        const w0 = img.naturalWidth, h0 = img.naturalHeight;
+        if (!w0 || !h0) throw new Error("decode");
+        const tries = [ [ 2600, .85 ], [ 2e3, .75 ], [ 1600, .65 ] ];
+        let blob = null;
+        for (let i = 0; i < tries.length; i++) {
+            blob = await pdocJpeg(img, w0, h0, tries[i][0], tries[i][1]);
+            if (blob.size <= 3.5 * 1024 * 1024) break;
+        }
+        if (!blob || blob.size > PDOC_MAX_BYTES) throw new Error("big");
+        return blob;
+    } finally {
+        URL.revokeObjectURL(url);
+    }
+}
+
+async function pdocPick(file) {
+    const sh = pdocSheet;
+    if (!sh || !sh.form) return;
+    const gen = ++pdocPickGen;
+    const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name || "");
+    const isImg = /^image\//i.test(file.type || "") || /\.(jpe?g|png|heic|heif|webp|gif|bmp)$/i.test(file.name || "");
+    if (!isPdf && !isImg) {
+        showToast("نوع الملف غير مدعوم — اختر PDF أو صورة", "error");
+        return;
+    }
+    if (isPdf && file.size > PDOC_MAX_BYTES) {
+        showToast("الملف أكبر من 10 ميغابايت", "error");
+        return;
+    }
+    if (isPdf && file.size <= 0) {
+        showToast("الملف فارغ", "error");
+        return;
+    }
+    sh.prep = true;
+    sh.form.file = null;
+    pdocRender();
+    try {
+        let blob, mime, ext;
+        if (isPdf) {
+            blob = file;
+            mime = "application/pdf";
+            ext = "pdf";
+        } else {
+            blob = await pdocPrepareImage(file);
+            mime = "image/jpeg";
+            ext = "jpg";
+        }
+        if (pdocSheet !== sh || gen !== pdocPickGen) return;
+        sh.form.file = {
+            blob: blob,
+            mime: mime,
+            ext: ext,
+            size: blob.size,
+            name: (pdocBaseName(file.name) || "مستند") + "." + ext
+        };
+    } catch (e) {
+        if (pdocSheet !== sh || gen !== pdocPickGen) return;
+        showToast(e && e.message === "big" ? "الصورة كبيرة جدًا — صوّرها من جديد أو اختر PDF" : e && e.message === "decode" ? "تعذّرت قراءة الصورة — جرّب صورة أخرى أو ملف PDF" : "تعذّر تجهيز الملف — حاول مرة أخرى", "error");
+    }
+    if (pdocSheet === sh && gen === pdocPickGen) {
+        sh.prep = false;
+        pdocRender();
+    }
+}
+
+function pdocUuid() {
+    try {
+        if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID().toLowerCase();
+    } catch (e) {}
+    const b = new Uint8Array(16);
+    if (typeof crypto !== "undefined" && crypto.getRandomValues) crypto.getRandomValues(b); else for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+    b[6] = b[6] & 15 | 64;
+    b[8] = b[8] & 63 | 128;
+    const h = [].map.call(b, function(x) {
+        return (x + 256).toString(16).slice(1);
+    }).join("");
+    return h.slice(0, 8) + "-" + h.slice(8, 12) + "-" + h.slice(12, 16) + "-" + h.slice(16, 20) + "-" + h.slice(20);
+}
+
+async function pdocUpload() {
+    const sh = pdocSheet;
+    if (!sh || !pdocCanUpload(sh)) return;
+    const f = sh.form, file = f.file, path = sh.kind + "/" + sh.id + "/" + pdocUuid() + "." + file.ext;
+    sh.busy = true;
+    pdocRender();
+    let uploaded = false;
+    try {
+        const up = await withTimeout(sb.storage.from(PDOC_BUCKET).upload(path, file.blob, {
+            contentType: file.mime,
+            cacheControl: "3600",
+            upsert: false
+        }), 18e4, "upload");
+        if (up && up.error) throw up.error;
+        uploaded = true;
+        const d = await pdocRpc("party_doc_add", {
+            kind: sh.kind,
+            party_id: sh.id,
+            doc_type: f.type,
+            label: f.type === "other" ? String(f.label || "").trim() : "",
+            path: path,
+            file_name: file.name
+        });
+        if (!d || !d.doc) throw new Error("add");
+        if (pdocSheet === sh) {
+            sh.docs.unshift(d.doc);
+            sh.form = null;
+            sh.error = "";
+            pdocSyncCount(sh);
+        }
+        showToast("تم رفع المستند", "ok");
+    } catch (e) {
+        if (uploaded) {
+            try {
+                await sb.storage.from(PDOC_BUCKET).remove([ path ]);
+            } catch (e2) {}
+        }
+        showToast(pdocErrText(e), "error");
+    }
+    if (pdocSheet === sh) {
+        sh.busy = false;
+        pdocRender();
+    }
+}
+
+function pdocFileExt(d) {
+    return d.mime === "application/pdf" ? "pdf" : d.mime === "image/png" ? "png" : "jpg";
+}
+
+async function pdocOpenDoc(did, download) {
+    const sh = pdocSheet, d = pdocFindDoc(did);
+    if (!sh || !d) return;
+    let w = null;
+    if (!download) {
+        try {
+            w = window.open("", "_blank");
+        } catch (e) {
+            w = null;
+        }
+    }
+    try {
+        const name = d.file_name || "document." + pdocFileExt(d);
+        const r = await withTimeout(sb.storage.from(PDOC_BUCKET).createSignedUrl(d.path, PDOC_URL_SECONDS, download ? {
+            download: name
+        } : undefined), 25e3, "signed url");
+        if (!r || r.error || !r.data || !r.data.signedUrl) throw r && r.error || new Error("signed");
+        const url = r.data.signedUrl;
+        if (download) {
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = name;
+            a.rel = "noopener";
+            a.style.display = "none";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        } else if (w) {
+            try {
+                w.opener = null;
+            } catch (e) {}
+            w.location.replace(url);
+        } else if (pdocSheet === sh) {
+            sh.link = {
+                id: d.id,
+                url: url
+            };
+            pdocRender();
+            setTimeout(function() {
+                if (pdocSheet === sh && sh.link && sh.link.id === d.id) {
+                    sh.link = null;
+                    pdocRender();
+                }
+            }, PDOC_URL_SECONDS * 1e3);
+        }
+    } catch (e) {
+        if (w) {
+            try {
+                w.close();
+            } catch (e2) {}
+        }
+        showToast("تعذّر فتح الملف — " + pdocErrText(e), "error");
+    }
+}
+
+function pdocAskDelete(did) {
+    const sh = pdocSheet, d = pdocFindDoc(did);
+    if (!sh || !d) return;
+    confirmAction({
+        title: "حذف هذا المستند؟",
+        message: "سيُحذف الملف نهائيًا ولا يمكن استرجاعه.",
+        confirmLabel: "حذف",
+        dangerous: true,
+        onConfirm: async function() {
+            try {
+                const r = await pdocRpc("party_doc_delete", {
+                    id: did
+                });
+                const path = r && r.path;
+                if (path) {
+                    try {
+                        await sb.storage.from(PDOC_BUCKET).remove([ path ]);
+                    } catch (e2) {}
+                }
+                if (pdocSheet === sh) {
+                    sh.docs = sh.docs.filter(function(x) {
+                        return x.id !== did;
+                    });
+                    if (sh.link && sh.link.id === did) sh.link = null;
+                    pdocSyncCount(sh);
+                    pdocRender();
+                }
+                showToast("تم حذف المستند", "ok");
+            } catch (e) {
+                showToast(pdocErrText(e), "error");
+            }
+        }
+    });
+}
+
+function pdocSleep(ms) {
+    return new Promise(function(r) {
+        setTimeout(r, ms);
+    });
+}
+
+function pdocExConsented() {
+    try {
+        return localStorage.getItem("pdoc-ex-consent") === "1";
+    } catch (e) {
+        return false;
+    }
+}
+
+function pdocExConsent() {
+    try {
+        localStorage.setItem("pdoc-ex-consent", "1");
+    } catch (e) {}
+}
+
+function pdocExErr(code) {
+    return PDOC_EX_MSG[code] || "تعذّرت قراءة المستند — حاول مرة أخرى";
+}
+
+function pdocExKeys(sh) {
+    return PDOC_EX_ORDER.filter(function(k) {
+        return !(sh.kind === "customer" && k === "additional_no");
+    });
+}
+
+function pdocExisting(sh) {
+    const out = {};
+    try {
+        if (sh.kind === "customer") {
+            const c = (appData.customers || []).find(function(x) {
+                return x.id === sh.id;
+            }) || {};
+            out.cr_number = c.additionalId || "";
+            out.vat_number = c.vatNumber || "";
+            out.street = c.addressStreet || "";
+            out.building_no = c.addressBuildingNo || "";
+            out.district = c.addressDistrict || "";
+            out.city = c.addressCity || "";
+            out.postal_code = c.addressPostalCode || "";
+            out.name = c.name || "";
+        } else {
+            const p = sh.prof && sh.prof.data || {}, s = (appData.suppliers || []).find(function(x) {
+                return x.id === sh.id;
+            }) || {};
+            PDOC_EX_ORDER.forEach(function(k) {
+                out[k] = p[k] || "";
+            });
+            out.name = s.name || "";
+        }
+    } catch (e) {}
+    return out;
+}
+
+function pdocExBuild(sh, did, data) {
+    const cur = pdocExisting(sh), f = data.fields || {}, rows = [];
+    let same = 0;
+    pdocExKeys(sh).forEach(function(k) {
+        const v = f[k];
+        if (v === undefined || v === null || v === "") return;
+        const c = String(cur[k] || "");
+        if (c && c === String(v)) {
+            same++;
+            return;
+        }
+        rows.push({
+            key: k,
+            val: String(v),
+            cur: c,
+            on: !c
+        });
+    });
+    return {
+        did: did,
+        phase: "review",
+        rows: rows,
+        same: same,
+        name: String(f.establishment_name || ""),
+        rejected: (data.rejected || []).length
+    };
+}
+
+async function pdocExStart(did) {
+    const sh = pdocSheet, d = pdocFindDoc(did);
+    if (!sh || !d || sh.busy || sh.ex && sh.ex.phase === "loading") return;
+    if (!pdocExConsented()) {
+        confirmAction({
+            title: "قراءة المستند تلقائيًا",
+            message: "لقراءة بيانات المستند يُرسَل إلى خدمة كلود (شركة أنثروبيك) ولا يُحفظ لديها. تظهر البيانات كاقتراحات تراجعها بنفسك، ولا يُحفظ شيء قبل أن تضغط حفظ. متابعة؟",
+            confirmLabel: "متابعة",
+            onConfirm: function() {
+                pdocExConsent();
+                pdocExStart(did);
+            }
+        });
+        return;
+    }
+    sh.ex = {
+        did: did,
+        phase: "loading",
+        msg: "",
+        rows: [],
+        name: ""
+    };
+    pdocRender();
+    try {
+        const r = await withTimeout(sb.functions.invoke("pdoc-extract", {
+            body: {
+                doc_id: did
+            }
+        }), 95e3, "extract");
+        if (pdocSheet !== sh || !sh.ex || sh.ex.did !== did) return;
+        if (r && r.error) {
+            const st = r.error.context && r.error.context.status;
+            sh.ex = {
+                did: did,
+                phase: "error",
+                msg: st === 404 ? pdocExErr("not-configured") : pdocExErr("")
+            };
+        } else if (!r || !r.data || r.data.ok !== true) {
+            sh.ex = {
+                did: did,
+                phase: "error",
+                msg: pdocExErr(r && r.data && r.data.code)
+            };
+        } else sh.ex = pdocExBuild(sh, did, r.data);
+    } catch (e) {
+        if (pdocSheet !== sh || !sh.ex || sh.ex.did !== did) return;
+        sh.ex = {
+            did: did,
+            phase: "error",
+            msg: /TIMEOUT/.test(String(e && e.message)) ? "انتهت المهلة — حاول مرة أخرى" : pdocExErr("")
+        };
+    }
+    pdocRender();
+}
+
+function pdocExValid(row) {
+    const v = String(row.val || "").trim();
+    return !!v && (!PDOC_EX_RE[row.key] || PDOC_EX_RE[row.key].test(v));
+}
+
+function pdocExCanFill(ex) {
+    return !!ex && ex.phase === "review" && ex.rows.some(function(r) {
+        return r.on && pdocExValid(r);
+    });
+}
+
+function pdocExHtml(ex) {
+    if (ex.phase === "loading") return '<div class="pdoc-ex"><div class="pdoc-note">جارٍ قراءة المستند... يُرسَل لخدمة كلود للقراءة</div></div>';
+    if (ex.phase === "error") return '<div class="pdoc-ex"><div class="pdoc-err">' + escapeHtml(ex.msg) + '</div><div class="pdoc-fx-a"><button type="button" class="btn pdoc-b" data-pdoc-act="ex-close">إغلاق</button></div></div>';
+    let h = '<div class="pdoc-ex"><div class="pdoc-lbl">بيانات مقترحة من المستند</div>';
+    ex.rows.forEach(function(r) {
+        const num = !!PDOC_EX_RE[r.key], bad = !pdocExValid(r) && r.on;
+        h += '<div class="pdoc-fx"><span class="pdoc-fx-l">' + escapeHtml(PDOC_EX_LABELS[r.key]) + "</span>" + '<input type="text" class="pdoc-fx-i' + (bad ? " pdoc-fx-bad" : "") + '" data-pdoc-fx="' + r.key + '" value="' + escapeHtml(r.val) + '"' + (num ? ' inputmode="numeric" dir="ltr"' : "") + (r.on ? "" : " disabled") + ' autocomplete="off">' + (r.cur ? '<div class="pdoc-fx-r"><span class="pdoc-fx-cur">الحالي: ' + escapeHtml(r.cur) + '</span><button type="button" class="chip pdoc-chip pdoc-fx-t' + (r.on ? " pdoc-chip-on" : "") + '" data-pdoc-act="ex-toggle" data-pdoc-key="' + r.key + '" aria-pressed="' + (r.on ? "true" : "false") + '">استبدال الحالي</button></div>' : "") + "</div>";
+    });
+    if (!ex.rows.length) h += '<div class="pdoc-note">' + (ex.same ? "البيانات المقروءة مطابقة لما هو مسجّل" : "لم أجد بيانات واضحة بالمستند") + "</div>";
+    if (ex.name) h += '<div class="pdoc-fx-name"><span class="pdoc-fx-cur">اسم المنشأة بالمستند: ' + escapeHtml(ex.name) + '</span><button type="button" class="btn pdoc-b" data-pdoc-act="ex-copy-name">نسخ الاسم</button></div>';
+    if (ex.rejected) h += '<div class="pdoc-note">تجاهلتُ ' + ex.rejected + " من البيانات لأن صيغتها غير صحيحة</div>";
+    if (ex.rows.length) h += '<div class="pdoc-note">لا يُحفظ شيء قبل أن تضغط حفظ بنفسك</div>';
+    h += '<div class="pdoc-fx-a">' + (ex.rows.length ? '<button type="button" class="btn btn-primary pdoc-b pdoc-fill" data-pdoc-act="ex-fill"' + (pdocExCanFill(ex) ? "" : " disabled") + ">تعبئة</button>" : "") + '<button type="button" class="btn pdoc-b" data-pdoc-act="ex-close">' + (ex.rows.length ? "إلغاء" : "إغلاق") + "</button></div></div>";
+    return h;
+}
+
+function pdocExCopyName() {
+    const sh = pdocSheet, nm = sh && sh.ex ? sh.ex.name : "";
+    if (!nm) return;
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(nm).then(function() {
+                showToast("تم نسخ الاسم", "ok");
+            }, function() {
+                showToast("تعذّر النسخ", "error");
+            });
+            return;
+        }
+    } catch (e) {}
+    showToast("تعذّر النسخ", "error");
+}
+
+function pdocExFill() {
+    const sh = pdocSheet;
+    if (!sh || !sh.ex || sh.ex.phase !== "review") return;
+    const vals = {};
+    let bad = 0;
+    sh.ex.rows.forEach(function(r) {
+        if (!r.on) return;
+        if (pdocExValid(r)) vals[r.key] = String(r.val).trim(); else if (String(r.val || "").trim()) bad++;
+    });
+    if (!Object.keys(vals).length) {
+        showToast("لا توجد بيانات صالحة للتعبئة", "error");
+        return;
+    }
+    if (bad) showToast("تجاهلتُ " + bad + " من الحقول بصيغة غير صحيحة", "error");
+    if (sh.kind === "supplier") pdocFillSupplier(sh, vals); else pdocFillCustomer(sh, vals);
+}
+
+function pdocFillSupplier(sh, vals) {
+    if (sh.prof && sh.prof.na) {
+        showToast("حفظ بيانات المنشأة غير متاح بعد", "error");
+        return;
+    }
+    const base = sh.prof && sh.prof.data || {}, form = {};
+    PDOC_EX_ORDER.forEach(function(k) {
+        form[k] = base[k] || "";
+    });
+    Object.keys(vals).forEach(function(k) {
+        form[k] = vals[k];
+    });
+    sh.prof = Object.assign(sh.prof || {}, {
+        open: true,
+        form: form,
+        filled: Object.keys(vals),
+        busy: false
+    });
+    sh.ex = null;
+    pdocRender();
+    try {
+        const el = document.querySelector("#pdoc-root .pdoc-prof");
+        if (el) el.scrollIntoView({
+            block: "start"
+        });
+    } catch (e) {}
+    showToast("تمت التعبئة — راجع الحقول ثم اضغط حفظ", "ok");
+}
+
+async function pdocFillCustomer(sh, vals) {
+    const cid = sh.id;
+    pdocClose();
+    try {
+        if (typeof editingCustomers === "undefined" || typeof refreshCustomersList !== "function") throw new Error("no-customers-view");
+        editingCustomers[cid] = true;
+        refreshCustomersList();
+        let row = null, box = null;
+        for (let i = 0; i < 25 && !box; i++) {
+            await pdocSleep(100);
+            row = document.querySelector('#customers-items-list .task-item-row[data-customer-id="' + cid + '"]');
+            box = row ? row.querySelector(".taxinv-cust") : null;
+        }
+        if (!box) {
+            showToast("بيانات المشتري الضريبية غير متاحة بكرت العميل حاليًا", "error");
+            return;
+        }
+        box.open = true;
+        const put = function(k, v) {
+            const el = box.querySelector('[data-taxinv-ck="' + k + '"]');
+            if (!el) return false;
+            el.value = v;
+            el.classList.add("pdoc-filled");
+            el.addEventListener("input", function() {
+                el.classList.remove("pdoc-filled");
+            }, {
+                once: true
+            });
+            return true;
+        };
+        let n = 0;
+        if (vals.vat_number && put("vat_number", vals.vat_number)) n++;
+        if (vals.cr_number) {
+            const sel = box.querySelector('[data-taxinv-ck="additional_id_type"]');
+            if (sel && sel.querySelector('option[value="CRN"]')) {
+                sel.value = "CRN";
+                sel.classList.add("pdoc-filled");
+                if (put("additional_id", vals.cr_number)) n++;
+            } else showToast("نوع المعرّف «سجل تجاري» غير متاح بكرت العميل", "error");
+        }
+        [ [ "street", "address_street" ], [ "building_no", "address_building_no" ], [ "district", "address_district" ], [ "city", "address_city" ], [ "postal_code", "address_postal_code" ] ].forEach(function(p) {
+            if (vals[p[0]] && put(p[1], vals[p[0]])) n++;
+        });
+        const kind = box.querySelector('[data-taxinv-ck="customer_kind"]');
+        if (kind && !kind.value && (vals.cr_number || vals.vat_number)) {
+            kind.value = "business";
+            kind.classList.add("pdoc-filled");
+        }
+        try {
+            row.scrollIntoView({
+                block: "center"
+            });
+        } catch (e) {}
+        showToast(n ? "تمت التعبئة — راجع الحقول ثم اضغط «حفظ البيانات الضريبية»" : "لم تُعبّأ حقول", n ? "ok" : "error");
+    } catch (e) {
+        console.error("PDOC fill:", e);
+        showToast("تعذّرت التعبئة", "error");
+    }
+}
+
+function pdocProfHtml(sh) {
+    const p = sh.prof;
+    if (sh.kind !== "supplier" || !p || p.loading || p.na) return "";
+    const d = p.data, has = !!d && PDOC_EX_ORDER.some(function(k) {
+        return d[k];
+    });
+    const sum = has ? [ d.cr_number ? "سجل " + d.cr_number : "", d.vat_number ? "ضريبي " + d.vat_number : "" ].filter(Boolean).join(" · ") || "عنوان فقط" : "لم تُسجَّل";
+    let h = '<div class="pdoc-prof"><div class="pdoc-prof-h"><span class="pdoc-prof-t">بيانات المنشأة</span><span class="pdoc-prof-s">' + escapeHtml(sum) + "</span>" + (p.open ? "" : '<button type="button" class="btn pdoc-b pdoc-prof-b" data-pdoc-act="prof-open">' + (has ? "تعديل" : "+ إضافة") + "</button>") + "</div>";
+    if (p.open && p.form) {
+        PDOC_EX_ORDER.forEach(function(k) {
+            const num = !!PDOC_EX_RE[k];
+            h += '<label class="pdoc-fx"><span class="pdoc-fx-l">' + escapeHtml(PDOC_EX_LABELS[k]) + '</span><input type="text" class="pdoc-fx-i' + ((p.filled || []).indexOf(k) >= 0 ? " pdoc-filled" : "") + '" data-pdoc-pf="' + k + '" value="' + escapeHtml(p.form[k] || "") + '" maxlength="80"' + (num ? ' inputmode="numeric" dir="ltr"' : "") + ' autocomplete="off"></label>';
+        });
+        h += '<div class="pdoc-fx-a"><button type="button" class="btn btn-primary pdoc-b" data-pdoc-act="prof-save"' + (p.busy ? " disabled" : "") + ">" + (p.busy ? "جارٍ الحفظ..." : "حفظ") + '</button><button type="button" class="btn pdoc-b" data-pdoc-act="prof-cancel"' + (p.busy ? " disabled" : "") + ">إلغاء</button></div>";
+    }
+    return h + "</div>";
+}
+
+async function pdocProfSave() {
+    const sh = pdocSheet;
+    if (!sh || sh.kind !== "supplier" || !sh.prof || !sh.prof.open || sh.prof.busy) return;
+    const f = sh.prof.form || {}, body = {
+        party_id: sh.id
+    };
+    for (let i = 0; i < PDOC_EX_ORDER.length; i++) {
+        const k = PDOC_EX_ORDER[i], v = String(f[k] || "").trim();
+        if (v && PDOC_EX_RE[k] && !PDOC_EX_RE[k].test(v)) {
+            showToast(PDOC_EX_LABELS[k] + " بصيغة غير صحيحة", "error");
+            return;
+        }
+        body[k] = v;
+    }
+    sh.prof.busy = true;
+    pdocRender();
+    try {
+        const d = await pdocRpc("party_profile_set", body, true);
+        if (pdocSheet === sh) {
+            sh.prof.data = d && d.profile ? d.profile : null;
+            sh.prof.open = false;
+            sh.prof.form = null;
+            sh.prof.filled = [];
+        }
+        showToast("تم حفظ بيانات المنشأة", "ok");
+    } catch (e) {
+        showToast(pdocErrText(e), "error");
+    }
+    if (pdocSheet === sh) {
+        sh.prof.busy = false;
+        pdocRender();
+    }
+}
+
+function pdocOnClick(ev) {
+    if (pdocDead) return;
+    try {
+        const t = ev.target;
+        const btn = t && t.closest ? t.closest(".pdoc-btn") : null;
+        if (btn) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            pdocOpen(btn.getAttribute("data-pdoc-kind"), btn.getAttribute("data-pdoc-id"));
+            return;
+        }
+        const a = t && t.closest ? t.closest("[data-pdoc-act]") : null;
+        if (!a || !pdocSheet) return;
+        const act = a.getAttribute("data-pdoc-act"), sh = pdocSheet;
+        if (act === "backdrop") {
+            if (t === a && !sh.busy) pdocClose();
+            return;
+        }
+        if (act === "close") {
+            if (!sh.busy) pdocClose();
+            return;
+        }
+        if (act === "add") {
+            sh.form = {
+                type: "",
+                label: "",
+                file: null
+            };
+            pdocRender();
+            return;
+        }
+        if (act === "cancel") {
+            if (!sh.busy) {
+                sh.form = null;
+                sh.prep = false;
+                pdocPickGen++;
+                pdocRender();
+            }
+            return;
+        }
+        if (act === "type") {
+            if (sh.form && !sh.busy) {
+                sh.form.type = a.getAttribute("data-pdoc-type");
+                pdocRender();
+                if (sh.form.type === "other") {
+                    const i = document.querySelector("#pdoc-root .pdoc-other");
+                    if (i) i.focus();
+                }
+            }
+            return;
+        }
+        if (act === "pick-file") {
+            const i = document.getElementById("pdoc-in-file");
+            if (i && !sh.busy) i.click();
+            return;
+        }
+        if (act === "pick-cam") {
+            const i = document.getElementById("pdoc-in-cam");
+            if (i && !sh.busy) i.click();
+            return;
+        }
+        if (act === "unpick") {
+            if (sh.form && !sh.busy) {
+                sh.form.file = null;
+                pdocRender();
+            }
+            return;
+        }
+        if (act === "upload") {
+            pdocUpload();
+            return;
+        }
+        if (act === "extract") {
+            pdocExStart(a.getAttribute("data-pdoc-did"));
+            return;
+        }
+        if (act === "ex-close") {
+            sh.ex = null;
+            pdocRender();
+            return;
+        }
+        if (act === "ex-toggle") {
+            const r = sh.ex && sh.ex.rows.find(function(x) {
+                return x.key === a.getAttribute("data-pdoc-key");
+            });
+            if (r) {
+                r.on = !r.on;
+                pdocRender();
+            }
+            return;
+        }
+        if (act === "ex-fill") {
+            pdocExFill();
+            return;
+        }
+        if (act === "ex-copy-name") {
+            pdocExCopyName();
+            return;
+        }
+        if (act === "prof-open") {
+            if (sh.prof) {
+                const d = sh.prof.data || {}, fm = {};
+                PDOC_EX_ORDER.forEach(function(k) {
+                    fm[k] = d[k] || "";
+                });
+                sh.prof.open = true;
+                sh.prof.form = fm;
+                sh.prof.filled = [];
+                pdocRender();
+            }
+            return;
+        }
+        if (act === "prof-cancel") {
+            if (sh.prof && !sh.prof.busy) {
+                sh.prof.open = false;
+                sh.prof.form = null;
+                sh.prof.filled = [];
+                pdocRender();
+            }
+            return;
+        }
+        if (act === "prof-save") {
+            pdocProfSave();
+            return;
+        }
+        const did = a.getAttribute("data-pdoc-did");
+        if (act === "open") pdocOpenDoc(did, false); else if (act === "download") pdocOpenDoc(did, true); else if (act === "delete") pdocAskDelete(did);
+    } catch (e) {
+        console.error("PDOC click:", e);
+    }
+}
+
+function pdocOnInput(ev) {
+    const t = ev.target;
+    if (pdocSheet && t && t.getAttribute) {
+        const fx = t.getAttribute("data-pdoc-fx"), pf = t.getAttribute("data-pdoc-pf");
+        if (fx && pdocSheet.ex && pdocSheet.ex.rows) {
+            const r = pdocSheet.ex.rows.find(function(x) {
+                return x.key === fx;
+            });
+            if (r) {
+                r.val = t.value;
+                t.classList.toggle("pdoc-fx-bad", r.on && !pdocExValid(r));
+                const fb = document.querySelector("#pdoc-root .pdoc-fill");
+                if (fb) fb.disabled = !pdocExCanFill(pdocSheet.ex);
+            }
+            return;
+        }
+        if (pf && pdocSheet.prof && pdocSheet.prof.form) {
+            pdocSheet.prof.form[pf] = t.value;
+            return;
+        }
+    }
+    if (!pdocSheet || !pdocSheet.form || !t || !t.getAttribute || t.getAttribute("data-pdoc-in") !== "label") return;
+    pdocSheet.form.label = t.value;
+    const go = document.querySelector("#pdoc-root .pdoc-go");
+    if (go) go.disabled = !pdocCanUpload(pdocSheet);
+}
+
+(function pdocInstall() {
+    try {
+        if (typeof document === "undefined" || !document.addEventListener) return;
+        document.addEventListener("click", pdocOnClick, true);
+        document.addEventListener("input", pdocOnInput);
+        [ "customers-view", "suppliers-view" ].forEach(function(id) {
+            const root = document.getElementById(id);
+            if (root && typeof MutationObserver === "function") {
+                const o = new MutationObserver(function() {
+                    pdocSchedule();
+                });
+                o.observe(root, {
+                    childList: true,
+                    subtree: true
+                });
+                pdocObs.push(o);
+            }
+        });
+        pdocSchedule();
+    } catch (e) {
+        console.error("PDOC install:", e);
+    }
+})();
+
 const TRACK_STAGES = [ {
     id: 1,
     label: "طلبات التسعير",
@@ -77626,12 +78824,9 @@ function trackPrApply() {
             if (pair[1]) list.classList.add("trk-prq");
             [].slice.call(list.querySelectorAll(".part-row:not(.part-row-returned)")).forEach(function(row) {
                 const key = trackPrKey(list, row);
-                [].slice.call(row.querySelectorAll(".part-pn-find")).forEach(function(b) {
-                    if (b.textContent !== "بحث") b.textContent = "بحث";
-                });
-                const strip = row.querySelector(".epcl-strip"), pnb = row.querySelector(":scope > .part-desc-wrap > .part-pn-block");
+                const strip = row.querySelector(".epcl-strip"), find = row.querySelector(".part-pn-find"), pnb = row.querySelector(":scope > .part-desc-wrap > .part-pn-block");
                 let cb = row.querySelector(".trk-catbtn");
-                if (strip && pnb) {
+                if ((strip || find) && pnb) {
                     const on = trackPrOpen.cat.has(key);
                     if (!cb) cb = trackPrBtn("trk-catbtn", "");
                     if (cb.previousElementSibling !== pnb) pnb.insertAdjacentElement("afterend", cb);
@@ -79000,1202 +80195,6 @@ function trackAcctApply() {
         document.addEventListener("change", trackOnChange, false);
     } catch (e) {
         console.error("TRACK install:", e);
-    }
-})();
-
-const PDOC_BUCKET = "party-docs";
-
-const PDOC_MAX_BYTES = 10 * 1024 * 1024;
-
-const PDOC_URL_SECONDS = 120;
-
-const PDOC_TYPES = [ {
-    id: "cr",
-    ar: "سجل تجاري",
-    cls: "pdoc-t-cr"
-}, {
-    id: "vat",
-    ar: "شهادة ضريبية",
-    cls: "pdoc-t-vat"
-}, {
-    id: "addr",
-    ar: "عنوان وطني",
-    cls: "pdoc-t-addr"
-}, {
-    id: "id",
-    ar: "هوية",
-    cls: "pdoc-t-id"
-}, {
-    id: "other",
-    ar: "أخرى",
-    cls: "pdoc-t-other"
-} ];
-
-const PDOC_EX_TYPES = [ "cr", "vat", "addr" ];
-
-const PDOC_EX_LABELS = {
-    cr_number: "السجل التجاري",
-    vat_number: "الرقم الضريبي",
-    street: "الشارع",
-    building_no: "رقم المبنى",
-    additional_no: "الرقم الإضافي",
-    district: "الحي",
-    city: "المدينة",
-    postal_code: "الرمز البريدي"
-};
-
-const PDOC_EX_ORDER = [ "cr_number", "vat_number", "street", "building_no", "additional_no", "district", "city", "postal_code" ];
-
-const PDOC_EX_RE = {
-    cr_number: /^[0-9]{10}$/,
-    vat_number: /^3[0-9]{13}3$/,
-    building_no: /^[0-9]{4}$/,
-    additional_no: /^[0-9]{4}$/,
-    postal_code: /^[0-9]{5}$/
-};
-
-const PDOC_EX_MSG = {
-    "not-configured": "ميزة الاستخراج غير مفعّلة بعد",
-    rate: "تجاوزت الحد المسموح بالساعة — حاول لاحقًا",
-    quota: "بلغ الحد اليومي لاستخراج البيانات",
-    busy: "الخدمة مشغولة — حاول بعد قليل",
-    "too-large": "الملف كبير على القراءة — صغّر الصورة أو اختر PDF أصغر",
-    unsupported: "نوع الملف غير مدعوم للاستخراج",
-    forbidden: "ليست لديك صلاحية",
-    unauthorized: "انتهت الجلسة — أعد فتح التطبيق",
-    "not-found": "تعذّر إيجاد الملف"
-};
-
-let pdocDead = false, pdocBusy = false, pdocObs = [], pdocCounts = {}, pdocCountsAt = 0, pdocCountsLoading = false, pdocSheet = null, pdocInputsMade = false, pdocPickGen = 0;
-
-function pdocType(id) {
-    for (let i = 0; i < PDOC_TYPES.length; i++) {
-        if (PDOC_TYPES[i].id === id) return PDOC_TYPES[i];
-    }
-    return PDOC_TYPES[3];
-}
-
-function pdocOn() {
-    try {
-        return !pdocDead && typeof sb !== "undefined" && !!sb && typeof currentUserRole !== "undefined" && currentUserRole === "full";
-    } catch (e) {
-        return false;
-    }
-}
-
-function pdocDate(iso) {
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return "";
-    return String(d.getDate()).padStart(2, "0") + "/" + String(d.getMonth() + 1).padStart(2, "0") + "/" + d.getFullYear();
-}
-
-function pdocSizeText(n) {
-    n = Number(n) || 0;
-    if (n >= 1024 * 1024) return Math.round(n / (1024 * 1024) * 10) / 10 + " ميغابايت";
-    return Math.max(1, Math.round(n / 1024)) + " كيلوبايت";
-}
-
-function pdocWho(email) {
-    let nm = "";
-    try {
-        nm = typeof displayNameForEmail === "function" ? String(displayNameForEmail(email) || "") : "";
-    } catch (e) {
-        nm = "";
-    }
-    return nm || String(email || "").split("@")[0];
-}
-
-function pdocPartyName(kind, id) {
-    try {
-        const list = kind === "supplier" ? appData.suppliers || [] : appData.customers || [];
-        const p = list.find(function(x) {
-            return x.id === id;
-        });
-        return p && (p.name || p.phone) || (kind === "supplier" ? "مورد" : "عميل");
-    } catch (e) {
-        return "";
-    }
-}
-
-function pdocErrText(e) {
-    const m = String(e && (e.message || e.error_description) || e || "");
-    if (/TIMEOUT/i.test(m)) return "انتهت المهلة — تحقق من الاتصال وحاول مرة أخرى";
-    if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return "تعذّر الاتصال — تحقق من الإنترنت وحاول مرة أخرى";
-    if (/exceeded the maximum allowed size|too large|Payload/i.test(m)) return "الملف أكبر من 10 ميغابايت";
-    if (/mime type|not supported/i.test(m)) return "نوع الملف غير مدعوم (PDF أو صورة فقط)";
-    if (/row-level security|غير متاح|permission denied/i.test(m)) return "ليست لديك صلاحية على المستندات";
-    const ar = m.match(/[؀-ۿ][؀-ۿ\s()0-9]*[؀-ۿ)]/);
-    return ar ? ar[0] : "تعذّر تنفيذ الطلب — حاول مرة أخرى";
-}
-
-function pdocRpc(name, p, soft) {
-    return withTimeout(sb.rpc(name, {
-        p: p || {}
-    }), 25e3, name).then(function(r) {
-        if (r && r.error) {
-            const msg = String(r.error.message || "") + " " + String(r.error.code || "");
-            if (/PGRST202|Could not find the function|does not exist/i.test(msg)) {
-                if (!soft) pdocOff();
-            }
-            const e = new Error(r.error.message || "rpc");
-            e.code = r.error.code;
-            throw e;
-        }
-        return r ? r.data : null;
-    });
-}
-
-function pdocOff() {
-    pdocDead = true;
-    try {
-        pdocObs.forEach(function(o) {
-            o.disconnect();
-        });
-        pdocObs = [];
-    } catch (e) {}
-    try {
-        [].slice.call(document.querySelectorAll(".pdoc-btn")).forEach(function(b) {
-            b.remove();
-        });
-    } catch (e) {}
-    try {
-        pdocClose();
-    } catch (e) {}
-}
-
-function pdocKey(kind, id) {
-    return kind + ":" + id;
-}
-
-function pdocLoadCounts(force) {
-    if (!pdocOn() || pdocCountsLoading) return;
-    if (!force && pdocCountsAt && Date.now() - pdocCountsAt < 18e4) return;
-    pdocCountsLoading = true;
-    pdocRpc("party_docs_counts", {}).then(function(d) {
-        const next = {};
-        (d && d.rows || []).forEach(function(r) {
-            next[pdocKey(r.kind, r.id)] = {
-                n: Number(r.n) || 0,
-                types: r.types || []
-            };
-        });
-        pdocCounts = next;
-        pdocCountsAt = Date.now();
-        pdocSchedule();
-    }).then(null, function(e) {
-        if (e && /غير متاح/.test(String(e.message || ""))) pdocOff();
-        pdocCountsAt = Date.now() - 12e4;
-    }).then(function() {
-        pdocCountsLoading = false;
-    });
-}
-
-function pdocBtnHtml(n) {
-    return "مستندات" + (n > 0 ? '<span class="pdoc-n">' + n + "</span>" : "");
-}
-
-function pdocApply() {
-    if (!pdocOn() || typeof document === "undefined" || !document.querySelectorAll) return;
-    let anyRow = false;
-    try {
-        [ [ "customer", "#customers-items-list .task-item-row[data-customer-id]", "data-customer-id", ".customer-row-main", ".customer-edit-btn" ], [ "supplier", "#suppliers-items-list .task-item-row[data-supplier-id]", "data-supplier-id", ".supplier-row-main", ".supplier-edit-btn" ] ].forEach(function(spec) {
-            [].slice.call(document.querySelectorAll(spec[1])).forEach(function(row) {
-                const id = row.getAttribute(spec[2]), main = row.querySelector(":scope > " + spec[3]), edit = main ? main.querySelector(".task-item-remove-btn, .customer-save-btn, .supplier-save-btn, input") : null;
-                let b = row.querySelector(".pdoc-btn");
-                if (!main || edit) {
-                    if (b) b.remove();
-                    return;
-                }
-                anyRow = true;
-                const c = pdocCounts[pdocKey(spec[0], id)], n = c ? c.n : 0, html = pdocBtnHtml(n);
-                if (!b) {
-                    b = document.createElement("button");
-                    b.type = "button";
-                    b.className = "icon-btn pdoc-btn";
-                    b.setAttribute("data-pdoc-kind", spec[0]);
-                    b.setAttribute("data-pdoc-id", id);
-                    b.setAttribute("aria-label", "مستندات");
-                    b.innerHTML = html;
-                    b.setAttribute("data-pdoc-n", String(n));
-                    const host = main.querySelector(":scope > .trk-row-actions") || main, anchor = host.querySelector(":scope > " + spec[4]);
-                    if (anchor) host.insertBefore(b, anchor); else host.appendChild(b);
-                } else {
-                    if (b.getAttribute("data-pdoc-n") !== String(n)) {
-                        b.innerHTML = html;
-                        b.setAttribute("data-pdoc-n", String(n));
-                    }
-                    if (b.getAttribute("data-pdoc-id") !== id) {
-                        b.setAttribute("data-pdoc-id", id);
-                        b.setAttribute("data-pdoc-kind", spec[0]);
-                    }
-                    const host = main.querySelector(":scope > .trk-row-actions");
-                    if (host && b.parentNode !== host) {
-                        const anchor = host.querySelector(":scope > " + spec[4]);
-                        if (anchor) host.insertBefore(b, anchor); else host.appendChild(b);
-                    }
-                }
-            });
-        });
-        if (anyRow && (!pdocCountsAt || Date.now() - pdocCountsAt > 18e4)) pdocLoadCounts(false);
-    } catch (e) {
-        console.error("PDOC apply:", e);
-    }
-}
-
-function pdocSchedule() {
-    if (pdocBusy || pdocDead) return;
-    pdocBusy = true;
-    const go = function() {
-        pdocBusy = false;
-        pdocApply();
-    };
-    if (typeof requestAnimationFrame === "function") requestAnimationFrame(go); else setTimeout(go, 0);
-}
-
-function pdocRoot() {
-    let r = document.getElementById("pdoc-root");
-    if (!r) {
-        r = document.createElement("div");
-        r.id = "pdoc-root";
-        document.body.appendChild(r);
-    }
-    return r;
-}
-
-function pdocClose() {
-    pdocSheet = null;
-    pdocPickGen++;
-    const r = document.getElementById("pdoc-root");
-    if (r) {
-        r.innerHTML = "";
-        r.classList.remove("pdoc-open");
-    }
-    document.removeEventListener("keydown", pdocOnKey, true);
-    pdocSchedule();
-}
-
-function pdocOnKey(ev) {
-    if (ev.key === "Escape" && pdocSheet && !document.querySelector("#confirm-root.modal-open")) {
-        ev.stopPropagation();
-        pdocClose();
-    }
-}
-
-function pdocOpen(kind, id) {
-    if (!pdocOn()) return;
-    pdocEnsureInputs();
-    pdocSheet = {
-        kind: kind,
-        id: id,
-        docs: [],
-        loading: true,
-        error: "",
-        form: null,
-        busy: false,
-        link: null,
-        prep: false,
-        ex: null,
-        prof: kind === "supplier" ? {
-            loading: true,
-            data: null,
-            open: false,
-            form: null,
-            filled: [],
-            busy: false,
-            na: false
-        } : null
-    };
-    pdocRender();
-    document.addEventListener("keydown", pdocOnKey, true);
-    const sh = pdocSheet;
-    if (kind === "supplier") {
-        pdocRpc("party_profile_get", {
-            party_id: id
-        }, true).then(function(d) {
-            if (pdocSheet !== sh) return;
-            sh.prof.data = d && d.profile ? d.profile : null;
-            sh.prof.loading = false;
-            pdocRender();
-        }).then(null, function() {
-            if (pdocSheet !== sh) return;
-            sh.prof.loading = false;
-            sh.prof.na = true;
-            pdocRender();
-        });
-    }
-    pdocRpc("party_docs_list", {
-        kind: kind,
-        party_id: id
-    }).then(function(d) {
-        if (pdocSheet !== sh) return;
-        sh.docs = d && d.docs || [];
-        sh.loading = false;
-        pdocSyncCount(sh);
-        pdocRender();
-    }).then(null, function(e) {
-        if (pdocSheet !== sh) return;
-        sh.loading = false;
-        sh.error = pdocErrText(e);
-        pdocRender();
-    });
-}
-
-function pdocSyncCount(sh) {
-    const types = [];
-    sh.docs.forEach(function(d) {
-        if (types.indexOf(d.doc_type) < 0) types.push(d.doc_type);
-    });
-    pdocCounts[pdocKey(sh.kind, sh.id)] = {
-        n: sh.docs.length,
-        types: types.sort()
-    };
-    pdocSchedule();
-}
-
-function pdocDocHtml(d) {
-    const t = pdocType(d.doc_type), title = d.doc_type === "other" ? d.label || t.ar : t.ar + (d.label ? " — " + d.label : "");
-    const kindTxt = d.mime === "application/pdf" ? "PDF" : "صورة";
-    const meta = [ pdocDate(d.created_at), pdocWho(d.uploaded_by), kindTxt, pdocSizeText(d.size) ].filter(Boolean).join(" · ");
-    const link = pdocSheet && pdocSheet.link && pdocSheet.link.id === d.id ? pdocSheet.link.url : "";
-    return '<div class="pdoc-doc ' + t.cls + '" data-pdoc-doc="' + escapeHtml(d.id) + '">' + '<div class="pdoc-doc-t">' + escapeHtml(title) + "</div>" + '<div class="pdoc-doc-m">' + escapeHtml(meta) + "</div>" + '<div class="pdoc-doc-a">' + (link ? '<a class="btn btn-primary pdoc-b" href="' + escapeHtml(link) + '" target="_blank" rel="noopener">اضغط لفتح الملف</a>' : '<button type="button" class="btn btn-primary pdoc-b" data-pdoc-act="open" data-pdoc-did="' + escapeHtml(d.id) + '">فتح</button>') + '<button type="button" class="btn pdoc-b" data-pdoc-act="download" data-pdoc-did="' + escapeHtml(d.id) + '">تنزيل</button>' + (PDOC_EX_TYPES.indexOf(d.doc_type) >= 0 && !(pdocSheet && pdocSheet.prof && pdocSheet.prof.na) ? '<button type="button" class="btn pdoc-b pdoc-exb" data-pdoc-act="extract" data-pdoc-did="' + escapeHtml(d.id) + '"' + (pdocSheet && pdocSheet.ex && pdocSheet.ex.phase === "loading" ? " disabled" : "") + ">استخراج</button>" : "") + (d.can_delete ? '<button type="button" class="btn btn-danger pdoc-b" data-pdoc-act="delete" data-pdoc-did="' + escapeHtml(d.id) + '">حذف</button>' : "") + "</div>" + (pdocSheet && pdocSheet.ex && pdocSheet.ex.did === d.id ? pdocExHtml(pdocSheet.ex) : "") + "</div>";
-}
-
-function pdocFormHtml(f) {
-    const chips = PDOC_TYPES.map(function(t) {
-        return '<button type="button" class="chip pdoc-chip ' + t.cls + (f.type === t.id ? " pdoc-chip-on" : "") + '" data-pdoc-act="type" data-pdoc-type="' + t.id + '" aria-pressed="' + (f.type === t.id ? "true" : "false") + '">' + t.ar + "</button>";
-    }).join("");
-    const file = f.file ? '<div class="pdoc-file"><span class="pdoc-file-n">' + escapeHtml(f.file.name) + '</span><span class="pdoc-file-s">' + escapeHtml((f.file.mime === "application/pdf" ? "PDF" : "صورة") + " · " + pdocSizeText(f.file.size)) + '</span><button type="button" class="btn pdoc-b pdoc-file-x" data-pdoc-act="unpick">إزالة</button></div>' : pdocSheet && pdocSheet.prep ? '<div class="pdoc-note">جارٍ تجهيز الملف...</div>' : "";
-    return '<div class="pdoc-form">' + '<div class="pdoc-lbl">نوع المستند</div><div class="pdoc-types">' + chips + "</div>" + (f.type === "other" ? '<input type="text" class="pdoc-other" maxlength="80" placeholder="اسم المستند (مثال: عقد توريد)" value="' + escapeHtml(f.label) + '" data-pdoc-in="label" autocomplete="off">' : "") + '<div class="pdoc-lbl">الملف</div>' + '<div class="pdoc-pick"><button type="button" class="btn pdoc-b" data-pdoc-act="pick-file">اختيار ملف</button><button type="button" class="btn pdoc-b" data-pdoc-act="pick-cam">تصوير بالكاميرا</button></div>' + file + '<div class="pdoc-note">PDF أو صورة، حتى 10 ميغابايت</div></div>';
-}
-
-function pdocCanUpload(sh) {
-    const f = sh && sh.form;
-    return !!(f && f.type && f.file && !sh.busy && !sh.prep && (f.type !== "other" || String(f.label || "").trim()));
-}
-
-function pdocRender() {
-    const sh = pdocSheet, r = pdocRoot();
-    if (!sh) {
-        r.innerHTML = "";
-        r.classList.remove("pdoc-open");
-        return;
-    }
-    const kindAr = sh.kind === "supplier" ? "المورد" : "العميل";
-    let body;
-    if (sh.loading) body = '<div class="pdoc-note">جارٍ التحميل...</div>'; else if (sh.error && !sh.docs.length) body = '<div class="pdoc-err">' + escapeHtml(sh.error) + "</div>"; else body = pdocProfHtml(sh) + (sh.form ? pdocFormHtml(sh.form) : "") + (sh.docs.length ? sh.docs.map(pdocDocHtml).join("") : sh.form ? "" : '<div class="pdoc-empty">لا توجد مستندات بعد</div>');
-    const bar = sh.form ? '<button type="button" class="btn btn-primary pdoc-b pdoc-go" data-pdoc-act="upload"' + (pdocCanUpload(sh) ? "" : " disabled") + ">" + (sh.busy ? "جارٍ الرفع..." : "رفع الملف") + '</button><button type="button" class="btn pdoc-b pdoc-cancel" data-pdoc-act="cancel"' + (sh.busy ? " disabled" : "") + ">إلغاء</button>" : '<button type="button" class="btn btn-primary pdoc-b pdoc-add" data-pdoc-act="add"' + (sh.loading || sh.error && !sh.docs.length ? " disabled" : "") + ">+ إرفاق مستند</button>";
-    const keepScroll = r.querySelector(".pdoc-body") ? r.querySelector(".pdoc-body").scrollTop : 0;
-    r.innerHTML = '<div class="pdoc-back" data-pdoc-act="backdrop"><div class="pdoc-card" role="dialog" aria-modal="true" aria-label="مستندات ' + escapeHtml(kindAr) + '">' + '<div class="pdoc-head"><div class="pdoc-title">مستندات ' + escapeHtml(kindAr) + '<span class="pdoc-who">' + escapeHtml(pdocPartyName(sh.kind, sh.id)) + '</span></div><button type="button" class="btn pdoc-b pdoc-x" data-pdoc-act="close">إغلاق</button></div>' + '<div class="pdoc-body">' + body + '</div><div class="pdoc-bar">' + bar + "</div></div></div>";
-    r.classList.add("pdoc-open");
-    const bd = r.querySelector(".pdoc-body");
-    if (bd && keepScroll) bd.scrollTop = keepScroll;
-}
-
-function pdocFindDoc(did) {
-    return pdocSheet ? pdocSheet.docs.find(function(d) {
-        return d.id === did;
-    }) : null;
-}
-
-function pdocEnsureInputs() {
-    if (pdocInputsMade || document.getElementById("pdoc-in-file")) {
-        pdocInputsMade = true;
-        return;
-    }
-    const mk = function(id, accept, capture) {
-        const el = document.createElement("input");
-        el.type = "file";
-        el.id = id;
-        el.accept = accept;
-        el.style.display = "none";
-        if (capture) el.setAttribute("capture", "environment");
-        el.addEventListener("change", function() {
-            const fl = el.files && el.files[0];
-            el.value = "";
-            if (fl) pdocPick(fl);
-        });
-        document.body.appendChild(el);
-    };
-    mk("pdoc-in-file", "application/pdf,image/*", false);
-    mk("pdoc-in-cam", "image/*", true);
-    pdocInputsMade = true;
-}
-
-function pdocBaseName(name) {
-    const n = String(name || "").replace(/^.*[\\/]/, "").replace(/\.[A-Za-z0-9]{1,5}$/, "").replace(/[\u0000-\u001f<>:"|?*]/g, "").trim();
-    return n.slice(0, 80);
-}
-
-function pdocJpeg(img, w0, h0, maxSide, q) {
-    const s = Math.min(1, maxSide / Math.max(w0, h0));
-    const w = Math.min(4096, Math.max(16, Math.round(w0 * s))), h = Math.min(4096, Math.max(16, Math.round(h0 * s)));
-    const c = document.createElement("canvas");
-    c.width = w;
-    c.height = h;
-    const g = c.getContext("2d");
-    g.fillStyle = "#fff";
-    g.fillRect(0, 0, w, h);
-    g.drawImage(img, 0, 0, w, h);
-    return new Promise(function(resolve, reject) {
-        c.toBlob(function(b) {
-            c.width = 0;
-            c.height = 0;
-            if (b) resolve(b); else reject(new Error("encode"));
-        }, "image/jpeg", q);
-    });
-}
-
-async function pdocPrepareImage(file) {
-    const url = URL.createObjectURL(file);
-    try {
-        const img = new Image;
-        img.decoding = "async";
-        img.src = url;
-        try {
-            await img.decode();
-        } catch (e) {
-            throw new Error("decode");
-        }
-        const w0 = img.naturalWidth, h0 = img.naturalHeight;
-        if (!w0 || !h0) throw new Error("decode");
-        const tries = [ [ 2600, .85 ], [ 2e3, .75 ], [ 1600, .65 ] ];
-        let blob = null;
-        for (let i = 0; i < tries.length; i++) {
-            blob = await pdocJpeg(img, w0, h0, tries[i][0], tries[i][1]);
-            if (blob.size <= 3.5 * 1024 * 1024) break;
-        }
-        if (!blob || blob.size > PDOC_MAX_BYTES) throw new Error("big");
-        return blob;
-    } finally {
-        URL.revokeObjectURL(url);
-    }
-}
-
-async function pdocPick(file) {
-    const sh = pdocSheet;
-    if (!sh || !sh.form) return;
-    const gen = ++pdocPickGen;
-    const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name || "");
-    const isImg = /^image\//i.test(file.type || "") || /\.(jpe?g|png|heic|heif|webp|gif|bmp)$/i.test(file.name || "");
-    if (!isPdf && !isImg) {
-        showToast("نوع الملف غير مدعوم — اختر PDF أو صورة", "error");
-        return;
-    }
-    if (isPdf && file.size > PDOC_MAX_BYTES) {
-        showToast("الملف أكبر من 10 ميغابايت", "error");
-        return;
-    }
-    if (isPdf && file.size <= 0) {
-        showToast("الملف فارغ", "error");
-        return;
-    }
-    sh.prep = true;
-    sh.form.file = null;
-    pdocRender();
-    try {
-        let blob, mime, ext;
-        if (isPdf) {
-            blob = file;
-            mime = "application/pdf";
-            ext = "pdf";
-        } else {
-            blob = await pdocPrepareImage(file);
-            mime = "image/jpeg";
-            ext = "jpg";
-        }
-        if (pdocSheet !== sh || gen !== pdocPickGen) return;
-        sh.form.file = {
-            blob: blob,
-            mime: mime,
-            ext: ext,
-            size: blob.size,
-            name: (pdocBaseName(file.name) || "مستند") + "." + ext
-        };
-    } catch (e) {
-        if (pdocSheet !== sh || gen !== pdocPickGen) return;
-        showToast(e && e.message === "big" ? "الصورة كبيرة جدًا — صوّرها من جديد أو اختر PDF" : e && e.message === "decode" ? "تعذّرت قراءة الصورة — جرّب صورة أخرى أو ملف PDF" : "تعذّر تجهيز الملف — حاول مرة أخرى", "error");
-    }
-    if (pdocSheet === sh && gen === pdocPickGen) {
-        sh.prep = false;
-        pdocRender();
-    }
-}
-
-function pdocUuid() {
-    try {
-        if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID().toLowerCase();
-    } catch (e) {}
-    const b = new Uint8Array(16);
-    if (typeof crypto !== "undefined" && crypto.getRandomValues) crypto.getRandomValues(b); else for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
-    b[6] = b[6] & 15 | 64;
-    b[8] = b[8] & 63 | 128;
-    const h = [].map.call(b, function(x) {
-        return (x + 256).toString(16).slice(1);
-    }).join("");
-    return h.slice(0, 8) + "-" + h.slice(8, 12) + "-" + h.slice(12, 16) + "-" + h.slice(16, 20) + "-" + h.slice(20);
-}
-
-async function pdocUpload() {
-    const sh = pdocSheet;
-    if (!sh || !pdocCanUpload(sh)) return;
-    const f = sh.form, file = f.file, path = sh.kind + "/" + sh.id + "/" + pdocUuid() + "." + file.ext;
-    sh.busy = true;
-    pdocRender();
-    let uploaded = false;
-    try {
-        const up = await withTimeout(sb.storage.from(PDOC_BUCKET).upload(path, file.blob, {
-            contentType: file.mime,
-            cacheControl: "3600",
-            upsert: false
-        }), 18e4, "upload");
-        if (up && up.error) throw up.error;
-        uploaded = true;
-        const d = await pdocRpc("party_doc_add", {
-            kind: sh.kind,
-            party_id: sh.id,
-            doc_type: f.type,
-            label: f.type === "other" ? String(f.label || "").trim() : "",
-            path: path,
-            file_name: file.name
-        });
-        if (!d || !d.doc) throw new Error("add");
-        if (pdocSheet === sh) {
-            sh.docs.unshift(d.doc);
-            sh.form = null;
-            sh.error = "";
-            pdocSyncCount(sh);
-        }
-        showToast("تم رفع المستند", "ok");
-    } catch (e) {
-        if (uploaded) {
-            try {
-                await sb.storage.from(PDOC_BUCKET).remove([ path ]);
-            } catch (e2) {}
-        }
-        showToast(pdocErrText(e), "error");
-    }
-    if (pdocSheet === sh) {
-        sh.busy = false;
-        pdocRender();
-    }
-}
-
-function pdocFileExt(d) {
-    return d.mime === "application/pdf" ? "pdf" : d.mime === "image/png" ? "png" : "jpg";
-}
-
-async function pdocOpenDoc(did, download) {
-    const sh = pdocSheet, d = pdocFindDoc(did);
-    if (!sh || !d) return;
-    let w = null;
-    if (!download) {
-        try {
-            w = window.open("", "_blank");
-        } catch (e) {
-            w = null;
-        }
-    }
-    try {
-        const name = d.file_name || "document." + pdocFileExt(d);
-        const r = await withTimeout(sb.storage.from(PDOC_BUCKET).createSignedUrl(d.path, PDOC_URL_SECONDS, download ? {
-            download: name
-        } : undefined), 25e3, "signed url");
-        if (!r || r.error || !r.data || !r.data.signedUrl) throw r && r.error || new Error("signed");
-        const url = r.data.signedUrl;
-        if (download) {
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = name;
-            a.rel = "noopener";
-            a.style.display = "none";
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-        } else if (w) {
-            try {
-                w.opener = null;
-            } catch (e) {}
-            w.location.replace(url);
-        } else if (pdocSheet === sh) {
-            sh.link = {
-                id: d.id,
-                url: url
-            };
-            pdocRender();
-            setTimeout(function() {
-                if (pdocSheet === sh && sh.link && sh.link.id === d.id) {
-                    sh.link = null;
-                    pdocRender();
-                }
-            }, PDOC_URL_SECONDS * 1e3);
-        }
-    } catch (e) {
-        if (w) {
-            try {
-                w.close();
-            } catch (e2) {}
-        }
-        showToast("تعذّر فتح الملف — " + pdocErrText(e), "error");
-    }
-}
-
-function pdocAskDelete(did) {
-    const sh = pdocSheet, d = pdocFindDoc(did);
-    if (!sh || !d) return;
-    confirmAction({
-        title: "حذف هذا المستند؟",
-        message: "سيُحذف الملف نهائيًا ولا يمكن استرجاعه.",
-        confirmLabel: "حذف",
-        dangerous: true,
-        onConfirm: async function() {
-            try {
-                const r = await pdocRpc("party_doc_delete", {
-                    id: did
-                });
-                const path = r && r.path;
-                if (path) {
-                    try {
-                        await sb.storage.from(PDOC_BUCKET).remove([ path ]);
-                    } catch (e2) {}
-                }
-                if (pdocSheet === sh) {
-                    sh.docs = sh.docs.filter(function(x) {
-                        return x.id !== did;
-                    });
-                    if (sh.link && sh.link.id === did) sh.link = null;
-                    pdocSyncCount(sh);
-                    pdocRender();
-                }
-                showToast("تم حذف المستند", "ok");
-            } catch (e) {
-                showToast(pdocErrText(e), "error");
-            }
-        }
-    });
-}
-
-function pdocSleep(ms) {
-    return new Promise(function(r) {
-        setTimeout(r, ms);
-    });
-}
-
-function pdocExConsented() {
-    try {
-        return localStorage.getItem("pdoc-ex-consent") === "1";
-    } catch (e) {
-        return false;
-    }
-}
-
-function pdocExConsent() {
-    try {
-        localStorage.setItem("pdoc-ex-consent", "1");
-    } catch (e) {}
-}
-
-function pdocExErr(code) {
-    return PDOC_EX_MSG[code] || "تعذّرت قراءة المستند — حاول مرة أخرى";
-}
-
-function pdocExKeys(sh) {
-    return PDOC_EX_ORDER.filter(function(k) {
-        return !(sh.kind === "customer" && k === "additional_no");
-    });
-}
-
-function pdocExisting(sh) {
-    const out = {};
-    try {
-        if (sh.kind === "customer") {
-            const c = (appData.customers || []).find(function(x) {
-                return x.id === sh.id;
-            }) || {};
-            out.cr_number = c.additionalId || "";
-            out.vat_number = c.vatNumber || "";
-            out.street = c.addressStreet || "";
-            out.building_no = c.addressBuildingNo || "";
-            out.district = c.addressDistrict || "";
-            out.city = c.addressCity || "";
-            out.postal_code = c.addressPostalCode || "";
-            out.name = c.name || "";
-        } else {
-            const p = sh.prof && sh.prof.data || {}, s = (appData.suppliers || []).find(function(x) {
-                return x.id === sh.id;
-            }) || {};
-            PDOC_EX_ORDER.forEach(function(k) {
-                out[k] = p[k] || "";
-            });
-            out.name = s.name || "";
-        }
-    } catch (e) {}
-    return out;
-}
-
-function pdocExBuild(sh, did, data) {
-    const cur = pdocExisting(sh), f = data.fields || {}, rows = [];
-    let same = 0;
-    pdocExKeys(sh).forEach(function(k) {
-        const v = f[k];
-        if (v === undefined || v === null || v === "") return;
-        const c = String(cur[k] || "");
-        if (c && c === String(v)) {
-            same++;
-            return;
-        }
-        rows.push({
-            key: k,
-            val: String(v),
-            cur: c,
-            on: !c
-        });
-    });
-    return {
-        did: did,
-        phase: "review",
-        rows: rows,
-        same: same,
-        name: String(f.establishment_name || ""),
-        rejected: (data.rejected || []).length
-    };
-}
-
-async function pdocExStart(did) {
-    const sh = pdocSheet, d = pdocFindDoc(did);
-    if (!sh || !d || sh.busy || sh.ex && sh.ex.phase === "loading") return;
-    if (!pdocExConsented()) {
-        confirmAction({
-            title: "قراءة المستند تلقائيًا",
-            message: "لقراءة بيانات المستند يُرسَل إلى خدمة كلود (شركة أنثروبيك) ولا يُحفظ لديها. تظهر البيانات كاقتراحات تراجعها بنفسك، ولا يُحفظ شيء قبل أن تضغط حفظ. متابعة؟",
-            confirmLabel: "متابعة",
-            onConfirm: function() {
-                pdocExConsent();
-                pdocExStart(did);
-            }
-        });
-        return;
-    }
-    sh.ex = {
-        did: did,
-        phase: "loading",
-        msg: "",
-        rows: [],
-        name: ""
-    };
-    pdocRender();
-    try {
-        const r = await withTimeout(sb.functions.invoke("pdoc-extract", {
-            body: {
-                doc_id: did
-            }
-        }), 95e3, "extract");
-        if (pdocSheet !== sh || !sh.ex || sh.ex.did !== did) return;
-        if (r && r.error) {
-            const st = r.error.context && r.error.context.status;
-            sh.ex = {
-                did: did,
-                phase: "error",
-                msg: st === 404 ? pdocExErr("not-configured") : pdocExErr("")
-            };
-        } else if (!r || !r.data || r.data.ok !== true) {
-            sh.ex = {
-                did: did,
-                phase: "error",
-                msg: pdocExErr(r && r.data && r.data.code)
-            };
-        } else sh.ex = pdocExBuild(sh, did, r.data);
-    } catch (e) {
-        if (pdocSheet !== sh || !sh.ex || sh.ex.did !== did) return;
-        sh.ex = {
-            did: did,
-            phase: "error",
-            msg: /TIMEOUT/.test(String(e && e.message)) ? "انتهت المهلة — حاول مرة أخرى" : pdocExErr("")
-        };
-    }
-    pdocRender();
-}
-
-function pdocExValid(row) {
-    const v = String(row.val || "").trim();
-    return !!v && (!PDOC_EX_RE[row.key] || PDOC_EX_RE[row.key].test(v));
-}
-
-function pdocExCanFill(ex) {
-    return !!ex && ex.phase === "review" && ex.rows.some(function(r) {
-        return r.on && pdocExValid(r);
-    });
-}
-
-function pdocExHtml(ex) {
-    if (ex.phase === "loading") return '<div class="pdoc-ex"><div class="pdoc-note">جارٍ قراءة المستند... يُرسَل لخدمة كلود للقراءة</div></div>';
-    if (ex.phase === "error") return '<div class="pdoc-ex"><div class="pdoc-err">' + escapeHtml(ex.msg) + '</div><div class="pdoc-fx-a"><button type="button" class="btn pdoc-b" data-pdoc-act="ex-close">إغلاق</button></div></div>';
-    let h = '<div class="pdoc-ex"><div class="pdoc-lbl">بيانات مقترحة من المستند</div>';
-    ex.rows.forEach(function(r) {
-        const num = !!PDOC_EX_RE[r.key], bad = !pdocExValid(r) && r.on;
-        h += '<div class="pdoc-fx"><span class="pdoc-fx-l">' + escapeHtml(PDOC_EX_LABELS[r.key]) + "</span>" + '<input type="text" class="pdoc-fx-i' + (bad ? " pdoc-fx-bad" : "") + '" data-pdoc-fx="' + r.key + '" value="' + escapeHtml(r.val) + '"' + (num ? ' inputmode="numeric" dir="ltr"' : "") + (r.on ? "" : " disabled") + ' autocomplete="off">' + (r.cur ? '<div class="pdoc-fx-r"><span class="pdoc-fx-cur">الحالي: ' + escapeHtml(r.cur) + '</span><button type="button" class="chip pdoc-chip pdoc-fx-t' + (r.on ? " pdoc-chip-on" : "") + '" data-pdoc-act="ex-toggle" data-pdoc-key="' + r.key + '" aria-pressed="' + (r.on ? "true" : "false") + '">استبدال الحالي</button></div>' : "") + "</div>";
-    });
-    if (!ex.rows.length) h += '<div class="pdoc-note">' + (ex.same ? "البيانات المقروءة مطابقة لما هو مسجّل" : "لم أجد بيانات واضحة بالمستند") + "</div>";
-    if (ex.name) h += '<div class="pdoc-fx-name"><span class="pdoc-fx-cur">اسم المنشأة بالمستند: ' + escapeHtml(ex.name) + '</span><button type="button" class="btn pdoc-b" data-pdoc-act="ex-copy-name">نسخ الاسم</button></div>';
-    if (ex.rejected) h += '<div class="pdoc-note">تجاهلتُ ' + ex.rejected + " من البيانات لأن صيغتها غير صحيحة</div>";
-    if (ex.rows.length) h += '<div class="pdoc-note">لا يُحفظ شيء قبل أن تضغط حفظ بنفسك</div>';
-    h += '<div class="pdoc-fx-a">' + (ex.rows.length ? '<button type="button" class="btn btn-primary pdoc-b pdoc-fill" data-pdoc-act="ex-fill"' + (pdocExCanFill(ex) ? "" : " disabled") + ">تعبئة</button>" : "") + '<button type="button" class="btn pdoc-b" data-pdoc-act="ex-close">' + (ex.rows.length ? "إلغاء" : "إغلاق") + "</button></div></div>";
-    return h;
-}
-
-function pdocExCopyName() {
-    const sh = pdocSheet, nm = sh && sh.ex ? sh.ex.name : "";
-    if (!nm) return;
-    try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(nm).then(function() {
-                showToast("تم نسخ الاسم", "ok");
-            }, function() {
-                showToast("تعذّر النسخ", "error");
-            });
-            return;
-        }
-    } catch (e) {}
-    showToast("تعذّر النسخ", "error");
-}
-
-function pdocExFill() {
-    const sh = pdocSheet;
-    if (!sh || !sh.ex || sh.ex.phase !== "review") return;
-    const vals = {};
-    let bad = 0;
-    sh.ex.rows.forEach(function(r) {
-        if (!r.on) return;
-        if (pdocExValid(r)) vals[r.key] = String(r.val).trim(); else if (String(r.val || "").trim()) bad++;
-    });
-    if (!Object.keys(vals).length) {
-        showToast("لا توجد بيانات صالحة للتعبئة", "error");
-        return;
-    }
-    if (bad) showToast("تجاهلتُ " + bad + " من الحقول بصيغة غير صحيحة", "error");
-    if (sh.kind === "supplier") pdocFillSupplier(sh, vals); else pdocFillCustomer(sh, vals);
-}
-
-function pdocFillSupplier(sh, vals) {
-    if (sh.prof && sh.prof.na) {
-        showToast("حفظ بيانات المنشأة غير متاح بعد", "error");
-        return;
-    }
-    const base = sh.prof && sh.prof.data || {}, form = {};
-    PDOC_EX_ORDER.forEach(function(k) {
-        form[k] = base[k] || "";
-    });
-    Object.keys(vals).forEach(function(k) {
-        form[k] = vals[k];
-    });
-    sh.prof = Object.assign(sh.prof || {}, {
-        open: true,
-        form: form,
-        filled: Object.keys(vals),
-        busy: false
-    });
-    sh.ex = null;
-    pdocRender();
-    try {
-        const el = document.querySelector("#pdoc-root .pdoc-prof");
-        if (el) el.scrollIntoView({
-            block: "start"
-        });
-    } catch (e) {}
-    showToast("تمت التعبئة — راجع الحقول ثم اضغط حفظ", "ok");
-}
-
-async function pdocFillCustomer(sh, vals) {
-    const cid = sh.id;
-    pdocClose();
-    try {
-        if (typeof editingCustomers === "undefined" || typeof refreshCustomersList !== "function") throw new Error("no-customers-view");
-        editingCustomers[cid] = true;
-        refreshCustomersList();
-        let row = null, box = null;
-        for (let i = 0; i < 25 && !box; i++) {
-            await pdocSleep(100);
-            row = document.querySelector('#customers-items-list .task-item-row[data-customer-id="' + cid + '"]');
-            box = row ? row.querySelector(".taxinv-cust") : null;
-        }
-        if (!box) {
-            showToast("بيانات المشتري الضريبية غير متاحة بكرت العميل حاليًا", "error");
-            return;
-        }
-        box.open = true;
-        const put = function(k, v) {
-            const el = box.querySelector('[data-taxinv-ck="' + k + '"]');
-            if (!el) return false;
-            el.value = v;
-            el.classList.add("pdoc-filled");
-            el.addEventListener("input", function() {
-                el.classList.remove("pdoc-filled");
-            }, {
-                once: true
-            });
-            return true;
-        };
-        let n = 0;
-        if (vals.vat_number && put("vat_number", vals.vat_number)) n++;
-        if (vals.cr_number) {
-            const sel = box.querySelector('[data-taxinv-ck="additional_id_type"]');
-            if (sel && sel.querySelector('option[value="CRN"]')) {
-                sel.value = "CRN";
-                sel.classList.add("pdoc-filled");
-                if (put("additional_id", vals.cr_number)) n++;
-            } else showToast("نوع المعرّف «سجل تجاري» غير متاح بكرت العميل", "error");
-        }
-        [ [ "street", "address_street" ], [ "building_no", "address_building_no" ], [ "district", "address_district" ], [ "city", "address_city" ], [ "postal_code", "address_postal_code" ] ].forEach(function(p) {
-            if (vals[p[0]] && put(p[1], vals[p[0]])) n++;
-        });
-        const kind = box.querySelector('[data-taxinv-ck="customer_kind"]');
-        if (kind && !kind.value && (vals.cr_number || vals.vat_number)) {
-            kind.value = "business";
-            kind.classList.add("pdoc-filled");
-        }
-        try {
-            row.scrollIntoView({
-                block: "center"
-            });
-        } catch (e) {}
-        showToast(n ? "تمت التعبئة — راجع الحقول ثم اضغط «حفظ البيانات الضريبية»" : "لم تُعبّأ حقول", n ? "ok" : "error");
-    } catch (e) {
-        console.error("PDOC fill:", e);
-        showToast("تعذّرت التعبئة", "error");
-    }
-}
-
-function pdocProfHtml(sh) {
-    const p = sh.prof;
-    if (sh.kind !== "supplier" || !p || p.loading || p.na) return "";
-    const d = p.data, has = !!d && PDOC_EX_ORDER.some(function(k) {
-        return d[k];
-    });
-    const sum = has ? [ d.cr_number ? "سجل " + d.cr_number : "", d.vat_number ? "ضريبي " + d.vat_number : "" ].filter(Boolean).join(" · ") || "عنوان فقط" : "لم تُسجَّل";
-    let h = '<div class="pdoc-prof"><div class="pdoc-prof-h"><span class="pdoc-prof-t">بيانات المنشأة</span><span class="pdoc-prof-s">' + escapeHtml(sum) + "</span>" + (p.open ? "" : '<button type="button" class="btn pdoc-b pdoc-prof-b" data-pdoc-act="prof-open">' + (has ? "تعديل" : "+ إضافة") + "</button>") + "</div>";
-    if (p.open && p.form) {
-        PDOC_EX_ORDER.forEach(function(k) {
-            const num = !!PDOC_EX_RE[k];
-            h += '<label class="pdoc-fx"><span class="pdoc-fx-l">' + escapeHtml(PDOC_EX_LABELS[k]) + '</span><input type="text" class="pdoc-fx-i' + ((p.filled || []).indexOf(k) >= 0 ? " pdoc-filled" : "") + '" data-pdoc-pf="' + k + '" value="' + escapeHtml(p.form[k] || "") + '" maxlength="80"' + (num ? ' inputmode="numeric" dir="ltr"' : "") + ' autocomplete="off"></label>';
-        });
-        h += '<div class="pdoc-fx-a"><button type="button" class="btn btn-primary pdoc-b" data-pdoc-act="prof-save"' + (p.busy ? " disabled" : "") + ">" + (p.busy ? "جارٍ الحفظ..." : "حفظ") + '</button><button type="button" class="btn pdoc-b" data-pdoc-act="prof-cancel"' + (p.busy ? " disabled" : "") + ">إلغاء</button></div>";
-    }
-    return h + "</div>";
-}
-
-async function pdocProfSave() {
-    const sh = pdocSheet;
-    if (!sh || sh.kind !== "supplier" || !sh.prof || !sh.prof.open || sh.prof.busy) return;
-    const f = sh.prof.form || {}, body = {
-        party_id: sh.id
-    };
-    for (let i = 0; i < PDOC_EX_ORDER.length; i++) {
-        const k = PDOC_EX_ORDER[i], v = String(f[k] || "").trim();
-        if (v && PDOC_EX_RE[k] && !PDOC_EX_RE[k].test(v)) {
-            showToast(PDOC_EX_LABELS[k] + " بصيغة غير صحيحة", "error");
-            return;
-        }
-        body[k] = v;
-    }
-    sh.prof.busy = true;
-    pdocRender();
-    try {
-        const d = await pdocRpc("party_profile_set", body, true);
-        if (pdocSheet === sh) {
-            sh.prof.data = d && d.profile ? d.profile : null;
-            sh.prof.open = false;
-            sh.prof.form = null;
-            sh.prof.filled = [];
-        }
-        showToast("تم حفظ بيانات المنشأة", "ok");
-    } catch (e) {
-        showToast(pdocErrText(e), "error");
-    }
-    if (pdocSheet === sh) {
-        sh.prof.busy = false;
-        pdocRender();
-    }
-}
-
-function pdocOnClick(ev) {
-    if (pdocDead) return;
-    try {
-        const t = ev.target;
-        const btn = t && t.closest ? t.closest(".pdoc-btn") : null;
-        if (btn) {
-            ev.preventDefault();
-            ev.stopPropagation();
-            pdocOpen(btn.getAttribute("data-pdoc-kind"), btn.getAttribute("data-pdoc-id"));
-            return;
-        }
-        const a = t && t.closest ? t.closest("[data-pdoc-act]") : null;
-        if (!a || !pdocSheet) return;
-        const act = a.getAttribute("data-pdoc-act"), sh = pdocSheet;
-        if (act === "backdrop") {
-            if (t === a && !sh.busy) pdocClose();
-            return;
-        }
-        if (act === "close") {
-            if (!sh.busy) pdocClose();
-            return;
-        }
-        if (act === "add") {
-            sh.form = {
-                type: "",
-                label: "",
-                file: null
-            };
-            pdocRender();
-            return;
-        }
-        if (act === "cancel") {
-            if (!sh.busy) {
-                sh.form = null;
-                sh.prep = false;
-                pdocPickGen++;
-                pdocRender();
-            }
-            return;
-        }
-        if (act === "type") {
-            if (sh.form && !sh.busy) {
-                sh.form.type = a.getAttribute("data-pdoc-type");
-                pdocRender();
-                if (sh.form.type === "other") {
-                    const i = document.querySelector("#pdoc-root .pdoc-other");
-                    if (i) i.focus();
-                }
-            }
-            return;
-        }
-        if (act === "pick-file") {
-            const i = document.getElementById("pdoc-in-file");
-            if (i && !sh.busy) i.click();
-            return;
-        }
-        if (act === "pick-cam") {
-            const i = document.getElementById("pdoc-in-cam");
-            if (i && !sh.busy) i.click();
-            return;
-        }
-        if (act === "unpick") {
-            if (sh.form && !sh.busy) {
-                sh.form.file = null;
-                pdocRender();
-            }
-            return;
-        }
-        if (act === "upload") {
-            pdocUpload();
-            return;
-        }
-        if (act === "extract") {
-            pdocExStart(a.getAttribute("data-pdoc-did"));
-            return;
-        }
-        if (act === "ex-close") {
-            sh.ex = null;
-            pdocRender();
-            return;
-        }
-        if (act === "ex-toggle") {
-            const r = sh.ex && sh.ex.rows.find(function(x) {
-                return x.key === a.getAttribute("data-pdoc-key");
-            });
-            if (r) {
-                r.on = !r.on;
-                pdocRender();
-            }
-            return;
-        }
-        if (act === "ex-fill") {
-            pdocExFill();
-            return;
-        }
-        if (act === "ex-copy-name") {
-            pdocExCopyName();
-            return;
-        }
-        if (act === "prof-open") {
-            if (sh.prof) {
-                const d = sh.prof.data || {}, fm = {};
-                PDOC_EX_ORDER.forEach(function(k) {
-                    fm[k] = d[k] || "";
-                });
-                sh.prof.open = true;
-                sh.prof.form = fm;
-                sh.prof.filled = [];
-                pdocRender();
-            }
-            return;
-        }
-        if (act === "prof-cancel") {
-            if (sh.prof && !sh.prof.busy) {
-                sh.prof.open = false;
-                sh.prof.form = null;
-                sh.prof.filled = [];
-                pdocRender();
-            }
-            return;
-        }
-        if (act === "prof-save") {
-            pdocProfSave();
-            return;
-        }
-        const did = a.getAttribute("data-pdoc-did");
-        if (act === "open") pdocOpenDoc(did, false); else if (act === "download") pdocOpenDoc(did, true); else if (act === "delete") pdocAskDelete(did);
-    } catch (e) {
-        console.error("PDOC click:", e);
-    }
-}
-
-function pdocOnInput(ev) {
-    const t = ev.target;
-    if (pdocSheet && t && t.getAttribute) {
-        const fx = t.getAttribute("data-pdoc-fx"), pf = t.getAttribute("data-pdoc-pf");
-        if (fx && pdocSheet.ex && pdocSheet.ex.rows) {
-            const r = pdocSheet.ex.rows.find(function(x) {
-                return x.key === fx;
-            });
-            if (r) {
-                r.val = t.value;
-                t.classList.toggle("pdoc-fx-bad", r.on && !pdocExValid(r));
-                const fb = document.querySelector("#pdoc-root .pdoc-fill");
-                if (fb) fb.disabled = !pdocExCanFill(pdocSheet.ex);
-            }
-            return;
-        }
-        if (pf && pdocSheet.prof && pdocSheet.prof.form) {
-            pdocSheet.prof.form[pf] = t.value;
-            return;
-        }
-    }
-    if (!pdocSheet || !pdocSheet.form || !t || !t.getAttribute || t.getAttribute("data-pdoc-in") !== "label") return;
-    pdocSheet.form.label = t.value;
-    const go = document.querySelector("#pdoc-root .pdoc-go");
-    if (go) go.disabled = !pdocCanUpload(pdocSheet);
-}
-
-(function pdocInstall() {
-    try {
-        if (typeof document === "undefined" || !document.addEventListener) return;
-        document.addEventListener("click", pdocOnClick, true);
-        document.addEventListener("input", pdocOnInput);
-        [ "customers-view", "suppliers-view" ].forEach(function(id) {
-            const root = document.getElementById(id);
-            if (root && typeof MutationObserver === "function") {
-                const o = new MutationObserver(function() {
-                    pdocSchedule();
-                });
-                o.observe(root, {
-                    childList: true,
-                    subtree: true
-                });
-                pdocObs.push(o);
-            }
-        });
-        pdocSchedule();
-    } catch (e) {
-        console.error("PDOC install:", e);
     }
 })();</script>
 </body>
