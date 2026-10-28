@@ -1526,6 +1526,20 @@
   /* الفاتورة الضريبية (طلب المالك 2026-10-28): بنود الرسوم والخدمات بعد القطع بعنوان خافت وبلا كمية، خط أصغر ولون باهت فلا تسحب نظر القارئ؛ العرض فقط */
   .zatca-xlhead td{border:0;background:#fff;padding:14px 6px 4px;font-size:.9em;font-weight:700;color:#6B6B6B;text-align:right;break-after:avoid;page-break-after:avoid;}
   .zatca-xlrow td{background:#fff;color:#6B6B6B;font-size:.92em;font-weight:400;border-color:#ECECEC;padding-top:5px;padding-bottom:5px;}
+  /* تعديل الفاتورة التلقائي (طلب المالك 2026-10-28): نافذة الفرق بين الطلبية والفاتورة والمستندات التي ستصدر؛ نقص بشارة مربّعة حمراء، زيادة بحبّة كهرمانية، جديد بحافة متقطعة خضراء */
+  .zatca-am-btn{border-color:var(--green);color:var(--green);font-weight:700;}
+  .zatca-am-title{margin:14px 0 6px;font-weight:800;font-size:14px;}
+  .zatca-am-note{font-weight:500;font-size:13px;color:var(--text-dim);}
+  .zatca-am-list{display:flex;flex-direction:column;gap:6px;}
+  .zatca-am-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;}
+  .zatca-am-chip{flex:0 0 auto;padding:2px 10px;font-size:13px;font-weight:700;border:1px solid currentColor;}
+  .zatca-am-down{color:var(--rust);border-radius:4px;}
+  .zatca-am-up{color:var(--amber);border-radius:999px;}
+  .zatca-am-new{color:var(--green);border-radius:999px;border-style:dashed;}
+  .zatca-am-name{flex:1 1 140px;min-width:0;font-weight:700;}
+  .zatca-am-detail{flex:1 1 100%;font-size:13px;color:var(--text-dim);}
+  .zatca-am-steps{margin:0;padding-inline-start:24px;font-size:14px;line-height:1.7;}
+  .zatca-am-done{color:var(--green);}
   /* ZATCA END css */
   /* HOMEKPI BEGIN css */
   /* مؤشر الأداء بالرئيسية وبشاشة المشتريات: شرائح الفترة مخفية وتظهر بزر الفترة فقط، وتلميح «اضغط على أي بطاقة…» محذوف (طلب مهاب 2026-10-22) */
@@ -71885,7 +71899,7 @@ function zatcaXlRowsHtml(inv, cols, printCode) {
         return '<td data-l="' + escapeHtml(label) + '"' + (cls ? ' class="' + cls + '"' : "") + ">" + v + "</td>";
     };
     return '<tr class="zatca-xlhead"><td colspan="' + cols + '">' + escapeHtml(ZATCA_XL_TITLE) + "</td></tr>" + PTX_TAXINV.sheetModel(inv, {}).rows.map(function(r) {
-        return '<tr class="zatca-xlrow">' + td(C.n, "taxinv-num", escapeHtml(r.n)) + '<td class="taxinv-name">' + escapeHtml(r.name) + "</td>" + (printCode ? '<td data-l="' + escapeHtml(C.code) + '"></td>' : "") + td(C.qty, "taxinv-num", "—") + td(C.unitNet, "taxinv-num", escapeHtml(r.unitNet)) + td(C.net, "taxinv-num", escapeHtml(r.net)) + td(C.vatRate, "taxinv-num", escapeHtml(r.vatRate)) + td(C.vat, "taxinv-num", escapeHtml(r.vat)) + td(C.lineInc, "taxinv-num", escapeHtml(r.lineInc)) + "</tr>";
+        return '<tr class="zatca-xlrow">' + td(C.n, "taxinv-num", escapeHtml(r.n)) + '<td class="taxinv-name">' + escapeHtml(r.name) + "</td>" + (printCode ? '<td data-l="' + escapeHtml(C.code) + '"></td>' : "") + td(C.qty, "taxinv-num", escapeHtml(r.qty)) + td(C.unitNet, "taxinv-num", escapeHtml(r.unitNet)) + td(C.net, "taxinv-num", escapeHtml(r.net)) + td(C.vatRate, "taxinv-num", escapeHtml(r.vatRate)) + td(C.vat, "taxinv-num", escapeHtml(r.vat)) + td(C.lineInc, "taxinv-num", escapeHtml(r.lineInc)) + "</tr>";
     }).join("");
 }
 
@@ -71908,6 +71922,686 @@ function zatcaXlSheet(prev, inv, o) {
         }), cols, !!(inv.seller && inv.seller.print_item_code)) + html.slice(k);
     } catch (e) {
         return prev(inv, o);
+    }
+}
+
+const ZATCA_AM_REASON_TEXT = "تعديل الطلبية";
+
+let zatcaAm = null;
+
+function zatcaAmH(x) {
+    const n = PTX_TAXINV.money.parse(x);
+    return n === null ? 0 : n;
+}
+
+function zatcaAmMoney(h) {
+    return PTX_TAXINV.money.format(h);
+}
+
+function zatcaAmFeeKey(L) {
+    const n = String(L && L.name || "");
+    if (L && L.kind === "fee_delivery") return "delivery";
+    if (/^رسوم خدمات وتوصيل/.test(n)) return "combined";
+    if (/^رسوم خدمات/.test(n)) return "service";
+    if (/^مبلغ محتفظ به/.test(n)) return "kept";
+    return "";
+}
+
+function zatcaAmTake(L, pool) {
+    let hit = null;
+    if (zatcaXlIsFee(L)) {
+        const k = zatcaAmFeeKey(L);
+        if (k) hit = pool.find(function(x) {
+            return !x._am && zatcaXlIsFee(x) && zatcaAmFeeKey(x) === k;
+        }) || null;
+    } else if (L.part_id !== undefined && L.part_id !== null) {
+        hit = pool.find(function(x) {
+            return !x._am && !zatcaXlIsFee(x) && String(x.part_id) === String(L.part_id);
+        }) || null;
+    } else {
+        const c = pool.filter(function(x) {
+            return !x._am && !zatcaXlIsFee(x) && x.name === L.name && zatcaAmH(x.unit_inc) === zatcaAmH(L.unit_inc);
+        });
+        if (c.length === 1) hit = c[0];
+    }
+    if (hit) hit._am = true;
+    return hit;
+}
+
+function zatcaAmPlan(inv, notes, draft, opts) {
+    opts = opts || {};
+    notes = Array.isArray(notes) ? notes : [];
+    const out = {
+        kind: "none",
+        changes: [],
+        blockers: [],
+        steps: [],
+        why: ""
+    };
+    if (!inv || inv.doc_kind !== "simplified" && inv.doc_kind !== "standard") {
+        out.kind = "blocked";
+        out.blockers.push("التعديل التلقائي لفاتورة ضريبية فقط");
+        return out;
+    }
+    if (!draft || !draft.ok) {
+        out.kind = "blocked";
+        out.blockers.push("الطلبية الآن غير صالحة للفوترة" + (draft && draft.errors && draft.errors[0] ? ": " + draft.errors[0].message : ""));
+        return out;
+    }
+    const pool = (draft.lines || []).map(function(L) {
+        return Object.assign({}, L);
+    });
+    const rem = PTX_TAXINV.creditableRemaining(inv, notes), drem = PTX_TAXINV.debitableRemaining(inv, notes);
+    const hasDebits = notes.some(function(n) {
+        return n && n.doc_kind === "debit_note";
+    });
+    const returned = {};
+    (opts.returnedIds || []).forEach(function(id) {
+        returned[String(id)] = true;
+    });
+    (inv.lines || []).forEach(function(L) {
+        const r = rem.find(function(x) {
+            return String(x.n) === String(L.n);
+        }) || {
+            qty_left: 0,
+            inc_left: 0
+        };
+        const d = drem.find(function(x) {
+            return String(x.n) === String(L.n);
+        }) || {
+            inc_room: 0
+        };
+        const t = zatcaAmTake(L, pool);
+        const fee = zatcaXlIsFee(L), incEff = r.inc_left, tInc = t ? zatcaAmH(t.line_inc) : 0;
+        if (!(incEff > 0)) {
+            return;
+        }
+        const c = {
+            n: L.n,
+            name: L.name,
+            isFee: fee,
+            from: incEff,
+            to: tInc,
+            type: "",
+            amount: 0,
+            qtyFrom: r.qty_left,
+            qtyTo: t ? Number(t.qty) : 0,
+            removedQty: 0,
+            room: d.inc_room,
+            partId: L.part_id
+        };
+        if (fee) {
+            if (tInc === incEff) return;
+            c.type = tInc < incEff ? "fee_down" : "fee_up";
+            c.amount = Math.abs(incEff - tInc);
+        } else if (!t) {
+            c.type = "gone";
+            c.amount = incEff;
+            c.removedQty = r.qty_left;
+        } else {
+            const qEff = r.qty_left, tQty = Number(t.qty);
+            if (Math.abs(tQty - qEff) < 1e-9) {
+                if (tInc === incEff) return;
+                c.type = tInc < incEff ? "price_down" : "price_up";
+                c.amount = Math.abs(incEff - tInc);
+            } else if (tQty < qEff) {
+                c.removedQty = Math.round((qEff - tQty) * 1e3) / 1e3;
+                let cr = -1;
+                try {
+                    cr = PTX_TAXINV.creditLineHalalas(r, c.removedQty, true, Number(L.unit_inc));
+                } catch (e) {
+                    cr = -1;
+                }
+                if (cr > 0 && incEff - cr === tInc) {
+                    c.type = "qty_down";
+                    c.amount = cr;
+                } else c.type = "mixed";
+            } else {
+                c.type = "qty_up";
+            }
+        }
+        out.changes.push(c);
+    });
+    pool.forEach(function(x) {
+        if (!x._am) out.changes.push({
+            n: null,
+            name: x.name,
+            isFee: zatcaXlIsFee(x),
+            from: 0,
+            to: zatcaAmH(x.line_inc),
+            type: "added",
+            amount: zatcaAmH(x.line_inc),
+            qtyFrom: 0,
+            qtyTo: Number(x.qty) || 0
+        });
+    });
+    if (!out.changes.length) return out;
+    const types = {};
+    out.changes.forEach(function(c) {
+        types[c.type] = true;
+    });
+    const only = function(list) {
+        return Object.keys(types).every(function(k) {
+            return list.indexOf(k) >= 0;
+        });
+    };
+    let kind = "reissue";
+    if (only([ "gone", "qty_down", "price_down", "fee_down" ])) kind = "credit"; else if (only([ "price_up", "fee_up" ]) && opts.elevated) kind = "debit";
+    if (kind === "debit") {
+        const tot = out.changes.reduce(function(s, c) {
+            return s + c.amount;
+        }, 0);
+        if (out.changes.some(function(c) {
+            return c.amount > c.room;
+        }) || tot > zatcaAmH(inv.totals && inv.totals.total_inc)) kind = "reissue";
+    }
+    if (hasDebits && kind !== "debit") {
+        out.kind = "blocked";
+        out.blockers.push("على هذه الفاتورة تعديل سابق بالزيادة — لا يمكن إلغاؤها أو إرجاعها تلقائيًا. استخدم «إرجاع الفاتورة» يدويًا أو راجع المحاسب");
+        return out;
+    }
+    out.kind = kind;
+    const reqId = function(p) {
+        return typeof uid === "function" ? uid(p) : p + "-" + Math.random().toString(36).slice(2, 10);
+    };
+    if (kind === "credit") {
+        const qtyLines = out.changes.filter(function(c) {
+            return c.type === "gone" || c.type === "qty_down";
+        });
+        const prLines = out.changes.filter(function(c) {
+            return c.type === "price_down" || c.type === "fee_down";
+        });
+        if (qtyLines.length) {
+            const allReturned = qtyLines.every(function(c) {
+                return !c.isFee && c.partId !== undefined && c.partId !== null && returned[String(c.partId)];
+            });
+            out.steps.push({
+                type: "credit",
+                reason: allReturned ? "goods_returned" : "cancel",
+                reasonText: ZATCA_AM_REASON_TEXT,
+                requestId: reqId("zam"),
+                selections: qtyLines.map(function(c) {
+                    return c.type === "gone" ? {
+                        orig_line_n: c.n
+                    } : {
+                        orig_line_n: c.n,
+                        qty: c.removedQty
+                    };
+                })
+            });
+        }
+        if (prLines.length) {
+            out.steps.push({
+                type: "credit",
+                reason: "price_change",
+                reasonText: ZATCA_AM_REASON_TEXT,
+                requestId: reqId("zam"),
+                selections: prLines.map(function(c) {
+                    let qty = 1, unit = c.amount / 100;
+                    if (!c.isFee && c.qtyFrom > 1) {
+                        const u4 = Math.round(c.amount * 100 / c.qtyFrom) / 1e4;
+                        let h = -1;
+                        try {
+                            h = PTX_TAXINV.money.mul(c.qtyFrom, u4);
+                        } catch (e) {
+                            h = -1;
+                        }
+                        if (h === c.amount) {
+                            qty = c.qtyFrom;
+                            unit = u4;
+                        }
+                    }
+                    return {
+                        orig_line_n: c.n,
+                        qty: qty,
+                        unit_inc: unit
+                    };
+                })
+            });
+        }
+    } else if (kind === "debit") {
+        out.steps.push({
+            type: "debit",
+            reason: "price_change",
+            reasonText: ZATCA_AM_REASON_TEXT,
+            requestId: reqId("zam"),
+            selections: out.changes.map(function(c) {
+                return {
+                    orig_line_n: c.n,
+                    amount: (c.amount / 100).toFixed(2)
+                };
+            })
+        });
+    } else {
+        if (hasDebits) {
+            out.kind = "blocked";
+            out.blockers.push("على هذه الفاتورة تعديل سابق بالزيادة — لا يمكن إلغاؤها تلقائيًا. استخدم «إرجاع الفاتورة» يدويًا أو راجع المحاسب");
+            return out;
+        }
+        out.steps.push({
+            type: "credit",
+            reason: "cancel",
+            reasonText: "إلغاء وإعادة إصدار بعد تعديل الطلبية",
+            requestId: reqId("zam"),
+            all: true
+        });
+        out.steps.push({
+            type: "invoice",
+            requestId: reqId("zam")
+        });
+        out.why = types.added ? "إضافة بند جديد" : types.qty_up ? "زيادة كمية" : types.mixed ? "تغيّر سعر وكمية معًا" : opts.elevated || !(types.price_up || types.fee_up) ? "تغييرات بالزيادة والنقص معًا" : "الزيادة بالسعر للإدارة فقط";
+        if (types.price_up || types.fee_up) {
+            if (!opts.elevated && !(types.added || types.qty_up || types.mixed || types.gone || types.qty_down || types.price_down || types.fee_down)) out.why = "الزيادة بالسعر للإدارة فقط";
+        }
+    }
+    let prior = notes.slice();
+    out.steps.forEach(function(s) {
+        if (s.type === "credit") {
+            const b = zatcaAmBuildCredit(inv, prior, s);
+            if (!b.ok) {
+                out.kind = "blocked";
+                out.blockers.push(b.errors.map(function(e) {
+                    return e.message;
+                }).join(" — "));
+                return;
+            }
+            s.total = b.halalas.total_inc;
+            prior = prior.concat([ {
+                doc_kind: "credit_note",
+                original_invoice_id: inv.id,
+                reason_code: s.reason,
+                lines: b.lines
+            } ]);
+        } else if (s.type === "debit") {
+            const b = PTX_TAXINV.buildDebitNoteDraft(inv, {
+                reason_code: s.reason,
+                reason_text: s.reasonText,
+                selections: s.selections
+            }, {
+                priorNotes: prior
+            });
+            if (!b.ok) {
+                out.kind = "blocked";
+                out.blockers.push(b.errors.map(function(e) {
+                    return e.message;
+                }).join(" — "));
+                return;
+            }
+            s.total = b.halalas.total_inc;
+        } else if (s.type === "invoice") {
+            s.total = draft.halalas ? draft.halalas.total_inc : 0;
+        }
+    });
+    return out;
+}
+
+function zatcaAmBuildCredit(inv, notes, step) {
+    let selections = step.selections || [];
+    if (step.all) {
+        selections = [];
+        PTX_TAXINV.creditableRemaining(inv, notes).forEach(function(r) {
+            if (!(r.inc_left > 0)) return;
+            selections.push(zatcaXlIsFee(r) ? {
+                orig_line_n: r.n,
+                qty: 1,
+                unit_inc: r.inc_left / 100
+            } : {
+                orig_line_n: r.n
+            });
+        });
+    }
+    return PTX_TAXINV.buildCreditNoteDraft(inv, {
+        reason_code: step.reason,
+        reason_text: step.reasonText || ZATCA_AM_REASON_TEXT,
+        selections: selections
+    }, {
+        priorNotes: notes
+    });
+}
+
+const ZATCA_AM_CHIP = {
+    gone: [ "حُذفت", "down" ],
+    qty_down: [ "نقصت الكمية", "down" ],
+    price_down: [ "خُفّض السعر", "down" ],
+    fee_down: [ "خُفّضت الرسوم", "down" ],
+    price_up: [ "رُفع السعر", "up" ],
+    fee_up: [ "زادت الرسوم", "up" ],
+    qty_up: [ "زادت الكمية", "up" ],
+    added: [ "جديدة", "new" ],
+    mixed: [ "تغيّر السعر والكمية", "up" ]
+};
+
+function zatcaAmChangeHtml(c) {
+    const chip = ZATCA_AM_CHIP[c.type] || [ "تغيّر", "up" ];
+    let detail;
+    if (c.type === "added") detail = "تُضاف بقيمة " + zatcaAmMoney(c.to) + " ر.س"; else if (c.type === "gone") detail = "كانت " + zatcaAmMoney(c.from) + " ر.س"; else if (c.type === "qty_down" || c.type === "qty_up" || c.type === "mixed") detail = "الكمية من " + PTX_TAXINV.fmt.qty(c.qtyFrom) + " إلى " + PTX_TAXINV.fmt.qty(c.qtyTo) + " — القيمة من " + zatcaAmMoney(c.from) + " إلى " + zatcaAmMoney(c.to); else detail = "من " + zatcaAmMoney(c.from) + " إلى " + zatcaAmMoney(c.to) + " ر.س";
+    return '<div class="zatca-am-row"><span class="zatca-am-chip zatca-am-' + chip[1] + '">' + escapeHtml(chip[0]) + '</span><span class="zatca-am-name">' + escapeHtml(c.name) + '</span><span class="zatca-am-detail">' + escapeHtml(detail) + "</span></div>";
+}
+
+function zatcaAmStepText(s, plan, inv) {
+    const m = zatcaAmMoney(s.total || 0) + " ر.س";
+    if (s.type === "invoice") return "فاتورة ضريبية جديدة بقيمة " + m + " (بيانات العميل والدفع كما في الفاتورة السابقة)";
+    if (s.type === "debit") return "إشعار مدين (زيادة) بقيمة " + m;
+    if (plan.kind === "reissue") return "إشعار دائن كامل بقيمة " + m + " يُلغي الفاتورة " + inv.doc_number;
+    return "إشعار دائن بقيمة " + m + (s.reason === "price_change" ? " (تخفيض سعر/رسوم)" : s.reason === "goods_returned" ? " (إرجاع قطع)" : " (حذف/إنقاص بنود)");
+}
+
+function zatcaAmDialogHtml() {
+    const am = zatcaAm, inv = am.inv, plan = am.plan;
+    let body = "", foot;
+    const close = '<button type="button" class="btn btn-ghost" data-zatca-am="close">' + (plan.kind === "none" || plan.kind === "blocked" ? "إغلاق" : "إلغاء") + "</button>";
+    if (plan.kind === "none") {
+        body = '<div class="taxinv-legal">الطلبية الآن مطابقة للفاتورة — لا حاجة لتعديل.</div>';
+        foot = close;
+    } else if (plan.kind === "blocked") {
+        body = '<div class="taxinv-cn-sum" style="color:var(--rust);">' + plan.blockers.map(escapeHtml).join("<br>") + "</div>";
+        foot = close;
+    } else {
+        const sub = plan.kind === "credit" ? "الفاتورة لا تُعدَّل بعد صدورها نظامًا: يصدر «إشعار دائن» بالنقص وتبقى الفاتورة الأصلية كما هي." : plan.kind === "debit" ? "الفاتورة لا تُعدَّل بعد صدورها نظامًا: يصدر «إشعار مدين» بالزيادة وتبقى الفاتورة الأصلية كما هي." : "الفاتورة لا تُعدَّل بعد صدورها نظامًا: تُلغى بإشعار دائن كامل ثم تصدر فاتورة جديدة بالطلبية كما هي الآن" + (plan.why ? " (السبب: " + plan.why + ")" : "") + ".";
+        let timing = plan.kind !== "debit" && typeof taxinvCnTimingHint === "function" ? taxinvCnTimingHint(inv) : "";
+        if (plan.kind === "reissue") {
+            try {
+                const sd = String(inv.supply_date || ""), y = +sd.slice(0, 4), mo = +sd.slice(5, 7);
+                if (y && mo && PTX_TAXINV.time.todayRiyadh(new Date) > new Date(Date.UTC(y, mo, 15)).toISOString().slice(0, 10)) timing = (timing ? timing + " — " : "") + "الفاتورة الجديدة تصدر بعد مهلة الـ15 يومًا من نهاية شهر التوريد — راجع المحاسب قبل التأكيد";
+            } catch (e) {}
+        }
+        body = '<div class="modal-sub">' + escapeHtml(sub) + "</div>" + '<div class="zatca-am-title">ما تغيّر في الطلبية <span class="zatca-am-note">(المبالغ شاملة الضريبة)</span></div>' + '<div class="zatca-am-list">' + plan.changes.map(zatcaAmChangeHtml).join("") + "</div>" + '<div class="zatca-am-title">ما سيصدر عند التأكيد</div>' + '<ol class="zatca-am-steps">' + plan.steps.map(function(s) {
+            return "<li" + (s.done ? ' class="zatca-am-done"' : "") + ">" + escapeHtml(zatcaAmStepText(s, plan, inv)) + (s.done ? " — صدر " + escapeHtml(s.docNumber || "") : "") + "</li>";
+        }).join("") + "</ol>" + (timing ? '<div class="taxinv-legal" style="color:var(--rust);">' + escapeHtml(timing) + "</div>" : "") + (am.error ? '<div class="taxinv-cn-sum" style="color:var(--rust);">' + escapeHtml(am.error) + "</div>" : "");
+        const retry = plan.steps.some(function(s) {
+            return s.done;
+        });
+        foot = am.confirming ? '<span style="flex:1;font-weight:700;font-size:13px;">بعد الإصدار لا يمكن تعديل المستندات أو حذفها. تأكيد الإصدار؟</span><button type="button" class="btn btn-ghost" data-zatca-am="back"' + (am.busy ? " disabled" : "") + '>رجوع</button><button type="button" class="btn btn-danger" data-zatca-am="run"' + (am.busy ? " disabled" : "") + ">" + (am.busy ? "جاري الإصدار…" : "تأكيد الإصدار") + "</button>" : close + '<button type="button" class="btn btn-primary" data-zatca-am="ask">' + (retry ? "إكمال الإصدار" : "تعديل الفاتورة") + "</button>";
+    }
+    return '<div class="modal-backdrop" data-taxinv-dialog="am"><div class="modal-card taxinv-dialog-card" role="dialog" aria-modal="true">' + '<div class="modal-title">تعديل الفاتورة ' + escapeHtml(inv.doc_number) + "</div>" + body + '<div class="modal-footer-actions" style="margin-top:14px;justify-content:flex-end;">' + foot + "</div></div></div>";
+}
+
+function zatcaAmRender() {
+    const root = document.getElementById("confirm-root");
+    if (!root || !zatcaAm) return;
+    root.innerHTML = zatcaAmDialogHtml();
+    root.classList.add("modal-open");
+    if (typeof taxinvState !== "undefined" && taxinvState) taxinvState.dialog = "am";
+    if (typeof taxinvSyncEsc === "function") taxinvSyncEsc();
+}
+
+function zatcaAmClose() {
+    zatcaAm = null;
+    const root = document.getElementById("confirm-root");
+    if (root) {
+        root.innerHTML = "";
+        root.classList.remove("modal-open");
+    }
+    if (typeof taxinvState !== "undefined" && taxinvState) {
+        taxinvState.dialog = null;
+        if (taxinvState.mode === "dialog-only") taxinvState = null;
+    }
+    if (typeof taxinvSyncEsc === "function") taxinvSyncEsc();
+}
+
+async function zatcaAmOpen(orderId) {
+    try {
+        let st = typeof taxinvState !== "undefined" ? taxinvState : null;
+        if (!(st && st.mode === "issued" && st.orderId === orderId)) {
+            await taxinvOpenForOrder(orderId);
+            st = taxinvState;
+        }
+        if (!st || st.mode !== "issued" || st.orderId !== orderId) {
+            return;
+        }
+        const list = await taxinvLoadOrderInvoices(orderId, true);
+        st = taxinvState;
+        if (!st || st.mode !== "issued" || st.orderId !== orderId) return;
+        st.docs = list.slice();
+        const inv = taxinvLiveInvoice(st.docs), order = taxinvOrder(orderId);
+        if (!inv || !order) {
+            showToast("لا توجد فاتورة سارية لهذا الطلب", "error");
+            return;
+        }
+        const notes = taxinvNotesOf(st.docs, inv.id);
+        const returnedIds = (Array.isArray(order.parts) ? order.parts : []).filter(function(p) {
+            return p && p.returned && p.id !== undefined && p.id !== null;
+        }).map(function(p) {
+            return p.id;
+        });
+        const plan = zatcaAmPlan(inv, notes, taxinvBuildDraft(order), {
+            elevated: hasElevatedAccess(),
+            returnedIds: returnedIds
+        });
+        zatcaAm = {
+            orderId: orderId,
+            inv: inv,
+            plan: plan,
+            busy: false,
+            confirming: false,
+            error: ""
+        };
+        zatcaAmRender();
+    } catch (e) {
+        showToast("تعذّر فتح تعديل الفاتورة: " + (typeof taxinvErrText === "function" ? taxinvErrText(e) : String(e && e.message || e)), "error");
+    }
+}
+
+async function zatcaAmCall(name, args, requestId, orderId) {
+    try {
+        return await taxinvCall(name, args, TAXINV_ISSUE_MS);
+    } catch (e) {
+        if (taxinvIsAmbiguous(e)) {
+            try {
+                const l = await taxinvLoadOrderInvoices(orderId, true);
+                const r = l.find(function(d) {
+                    return d && d.client_request_id === requestId;
+                });
+                if (r) return r;
+            } catch (e2) {}
+        }
+        throw e;
+    }
+}
+
+function zatcaAmStore(am, doc) {
+    am.docs = [ doc ].concat((am.docs || []).filter(function(d) {
+        return d && d.id !== doc.id;
+    }));
+    taxinvByOrder.set(am.orderId, {
+        at: Date.now(),
+        list: am.docs
+    });
+    if (typeof taxinvReg !== "undefined" && taxinvReg) taxinvReg.stale = true;
+}
+
+async function zatcaAmIssueInvoice(am, step) {
+    const order = taxinvOrder(am.orderId);
+    if (!order) throw new Error("الطلب غير موجود — أعد تحميل الصفحة");
+    let seller = null, sellerErr = "";
+    try {
+        seller = await taxinvLoadSeller(true);
+    } catch (e) {
+        sellerErr = taxinvErrText(e);
+    }
+    const st2 = taxinvNewPreviewState(order, am.docs, seller, sellerErr), old = am.inv, b = old.buyer || {}, a = b.address || {};
+    st2.buyer = {
+        kind: b.kind === "business" ? "business" : "individual",
+        name: b.name || "",
+        phone: b.phone || "",
+        vat_number: b.vat_number || "",
+        additional_id_type: b.additional_id_type || "",
+        additional_id: b.additional_id || "",
+        street: a.street || "",
+        building_no: a.building_no || "",
+        district: a.district || "",
+        city: a.city || "",
+        postal_code: a.postal_code || ""
+    };
+    const pm = old.payments && Array.isArray(old.payments.methods) ? old.payments.methods : null;
+    if (pm) st2.pay = {
+        cash: pm.indexOf("cash") >= 0,
+        card: pm.indexOf("card") >= 0,
+        credit: pm.indexOf("credit") >= 0
+    };
+    if (old.supply_date) st2.supplyDate = String(old.supply_date);
+    if (old.note !== undefined && old.note !== null) st2.note = String(old.note);
+    st2.kind = old.doc_kind;
+    st2.kindAuto = false;
+    st2.saveToCustomer = false;
+    st2.requestId = step.requestId;
+    taxinvNormalizeKind(st2);
+    const val = taxinvValidatePreview(st2);
+    if (!val.ok) {
+        zatcaAmClose();
+        taxinvState = st2;
+        taxinvMount();
+        showToast("أُلغيت الفاتورة السابقة — أكمل بيانات الفاتورة الجديدة ثم أصدرها", "error");
+        return null;
+    }
+    const args = PTX_TAXINV.buildIssueArgs({
+        order_id: st2.orderId,
+        kind: st2.kind,
+        buyer: taxinvBuyerObject(st2.buyer),
+        lines: st2.draft.lines,
+        totals: st2.draft.totals,
+        payments: {
+            methods: [ "cash", "card", "credit" ].filter(function(k) {
+                return st2.pay[k];
+            }),
+            note: null
+        },
+        supply_date: st2.supplyDate,
+        note: st2.note,
+        client_request_id: step.requestId
+    });
+    return zatcaAmCall("issue_tax_invoice", args, step.requestId, am.orderId);
+}
+
+async function zatcaAmRun() {
+    const am = zatcaAm;
+    if (!am || am.busy) return;
+    am.busy = true;
+    am.error = "";
+    if (!am.docs) am.docs = (taxinvState && taxinvState.docs ? taxinvState.docs : []).slice();
+    zatcaAmRender();
+    let last = null;
+    try {
+        for (let i = 0; i < am.plan.steps.length; i++) {
+            const s = am.plan.steps[i];
+            if (s.done) {
+                last = s.doc || last;
+                continue;
+            }
+            let doc = null;
+            if (s.type === "invoice") {
+                doc = await zatcaAmIssueInvoice(am, s);
+                if (!doc) {
+                    return;
+                }
+            } else {
+                const inv = am.docs.find(function(d) {
+                    return d && d.id === am.inv.id;
+                }) || am.inv, notes = taxinvNotesOf(am.docs, am.inv.id);
+                let b, args, rpc;
+                if (s.type === "credit") {
+                    b = zatcaAmBuildCredit(inv, notes, s);
+                    rpc = "issue_tax_credit_note";
+                    if (!b.ok) throw new Error(b.errors.map(function(e) {
+                        return e.message;
+                    }).join(" — "));
+                    args = PTX_TAXINV.buildCreditNoteArgs({
+                        invoice_id: inv.id,
+                        reason_code: s.reason,
+                        reason_text: s.reasonText || ZATCA_AM_REASON_TEXT,
+                        lines: b.lines,
+                        totals: b.totals,
+                        client_request_id: s.requestId
+                    });
+                } else {
+                    b = PTX_TAXINV.buildDebitNoteDraft(inv, {
+                        reason_code: s.reason,
+                        reason_text: s.reasonText,
+                        selections: s.selections
+                    }, {
+                        priorNotes: notes
+                    });
+                    rpc = "issue_tax_debit_note";
+                    if (!b.ok) throw new Error(b.errors.map(function(e) {
+                        return e.message;
+                    }).join(" — "));
+                    args = PTX_TAXINV.buildDebitNoteArgs({
+                        invoice_id: inv.id,
+                        reason_code: s.reason,
+                        reason_text: s.reasonText,
+                        lines: b.lines,
+                        totals: b.totals,
+                        client_request_id: s.requestId
+                    });
+                }
+                const chk = PTX_TAXINV.checkInvariants(b.lines, b.totals);
+                if (!chk.ok) throw new Error(chk.errors.map(function(e) {
+                    return e.message;
+                }).join(" — "));
+                doc = await zatcaAmCall(rpc, args, s.requestId, am.orderId);
+            }
+            if (!doc || !doc.id) throw new Error("استجابة غير متوقعة من الخادم");
+            s.done = true;
+            s.doc = doc;
+            s.docNumber = doc.doc_number;
+            last = doc;
+            zatcaAmStore(am, doc);
+        }
+    } catch (e) {
+        am.busy = false;
+        am.confirming = false;
+        am.error = "تعذّر إكمال التعديل: " + (typeof taxinvErrText === "function" ? taxinvErrText(e) : String(e && e.message || e)) + (am.plan.steps.some(function(s) {
+            return s.done;
+        }) ? " — ما صدر أعلاه صدر فعلًا، اضغط «إكمال الإصدار» لإتمام الباقي." : "");
+        if (zatcaAm === am) zatcaAmRender();
+        return;
+    }
+    am.busy = false;
+    const order = taxinvOrder(am.orderId) || {
+        id: am.orderId
+    };
+    const lastDoc = last;
+    zatcaAmClose();
+    taxinvOpenIssued(order, am.docs, lastDoc.id);
+    if (taxinvState) {
+        taxinvState.justIssued = lastDoc.id;
+        taxinvMount();
+    }
+    showToast("تم تعديل الفاتورة — " + am.plan.steps.map(function(s) {
+        return s.docNumber;
+    }).join("، "), "ok");
+    try {
+        taxinvRefreshModalBlock();
+    } catch (e) {}
+}
+
+function zatcaAmOnClick(ev) {
+    try {
+        const el = ev.target && ev.target.closest ? ev.target.closest("[data-zatca-am]") : null;
+        if (!el) return;
+        ev.preventDefault();
+        const act = el.getAttribute("data-zatca-am");
+        if (act === "open") {
+            const oid = el.getAttribute("data-taxinv-order") || typeof taxinvState !== "undefined" && taxinvState && taxinvState.orderId || "";
+            if (oid) zatcaAmOpen(oid);
+        } else if (act === "close") {
+            if (zatcaAm && !zatcaAm.busy) zatcaAmClose();
+        } else if (act === "ask") {
+            if (zatcaAm && !zatcaAm.busy) {
+                zatcaAm.confirming = true;
+                zatcaAm.error = "";
+                zatcaAmRender();
+            }
+        } else if (act === "back") {
+            if (zatcaAm && !zatcaAm.busy) {
+                zatcaAm.confirming = false;
+                zatcaAmRender();
+            }
+        } else if (act === "run") {
+            zatcaAmRun();
+        }
+    } catch (e) {
+        console.error("ZATCA amend click:", e);
     }
 }
 
@@ -71972,9 +72666,30 @@ let zatcaOrigMount = null;
                     const strip = zatcaStripHtml(inv);
                     if (strip) html = html.replace('<div id="taxinv-sheet-wrap">', () => strip + '<div id="taxinv-sheet-wrap">');
                 } catch (e) {}
+                try {
+                    const cnBtn = '<button type="button" class="btn btn-ghost btn-sm" data-taxinv-act="open-cn-dialog">';
+                    if (html.indexOf(cnBtn) >= 0) {
+                        html = html.replace(cnBtn, () => '<button type="button" class="btn btn-ghost btn-sm zatca-am-btn" data-zatca-am="open">تعديل الفاتورة</button>' + cnBtn);
+                        html = html.replace(">تعديل الفاتورة (زيادة)<", () => ">زيادة يدوية<");
+                    }
+                } catch (e) {}
                 return html;
             };
         }
+        if (typeof taxinvBannerInner === "function") {
+            const prevBanner = taxinvBannerInner;
+            taxinvBannerInner = function(d) {
+                let html = prevBanner(d);
+                try {
+                    if (html && d && d.id) {
+                        html = html.replace('class="btn btn-sm btn-primary" data-taxinv-act=', () => 'class="btn btn-sm btn-ghost" data-taxinv-act=');
+                        html = html.replace('<button type="button"', () => '<button type="button" class="btn btn-sm btn-primary" data-zatca-am="open" data-taxinv-order="' + escapeHtml(d.id) + '">تعديل الفاتورة تلقائيًا</button><button type="button"');
+                    }
+                } catch (e) {}
+                return html;
+            };
+        }
+        if (typeof document !== "undefined" && document.addEventListener) document.addEventListener("click", zatcaAmOnClick);
         if (typeof taxinvMount === "function") {
             zatcaOrigMount = taxinvMount;
             taxinvMount = function() {
