@@ -72291,8 +72291,8 @@ function zatcaAmDialogHtml() {
     let body = "", foot;
     const close = '<button type="button" class="btn btn-ghost" data-zatca-am="close">' + (plan.kind === "none" || plan.kind === "blocked" ? "إغلاق" : "إلغاء") + "</button>";
     if (plan.kind === "none") {
-        body = '<div class="taxinv-legal">الطلبية الآن مطابقة للفاتورة — لا حاجة لتعديل.</div>';
-        foot = close;
+        body = '<div class="modal-sub">الفاتورة لا تُعدَّل بعد صدورها نظامًا، فيصدر بدلًا من ذلك مستند نظامي (إشعار دائن أو مدين أو فاتورة جديدة) بحسب التغيير الذي تجريه.</div>' + '<div class="zatca-am-title">كيف أعدّل؟</div>' + '<ol class="zatca-am-steps"><li>اضغط «تعديل الطلبية» وعدّل ما تريد: حذف قطعة أو إضافتها، تغيير سعر، نسبة الخدمات أو التوصيل.</li><li>احفظ الطلبية، فنعود هنا ونعرض الفرق وما سيصدر.</li><li>تؤكد مرة واحدة، فيصدر المستند اللازم.</li></ol>';
+        foot = close + '<button type="button" class="btn btn-primary" data-zatca-am="edit">تعديل الطلبية</button>';
     } else if (plan.kind === "blocked") {
         body = '<div class="taxinv-cn-sum" style="color:var(--rust);">' + plan.blockers.map(escapeHtml).join("<br>") + "</div>";
         foot = close;
@@ -72575,6 +72575,74 @@ async function zatcaAmRun() {
     } catch (e) {}
 }
 
+let zatcaAmBack = null, zatcaAmObs = null;
+
+function zatcaAmWatch() {
+    const root = document.getElementById("modal-root");
+    if (!root || typeof MutationObserver !== "function") {
+        zatcaAmBack = null;
+        return;
+    }
+    if (zatcaAmObs) {
+        try {
+            zatcaAmObs.disconnect();
+        } catch (e) {}
+    }
+    let seen = false;
+    const stop = function() {
+        try {
+            if (zatcaAmObs) zatcaAmObs.disconnect();
+        } catch (e) {}
+        zatcaAmObs = null;
+    };
+    zatcaAmObs = new MutationObserver(function() {
+        if (!zatcaAmBack) {
+            stop();
+            return;
+        }
+        if (root.querySelector(".modal-card")) {
+            seen = true;
+            return;
+        }
+        if (seen) {
+            const oid = zatcaAmBack;
+            zatcaAmBack = null;
+            stop();
+            setTimeout(function() {
+                zatcaAmOpen(oid);
+            }, 250);
+        }
+    });
+    zatcaAmObs.observe(root, {
+        childList: true,
+        subtree: true
+    });
+    setTimeout(function() {
+        if (!seen) {
+            zatcaAmBack = null;
+            stop();
+        }
+    }, 4e3);
+}
+
+function zatcaAmEditOrder() {
+    const am = zatcaAm;
+    if (!am || am.busy) return;
+    const oid = am.orderId;
+    zatcaAmClose();
+    try {
+        taxinvCloseSheet();
+    } catch (e) {}
+    zatcaAmBack = oid;
+    zatcaAmWatch();
+    try {
+        openModal("edit", oid);
+    } catch (e) {
+        zatcaAmBack = null;
+        showToast("تعذّر فتح الطلبية", "error");
+    }
+}
+
 function zatcaAmOnClick(ev) {
     try {
         const el = ev.target && ev.target.closest ? ev.target.closest("[data-zatca-am]") : null;
@@ -72586,6 +72654,8 @@ function zatcaAmOnClick(ev) {
             if (oid) zatcaAmOpen(oid);
         } else if (act === "close") {
             if (zatcaAm && !zatcaAm.busy) zatcaAmClose();
+        } else if (act === "edit") {
+            zatcaAmEditOrder();
         } else if (act === "ask") {
             if (zatcaAm && !zatcaAm.busy) {
                 zatcaAm.confirming = true;
