@@ -1943,7 +1943,8 @@
   .modal-card.trk-om:focus{outline:none;}
   .modal-card.trk-om.trk-ddopen{padding-bottom:250px;}
   .modal-card.trk-om .modal-header{position:sticky;top:0;z-index:6;margin:0 calc(-1 * var(--trk-om-pad)) 12px;padding:calc(12px + env(safe-area-inset-top,0px)) var(--trk-om-pad) 12px;align-items:center;background:var(--surface);border-bottom:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0;}
-  .modal-card.trk-om .modal-sub,.modal-card.trk-om .order-date-caption{display:none;}
+  .modal-card.trk-om .modal-sub{display:none;}
+  .modal-card.trk-om .order-date-caption{margin:0 0 10px;font-size:13px;font-weight:600;color:var(--text-dim);}
   .modal-card.trk-om .modal-title{display:flex;flex-wrap:wrap;align-items:center;gap:0;font-size:0;}
   .modal-card.trk-om .trk-hmeta{display:inline-flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:16px;}
   .modal-card.trk-om .trk-hno{font-weight:800;color:var(--text);}
@@ -2118,6 +2119,9 @@
   body.trk-base .modal-footer .parts-clipboard-mini{display:none !important;}
   .modal-card.track-noacct .customer-pay-block,.modal-card.track-noacct #cost-split-row-wrap{display:none !important;}
   /* موعد التوريد (طلب المالك 2026-10-24): وسم الموعد (فوري = حدّه منقّط، قادم = أزرق بحد، اليوم = كهرماني مصمت، متأخر = أحمر مصمت بزوايا مربعة)، شريط التذكير، شرائح الاختيار، سطر العرض */
+  .trk-dates{display:flex;flex-wrap:wrap;gap:0 14px;margin-top:3px;font-size:13px;font-weight:500;line-height:1.55;color:var(--text-dim);}
+  .trk-dates > span{white-space:nowrap;}
+  .trk-dates > .trk-dsup{color:var(--green);font-weight:700;}
   .trk-due{display:inline-block;margin-inline-start:6px;padding:1px 10px;font-size:13px;font-weight:800;line-height:1.5;white-space:nowrap;vertical-align:middle;color:var(--text-dim);background:var(--surface-2);border:1px dashed var(--border);border-radius:999px;}
   .trk-due-soon{color:var(--supply-req);background:var(--supply-req-dim);border:1px solid var(--supply-req-line);}
   .trk-due-today{color:var(--amber-ink);background:var(--amber);border:1px solid var(--amber);}
@@ -78410,6 +78414,44 @@ function trackQuoteDecorate(row, o) {
     } catch (e) {}
 }
 
+function trackDatesText(o) {
+    return {
+        created: o && o.createdAt ? fmtDateShort(o.createdAt) : "",
+        supplied: o && o.supplied && o.suppliedAt ? fmtDateShort(o.suppliedAt) : ""
+    };
+}
+
+function trackDatesHtmlOf(o) {
+    const d = trackDatesText(o);
+    if (!d.created && !d.supplied) return "";
+    return '<span class="trk-dates" data-trk-dates>' + (d.created ? '<span>تاريخ الطلبية <bdi dir="ltr">' + escapeHtml(d.created) + "</bdi></span>" : "") + (d.supplied ? '<span class="trk-dsup">تاريخ التوريد <bdi dir="ltr">' + escapeHtml(d.supplied) + "</bdi></span>" : "") + "</span>";
+}
+
+function trackDatesInject(h, o, card) {
+    try {
+        const add = trackDatesHtmlOf(o);
+        if (!add || typeof h !== "string") return h;
+        const open = card ? '<span class="num cell-order">' : '<td class="num cell-order">';
+        const close = card ? '</span><div class="order-card-head-actions">' : "</td>";
+        const i = h.indexOf(open);
+        if (i < 0) return h;
+        const j = h.indexOf(close, i + open.length);
+        if (j < 0) return h;
+        return h.slice(0, j) + add + h.slice(j);
+    } catch (e) {
+        return h;
+    }
+}
+
+function trackDatesLast(root) {
+    try {
+        [].slice.call(root.querySelectorAll("[data-trk-dates]")).forEach(function(d) {
+            const c = d.parentNode;
+            if (c && c.lastElementChild !== d) c.appendChild(d);
+        });
+    } catch (e) {}
+}
+
 function trackDueDecorate(host, o) {
     try {
         const has = host.querySelector("[data-trk-due]");
@@ -78863,6 +78905,7 @@ function trackApply() {
             const show = searching ? true : !!(o && trackInStage(o, sel, subNow, ready, range));
             host.classList.toggle("trk-off", !show);
             trackDueDecorate(host, o);
+            trackDatesLast(host);
             hostList.push({
                 host: host,
                 o: o,
@@ -79290,6 +79333,7 @@ function trackAllRender() {
         const orders = trackAllList();
         box.innerHTML = orders.length ? ordersTableAndCardsHtml(orders, true) : '<div class="empty-state"><div class="empty-title">لا توجد طلبيات مطابقة</div><div class="empty-sub">جرّب تغيير الفلتر أو كلمة البحث.</div></div>';
         if (orders.length && typeof smxDecorateRows === "function") smxDecorateRows(box);
+        if (orders.length) trackDatesLast(box);
     } catch (e) {
         console.error("TRACK all orders:", e);
     }
@@ -79964,6 +80008,17 @@ function trackOmUpdate(card) {
                 meta._trkH = h;
             }
         }
+        try {
+            const body = card.querySelector(".modal-body"), dd = typeof draft !== "undefined" && draft ? trackDatesText(draft) : null;
+            const tx = dd ? [ dd.created ? "تاريخ الطلبية " + dd.created : "", dd.supplied ? "تاريخ التوريد " + dd.supplied : "" ].filter(Boolean).join(" · ") : "";
+            let cap = card.querySelector(".order-date-caption");
+            if (tx && body && !cap) {
+                cap = document.createElement("div");
+                cap.className = "order-date-caption";
+                body.insertBefore(cap, body.firstChild);
+            }
+            if (cap && tx && cap.textContent !== tx) cap.textContent = tx;
+        } catch (e) {}
         const due = card.querySelector("#trk-bar-due"), dv = card.querySelector("#total-sell-display");
         if (due) {
             const t = dv ? dv.textContent.trim() : "";
@@ -81397,7 +81452,7 @@ function trackAcctApply() {
             rowHtml = function(o) {
                 trackRowOrder = o;
                 try {
-                    return prev.apply(this, arguments);
+                    return trackDatesInject(prev.apply(this, arguments), o, false);
                 } finally {
                     trackRowOrder = null;
                 }
@@ -81408,7 +81463,7 @@ function trackAcctApply() {
             cardHtml = function(o) {
                 trackRowOrder = o;
                 try {
-                    return prev.apply(this, arguments);
+                    return trackDatesInject(prev.apply(this, arguments), o, true);
                 } finally {
                     trackRowOrder = null;
                 }
