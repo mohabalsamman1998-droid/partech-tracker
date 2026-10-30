@@ -1814,6 +1814,31 @@
   #app-root .topbar-actions .more-menu-wrap{order:6;margin-inline-start:14px;}
   #app-root .topbar-actions #btn-logout{margin-top:8px;}
   #app-root .topbar-actions .more-menu-popup{inset-inline-start:auto;inset-inline-end:0;}
+  /* القائمة الجانبية (طلب المالك 2026-10-30): أزرار شريط التنقل تنتقل إلى درج ينزلق من اليسار ويرجع إليه عند الإغلاق، يفتحه زر تحت الشعار */
+  .trk-navhide{display:none !important;}
+  .trk-navrow{position:relative;padding-bottom:18px;}
+  .trk-navbtn{position:absolute;left:12px;bottom:0;display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:6px 14px;font:inherit;font-size:15px;font-weight:800;color:var(--text);background:var(--surface);border:2px solid var(--green);border-radius:var(--radius-sm);cursor:pointer;}
+  .trk-bars{position:relative;display:block;width:18px;height:2px;border-radius:1px;background:var(--text);}
+  .trk-bars::before,.trk-bars::after{content:'';position:absolute;left:0;width:18px;height:2px;border-radius:1px;background:var(--text);}
+  .trk-bars::before{top:-6px;}
+  .trk-bars::after{top:6px;}
+  .trk-navov{position:fixed;inset:0;z-index:1190;background:rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:opacity .22s ease;}
+  .trk-navov.trk-open{opacity:1;pointer-events:auto;}
+  .trk-drawer{position:fixed;top:0;bottom:0;left:0;z-index:1200;display:flex;flex-direction:column;width:min(320px,86vw);background:var(--surface);border-right:1px solid var(--border);transform:translateX(-105%);visibility:hidden;transition:transform .24s ease,visibility 0s linear .24s;}
+  .trk-drawer.trk-open{transform:translateX(0);visibility:visible;transition:transform .24s ease,visibility 0s;}
+  .trk-drawer-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;font-size:17px;font-weight:800;color:var(--text);border-bottom:3px solid var(--green);}
+  .trk-navx{width:44px;height:44px;font:inherit;font-size:26px;line-height:1;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;}
+  .trk-drawer-list{display:flex;flex-direction:column;gap:8px;padding:12px;overflow-y:auto;}
+  .trk-drawer-list .btn{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:48px;padding:10px 14px;font-size:15px;font-weight:700;text-align:start;}
+  .trk-drawer-list .tasks-badge{position:static;margin:0;}
+  .trk-drawer-list .more-menu-wrap{display:flex;flex-direction:column;gap:8px;margin:6px 0 0;padding-top:12px;border-top:1px dashed var(--border);}
+  .trk-drawer-list .more-menu-wrap::before{content:'أخرى';font-size:13px;font-weight:700;color:var(--text-dim);}
+  .trk-drawer-list #btn-open-more-menu{display:none;}
+  .trk-drawer-list .more-menu-popup{position:static !important;display:flex !important;flex-direction:column;gap:8px;min-width:0;margin:0;padding:0;background:none;border:0;box-shadow:none;}
+  @media (max-width:480px){.trk-navbtn{padding:6px 10px;}.trk-navbtn > span:last-child{display:none;}}
+  @media (prefers-reduced-motion:reduce){.trk-drawer,.trk-navov{transition:none;}}
+  body.trk-base:has(#orders-view[style*="display: none"]) .trk-navbtn{display:none;}
+  body.trk-base:has(#orders-view[style*="display: none"]) .trk-navrow{padding-bottom:0;}
   .trk-c1,.trk-ygrid .trk-c1{--trk-c:var(--amber);--trk-dim:var(--amber-dim);--trk-line:var(--amber-line);}
   .trk-c2{--trk-c:var(--sg-violet);--trk-dim:var(--sg-violet-dim);--trk-line:var(--sg-violet-line);}
   .trk-c3{--trk-c:var(--supply-req);--trk-dim:var(--supply-req-dim);--trk-line:var(--supply-req-line);}
@@ -81033,6 +81058,139 @@ function trackAcctApply() {
     } catch (e) {}
 }
 
+const TRACK_NAV_IDS = [ "btn-open-customers", "btn-open-suppliers", "btn-open-invoices", "btn-open-treasury", "btn-open-statistics" ];
+
+let trackNavParts = null;
+
+function trackNavIsOpen() {
+    return !!(trackNavParts && trackNavParts.drawer.classList.contains("trk-open"));
+}
+
+function trackNavSet(open) {
+    const p = trackNavParts;
+    if (!p) return;
+    p.drawer.classList.toggle("trk-open", open);
+    p.ov.classList.toggle("trk-open", open);
+    p.btn.setAttribute("aria-expanded", open ? "true" : "false");
+    p.drawer.setAttribute("aria-hidden", open ? "false" : "true");
+    try {
+        document.body.style.overflow = open ? "hidden" : "";
+    } catch (e) {}
+    try {
+        if (open) {
+            const x = p.drawer.querySelector(".trk-navx");
+            if (x) x.focus({
+                preventScroll: true
+            });
+        } else p.btn.focus({
+            preventScroll: true
+        });
+    } catch (e) {}
+}
+
+function trackNavRevert(p) {
+    try {
+        document.body.style.overflow = "";
+    } catch (e) {}
+    (p.undo || []).slice().reverse().forEach(function(u) {
+        try {
+            u[1].insertBefore(u[0], u[2] && u[2].parentNode === u[1] ? u[2] : null);
+        } catch (e) {}
+    });
+    [ p.btn, p.ov, p.drawer ].forEach(function(el) {
+        try {
+            if (el) el.remove();
+        } catch (e) {}
+    });
+    try {
+        if (p.hdr) p.hdr.classList.remove("trk-navhide");
+        if (p.row) p.row.classList.remove("trk-navrow");
+    } catch (e) {}
+}
+
+function trackNavOnClick(e) {
+    try {
+        const p = trackNavParts;
+        if (!p) return;
+        const t = e.target && e.target.closest ? e.target : null;
+        if (!t) return;
+        if (t.closest("#trk-nav-btn")) {
+            trackNavSet(!trackNavIsOpen());
+            return;
+        }
+        if (!trackNavIsOpen()) return;
+        if (t.closest(".trk-navx") || t === p.ov) {
+            trackNavSet(false);
+            return;
+        }
+        if (p.drawer.contains(t) && t.closest(".btn")) setTimeout(function() {
+            trackNavSet(false);
+        }, 0);
+    } catch (err) {}
+}
+
+function trackNavSetup() {
+    const p = {
+        undo: []
+    };
+    try {
+        const root = trackEl("app-root");
+        if (!root || trackEl("trk-drawer")) return;
+        const acts = root.querySelector("header.topbar .topbar-actions"), logoRow = root.querySelector(".app-top-logo-row");
+        if (!acts || !logoRow || !logoRow.parentNode) return;
+        const nodes = TRACK_NAV_IDS.map(trackEl).filter(function(n) {
+            return n && n.parentNode === acts;
+        });
+        const wrap = acts.querySelector(".more-menu-wrap");
+        if (wrap) nodes.push(wrap);
+        if (nodes.length < 3) return;
+        const mk = function(tag, cls, html) {
+            const e = document.createElement(tag);
+            e.className = cls;
+            if (html) e.innerHTML = html;
+            return e;
+        };
+        const btn = mk("button", "trk-navbtn", '<span class="trk-bars" aria-hidden="true"></span><span>القائمة</span>');
+        btn.type = "button";
+        btn.id = "trk-nav-btn";
+        btn.setAttribute("aria-label", "القائمة");
+        btn.setAttribute("aria-expanded", "false");
+        btn.setAttribute("aria-controls", "trk-drawer");
+        const ov = mk("div", "trk-navov");
+        ov.id = "trk-nav-ov";
+        const drawer = mk("aside", "trk-drawer", '<div class="trk-drawer-head"><span>القائمة</span><button type="button" class="trk-navx" aria-label="إغلاق">×</button></div><div class="trk-drawer-list"></div>');
+        drawer.id = "trk-drawer";
+        drawer.setAttribute("role", "dialog");
+        drawer.setAttribute("aria-modal", "true");
+        drawer.setAttribute("aria-label", "القائمة");
+        drawer.setAttribute("aria-hidden", "true");
+        const list = drawer.querySelector(".trk-drawer-list"), hdr = acts.closest("header.topbar") || acts.parentNode;
+        p.btn = btn;
+        p.ov = ov;
+        p.drawer = drawer;
+        p.hdr = hdr;
+        p.row = logoRow.parentNode;
+        p.row.classList.add("trk-navrow");
+        p.row.appendChild(btn);
+        nodes.forEach(function(n) {
+            p.undo.push([ n, n.parentNode, n.nextSibling ]);
+            list.appendChild(n);
+        });
+        document.body.appendChild(ov);
+        document.body.appendChild(drawer);
+        hdr.classList.add("trk-navhide");
+        trackNavParts = p;
+        window.addEventListener("click", trackNavOnClick, true);
+        document.addEventListener("keydown", function(e) {
+            if (e.key === "Escape" && trackNavIsOpen()) trackNavSet(false);
+        });
+    } catch (e) {
+        console.error("TRACK nav drawer:", e);
+        trackNavParts = null;
+        trackNavRevert(p);
+    }
+}
+
 (function trackInstall() {
     try {
         if (typeof renderTable === "function") {
@@ -81188,6 +81346,7 @@ function trackAcctApply() {
             trackBaseOff();
         }
         trackPrInstall();
+        trackNavSetup();
         if (typeof taxinvCustomerCols === "function") {
             const prev = taxinvCustomerCols;
             taxinvCustomerCols = function(r) {
