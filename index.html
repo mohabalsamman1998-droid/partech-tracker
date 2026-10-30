@@ -1884,6 +1884,7 @@
   #orders-view.trk-on #table-container .order-card{border-inline-start:6px solid var(--trk-edge,var(--border));}
   .trk-yard{margin:0 0 12px;}
   .trk-ygrid{direction:ltr;display:grid;grid-template-columns:minmax(0,1fr) 22px minmax(0,1fr) 22px minmax(0,1fr);align-items:stretch;}
+  .trk-ygrid:not(:has(> .trk-c3)){grid-template-columns:minmax(0,1fr) 22px minmax(0,1fr);}
   #scrapyard-root:has(> #trk-yard) #btn-toggle-scrapyard-quotes{display:none;}
   #scrapyard-root:has(> #trk-yard){display:flex;flex-direction:column;}
   #scrapyard-root:has(> #trk-yard) > header.topbar{order:1;}
@@ -78289,6 +78290,13 @@ function trackDueInfo(o) {
     };
 }
 
+const TRACK_DUE_LEAD_DAYS = 2;
+
+function trackYardDueVisible(o) {
+    const i = trackDueInfo(o);
+    return i.diff === null || i.diff <= TRACK_DUE_LEAD_DAYS;
+}
+
 function trackDueTagHtml(o) {
     const i = trackDueInfo(o);
     return '<span class="trk-due trk-due-' + i.kind + '" data-trk-due>' + escapeHtml(i.label) + "</span>";
@@ -80966,6 +80974,8 @@ function trackYardApply() {
         if (!row || !row.parentNode) return;
         const d = trackYardData();
         if (!trackYardSel) trackYardSel = scrapyardHomeOpenSection === "quotes" && d.reqs > 0 ? 3 : 1;
+        const showReqs = d.reqs > 0;
+        if (trackYardSel === 3 && !showReqs) trackYardSel = 1;
         const secNow = scrapyardHomeOpenSection;
         const card = function(n, label, big, l1, l2, l3) {
             const sel = n === 2 ? secNow === "approved" : secNow === "quotes" && trackYardSel === n;
@@ -80975,7 +80985,7 @@ function trackYardApply() {
         if (kp && (kp.n !== null || kp.avg)) trackYardMemo = kp;
         const kk = kp && (kp.n !== null || kp.avg) ? kp : trackYardMemo;
         const l3 = kk ? (kk.n !== null && kk.n !== undefined ? '<span class="trk-kind">جديد <bdi dir="ltr">' + kk.n + '</bdi></span><span class="trk-kind">مستخدم <bdi dir="ltr">' + kk.u + "</bdi></span>" : "") + (kk.avg ? '<span class="trk-l3">متوسط التسعير <bdi dir="ltr">' + escapeHtml(kk.avg) + "</bdi></span>" : "") : "";
-        const html = trackDueBannerHtml() + trackYardTopHtml() + '<div class="trk-ygrid">' + card(1, "طلبات التسعير", d.pending, d.priced > 0 ? d.priced + " مسعّرة بانتظار الاعتماد" : "", d.late > 0 ? '<span class="trk-late">' + d.late + " متأخر</span>" : "", l3) + '<div class="trk-arrow"><span>›</span></div>' + card(2, "المسعّر", d.approved) + '<div class="trk-arrow"><span>›</span></div>' + card(3, "طلبات التوريد", d.reqs, trackDueCardHtml(d.dueLate, d.dueToday), d.mine > 0 ? "موجّه لك " + d.mine : "") + "</div>";
+        const html = trackDueBannerHtml() + trackYardTopHtml() + '<div class="trk-ygrid">' + card(1, "طلبات التسعير", d.pending, d.priced > 0 ? d.priced + " مسعّرة بانتظار الاعتماد" : "", d.late > 0 ? '<span class="trk-late">' + d.late + " متأخر</span>" : "", l3) + '<div class="trk-arrow"><span>›</span></div>' + card(2, "المسعّر", d.approved) + (showReqs ? '<div class="trk-arrow"><span>›</span></div>' + card(3, "طلبات التوريد", d.reqs, trackDueCardHtml(d.dueLate, d.dueToday), d.mine > 0 ? "موجّه لك " + d.mine : "") : "") + "</div>";
         trackYardNav(root);
         let host = root.querySelector("#trk-yard");
         if (!host) {
@@ -81033,6 +81043,17 @@ function trackAcctApply() {
                     trackAllRender();
                 } catch (e2) {}
                 return r;
+            };
+        }
+        if (typeof scrapyardSupplyRequestsSorted === "function") {
+            const prev = scrapyardSupplyRequestsSorted;
+            scrapyardSupplyRequestsSorted = function(list) {
+                const r = prev.apply(this, arguments);
+                try {
+                    return trackIsYard() && Array.isArray(r) ? r.filter(trackYardDueVisible) : r;
+                } catch (e) {
+                    return r;
+                }
             };
         }
         if (typeof hideAllSecondaryViews === "function") {
