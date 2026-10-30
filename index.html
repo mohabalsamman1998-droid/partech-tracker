@@ -1858,7 +1858,7 @@
   .trk-drawer.trk-open{transform:translateX(0);visibility:visible;transition:transform .24s ease,visibility 0s;}
   .trk-drawer-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;font-size:17px;font-weight:800;color:var(--text);border-bottom:3px solid var(--green);}
   .trk-navx{width:44px;height:44px;font:inherit;font-size:26px;line-height:1;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;}
-  .trk-drawer-list{display:flex;flex-direction:column;gap:8px;padding:12px;overflow-y:auto;}
+  .trk-drawer-list{display:flex;flex-direction:column;gap:8px;padding:12px;overflow-y:auto;flex:1 1 auto;min-height:0;}
   .trk-drawer-list .btn{display:flex;align-items:center;justify-content:flex-start;gap:0;width:100%;min-height:48px;padding:10px 14px;font-size:15px;font-weight:700;text-align:start;}
   .trk-drawer-list .tasks-badge{position:static;margin:0;}
   /* رموز أزرار القائمة الجانبية فقط (طلب المالك 2026-10-30): الرمز الأصلي لكل زر عبر ::before (لا يمسّه تجريد الرموز من النص)، ورمز افتراضي لأي زر غير معروف كي تتصف النصوص */
@@ -1881,6 +1881,18 @@
   .trk-drawer-list .more-menu-wrap::before{content:'أخرى';font-size:13px;font-weight:700;color:var(--text-dim);}
   .trk-drawer-list #btn-open-more-menu{display:none;}
   .trk-drawer-list .more-menu-popup{position:static !important;display:flex !important;flex-direction:column;gap:8px;min-width:0;margin:0;padding:0;background:none;border:0;box-shadow:none;}
+  /* قسم أزرار الركن العلوي بالدرج + تذييل الإغلاق بمتناول الإبهام + مساحة زر القائمة بعد إخفاء الشريط + نقطة تنبيه على الزر عند وجود إشعارات (طلب المالك 2026-10-30) */
+  .trk-drawer-tools{display:flex;flex-direction:column;gap:8px;margin:6px 0 0;padding-top:12px;border-top:1px dashed var(--border);}
+  .trk-drawer-tools::before{content:'التنبيهات والأدوات';font-size:13px;font-weight:700;color:var(--text-dim);}
+  .trk-drawer-tools .corner-mini-btn{display:flex;align-items:center;justify-content:flex-start;gap:10px;width:100%;min-height:48px;padding:10px 14px;font:inherit;font-size:15px;font-weight:700;line-height:1.3;text-align:start;color:var(--text);background:none;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;}
+  body.trk-base .trk-drawer-tools .corner-mini-btn{min-height:48px;}
+  .trk-drawer-tools .corner-mini-btn::after{content:attr(title);order:1;flex:1 1 auto;min-width:0;font-size:15px;font-weight:700;}
+  .trk-drawer-tools .corner-mini-btn > .tasks-badge{order:2;position:static;margin:0;margin-inline-start:auto;}
+  .trk-drawer-foot{flex:none;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:var(--surface);border-top:1px solid var(--border);}
+  .trk-drawer-foot .trk-navx{width:100%;height:auto;min-height:52px;font-size:16px;font-weight:800;}
+  .trk-navrow.trk-navbare{padding-bottom:58px;}
+  .trk-navrow.trk-navbare .trk-navbtn > span:last-child{display:inline;}
+  body.trk-base:has(#trk-drawer #activity-log-badge:not(:empty)) .trk-navbtn::after{content:'';position:absolute;top:-5px;right:-5px;width:14px;height:14px;border-radius:50%;background:var(--rust);border:2px solid var(--bg);}
   @media (max-width:480px){.trk-navbtn{padding:6px 10px;}.trk-navbtn > span:last-child{display:none;}}
   @media (prefers-reduced-motion:reduce){.trk-drawer,.trk-navov{transition:none;}}
   body.trk-base:has(#orders-view[style*="display: none"]) .trk-navbtn{display:none;}
@@ -81151,6 +81163,10 @@ function trackNavRevert(p) {
         if (p.hdr) p.hdr.classList.remove("trk-navhide");
         if (p.row) p.row.classList.remove("trk-navrow");
     } catch (e) {}
+    try {
+        if (p.bar) p.bar.classList.remove("trk-navhide");
+        if (p.row) p.row.classList.remove("trk-navbare");
+    } catch (e) {}
 }
 
 function trackNavOnClick(e) {
@@ -81168,7 +81184,7 @@ function trackNavOnClick(e) {
             trackNavSet(false);
             return;
         }
-        if (p.drawer.contains(t) && t.closest(".btn")) setTimeout(function() {
+        if (p.drawer.contains(t) && t.closest(".btn, .corner-mini-btn") && !t.closest("#btn-theme-toggle")) setTimeout(function() {
             trackNavSet(false);
         }, 0);
     } catch (err) {}
@@ -81203,7 +81219,7 @@ function trackNavSetup() {
         btn.setAttribute("aria-controls", "trk-drawer");
         const ov = mk("div", "trk-navov");
         ov.id = "trk-nav-ov";
-        const drawer = mk("aside", "trk-drawer", '<div class="trk-drawer-head"><span>القائمة</span><button type="button" class="trk-navx" aria-label="إغلاق">×</button></div><div class="trk-drawer-list"></div>');
+        const drawer = mk("aside", "trk-drawer", '<div class="trk-drawer-head"><span>القائمة</span><button type="button" class="trk-navx" aria-label="إغلاق">×</button></div><div class="trk-drawer-list"></div><div class="trk-drawer-foot"><button type="button" class="trk-navx" aria-label="إغلاق القائمة">إغلاق</button></div>');
         drawer.id = "trk-drawer";
         drawer.setAttribute("role", "dialog");
         drawer.setAttribute("aria-modal", "true");
@@ -81221,9 +81237,42 @@ function trackNavSetup() {
             p.undo.push([ n, n.parentNode, n.nextSibling ]);
             list.appendChild(n);
         });
+        const bar = root.querySelector(".corner-mini-bar");
+        const minis = bar ? [].slice.call(bar.children).filter(function(n) {
+            return n.tagName === "BUTTON";
+        }) : [];
+        if (minis.length) {
+            const tools = mk("div", "trk-drawer-tools");
+            minis.forEach(function(n) {
+                p.undo.push([ n, n.parentNode, n.nextSibling ]);
+                tools.appendChild(n);
+            });
+            list.insertBefore(tools, wrap && wrap.parentNode === list ? wrap : null);
+            bar.classList.add("trk-navhide");
+            p.bar = bar;
+            p.row.classList.add("trk-navbare");
+        }
         document.body.appendChild(ov);
         document.body.appendChild(drawer);
         hdr.classList.add("trk-navhide");
+        let sx = 0, sy = 0;
+        drawer.addEventListener("touchstart", function(e) {
+            const t = e.touches && e.touches[0];
+            if (t) {
+                sx = t.clientX;
+                sy = t.clientY;
+            }
+        }, {
+            passive: true
+        });
+        drawer.addEventListener("touchend", function(e) {
+            const t = e.changedTouches && e.changedTouches[0];
+            if (!t) return;
+            const dx = t.clientX - sx, dy = t.clientY - sy;
+            if (dx < -60 && Math.abs(dx) > Math.abs(dy) * 1.5) trackNavSet(false);
+        }, {
+            passive: true
+        });
         trackNavParts = p;
         window.addEventListener("click", trackNavOnClick, true);
         document.addEventListener("keydown", function(e) {
