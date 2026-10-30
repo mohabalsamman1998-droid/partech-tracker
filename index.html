@@ -81423,6 +81423,70 @@ function trackDlvMount() {
     refresh();
 }
 
+function trackDlvAddRow(h) {
+    try {
+        return String(h).replace(/<div class="task-add-row">\s*<input[^>]*id="new-delivery-agent-name-input"[^>]*>\s*<input[^>]*id="new-delivery-agent-phone-input"[^>]*>\s*<button[^>]*id="add-delivery-agent-btn"[^>]*>[^<]*<\/button>\s*<\/div>/, '<div class="new-order-btn-row trk-addrow"><button type="button" class="btn btn-primary" data-trk-dlv-add>+ مندوب جديد</button></div>');
+    } catch (e) {
+        return h;
+    }
+}
+
+function trackDlvAddOpen() {
+    const root = trackEl("modal-root");
+    if (!root) return;
+    root.innerHTML = '<div class="modal-backdrop" data-close-backdrop><div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">إضافة مندوب جديد</div>' + '<label class="field"><span class="field-label">الاسم</span><input type="text" id="trk-dlv-add-name" placeholder="اسم المندوب" autocomplete="off"></label>' + '<label class="field"><span class="field-label">رقم الجوال (اختياري)</span><input type="tel" id="trk-dlv-add-phone" placeholder="05XXXXXXXX" autocomplete="off"></label>' + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;"><button type="button" class="btn btn-ghost" data-trk-dlv-add-cancel>إلغاء</button><button type="button" class="btn btn-primary" data-trk-dlv-add-save>💾 حفظ</button></div>' + "</div></div>";
+    root.classList.add("modal-open");
+    const close = function() {
+        root.innerHTML = "";
+        root.classList.remove("modal-open");
+    };
+    root.querySelector("[data-close-backdrop]").addEventListener("click", function(e) {
+        if (e.target.hasAttribute("data-close-backdrop")) close();
+    });
+    root.querySelector("[data-trk-dlv-add-cancel]").addEventListener("click", close);
+    const nameEl = root.querySelector("#trk-dlv-add-name"), phoneEl = root.querySelector("#trk-dlv-add-phone"), save = root.querySelector("[data-trk-dlv-add-save]");
+    const go = async function() {
+        if (save.disabled) return;
+        const name = nameEl.value.trim();
+        if (!name) {
+            showToast("اكتب اسم المندوب", "error");
+            nameEl.focus();
+            return;
+        }
+        save.disabled = true;
+        try {
+            const saved = await saveDeliveryAgent({
+                name: name,
+                phone: phoneEl.value.trim()
+            });
+            if (saved) {
+                close();
+                renderDeliveryAgentsView();
+                showToast("تمت إضافة المندوب", "ok");
+            }
+        } finally {
+            save.disabled = false;
+        }
+    };
+    save.addEventListener("click", go);
+    [ nameEl, phoneEl ].forEach(function(el) {
+        el.addEventListener("keydown", function(e) {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                go();
+            }
+        });
+    });
+    nameEl.focus();
+}
+
+function trackDlvAddBind() {
+    const view = trackEl("delivery-agents-view");
+    if (!view) return;
+    const b = view.querySelector("[data-trk-dlv-add]");
+    if (b) b.addEventListener("click", trackDlvAddOpen);
+}
+
 (function trackInstall() {
     try {
         if (typeof renderTable === "function") {
@@ -81443,6 +81507,17 @@ function trackDlvMount() {
                 return r;
             };
         }
+        if (typeof deliveryAgentsViewHtml === "function") {
+            const prev = deliveryAgentsViewHtml;
+            deliveryAgentsViewHtml = function() {
+                const r = prev.apply(this, arguments);
+                try {
+                    return trackDlvAddRow(r);
+                } catch (e) {
+                    return r;
+                }
+            };
+        }
         if (typeof renderDeliveryAgentsView === "function") {
             const prev = renderDeliveryAgentsView;
             renderDeliveryAgentsView = function() {
@@ -81451,6 +81526,11 @@ function trackDlvMount() {
                     trackDlvMount();
                 } catch (e) {
                     console.error("TRACK delivery report:", e);
+                }
+                try {
+                    trackDlvAddBind();
+                } catch (e2) {
+                    console.error("TRACK delivery add:", e2);
                 }
                 return r;
             };
