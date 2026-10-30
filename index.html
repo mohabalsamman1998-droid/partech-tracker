@@ -2376,13 +2376,19 @@
   /* إنزال الواجهة بالجوال فقط (طلب المالك 2026-10-30: «المنطقة فوق صعبة الوصول» بكل الصفحات؛ آيفون 16): مقدار واحد --trk-rs يُنزل ترويسة التطبيق (فيُنزل زر القائمة وما تحته) وترويسات الصفحات الثابتة وحوارات النوافذ وترويسة القائمة؛ سطح المكتب بلا تغيير */
   .trk-rsbox{display:none;}
   @media (max-width:600px){
-    body.trk-base{--trk-rs:100px;}
+    body.trk-base{--trk-rs:12vh;}
     body.trk-base .page{padding-top:calc(24px + env(safe-area-inset-top,0px) + var(--trk-rs));}
     body.trk-base .tasks-header,body.trk-base .treasury-header{top:calc(env(safe-area-inset-top,0px) + var(--trk-rs) + 10px);}
     body.trk-base .modal-backdrop{padding-top:calc(4vh + env(safe-area-inset-top,0px) + var(--trk-rs));}
     body.trk-base .modal-card.trk-om .modal-header{padding-top:calc(12px + env(safe-area-inset-top,0px) + var(--trk-rs));}
     body.trk-base .trk-drawer-head{padding-top:calc(14px + env(safe-area-inset-top,0px) + var(--trk-rs));}
     body.trk-base .trk-drawer-list{padding-bottom:calc(12px + env(safe-area-inset-bottom,0px));}
+    body.trk-base .acct-head,body.trk-base .acct2-head,body.trk-base [class~="att-head"]{padding-top:calc(6px + env(safe-area-inset-top,0px) + var(--trk-rs));}
+    body.trk-base .dnote-bd-bar,body.trk-base .trk-cf-bar,body.trk-base .vcat-lb-bar{padding-top:calc(10px + env(safe-area-inset-top,0px) + var(--trk-rs));}
+    body.trk-base .acct-layer{padding-top:calc(4vh + env(safe-area-inset-top,0px) + var(--trk-rs));}
+    body.trk-base .doc-overlay{padding-top:calc(12px + env(safe-area-inset-top,0px) + var(--trk-rs));}
+    body.trk-base .acct2-bar-top{top:calc(8px + env(safe-area-inset-top,0px) + var(--trk-rs));}
+    body.trk-base .pcat-viewer-x{top:calc(12px + env(safe-area-inset-top,0px) + var(--trk-rs));}
     .trk-rsbox{display:flex;align-items:center;gap:8px;margin:6px 0 0;padding-top:12px;border-top:1px dashed var(--border);font-size:14px;font-weight:700;color:var(--text-dim);}
     .trk-rs-t{flex:1 1 auto;}
     .trk-rs-b{width:44px;height:44px;font:inherit;font-size:22px;line-height:1;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;}
@@ -81126,17 +81132,27 @@ function trackAcctApply() {
     } catch (e) {}
 }
 
-const TRACK_RS_KEY = "trk-rs", TRACK_RS_DEF = 100, TRACK_RS_MAX = 260, TRACK_RS_STEP = 20;
+const TRACK_RS_KEY = "trk-rs", TRACK_RS_FRAC = .12, TRACK_RS_FALLBACK = 100, TRACK_RS_MAX = 260, TRACK_RS_STEP = 20;
+
+function trackRsDefault() {
+    try {
+        const h = Math.max(Number(screen.width) || 0, Number(screen.height) || 0);
+        if (!(h > 0)) return TRACK_RS_FALLBACK;
+        return Math.max(0, Math.min(TRACK_RS_MAX, Math.round(h * TRACK_RS_FRAC / TRACK_RS_STEP) * TRACK_RS_STEP));
+    } catch (e) {
+        return TRACK_RS_FALLBACK;
+    }
+}
 
 function trackRsGet() {
     try {
         const v = localStorage.getItem(TRACK_RS_KEY);
-        if (v === null || v === "") return TRACK_RS_DEF;
-        const n = Number(v);
-        return isFinite(n) && n >= 0 && n <= TRACK_RS_MAX ? n : TRACK_RS_DEF;
-    } catch (e) {
-        return TRACK_RS_DEF;
-    }
+        if (v !== null && v !== "") {
+            const n = Number(v);
+            if (isFinite(n) && n >= 0 && n <= TRACK_RS_MAX) return n;
+        }
+    } catch (e) {}
+    return trackRsDefault();
 }
 
 function trackRsApply(n) {
