@@ -1871,12 +1871,11 @@
   .trk-chip-on{color:var(--text);border-color:var(--text-dim);}
   .trk-date{min-height:44px;padding:6px 10px;font:inherit;font-size:14px;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);}
   .trk-perf ~ .trk-grid{padding-top:10px;border-top:1px dashed var(--border);}
-  /* فصل المنطقتين (طلب المالك 2026-10-30): ما فوق «متوسط وقت التسعير» (المؤشرات وملخص الأداء) هادئ بإطار متقطع على خلفية الصفحة؛ وما تحته (البطاقات) هو القسم الحيوي: شريط أخضر عريض بعرض الشاشة وعنوان «الطلبيات» أخضر، وبطاقات بحدود وعناوين أوضح */
-  #orders-view.trk-on .trk-perf,#orders-view.trk-on #kpi-row .kpi-card{background:var(--bg);border-style:dashed;}
-  #orders-view.trk-on .trk-pc,#orders-view.trk-on .trk-pavg{background:var(--bg);}
-  #orders-view.trk-on .trk-grid{position:relative;margin-top:30px;padding:46px 0 20px;border:0;background:color-mix(in srgb,var(--green) 11%,var(--bg));box-shadow:0 0 0 100vmax color-mix(in srgb,var(--green) 11%,var(--bg));clip-path:inset(0 -100vmax);}
-  #orders-view.trk-on .trk-grid::before{content:'الطلبيات';position:absolute;top:10px;right:50%;transform:translateX(50%);padding:2px 24px;font-size:15px;font-weight:800;color:var(--green-ink);background:var(--green);border-radius:999px;}
-  #orders-view.trk-on .trk-cap{color:var(--text);font-weight:700;border-bottom-color:var(--green);}
+  /* فصل المنطقتين (طلب المالك 2026-10-30): الهايلايت الأخضر خلف المؤشرات وملخص الأداء (شريط بعرض الشاشة ::before على #orders-view يقيس موضعه الرأسي trackBandApply بمتغيّري --trk-bt/--trk-bh)، وقسم البطاقات تحته على الخلفية العادية بحدود وعناوين أوضح */
+  #orders-view.trk-on{position:relative;z-index:0;}
+  #orders-view.trk-on::before{content:'';position:absolute;z-index:-1;left:0;right:0;top:var(--trk-bt,0px);height:var(--trk-bh,0px);background:color-mix(in srgb,var(--green) 11%,var(--bg));box-shadow:0 0 0 100vmax color-mix(in srgb,var(--green) 11%,var(--bg));clip-path:inset(0 -100vmax);pointer-events:none;}
+  #orders-view.trk-on .trk-perf ~ .trk-grid{margin-top:22px;padding-top:0;border-top:0;}
+  #orders-view.trk-on .trk-cap{color:var(--text);font-weight:700;border-bottom-color:var(--text-faint);}
   #orders-view.trk-on .trk-lab{color:var(--text);}
   #orders-view.trk-on .trk-card:not(.trk-sel){border-left-width:2px;border-right-width:2px;border-bottom-width:2px;border-left-color:var(--text-faint);border-right-color:var(--text-faint);border-bottom-color:var(--text-faint);}
   .trk-grid{direction:ltr;display:grid;grid-template-columns:minmax(0,1fr) 22px minmax(0,1fr) 22px minmax(0,1fr) 22px minmax(0,1fr);row-gap:6px;align-items:stretch;}
@@ -81191,6 +81190,22 @@ function trackNavSetup() {
     }
 }
 
+function trackBandApply() {
+    try {
+        const v = trackEl("orders-view");
+        if (!v) return;
+        const perf = v.querySelector(".trk-perf"), kpi = trackEl("kpi-row"), top = kpi && kpi.offsetParent ? kpi : v.querySelector(".trk-top");
+        if (!v.classList.contains("trk-on") || v.offsetParent === null || !perf || !top || perf.offsetParent === null) {
+            v.style.setProperty("--trk-bh", "0px");
+            return;
+        }
+        const vr = v.getBoundingClientRect(), tr = top.getBoundingClientRect(), pr = perf.getBoundingClientRect();
+        const t = Math.max(0, Math.round(tr.top - vr.top) - 14);
+        v.style.setProperty("--trk-bt", t + "px");
+        v.style.setProperty("--trk-bh", Math.max(0, Math.round(pr.bottom - vr.top) + 14 - t) + "px");
+    } catch (e) {}
+}
+
 (function trackInstall() {
     try {
         if (typeof renderTable === "function") {
@@ -81347,6 +81362,14 @@ function trackNavSetup() {
         }
         trackPrInstall();
         trackNavSetup();
+        try {
+            const bv = trackEl("orders-view");
+            if (bv && typeof ResizeObserver === "function") new ResizeObserver(function() {
+                trackBandApply();
+            }).observe(bv);
+            if (document.fonts && document.fonts.ready) document.fonts.ready.then(trackBandApply);
+            trackBandApply();
+        } catch (e) {}
         if (typeof taxinvCustomerCols === "function") {
             const prev = taxinvCustomerCols;
             taxinvCustomerCols = function(r) {
