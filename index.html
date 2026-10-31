@@ -1349,6 +1349,17 @@
   .tamara-hist-meta{font-size:12px;color:var(--text-dim);overflow-wrap:anywhere;}
   .tamara-hist-row .btn{flex:0 0 auto;min-height:44px;}
   .tamara-hist-more{width:100%;min-height:44px;margin-top:4px;}
+  /* ---------- تمارا (المرحلة 1ب): زر «استرداد عبر تمارا»، أسطر حالة الاسترداد، قسم الاستردادات بنافذة الاستلام — ألوان الثيم فقط؛ كل صف يلتف وأبناؤه min-width:0 ---------- */
+  .customer-refund-actions{display:inline-flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px;min-width:0;max-width:100%;vertical-align:middle;}
+  .purchase-history-row-sub > .customer-refund-actions{display:flex;justify-content:flex-end;}
+  .customer-refund-status > .customer-refund-actions{display:flex;margin-top:6px;}
+  .customer-refund-why{display:block;flex:1 1 100%;min-width:0;margin-top:4px;font-size:12px;font-weight:700;color:var(--text-dim);overflow-wrap:anywhere;text-align:start;}
+  .customer-refund-status .customer-refund-why{text-align:center;}
+  .tamara-card-cell-note{font-size:11.5px;font-weight:700;color:var(--rust);overflow-wrap:anywhere;}
+  .tamara-refunds-title{margin-top:14px;}
+  .tamara-row-refund.tamara-row-on{border-color:var(--rust-line);background:var(--rust-dim);}
+  .tamara-row-refund input[type="checkbox"]{accent-color:var(--rust);}
+  .tamara-row-refund .tamara-row-refund-amt,.tamara-sum-row .num.tamara-sum-neg,.purchase-history-section-title .num.tamara-sum-neg{color:var(--rust);}
   .payment-remove-btn{
     background:transparent;border:1px solid var(--border);color:var(--text-faint);
     width:30px;height:30px;border-radius:6px;cursor:pointer;font-size:12px;flex-shrink:0;
@@ -6582,6 +6593,7 @@ function computeCustomerPaidAmountForBox(order) {
             if (p.method === "tamara" && tamaraElevated() && tamaraPaymentStatus(order.id, p) !== "confirmed") return sum;
             return sum + amt;
         }
+        if (p.method === "tamara" && tamaraElevated()) return tamaraRefundStatus(order.id, p) === "confirmed" ? sum - amt : sum;
         const linkedPart = (order.parts || []).find(pp => pp.id === p.linkedPartId);
         const confirmed = linkedPart && linkedPart.customerRefundConfirmed;
         return confirmed ? sum - amt : sum;
@@ -6608,7 +6620,6 @@ const TAMARA_REF_MAX = 20;
 
 const TAMARA_TEXT = {
     denied: "غير متاح",
-    refundBlocked: "هذه الطلبية مدفوعة عبر تمارا، واسترداد المبلغ يتم من بوابة تمارا ويُسجَّل في المرحلة القادمة، فلا يُنفَّذ الإرجاع المالي هنا الآن.",
     paymentLocked: "هذه الدفعة مؤكَّد استلامها ضمن تحويل تمارا. ألغِ تأكيد التحويل أولًا.",
     orderDeleteBlocked: "لا يمكن حذف طلبية لها تحويل تمارا مؤكَّد",
     feeManaged: "قيد رسوم تمارا يُدار تلقائيًا",
@@ -6622,7 +6633,7 @@ const TAMARA_TEXT = {
     notFound: "هذا التحويل غير موجود — ربما أُلغي تأكيده سابقًا، حُدِّثت البيانات",
     timeout: "انتهت مهلة الاتصال — لا نعلم هل نُفِّذت العملية. حُدِّثت البيانات، تحقق من سجل التحويلات قبل إعادة المحاولة",
     generic: "تعذر إتمام العملية — تحقق من الاتصال وحاول مرة أخرى",
-    refundBlockedPending: "هذه الطلبية فيها دفعة تمارا لم يُؤكَّد استلامها بعد. إن أُلغيت الطلبية في تمارا قبل التحويل فاحذف دفعة تمارا المعلّقة من الطلبية ثم أعد المحاولة؛ وإن كان العميل قد دفع فعلًا فاسترداد المبلغ يتم من بوابة تمارا ويُسجَّل في المرحلة القادمة.",
+    refundBlockedPending: "في هذه الطلبية دفعة تمارا لم يُؤكَّد استلامها بعد. عدّل مبلغ دفعة تمارا المعلّقة أو احذفها بما يعادل المبلغ المسترد ثم أعد الإرجاع؛ فتمارا ستخصم المسترد قبل التحويل ولن تدفعه لك.",
     bankAboveGrossHint: "تأكد أنك سجّلت وحددت كل طلبات هذا التحويل.",
     dataIncomplete: "تعذر تحميل تحويلات تمارا — أرقام الصندوق وتمارا غير مكتملة حتى يكتمل التحميل.",
     dataIncompleteBlock: "لا يمكن تأكيد استلام تحويل قبل اكتمال تحميل تحويلات تمارا — أعد المحاولة.",
@@ -6631,7 +6642,86 @@ const TAMARA_TEXT = {
     selectAllCap: "حُدِّدت أقدم 200 دفعة فقط (أقصى عدد لتحويل واحد) — أكّدها ثم حدّد الباقي.",
     dateBeforePayment: "تاريخ الاستلام أسبق من تاريخ إحدى الدفعات المحددة.",
     dateOld: "تاريخ الاستلام قديم (أكثر من 45 يومًا).",
-    notInBoxUntilConfirmed: "لا تدخل الصندوق قبل تأكيد وصول التحويل"
+    notInBoxUntilConfirmed: "لا تدخل الصندوق قبل تأكيد وصول التحويل",
+    refundPendingTerm: "استردادات تمارا بانتظار الخصم",
+    noPayment: "حدّد دفعة تمارا واحدة على الأقل مع الاستردادات",
+    netNegative: "مجموع الاستردادات المحددة أكبر من مجموع الدفعات المحددة — حدّد دفعات إضافية أو أزل بعض الاستردادات",
+    refundNeedsPayment: "دفعات هذه الطلبية المؤكَّدة في تحويلات أخرى لا تغطي مبلغ الاسترداد. إن خصمته تمارا من هذا التحويل فعلًا فحدّد معه دفعة هذه الطلبية المعلّقة؛ وسيتعذّر عندئذٍ إلغاء تأكيد التحويل لاحقًا من التطبيق.",
+    refundExceeds: "استرداد إحدى الطلبيات يتجاوز دفعاتها المؤكَّدة والمحددة — أزله من التحديد أو راجع دفعات الطلبية ثم أعد المحاولة",
+    refundNotExecuted: "تعذر تأكيد الاسترداد: إحدى القطع غير مرتجعة أو لم يُؤكَّد ردّ مبلغها — حُدِّثت البيانات، راجع الطلبية ثم أعد المحاولة",
+    refundDuplicate: "لإحدى القطع أكثر من صف استرداد — حُدِّثت البيانات، راجع الطلبية ثم أعد المحاولة",
+    unconfirmHasRefund: "لا يمكن إلغاء تأكيد هذا التحويل: لطلبية فيه استرداد عبر تمارا — ألغِ الاسترداد عبر تمارا (أو ألغِ تأكيد تحويله) أولًا",
+    bankAboveNet: "المبلغ الواصل أكبر من صافي الدفعات بعد الاستردادات",
+    expectedNegative: "الصافي المتوقع سالب — لن يصل تحويل بهذا التحديد",
+    netZeroNote: "صافي صفر",
+    impliedFeeRefund: "يُرجَّح أنه عمولة مستردة",
+    refundMaybeNotDeducted: "الفرق أكبر من عمولة الاستردادات المحتملة — تحقق هل خُصمت الاستردادات المحددة من هذا التحويل",
+    staleOrder: "تغيّرت الطلبية من مكان آخر — حُدِّثت البيانات، راجع ثم أعد المحاولة",
+    orderMissing: "تعذر العثور على الطلبية — ربما حُذفت من مكان آخر",
+    busy: "العملية جارية — انتظر اكتمالها",
+    convertSaveFailed: "تعذر حفظ الطلبية — لم يُسجَّل الاسترداد عبر تمارا",
+    orderUnconfirmBlockedRefund: "لا يمكن إلغاء تأكيد طلبية فيها استرداد تمارا بانتظار الخصم",
+    refundLocked: "هذا الاسترداد مخصوم ضمن تحويل تمارا مؤكَّد. ألغِ تأكيد التحويل أولًا.",
+    refundRowLocked: "صف الاسترداد عبر تمارا لا يُعدَّل ولا يُحذف — ألغِ الاسترداد عبر تمارا أولًا.",
+    refundExtendTamara: "تعذر استرجاع الزيادة — رُدّ مبلغ هذه القطعة عبر تمارا. الزيادة باقية ضمن دفعات الزبون، راجع الطلبية.",
+    refundApprovalTamara: "رُدّ مبلغ هذه القطعة عبر تمارا — لا حاجة لتأكيد الرد النقدي.",
+    undoBlockedTamara: "لا يمكن التراجع — رُدّ المبلغ للزبون عبر تمارا. ألغِ الاسترداد عبر تمارا أولًا",
+    cashRefundWarning: "هذه الطلبية مدفوعة عبر تمارا ويمكن استردادها من بوابتها. هل أرجعتَ المبلغ للعميل نقدًا فعلًا؟ سيُخصم من الصندوق.",
+    refundLabelPending: "مرتجع عبر تمارا — بانتظار الخصم من التحويل",
+    refundLabelSettled: "خُصم في تحويل ",
+    refundTag: "(عبر تمارا)",
+    refundMethodLabel: "مرتجع (تمارا)",
+    excelRefundPending: "استرداد بانتظار الخصم",
+    excelRefundSettled: "مخصوم في تحويل",
+    refundWhy: {
+        noTamara: "هذه الطلبية ليست مدفوعة عبر تمارا",
+        notConfirmed: "أكِّد الطلبية أولًا",
+        pendingPayment: "في الطلبية دفعة تمارا لم يُؤكَّد استلامها — أكِّد تحويلها أولًا",
+        noRows: "لا يوجد مبلغ مرتجع معلّق لهذه القطعة",
+        partExcluded: "القطعة مستبعدة من الطلبية",
+        multipleRows: "لهذه القطعة أكثر من صف استرداد — راجع الطلبية",
+        badAmount: "مبلغ الاسترداد بأكثر من خانتين عشريتين",
+        exceeds: "يتجاوز المدفوع عبر تمارا (المتاح %AV%) — يُردّ نقدًا من الصندوق",
+        settled: "هذا الاسترداد مخصوم في تحويل تمارا — ألغِ تأكيد التحويل أولًا"
+    },
+    uiRefundBtn: "↩️ استرداد عبر تمارا",
+    uiRefundConfirmTitle: "هل نفّذتَ الاسترداد في بوابة تمارا؟",
+    uiRefundConfirmOk: "نعم، نفّذتُه في تمارا",
+    uiBack: "رجوع",
+    uiRefundDone: "تم تسجيل الاسترداد عبر تمارا — يُخصم المبلغ عند استلام تحويل تمارا القادم",
+    uiRefundDraftMarked: 'تم التعليم — اضغط "حفظ الطلبية" لتثبيته',
+    uiStatusPending: " — عبر تمارا، بانتظار الخصم من التحويل القادم",
+    uiStatusSettled: " — عبر تمارا، خُصم في تحويل ",
+    uiUndoLink: "إلغاء الاسترداد عبر تمارا",
+    uiUndoTitle: "إلغاء الاسترداد عبر تمارا؟",
+    uiUndoMsg: "سيعود المبلغ إلى «يجب إرجاعه للعميل» ولن يُخصم من تحويل تمارا. هل لم تنفّذ الاسترداد في بوابة تمارا بعد؟",
+    uiUndoOk: "نعم، لم أنفّذه بعد",
+    uiUndoMarked: 'تم التعليم — اضغط "حفظ الطلبية" لتثبيت إلغاء الاسترداد',
+    uiCardRefundCell: "استردادات بانتظار الخصم",
+    uiPopRefundsTitle: "استردادات تمارا (تُخصم من التحويل)",
+    uiPopRefundsNote: "تُخصم المحددة منها من هذا التحويل — ألغِ تحديد أي استرداد لم تخصمه تمارا بعد.",
+    uiPopRefundLate: "متأخر — تحقق من تنفيذ الاسترداد في بوابة تمارا",
+    uiPopRefundsSel: "الاستردادات المحددة",
+    uiPopNetBeforeFee: "الصافي قبل العمولة",
+    uiPopFeeNew: "العمولة والضريبة المتوقعة للدفعات الجديدة",
+    uiPopExpectedNoRefund: "المبلغ المتوقع وصوله (بافتراض عدم إعادة العمولة)",
+    uiPopExpectedNegativeConfirm: "الصافي المتوقع لهذا التحديد سالب (الاستردادات أكبر من صافي الدفعات) ومع ذلك أدخلتَ مبلغًا واصلًا.",
+    uiHistRefunds: "استردادات ",
+    uiTooMany: "عدد الدفعات والاستردادات المحددة يتجاوز الحد الأقصى لتحويل واحد (200) — حدّد جزءًا منها ثم أكّد الباقي بتحويل آخر",
+    uiUnconfirmBlocked: "لا يمكن إلغاء تأكيد هذا التحويل: في إحدى طلبياته استرداد عبر تمارا لا تغطيه دفعاتها المؤكَّدة في تحويلات أخرى — ألغِ الاسترداد عبر تمارا من الطلبية، أو ألغِ تأكيد التحويل الذي خُصم فيه الاسترداد، ثم أعد المحاولة.",
+    uiUnconfirmSelf: "لا يمكن إلغاء تأكيد هذا التحويل من التطبيق: الاسترداد المخصوم فيه تغطيه دفعات هذا التحويل وحدها. إن كانت لهذه الطلبية دفعة تمارا معلّقة فأكِّدها بتحويل مستقل ثم أعد المحاولة، وإلا فيلزم تدخّل تقني.",
+    uiUnconfirmCover: "لا يمكن إلغاء تأكيد هذا التحويل الآن: دفعات هذه الطلبية فيه هي الغطاء الوحيد لاسترداد خُصم في تحويل آخر مع دفعة من الطلبية نفسها — ألغِ تأكيد ذلك التحويل أولًا ثم أعد المحاولة.",
+    uiPairTitle: "دفعة واسترداد للطلبية نفسها",
+    pairLeadOne: "يضم هذا التحويل دفعة واستردادًا للطلبية نفسها (%O%).",
+    pairLeadMany: "يضم هذا التحويل دفعة واستردادًا لكل من الطلبيات: %O%.",
+    pairTailCovered: "يبقى إلغاء تأكيده ممكنًا ما دامت دفعاتها المؤكَّدة في تحويلات أخرى مؤكَّدة؛ فلا تُلغِ تأكيدها قبله.",
+    pairTailUncovered: "لا تغطي دفعاتها المؤكَّدة في تحويلات أخرى هذا الاسترداد؛ لذلك لن يمكن إلغاء تأكيد هذا التحويل لاحقًا من التطبيق.",
+    dateBeforeRefund: "تاريخ الاستلام أسبق من تاريخ تنفيذ إحدى الاستردادات المحددة.",
+    saveRefundUncovered: "لم تُحفظ الطلبية: الاسترداد عبر تمارا لا تغطيه دفعات تمارا المؤكَّدة الآن — تغيّر تأكيد أحد التحويلات من مكان آخر. أغلق النافذة وافتحها من جديد ثم راجع الاسترداد.",
+    conflictRefund: "تنبيه: في النسخة الحالية استرداد عبر تمارا لا تحتويه نسختك — الحفظ سيعيده إلى «يجب إرجاعه للعميل» وقد يُرَدّ المبلغ للزبون مرتين.",
+    bankAboveNetHint: "تأكد أنك سجّلت وحددت كل دفعات هذا التحويل؛ وإن أعادت تمارا عمولة الاستردادات فحدّد معها دفعات أخرى بانتظار التحويل.",
+    uiPopNoPending: "لا توجد دفعات بانتظار التحويل — تُخصم الاستردادات المعلّقة من أول تحويل يضم دفعة جديدة.",
+    refundRowLockedAny: "صف المرتجع لا يُعدَّل ولا يُحذف بطلب دفعة — يُنشأ بإرجاع القطعة ويزول بالتراجع عن الإرجاع."
 };
 
 const TAMARA_MAX_ITEMS = 200;
@@ -6696,8 +6786,9 @@ function tamaraFeeParts(amountRiyal) {
     };
 }
 
-function tamaraBatchExpected(amountsRiyal) {
+function tamaraBatchExpected(amountsRiyal, refundsRiyal) {
     const list = Array.isArray(amountsRiyal) ? amountsRiyal : [];
+    const refs = Array.isArray(refundsRiyal) ? refundsRiyal : [];
     let grossH = 0, feeH = 0, vatH = 0, netBeforeSmallH = 0;
     for (let i = 0; i < list.length; i++) {
         const q = tamaraFeeParts(list[i]);
@@ -6709,6 +6800,14 @@ function tamaraBatchExpected(amountsRiyal) {
     const smallApplied = grossH > 0 && netBeforeSmallH < TAMARA_FEE.smallBelowH;
     const smallH = smallApplied ? TAMARA_FEE.smallTotalH : 0;
     const smallFeeH = smallApplied ? Math.floor((TAMARA_FEE.smallTotalH * 100 * 2 + (100 + TAMARA_FEE.vatPct)) / (2 * (100 + TAMARA_FEE.vatPct))) : 0;
+    let refundsH = 0, refundFeeVatH = 0, refundCount = 0;
+    for (let j = 0; j < refs.length; j++) {
+        const r = tamaraFeeParts(refs[j]);
+        if (r.amountH <= 0) continue;
+        refundsH += r.amountH;
+        refundFeeVatH += r.feeH + r.vatH;
+        refundCount += 1;
+    }
     return {
         count: list.length,
         grossH: grossH,
@@ -6719,22 +6818,44 @@ function tamaraBatchExpected(amountsRiyal) {
         smallH: smallH,
         smallFeeH: smallFeeH,
         smallVatH: smallH - smallFeeH,
-        expectedBankH: netBeforeSmallH - smallH
+        refundCount: refundCount,
+        refundsH: refundsH,
+        refundFeeVatH: refundFeeVatH,
+        netGrossH: grossH - refundsH,
+        expectedBankH: netBeforeSmallH - smallH - refundsH
     };
 }
 
-function tamaraConfirmPreview(amountsRiyal, bankAmountRiyal) {
-    const exp = tamaraBatchExpected(amountsRiyal);
+function tamaraConfirmPreview(amountsRiyal, bankAmountRiyal, refundsRiyal) {
+    const exp = tamaraBatchExpected(amountsRiyal, refundsRiyal);
     const bankH = tamaraToHalalas(bankAmountRiyal);
     const diffH = bankH - exp.expectedBankH;
+    const hasRefunds = exp.refundCount > 0;
+    const expectedNegative = hasRefunds && exp.expectedBankH < 0;
+    let matched = Math.abs(diffH) <= TAMARA_MISMATCH_TOLERANCE_H;
+    let needsConfirm = Math.abs(diffH) > TAMARA_MISMATCH_TOLERANCE_H;
+    let impliedFeeRefundH = 0, refundMaybeNotDeducted = false;
+    if (expectedNegative) {
+        matched = bankH === 0;
+        needsConfirm = bankH > 0;
+    } else if (hasRefunds && diffH > TAMARA_MISMATCH_TOLERANCE_H) {
+        if (diffH <= exp.refundFeeVatH) impliedFeeRefundH = diffH; else refundMaybeNotDeducted = true;
+    }
     return {
         expected: exp,
         bankH: bankH,
         diffH: diffH,
-        feeTotalH: exp.grossH - bankH,
-        matched: Math.abs(diffH) <= TAMARA_MISMATCH_TOLERANCE_H,
-        needsConfirm: Math.abs(diffH) > TAMARA_MISMATCH_TOLERANCE_H,
-        bankAboveGross: bankH > exp.grossH
+        feeTotalH: exp.grossH - exp.refundsH - bankH,
+        matched: matched,
+        needsConfirm: needsConfirm,
+        bankAboveGross: bankH > exp.netGrossH,
+        refundsH: exp.refundsH,
+        netGrossH: exp.netGrossH,
+        netNegative: exp.netGrossH < 0,
+        expectedNegative: expectedNegative,
+        netZero: hasRefunds && exp.netGrossH === 0 && bankH === 0,
+        impliedFeeRefundH: impliedFeeRefundH,
+        refundMaybeNotDeducted: refundMaybeNotDeducted
     };
 }
 
@@ -6798,6 +6919,20 @@ function tamaraPaymentStatus(orderId, p) {
     return tamaraConfirmedKeySet().has(tamaraKey(orderId, p.id)) ? "confirmed" : "pending";
 }
 
+function tamaraIsRefund(p) {
+    return !!p && p.method === "tamara" && !!p.returnAdjustment;
+}
+
+function tamaraRefundStatus(orderId, p) {
+    if (!tamaraIsRefund(p)) return null;
+    return tamaraConfirmedKeySet().has(tamaraKey(orderId, p.id)) ? "confirmed" : "pending";
+}
+
+function tamaraSettledStatus(orderId, p) {
+    if (tamaraIsRefund(p)) return tamaraRefundStatus(orderId, p);
+    return tamaraPaymentStatus(orderId, p);
+}
+
 function tamaraSettlementForPayment(orderId, paymentId) {
     const list = tamaraSettlementsList();
     if (!list.length) return null;
@@ -6843,9 +6978,61 @@ function tamaraOrderHasConfirmed(order) {
     if (!order) return false;
     const pays = order.customerPayments || [];
     for (let i = 0; i < pays.length; i++) {
-        if (tamaraPaymentStatus(order.id, pays[i]) === "confirmed") return true;
+        if (tamaraSettledStatus(order.id, pays[i]) === "confirmed") return true;
     }
     return false;
+}
+
+function tamaraOrderConfirmedGrossH(order) {
+    let h = 0;
+    const pays = order && order.customerPayments || [];
+    for (let i = 0; i < pays.length; i++) {
+        if (tamaraPaymentStatus(order.id, pays[i]) === "confirmed") h += tamaraToHalalas(pays[i].amount);
+    }
+    return h;
+}
+
+function tamaraOrderPendingPaymentCount(order) {
+    let n = 0;
+    const pays = order && order.customerPayments || [];
+    for (let i = 0; i < pays.length; i++) {
+        if (tamaraPaymentStatus(order.id, pays[i]) === "pending") n++;
+    }
+    return n;
+}
+
+function tamaraOrderRefundedH(order) {
+    let h = 0;
+    const pays = order && order.customerPayments || [];
+    for (let i = 0; i < pays.length; i++) {
+        if (tamaraIsRefund(pays[i])) h += tamaraToHalalas(pays[i].amount);
+    }
+    return h;
+}
+
+function tamaraOrderHasRefund(order) {
+    const pays = order && order.customerPayments || [];
+    for (let i = 0; i < pays.length; i++) {
+        if (tamaraIsRefund(pays[i])) return true;
+    }
+    return false;
+}
+
+function tamaraOrderPendingRefundCount(order) {
+    let n = 0;
+    const pays = order && order.customerPayments || [];
+    for (let i = 0; i < pays.length; i++) {
+        if (tamaraRefundStatus(order.id, pays[i]) === "pending") n++;
+    }
+    return n;
+}
+
+function tamaraRefundAvailableSignedH(order) {
+    return tamaraOrderConfirmedGrossH(order) - tamaraOrderRefundedH(order);
+}
+
+function tamaraRefundAvailableH(order) {
+    return Math.max(0, tamaraRefundAvailableSignedH(order));
 }
 
 function tamaraPaymentAgeDays(p, nowDate) {
@@ -6936,6 +7123,147 @@ function tamaraPendingList(nowDate) {
     return rows;
 }
 
+function tamaraRefundExecutedDay(order, p) {
+    const parts = order && order.parts || [];
+    let part = null;
+    for (let i = 0; i < parts.length; i++) {
+        if (parts[i] && p && parts[i].id === p.linkedPartId) {
+            part = parts[i];
+            break;
+        }
+    }
+    if (part && part.customerRefundConfirmedAt) {
+        const d = new Date(part.customerRefundConfirmedAt);
+        if (!isNaN(d.getTime())) return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    }
+    return parseDMY(p && p.date);
+}
+
+function tamaraRefundAgeDays(order, p, nowDate) {
+    const d = tamaraRefundExecutedDay(order, p);
+    if (!d) return null;
+    const n = nowDate && typeof nowDate.getTime === "function" ? nowDate : new Date;
+    const a = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+    return Math.round((a.getTime() - d.getTime()) / 864e5);
+}
+
+function tamaraPendingRefundSnapshot(nowDate) {
+    const out = {
+        grossH: 0,
+        count: 0,
+        overdueCount: 0
+    };
+    if (!tamaraElevated()) return out;
+    const orders = appData && appData.orders || [];
+    for (let i = 0; i < orders.length; i++) {
+        const o = orders[i];
+        const pays = o && o.customerPayments || [];
+        for (let k = 0; k < pays.length; k++) {
+            const p = pays[k];
+            if (tamaraRefundStatus(o.id, p) !== "pending") continue;
+            out.grossH += tamaraToHalalas(p.amount);
+            out.count += 1;
+            const days = tamaraRefundAgeDays(o, p, nowDate);
+            if (days !== null && days > TAMARA_OVERDUE_DAYS) out.overdueCount += 1;
+        }
+    }
+    return out;
+}
+
+function tamaraPendingRefundList(nowDate) {
+    const rows = [];
+    if (!tamaraElevated()) return rows;
+    const orders = appData && appData.orders || [];
+    const customers = appData && appData.customers || [];
+    for (let i = 0; i < orders.length; i++) {
+        const o = orders[i];
+        const pays = o && o.customerPayments || [];
+        for (let k = 0; k < pays.length; k++) {
+            const p = pays[k];
+            if (tamaraRefundStatus(o.id, p) !== "pending") continue;
+            let part = null;
+            const parts = o.parts || [];
+            for (let j = 0; j < parts.length; j++) {
+                if (parts[j] && parts[j].id === p.linkedPartId) {
+                    part = parts[j];
+                    break;
+                }
+            }
+            let cust = null;
+            for (let c = 0; c < customers.length; c++) {
+                if (customers[c] && customers[c].id === o.customerId) {
+                    cust = customers[c];
+                    break;
+                }
+            }
+            const d = tamaraRefundExecutedDay(o, p);
+            const days = tamaraRefundAgeDays(o, p, nowDate);
+            rows.push({
+                sortMs: d ? d.getTime() : Number.MAX_SAFE_INTEGER,
+                orderId: o.id,
+                paymentId: p.id,
+                partId: p.linkedPartId ? String(p.linkedPartId) : "",
+                orderNumber: o.orderNumber || "",
+                orderLabel: o.orderLabel || "",
+                customerName: cust ? cust.name || "" : "",
+                partDescription: part ? part.description || "" : "",
+                date: p.date || "",
+                executedIso: part && part.customerRefundConfirmedAt ? String(part.customerRefundConfirmedAt) : "",
+                amount: Number(p.amount) || 0,
+                grossH: tamaraToHalalas(p.amount),
+                days: days,
+                overdue: days !== null && days > TAMARA_OVERDUE_DAYS,
+                badAmount: tamaraAmountHasExtraDecimals(p.amount)
+            });
+        }
+    }
+    rows.sort(function(a, b) {
+        if (a.sortMs !== b.sortMs) return a.sortMs < b.sortMs ? -1 : 1;
+        const x = String(a.orderNumber), y = String(b.orderNumber);
+        if (x !== y) return x < y ? -1 : 1;
+        return String(a.paymentId) < String(b.paymentId) ? -1 : String(a.paymentId) > String(b.paymentId) ? 1 : 0;
+    });
+    rows.forEach(function(r) {
+        delete r.sortMs;
+    });
+    return rows;
+}
+
+function tamaraOrderRefundSummary(order) {
+    const out = {
+        rows: [],
+        pendingH: 0,
+        pendingCount: 0,
+        settledH: 0,
+        settledCount: 0
+    };
+    if (!order || !tamaraElevated()) return out;
+    const pays = order.customerPayments || [];
+    for (let i = 0; i < pays.length; i++) {
+        const p = pays[i];
+        const st = tamaraRefundStatus(order.id, p);
+        if (!st) continue;
+        const s = st === "confirmed" ? tamaraSettlementForPayment(order.id, p.id) : null;
+        const h = tamaraToHalalas(p.amount);
+        out.rows.push({
+            partId: p.linkedPartId ? String(p.linkedPartId) : "",
+            paymentId: p.id,
+            amountH: h,
+            status: st,
+            receivedOn: s ? s.receivedOn || "" : "",
+            settlementId: s ? s.id : ""
+        });
+        if (st === "confirmed") {
+            out.settledH += h;
+            out.settledCount += 1;
+        } else {
+            out.pendingH += h;
+            out.pendingCount += 1;
+        }
+    }
+    return out;
+}
+
 function tamaraSettlementsSorted() {
     const list = tamaraSettlementsList().slice();
     const ms = function(s) {
@@ -6969,7 +7297,16 @@ function tamaraTodayRiyadhIso(nowDate) {
     return d.getUTCFullYear() + "-" + p2(d.getUTCMonth() + 1) + "-" + p2(d.getUTCDate());
 }
 
-function tamaraReceiptDateWarnings(dateIso, rows, nowDate) {
+function tamaraRefundRowDayMs(r) {
+    if (r && r.executedIso) {
+        const d = new Date(r.executedIso);
+        if (!isNaN(d.getTime())) return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    }
+    const p = parseDMY(r && r.date);
+    return p ? p.getTime() : null;
+}
+
+function tamaraReceiptDateWarnings(dateIso, rows, nowDate, refundRows) {
     const out = [];
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateIso || ""));
     if (!m) return out;
@@ -6979,19 +7316,25 @@ function tamaraReceiptDateWarnings(dateIso, rows, nowDate) {
         if (r && isFinite(r.dateMs) && r.dateMs > latest) latest = r.dateMs;
     });
     if (latest > -Infinity && chosen < latest) out.push(TAMARA_TEXT.dateBeforePayment);
+    let latestRef = -Infinity;
+    (refundRows || []).forEach(function(r) {
+        const d = tamaraRefundRowDayMs(r);
+        if (d !== null && d > latestRef) latestRef = d;
+    });
+    if (latestRef > -Infinity && chosen < latestRef) out.push(TAMARA_TEXT.dateBeforeRefund);
     const t = /^(\d{4})-(\d{2})-(\d{2})$/.exec(tamaraTodayRiyadhIso(nowDate));
     const today = new Date(parseInt(t[1], 10), parseInt(t[2], 10) - 1, parseInt(t[3], 10)).getTime();
     if (Math.round((today - chosen) / 864e5) > TAMARA_RECEIPT_OLD_DAYS) out.push(TAMARA_TEXT.dateOld);
     return out;
 }
 
-function tamaraConfirmedPaymentViolation(liveOrder, newPayments) {
+function tamaraConfirmedPaymentViolation(liveOrder, newPayments, newParts) {
     if (!liveOrder) return "";
     const old = liveOrder.customerPayments || [];
     const cur = Array.isArray(newPayments) ? newPayments : [];
     for (let i = 0; i < old.length; i++) {
         const p = old[i];
-        if (tamaraPaymentStatus(liveOrder.id, p) !== "confirmed") continue;
+        if (tamaraSettledStatus(liveOrder.id, p) !== "confirmed") continue;
         let q = null;
         for (let k = 0; k < cur.length; k++) {
             if (cur[k] && cur[k].id === p.id) {
@@ -7008,12 +7351,58 @@ function tamaraConfirmedPaymentViolation(liveOrder, newPayments) {
             if (cur[k] && cur[k].id === p.id) copies++;
         }
         if (copies > 1) return p.id;
+        if (tamaraIsRefund(p) && Array.isArray(newParts)) {
+            let oldPart = null, newPart = null;
+            const oldParts = liveOrder.parts || [];
+            for (let k = 0; k < oldParts.length; k++) {
+                if (oldParts[k] && oldParts[k].id === p.linkedPartId) {
+                    oldPart = oldParts[k];
+                    break;
+                }
+            }
+            for (let k = 0; k < newParts.length; k++) {
+                if (newParts[k] && newParts[k].id === p.linkedPartId) {
+                    newPart = newParts[k];
+                    break;
+                }
+            }
+            if (!newPart || !newPart.returned || !newPart.customerRefundConfirmed) return p.id;
+            if (oldPart && oldPart.customerRefundConfirmedAt && String(newPart.customerRefundConfirmedAt || "") !== String(oldPart.customerRefundConfirmedAt)) return p.id;
+        }
     }
     return "";
 }
 
 function tamaraPaymentLockMessage(orderId, p) {
-    return tamaraPaymentStatus(orderId, p) === "confirmed" ? TAMARA_TEXT.paymentLocked : "";
+    if (tamaraSettledStatus(orderId, p) !== "confirmed") return "";
+    return tamaraIsRefund(p) ? TAMARA_TEXT.refundLocked : TAMARA_TEXT.paymentLocked;
+}
+
+function tamaraLockTextFor(liveOrder, paymentId) {
+    const pays = liveOrder && liveOrder.customerPayments || [];
+    for (let i = 0; i < pays.length; i++) {
+        if (pays[i] && pays[i].id === paymentId) return tamaraIsRefund(pays[i]) ? TAMARA_TEXT.refundLocked : TAMARA_TEXT.paymentLocked;
+    }
+    return TAMARA_TEXT.paymentLocked;
+}
+
+function tamaraRefundCountText(n) {
+    if (n === 1) return "استرداد واحد";
+    if (n === 2) return "استردادان";
+    if (n >= 3 && n <= 10) return n + " استردادات";
+    return n + " استردادًا";
+}
+
+function tamaraPartsCountText(n) {
+    if (n === 1) return "قطعة واحدة";
+    if (n === 2) return "قطعتان";
+    if (n >= 3 && n <= 10) return n + " قطع";
+    return n + " قطعة";
+}
+
+function tamaraRefundLateText(n) {
+    const c = n === 1 ? "استرداد متأخر واحد" : n === 2 ? "استردادان متأخران" : n >= 3 && n <= 10 ? n + " استردادات متأخرة" : n + " استردادًا متأخرًا";
+    return c + " — تحقق من تنفيذها في بوابة تمارا";
 }
 
 function tamaraDeletePendingWarning(orderId) {
@@ -7022,14 +7411,21 @@ function tamaraDeletePendingWarning(orderId) {
         return o && o.id === orderId;
     });
     if (!order) return "";
-    let n = 0, grossH = 0;
+    let n = 0, grossH = 0, rn = 0, refundH = 0;
     (order.customerPayments || []).forEach(function(p) {
-        if (tamaraPaymentStatus(order.id, p) !== "pending") return;
-        n++;
-        grossH += tamaraToHalalas(p.amount);
+        if (tamaraPaymentStatus(order.id, p) === "pending") {
+            n++;
+            grossH += tamaraToHalalas(p.amount);
+        } else if (tamaraRefundStatus(order.id, p) === "pending") {
+            rn++;
+            refundH += tamaraToHalalas(p.amount);
+        }
     });
-    if (!n) return "";
-    return "للطلبية " + tamaraCountText(n) + " من تمارا بانتظار التحويل بإجمالي " + tamaraMoneyText(grossH) + ". المبلغ مستحق من تمارا ولم يدخل الصندوق بعد، وحذف الطلبية يُسقط هذا المستحق من الحسابات. متابعة؟";
+    if (!n && !rn) return "";
+    const payText = n ? "للطلبية " + tamaraCountText(n) + " من تمارا بانتظار التحويل بإجمالي " + tamaraMoneyText(grossH) + ". المبلغ مستحق من تمارا ولم يدخل الصندوق بعد، وحذف الطلبية يُسقط هذا المستحق من الحسابات." : "";
+    if (!rn) return payText + " متابعة؟";
+    const refundText = "للطلبية " + tamaraRefundCountText(rn) + " عبر تمارا بانتظار الخصم من التحويل القادم بإجمالي " + tamaraMoneyText(refundH) + ". رُدّ المبلغ للعميل فعلًا من بوابة تمارا، وحذف الطلبية يُسقط التزام خصمه من الحسابات.";
+    return (payText ? payText + " " : "") + refundText + " متابعة؟";
 }
 
 function tamaraOrderDeleteBlockReason(orderId) {
@@ -7071,19 +7467,15 @@ function tamaraReturnWouldRefund(order, partIds, opts) {
 }
 
 function tamaraRefundBlockText(order) {
-    if (!tamaraElevated() || !tamaraDataComplete()) return TAMARA_TEXT.refundBlocked;
-    const pays = order && order.customerPayments || [];
-    let n = 0, confirmed = 0;
-    for (let i = 0; i < pays.length; i++) {
-        if (!tamaraIsPayment(pays[i])) continue;
-        n++;
-        if (tamaraPaymentStatus(order.id, pays[i]) === "confirmed") confirmed++;
-    }
-    return n > 0 && confirmed === 0 ? TAMARA_TEXT.refundBlockedPending : TAMARA_TEXT.refundBlocked;
+    if (!tamaraElevated()) return "";
+    if (!tamaraDataComplete()) return TAMARA_TEXT.dataIncomplete;
+    return tamaraOrderPendingPaymentCount(order) > 0 ? TAMARA_TEXT.refundBlockedPending : "";
 }
 
 function tamaraReturnGuard(order, partIds, opts) {
     if (!tamaraOrderHasPayment(order)) return "";
+    const why = tamaraRefundBlockText(order);
+    if (!why) return "";
     opts = opts || {};
     let blocked;
     if (opts.keepFee === undefined) {
@@ -7095,7 +7487,181 @@ function tamaraReturnGuard(order, partIds, opts) {
     } else {
         blocked = tamaraReturnWouldRefund(order, partIds, opts);
     }
-    return blocked ? tamaraRefundBlockText(order) : "";
+    return blocked ? why : "";
+}
+
+function tamaraUniqueIds(partIds) {
+    const out = [];
+    (Array.isArray(partIds) ? partIds : []).forEach(function(id) {
+        if (id !== undefined && id !== null && id !== "" && out.indexOf(id) < 0) out.push(id);
+    });
+    return out;
+}
+
+function tamaraRefundRowsOfPart(order, partId) {
+    const out = [];
+    const pays = order && order.customerPayments || [];
+    for (let i = 0; i < pays.length; i++) {
+        if (pays[i] && pays[i].returnAdjustment && pays[i].linkedPartId === partId) out.push(pays[i]);
+    }
+    return out;
+}
+
+function tamaraPartOf(order, partId) {
+    const parts = order && order.parts || [];
+    for (let i = 0; i < parts.length; i++) {
+        if (parts[i] && parts[i].id === partId) return parts[i];
+    }
+    return null;
+}
+
+function tamaraRefundAmountOk(x) {
+    const n = Number(x);
+    return isFinite(n) && n > 0 && n < 1e9 && !tamaraAmountHasExtraDecimals(n);
+}
+
+function tamaraRefundEligibility(order, partIds) {
+    const res = function(code, partId, availableH, neededH) {
+        return {
+            ok: code === "",
+            code: code,
+            availableH: availableH || 0,
+            neededH: neededH || 0,
+            partId: partId || ""
+        };
+    };
+    if (!tamaraElevated()) return res("notElevated");
+    if (!tamaraDataComplete()) return res("incomplete");
+    if (!order || !tamaraOrderHasPayment(order)) return res("noTamara");
+    const signedH = tamaraRefundAvailableSignedH(order);
+    const availH = Math.max(0, signedH);
+    if (order.confirmed !== true) return res("notConfirmed", "", availH);
+    if (tamaraOrderPendingPaymentCount(order) > 0) return res("pendingPayment", "", availH);
+    const ids = tamaraUniqueIds(partIds);
+    const es = ids.map(function(id) {
+        return {
+            id: id,
+            part: tamaraPartOf(order, id),
+            rows: tamaraRefundRowsOfPart(order, id)
+        };
+    });
+    if (!es.length) return res("noRows", "", availH);
+    for (let i = 0; i < es.length; i++) {
+        const e = es[i];
+        if (!e.part || !e.part.returned || e.part.customerRefundConfirmed || e.rows.length === 0 || e.rows.length === 1 && e.rows[0].method === "tamara") return res("noRows", e.id, availH);
+    }
+    for (let i = 0; i < es.length; i++) {
+        if (!partIsIncludedInOrder(order, es[i].part)) return res("partExcluded", es[i].id, availH);
+    }
+    for (let i = 0; i < es.length; i++) {
+        if (es[i].rows.length > 1) return res("multipleRows", es[i].id, availH);
+    }
+    for (let i = 0; i < es.length; i++) {
+        if (!tamaraRefundAmountOk(es[i].rows[0].amount)) return res("badAmount", es[i].id, availH);
+    }
+    let needH = 0, tip = "";
+    for (let i = 0; i < es.length; i++) {
+        needH += tamaraToHalalas(es[i].rows[0].amount);
+        if (!tip && needH > signedH) tip = es[i].id;
+    }
+    if (needH > signedH) return res("exceeds", tip, availH, needH);
+    return res("", "", availH, needH);
+}
+
+function tamaraRefundWhyText(r) {
+    const code = r && r.code ? r.code : "";
+    if (!code) return "";
+    if (code === "notElevated") return TAMARA_TEXT.denied;
+    if (code === "incomplete") return TAMARA_TEXT.dataIncomplete;
+    const t = TAMARA_TEXT.refundWhy[code] || "";
+    return code === "exceeds" ? t.replace("%AV%", tamaraMoneyText(r.availableH || 0)) : t;
+}
+
+function tamaraConvertRefunds(order, partIds) {
+    const el = tamaraRefundEligibility(order, partIds);
+    if (!el.ok) return {
+        ok: false,
+        items: [],
+        message: tamaraRefundWhyText(el),
+        code: el.code,
+        partId: el.partId
+    };
+    const at = moneyEventNowIso();
+    const items = [];
+    tamaraUniqueIds(partIds).forEach(function(id) {
+        const part = tamaraPartOf(order, id);
+        const row = tamaraRefundRowsOfPart(order, id)[0];
+        row.method = "tamara";
+        stampPartRefundConfirmed(part, at);
+        items.push({
+            partId: id,
+            paymentId: row.id,
+            amountH: tamaraToHalalas(row.amount)
+        });
+    });
+    return {
+        ok: true,
+        items: items,
+        message: "",
+        code: "",
+        partId: ""
+    };
+}
+
+function tamaraUnconvertRefunds(order, partIds) {
+    const fail = function(code, partId) {
+        return {
+            ok: false,
+            items: [],
+            message: tamaraRefundWhyText({
+                code: code,
+                availableH: 0
+            }),
+            code: code,
+            partId: partId || ""
+        };
+    };
+    if (!tamaraElevated()) return fail("notElevated");
+    if (!tamaraDataComplete()) return fail("incomplete");
+    const ids = tamaraUniqueIds(partIds);
+    if (!order || !ids.length) return fail("noRows");
+    const targets = [];
+    for (let i = 0; i < ids.length; i++) {
+        const part = tamaraPartOf(order, ids[i]);
+        const rows = tamaraRefundRowsOfPart(order, ids[i]);
+        if (!part || rows.length === 0 || !tamaraIsRefund(rows[0])) return fail("noRows", ids[i]);
+        if (rows.length > 1) return fail("multipleRows", ids[i]);
+        if (tamaraRefundStatus(order.id, rows[0]) === "confirmed") return fail("settled", ids[i]);
+        if (order.confirmed !== true) return fail("notConfirmed", ids[i]);
+        if (!partIsIncludedInOrder(order, part)) return fail("partExcluded", ids[i]);
+        targets.push({
+            id: ids[i],
+            part: part,
+            row: rows[0]
+        });
+    }
+    const items = [];
+    targets.forEach(function(t) {
+        t.row.method = "مرتجع";
+        unstampPartRefundConfirmed(t.part);
+        items.push({
+            partId: t.id,
+            paymentId: t.row.id,
+            amountH: tamaraToHalalas(t.row.amount)
+        });
+    });
+    return {
+        ok: true,
+        items: items,
+        message: "",
+        code: "",
+        partId: ""
+    };
+}
+
+function tamaraCashRefundWarning(order) {
+    if (!order || !tamaraElevated() || !tamaraDataComplete()) return "";
+    return tamaraOrderConfirmedGrossH(order) > 0 ? TAMARA_TEXT.cashRefundWarning : "";
 }
 
 function tamaraSettlementsFromRows(headerRows, itemRows) {
@@ -7113,7 +7679,8 @@ function tamaraSettlementsFromRows(headerRows, itemRows) {
             note: r.note || "",
             feeEntryId: r.fee_entry_id || null,
             createdAt: r.created_at || "",
-            items: []
+            items: [],
+            refundTotal: Number(r.refund_total) || 0
         };
         byId[s.id] = s;
         list.push(s);
@@ -7123,7 +7690,8 @@ function tamaraSettlementsFromRows(headerRows, itemRows) {
         if (s) s.items.push({
             orderId: String(r.order_id),
             paymentId: String(r.payment_id),
-            amount: Number(r.amount) || 0
+            amount: Number(r.amount) || 0,
+            kind: r.kind === "refund" ? "refund" : "payment"
         });
     });
     return list;
@@ -7133,6 +7701,229 @@ function tamaraSetSettlements(list) {
     if (!appData) return;
     appData.tamaraSettlements = Array.isArray(list) ? list : [];
     tamaraInvalidate();
+}
+
+function tamaraSettlementCounts(s) {
+    let payments = 0, refunds = 0;
+    const items = s && s.items || [];
+    for (let i = 0; i < items.length; i++) {
+        if (items[i] && items[i].kind === "refund") refunds++; else payments++;
+    }
+    return {
+        payments: payments,
+        refunds: refunds
+    };
+}
+
+function tamaraSelectionCheck(items) {
+    const out = {
+        ok: false,
+        code: "unknown",
+        message: TAMARA_TEXT.stale,
+        paymentsH: 0,
+        refundsH: 0,
+        netH: 0,
+        paymentCount: 0,
+        refundCount: 0,
+        orderId: ""
+    };
+    const list = Array.isArray(items) ? items : [];
+    const orders = appData && appData.orders || [];
+    const per = {};
+    for (let i = 0; i < list.length; i++) {
+        const it = list[i];
+        let o = null, p = null;
+        for (let k = 0; k < orders.length; k++) {
+            if (orders[k] && it && orders[k].id === it.orderId) {
+                o = orders[k];
+                break;
+            }
+        }
+        const pays = o && o.customerPayments || [];
+        for (let k = 0; k < pays.length; k++) {
+            if (pays[k] && pays[k].id === it.paymentId) {
+                p = pays[k];
+                break;
+            }
+        }
+        if (!o || !p) return out;
+        const slot = per[o.id] || (per[o.id] = {
+            order: o,
+            payH: 0,
+            refH: 0
+        });
+        const h = tamaraToHalalas(p.amount);
+        if (tamaraIsPayment(p)) {
+            out.paymentsH += h;
+            out.paymentCount += 1;
+            slot.payH += h;
+        } else if (tamaraIsRefund(p)) {
+            out.refundsH += h;
+            out.refundCount += 1;
+            slot.refH += h;
+        } else return out;
+    }
+    out.netH = out.paymentsH - out.refundsH;
+    const fail = function(code, text, orderId) {
+        out.code = code;
+        out.message = text;
+        out.orderId = orderId || "";
+        return out;
+    };
+    if (out.refundCount > 0 && out.paymentCount === 0) return fail("noPayment", TAMARA_TEXT.noPayment);
+    if (out.netH < 0) return fail("netNegative", TAMARA_TEXT.netNegative);
+    const ids = Object.keys(per);
+    for (let i = 0; i < ids.length; i++) {
+        const slot = per[ids[i]];
+        if (!slot.refH) continue;
+        let settledRefH = 0;
+        const pays = slot.order.customerPayments || [];
+        for (let k = 0; k < pays.length; k++) {
+            if (tamaraRefundStatus(slot.order.id, pays[k]) === "confirmed") settledRefH += tamaraToHalalas(pays[k].amount);
+        }
+        if (settledRefH + slot.refH > tamaraOrderConfirmedGrossH(slot.order) + slot.payH) return fail("refundNeedsPayment", slot.payH > 0 ? TAMARA_TEXT.refundExceeds : TAMARA_TEXT.refundNeedsPayment, ids[i]);
+    }
+    out.ok = true;
+    out.code = "";
+    out.message = "";
+    return out;
+}
+
+function tamaraSelectionPairs(items) {
+    const out = [];
+    const list = Array.isArray(items) ? items : [];
+    const orders = appData && appData.orders || [];
+    const per = {};
+    const ids = [];
+    for (let i = 0; i < list.length; i++) {
+        const it = list[i];
+        let o = null, p = null;
+        for (let k = 0; k < orders.length; k++) {
+            if (orders[k] && it && orders[k].id === it.orderId) {
+                o = orders[k];
+                break;
+            }
+        }
+        const pays = o && o.customerPayments || [];
+        for (let k = 0; k < pays.length; k++) {
+            if (pays[k] && pays[k].id === it.paymentId) {
+                p = pays[k];
+                break;
+            }
+        }
+        if (!o || !p) continue;
+        let slot = per[o.id];
+        if (!slot) {
+            slot = per[o.id] = {
+                order: o,
+                pay: false,
+                ref: false
+            };
+            ids.push(o.id);
+        }
+        if (tamaraIsPayment(p)) slot.pay = true; else if (tamaraIsRefund(p)) slot.ref = true;
+    }
+    for (let i = 0; i < ids.length; i++) {
+        const s = per[ids[i]];
+        if (!s.pay || !s.ref) continue;
+        out.push({
+            orderId: s.order.id,
+            orderNumber: String(s.order.orderNumber || s.order.id),
+            coveredElsewhere: tamaraOrderConfirmedGrossH(s.order) >= tamaraOrderRefundedH(s.order)
+        });
+    }
+    return out;
+}
+
+function tamaraPairWarnings(items) {
+    const pairs = tamaraSelectionPairs(items);
+    const lead = function(names) {
+        const joined = names.join("، ");
+        return (names.length === 1 ? TAMARA_TEXT.pairLeadOne : TAMARA_TEXT.pairLeadMany).replace("%O%", function() {
+            return joined;
+        });
+    };
+    const cov = pairs.filter(function(x) {
+        return x.coveredElsewhere;
+    }).map(function(x) {
+        return x.orderNumber;
+    });
+    const unc = pairs.filter(function(x) {
+        return !x.coveredElsewhere;
+    }).map(function(x) {
+        return x.orderNumber;
+    });
+    const out = [];
+    if (cov.length) out.push(lead(cov) + " " + TAMARA_TEXT.pairTailCovered);
+    if (unc.length) out.push(lead(unc) + " " + TAMARA_TEXT.pairTailUncovered);
+    return out;
+}
+
+function tamaraUnconfirmBlockReason(settlementId) {
+    return tamaraUnconfirmDecision(settlementId).text;
+}
+
+function tamaraUnconfirmDecision(settlementId) {
+    const none = {
+        code: "",
+        text: ""
+    };
+    const list = tamaraSettlementsList();
+    let s = null;
+    for (let i = 0; i < list.length; i++) {
+        if (list[i] && list[i].id === settlementId) {
+            s = list[i];
+            break;
+        }
+    }
+    if (!s) return none;
+    const payOrders = {};
+    (s.items || []).forEach(function(it) {
+        if (it && it.kind !== "refund") payOrders[it.orderId] = true;
+    });
+    const orders = appData && appData.orders || [];
+    const ids = Object.keys(payOrders);
+    let coverBlock = false;
+    for (let i = 0; i < ids.length; i++) {
+        let order = null;
+        for (let k = 0; k < orders.length; k++) {
+            if (orders[k] && orders[k].id === ids[i]) {
+                order = orders[k];
+                break;
+            }
+        }
+        if (!order) continue;
+        const refundedH = tamaraOrderRefundedH(order);
+        let otherH = 0, selfRefH = 0;
+        const others = [];
+        list.forEach(function(t) {
+            if (!t || t.id === s.id) return;
+            let payH = 0, refH = 0;
+            (t.items || []).forEach(function(it) {
+                if (!it || it.orderId !== ids[i]) return;
+                if (it.kind === "refund") refH += tamaraToHalalas(it.amount); else payH += tamaraToHalalas(it.amount);
+            });
+            otherH += payH;
+            others.push({
+                payH: payH,
+                refH: refH
+            });
+        });
+        (s.items || []).forEach(function(it) {
+            if (it && it.kind === "refund" && it.orderId === ids[i]) selfRefH += tamaraToHalalas(it.amount);
+        });
+        if (otherH < refundedH) return {
+            code: selfRefH > 0 ? "self" : "literal",
+            text: TAMARA_TEXT.unconfirmHasRefund
+        };
+        for (let k = 0; k < others.length; k++) {
+            if (others[k].payH > 0 && others[k].refH > 0 && otherH - others[k].payH < refundedH - selfRefH) coverBlock = true;
+        }
+    }
+    return coverBlock ? {
+        code: "cover",
+        text: TAMARA_TEXT.uiUnconfirmCover
+    } : none;
 }
 
 function tamaraValidateConfirmInput(items, bankAmount, receivedOn, ref, note, nowDate) {
@@ -7182,7 +7973,7 @@ function tamaraValidateConfirmInput(items, bankAmount, receivedOn, ref, note, no
     };
 }
 
-function tamaraMapRpcError(err) {
+function tamaraMapRpcError(err, ctx) {
     if (!currentUserIsElevated) return {
         ok: false,
         code: "PT480",
@@ -7191,48 +7982,32 @@ function tamaraMapRpcError(err) {
     };
     const code = String(err && err.code != null ? err.code : "");
     const msg = String(err && err.message != null ? err.message : "");
-    if (code === "PT480") return {
-        ok: false,
-        code: code,
-        message: TAMARA_TEXT.denied,
-        refresh: false
+    const hint = String(err && err.hint != null ? err.hint : "");
+    const out = function(text, refresh) {
+        return {
+            ok: false,
+            code: code,
+            message: text,
+            refresh: refresh
+        };
     };
-    if (code === "PT481") return {
-        ok: false,
-        code: code,
-        message: TAMARA_TEXT.invalidInput,
-        refresh: false
-    };
-    if (code === "PT482") return {
-        ok: false,
-        code: code,
-        message: TAMARA_TEXT.stale,
-        refresh: true
-    };
-    if (code === "PT483") return {
-        ok: false,
-        code: code,
-        message: TAMARA_TEXT.already,
-        refresh: true
-    };
-    if (code === "PT484") return {
-        ok: false,
-        code: code,
-        message: TAMARA_TEXT.bankAboveGross,
-        refresh: false
-    };
-    if (code === "PT485") return {
-        ok: false,
-        code: code,
-        message: TAMARA_TEXT.notFound,
-        refresh: true
-    };
-    if (code === "PT486") return {
-        ok: false,
-        code: code,
-        message: TAMARA_TEXT.feeManaged,
-        refresh: true
-    };
+    if (code === "PT480") return out(TAMARA_TEXT.denied, false);
+    if (code === "PT481") {
+        if (hint === "tamara_no_payment") return out(TAMARA_TEXT.noPayment, false);
+        if (hint === "tamara_net_negative") return out(TAMARA_TEXT.netNegative, false);
+        return out(TAMARA_TEXT.invalidInput, false);
+    }
+    if (code === "PT482") {
+        if (hint === "tamara_refund_exceeds") return out(TAMARA_TEXT.refundExceeds, false);
+        if (hint === "tamara_refund_not_executed") return out(TAMARA_TEXT.refundNotExecuted, true);
+        if (hint === "tamara_refund_duplicate_part") return out(TAMARA_TEXT.refundDuplicate, true);
+        return out(TAMARA_TEXT.stale, true);
+    }
+    if (code === "PT483") return out(TAMARA_TEXT.already, true);
+    if (code === "PT484") return out(ctx && ctx.hasRefunds ? TAMARA_TEXT.bankAboveNet : TAMARA_TEXT.bankAboveGross, false);
+    if (code === "PT485") return out(TAMARA_TEXT.notFound, true);
+    if (code === "PT486") return out(TAMARA_TEXT.feeManaged, true);
+    if (code === "PT487") return out(TAMARA_TEXT.unconfirmHasRefund, true);
     if (msg.indexOf("TIMEOUT") >= 0) return {
         ok: false,
         code: "TIMEOUT",
@@ -8272,6 +9047,7 @@ function computeAggregateFinancials(matchPeriodFn) {
         }
     });
     const tamaraPending = tamaraPendingSnapshot();
+    const tamaraRefundPending = tamaraPendingRefundSnapshot();
     return {
         confirmedCount: confirmedOrders.length,
         unconfirmedCount: realOrders.filter(o => !o.confirmed && !o.archived).length,
@@ -8290,7 +9066,10 @@ function computeAggregateFinancials(matchPeriodFn) {
         tamaraPendingGross: tamaraPending.grossH / 100,
         tamaraPendingNet: tamaraPending.netH / 100,
         tamaraPendingCount: tamaraPending.count,
-        tamaraOverdueCount: tamaraPending.overdueCount
+        tamaraOverdueCount: tamaraPending.overdueCount,
+        tamaraRefundPendingAmount: tamaraRefundPending.grossH / 100,
+        tamaraRefundPendingCount: tamaraRefundPending.count,
+        tamaraRefundOverdueCount: tamaraRefundPending.overdueCount
     };
 }
 
@@ -9997,7 +10776,8 @@ function partRowHtml(p, i) {
     if (p.returned) {
         const statusLabel = p.returnHasReceivable ? p.returnCollected ? "✅ مرتجعة — تم تحصيل المبلغ من المورد" + (hasElevatedAccess() && p.returnCollectedAt && fmtDateShort(p.returnCollectedAt) ? " (" + fmtDateShort(p.returnCollectedAt) + ")" : "") : "🔄 مرتجعة — بانتظار تحصيل المبلغ من المورد" : "🔄 مرتجعة";
         const refundDone = !!p.customerRefundConfirmed;
-        const canUndo = !p.returnCollected && !refundDone;
+        const tamaraRefundOfPart = typeof draft !== "undefined" && draft && tamaraIsRefund((draft.customerPayments || []).find(pay => pay.returnAdjustment && pay.linkedPartId === p.id));
+        const canUndo = !p.returnCollected && !refundDone && !tamaraRefundOfPart;
         return '<div class="part-row part-row-returned" data-part-id="' + escapeHtml(p.id) + '">' + '<div class="part-desc-wrap">' + '<div class="part-desc-row"><span class="part-index-badge">' + ((i != null ? i : 0) + 1) + '</span><span class="part-desc-returned">' + escapeHtml(p.description) + "</span></div>" + '<span class="used-badge used-badge-off">' + statusLabel + (refundDone ? " · ✅ تم رد المبلغ للزبون" + (p.customerRefundConfirmedAt && fmtDateShort(p.customerRefundConfirmedAt) ? " (" + fmtDateShort(p.customerRefundConfirmedAt) + ")" : "") : "") + "</span>" + (draft ? mediaStripHtml(draft.id, p.id, "view") : "") + "</div>" + '<div class="part-price-group">' + '<span class="num">' + escapeHtml(qtyVal) + " × " + modalMoney(Number(costVal) || 0) + "</span>" + "</div>" + (canUndo ? '<button type="button" class="icon-btn" data-undo-return-part="' + escapeHtml(p.id) + '" title="تراجع عن الإرجاع" aria-label="تراجع عن الإرجاع">↩️</button>' : "") + "</div>";
     }
     const descFieldUi = fieldRequestUiHtml("description", p.id, p.description, '<span class="field-readonly-value field-readonly-desc">' + escapeHtml(p.description || "") + "</span>");
@@ -15104,6 +15884,10 @@ function bindPartRowEvents() {
                             showToast("لا يمكن التراجع — تم رد المبلغ للزبون فعلًا", "error");
                             return;
                         }
+                        if (draft && tamaraIsRefund((draft.customerPayments || []).find(pay => pay.returnAdjustment && pay.linkedPartId === part.id))) {
+                            showToast(TAMARA_TEXT.undoBlockedTamara, "error");
+                            return;
+                        }
                         const undoRes = undoPartReturnOnOrder(draft, part);
                         if (undoRes.releasedKeptDelivery > .01) showToast("أُلغي الاحتفاظ بأجور التوصيل (" + fmtMoney(undoRes.releasedKeptDelivery) + " ريال) لأن التوصيل صار يُحسب مع القطعة", "ok");
                         pendingPartProposalPurges.delete(pid);
@@ -15538,15 +16322,22 @@ function applyReturnExcessKeepToOrder(order, linkedPart, amount, deliveryDropped
 }
 
 function applyReturnExcessRefundToOrder(order, linkedPartId, amount) {
-    if (tamaraOrderHasPayment(order)) return {
-        ok: false,
-        message: tamaraRefundBlockText(order)
-    };
+    if (tamaraOrderHasPayment(order)) {
+        const tamaraBlock = tamaraRefundBlockText(order);
+        if (tamaraBlock) return {
+            ok: false,
+            message: tamaraBlock
+        };
+    }
     amount = round2(Math.max(0, Number(amount) || 0));
     if (!Array.isArray(order.customerPayments)) order.customerPayments = [];
     const linkedPart = linkedPartId ? (order.parts || []).find(p => p.id === linkedPartId) : null;
     const existing = linkedPartId ? order.customerPayments.find(pay => pay.returnAdjustment && pay.linkedPartId === linkedPartId) : null;
     if (existing) {
+        if (tamaraIsRefund(existing)) return {
+            ok: false,
+            message: TAMARA_TEXT.refundExtendTamara
+        };
         if (linkedPart && linkedPart.customerRefundConfirmed) {
             return {
                 ok: false,
@@ -15788,12 +16579,16 @@ function updateModalTotals() {
 function bindOrderRefundConfirmButton() {
     const root = document.getElementById("modal-root");
     if (!root) return;
+    const tamaraRefundBtn = root.querySelector("#order-tamara-refund-btn");
+    if (tamaraRefundBtn && !tamaraRefundBtn.disabled) tamaraRefundBtn.addEventListener("click", tamaraOrderModalConvert);
+    const tamaraUndoBtn = root.querySelector("#order-tamara-undo-btn");
+    if (tamaraUndoBtn) tamaraUndoBtn.addEventListener("click", tamaraOrderModalUndo);
     const confirmRefundBtn = root.querySelector("#order-confirm-refund-btn");
     if (!confirmRefundBtn) return;
     confirmRefundBtn.addEventListener("click", () => {
         confirmAction({
             title: "تأكيد رد المبلغ للزبون؟",
-            message: "سيتم خصم المبلغ من صافي الصندوق بتاريخ اليوم (" + todayNumeric() + "). احفظ الطلبية بعدها حتى يتم تثبيته.",
+            message: "سيتم خصم المبلغ من صافي الصندوق بتاريخ اليوم (" + todayNumeric() + "). احفظ الطلبية بعدها حتى يتم تثبيته." + (draft ? tamaraCashWarnSuffix(draft) : ""),
             confirmLabel: "تم الرد",
             dangerous: true,
             onConfirm: () => {
@@ -15801,7 +16596,7 @@ function bindOrderRefundConfirmButton() {
                 (draft.parts || []).forEach(p => {
                     if (!p.returned || p.customerRefundConfirmed) return;
                     const adj = (draft.customerPayments || []).find(pay => pay.returnAdjustment && pay.linkedPartId === p.id);
-                    if (adj) stampPartRefundConfirmed(p);
+                    if (adj && !tamaraIsRefund(adj)) stampPartRefundConfirmed(p);
                 });
                 refreshPartsList();
                 updateModalTotals();
@@ -15812,12 +16607,13 @@ function bindOrderRefundConfirmButton() {
 }
 
 function orderCustomerRefundStatusHtml(order) {
+    if (tamaraElevated() && (tamaraOrderHasPayment(order) || tamaraOrderHasRefund(order))) return tamaraRefundStatusHtml(order, v => modalMoney(v));
     let pendingTotal = 0, confirmedTotal = 0;
     (order.parts || []).forEach(p => {
         if (!p.returned) return;
         const adj = (order.customerPayments || []).find(pay => pay.returnAdjustment && pay.linkedPartId === p.id);
         if (!adj) return;
-        if (p.customerRefundConfirmed) confirmedTotal += Number(adj.amount) || 0; else pendingTotal += Number(adj.amount) || 0;
+        if (tamaraIsRefund(adj) || p.customerRefundConfirmed) confirmedTotal += Number(adj.amount) || 0; else pendingTotal += Number(adj.amount) || 0;
     });
     pendingTotal = round2(pendingTotal);
     confirmedTotal = round2(confirmedTotal);
@@ -15836,10 +16632,11 @@ async function checkOrderSaveConflict(baseline) {
     }
     if (baseline && liveOrder.updatedAt && liveOrder.updatedAt !== baseline) {
         document.removeEventListener("keydown", escListener);
+        const conflictRefundNote = typeof tamaraConflictRefundNote === "function" ? tamaraConflictRefundNote(liveOrder, draft) : "";
         const proceedAnyway = await new Promise(resolve => {
             confirmAction({
                 title: "تم تغيير الطلبية من مكان آخر",
-                message: "طرأ عليها تحديث (مثل قبول اقتراح تسعير من عامر، أو تعديل من مستخدم آخر) بعد أن فتحت هذه النافذة. إذا أكملت وحفظت، سيضيع ذلك التحديث. الأفضل أن تغلقها وتفتحها من جديد لترى آخر نسخة.",
+                message: "طرأ عليها تحديث (مثل قبول اقتراح تسعير من عامر، أو تعديل من مستخدم آخر) بعد أن فتحت هذه النافذة. إذا أكملت وحفظت، سيضيع ذلك التحديث. الأفضل أن تغلقها وتفتحها من جديد لترى آخر نسخة." + (conflictRefundNote ? " " + conflictRefundNote : ""),
                 confirmLabel: "أكمل واحفظ نسختي (سيلغي تعديلهم)",
                 cancelLabel: "أغلق بدون حفظ",
                 dangerous: true,
@@ -15908,9 +16705,19 @@ async function onSaveOrder() {
             showToast("يجب تحديد طريقة الدفع (كاش/شبكة/تمارا) لكل دفعة قبل الحفظ", "error");
             return false;
         }
-        if (!draft.isNew && tamaraConfirmedPaymentViolation((appData.orders || []).find(o => o.id === draft.id), draft.customerPayments)) {
-            showToast(TAMARA_TEXT.paymentLocked, "error");
+        const tamaraLiveForLock = draft.isNew ? null : (appData.orders || []).find(o => o.id === draft.id);
+        const tamaraLockedId = tamaraLiveForLock ? tamaraConfirmedPaymentViolation(tamaraLiveForLock, draft.customerPayments, cleanedParts) : "";
+        if (tamaraLockedId) {
+            showToast(tamaraLockTextFor(tamaraLiveForLock, tamaraLockedId), "error");
             return false;
+        }
+        if (!draft.isNew && typeof tamaraDraftAddsRefund === "function" && tamaraElevated() && tamaraDraftAddsRefund(tamaraLiveForLock, draft.customerPayments)) {
+            const tamaraCoverWhy = await tamaraDraftRefundCoverCheck(draft);
+            if (!draft || draft !== saveFlightRef) return false;
+            if (tamaraCoverWhy) {
+                showToast(tamaraCoverWhy, "error");
+                return false;
+            }
         }
         if (!draft.isNew) {
             const payLive = supplyLive || (appData.orders || []).find(o => o.id === draft.id);
@@ -16034,6 +16841,7 @@ async function onSaveOrder() {
                 await purgeEditProposalsForPart(savingOrder.id, partId);
             }
         }
+        if (typeof tamaraDraftPurgeAfterSave === "function") tamaraDraftPurgeAfterSave(savingOrder);
         if (editProposalsCancellationSnapshot) {} else if (supplyCancelPlan.orderLevel) {
             await cancelPendingSuppliedGatedProposalsForOrder(savingOrder.id);
             await cancelPendingScrapyardProposalsForOrder(savingOrder.id);
@@ -20767,6 +21575,7 @@ function orderCashFootprintVisible(order) {
 function orderHasPendingCustomerRefund(order) {
     return !!(order && (order.customerPayments || []).some(p => {
         if (!p.returnAdjustment) return false;
+        if (tamaraIsRefund(p)) return false;
         const lp = (order.parts || []).find(pp => pp.id === p.linkedPartId);
         return !(lp && lp.customerRefundConfirmed);
     }));
@@ -20778,6 +21587,10 @@ function orderUnconfirmBlockReason(order) {
     if (orderHasPayStamps(order)) return (order.parts || []).some(p => partPayCorrupt(p)) ? "لا يمكن إلغاء تأكيد طلبية فيها قطعة بيانات سدادها تالفة — تُصلَح بالصيانة أولًا" : "لا يمكن إلغاء تأكيد طلبية عليها تسديد لقطعها — ألغِ تسديد القطع أولًا (زر السداد ← الدفعات)";
     if (orderHasSettlementFlag(order)) return "لا يمكن إلغاء تأكيد طلبية عليها تسديد للمشتريات — ألغِ التسديد أولًا من نافذة الطلبية";
     if (orderHasPendingCustomerRefund(order)) return "لا يمكن إلغاء تأكيد طلبية فيها مبلغ مرتجع بانتظار ردّه للعميل — أكِّد الرد أولًا";
+    if (tamaraOrderHasRefund(order)) {
+        if (!tamaraElevated()) return "غير متاح";
+        if (tamaraOrderPendingRefundCount(order) > 0) return TAMARA_TEXT.orderUnconfirmBlockedRefund;
+    }
     return "";
 }
 
@@ -29598,6 +30411,10 @@ var PTX_ACCT = function() {
                     pf.tamara = true;
                     pf.tamaraOn = tamaraOnOf(fn, o, p);
                 }
+                if (refund && str(p.method) === "tamara") {
+                    pf.tamaraRefund = true;
+                    pf.tamaraOn = tamaraOnOf(fn, o, p);
+                }
                 return pf;
             }),
             parts: parts.map(function(p) {
@@ -30769,9 +31586,26 @@ var PTX_ACCT = function() {
         res.advancesH = advancesH;
         res.undatedReceipts = undatedReceipts;
         res.noSupplyDate = noSupplyDate;
-        var tamaraPendH = 0, tamaraUnknown = false, tamaraSeen = false;
+        var tamaraPendH = 0, tamaraUnknown = false, tamaraSeen = false, tamaraRefPendH = 0, tamaraRefSeen = false;
         c.orders.forEach(function(o) {
             objs(o.payments).forEach(function(pay) {
+                var exDay;
+                if (pay.tamaraRefund) {
+                    tamaraSeen = true;
+                    tamaraRefSeen = true;
+                    exDay = riyadhDate(pay.confirmedAt) || pay.date || "";
+                    if (exDay !== "" && exDay > A) {
+                        return;
+                    }
+                    if (pay.tamaraOn === null || pay.tamaraOn === undefined) {
+                        tamaraUnknown = true;
+                        return;
+                    }
+                    if (pay.tamaraOn === "" || pay.tamaraOn > A) {
+                        tamaraRefPendH += pay.amountH;
+                    }
+                    return;
+                }
                 if (!pay.tamara) {
                     return;
                 }
@@ -30791,6 +31625,9 @@ var PTX_ACCT = function() {
         if (tamaraSeen) {
             res.tamaraPendingH = tamaraPendH;
             res.tamaraUnknown = tamaraUnknown;
+        }
+        if (tamaraRefSeen) {
+            res.tamaraRefundPendingH = tamaraRefPendH;
         }
         res.customers = sortBy(custList.filter(function(r) {
             return r.remainingH > 0;
@@ -32434,8 +33271,11 @@ var PTX_ACCT_SHEETS = function(core) {
         const D = sxDay(c.A);
         const approx = "تقريبي";
         const rows = [ [ "الصندوق (صافي النقد)", sxMoney(at.cashH), D, "", "treasuryTotals().net مطروحًا منه حركة ما بعد التاريخ", cashPrec ], [ "عهدة عامر", sxMoney(at.amerH), D, "", "amerCustodyBalance() مطروحًا منه حركة ما بعد التاريخ", cashPrec ], [ "عهدة عمر", sxMoney(at.omarH), D, "", "omarCustodyBalance() مطروحًا منه حركة ما بعد التاريخ", cashPrec ], [ "ذمم العملاء — مفوتر", sxMoney(at.invoicedH), D, "", "طلبات موردة بفاتورة", custPrec ], [ "ذمم العملاء — غير مفوتر", sxMoney(at.uninvoicedH), D, "", "طلبات موردة بلا فاتورة", custPrec ], [ "دفعات مقدّمة من العملاء (طلبات لم تُورَّد)", sxMoney(at.advancesH), D, "", "دفعات طلبات غير موردة بالتاريخ", custPrec ], [ "ذمم الموردين (مستحق للسداد)", sxMoney(at.owedH), D, "", "supplierOwedIndex عند التاريخ", approx ], [ "مدفوع مقدّمًا للموردين (قطع لم تصل)", sxMoney(at.supAdvanceH), D, "", "أختام السداد لقطع لم تصل", approx ], [ "مرتجعات موردين مستحقة الاسترداد", sxMoney(at.supReturnsH), D, "", "supplierReturnReceivables عند التاريخ", approx ], [ "ضريبة المخرجات قبل خصم ضريبة المدخلات (تقدير للفترة)", sxMoney(s.r01.netVatH), sxDay(c.period.to || c.A), "", "ورقة 01 — صافي الضريبة التقديري (مستندات رسمية فقط)", "تقديري — للتأكيد" ], [ "تقدير إضافي: ضريبة مقبوضات وتوريدات بلا فاتورة (منفصل عن البند السابق)", sxMoney(s.r01.estVatH), sxDay(c.period.to || c.A), "", "ورقة 01 — التقدير الإضافي", "تقديري — للتأكيد" ], [ "مخزون / قطع بلا تسليم", "", D, "", "الجرد اليدوي بتاريخ 2026-10-31", "غير متاح بالتطبيق" ] ];
-        if (at.tamaraUnknown || sxInt(at.tamaraPendingH) > 0) {
+        if (at.tamaraUnknown || sxInt(at.tamaraPendingH) > 0 || sxInt(at.tamaraRefundPendingH) > 0) {
             rows.splice(6, 0, [ "مستحق من تمارا (دفعات بانتظار التحويل)", at.tamaraUnknown ? "" : sxMoney(at.tamaraPendingH), D, "", "إجمالي دفعات تمارا التي لم يصل تحويلها بعد بالتاريخ؛ تُخصم منها عمولة تمارا عند الاستلام (قيد مصروف بتاريخ الاستلام)", at.tamaraUnknown ? "غير متاح — بيانات التحويلات غير محمّلة أو الحساب غير مخوّل" : custPrec ]);
+            if (!at.tamaraUnknown && sxInt(at.tamaraRefundPendingH) > 0) {
+                rows.splice(7, 0, [ "استردادات تمارا بانتظار الخصم (تُخصم من مستحق تمارا)", sxMoney(-at.tamaraRefundPendingH), D, "", "استردادات رُدّت للعميل عبر بوابة تمارا في/قبل التاريخ ولم تُخصم من تحويل حتى التاريخ؛ تُخصم من أول تحويل لاحق (الصندوق يتبع المبلغ الواصل)", custPrec ]);
+            }
         }
         return {
             rows: rows
@@ -48585,6 +49425,10 @@ function paymentMethodLabel(method) {
     return method === "cash" ? "كاش" : method === "card" ? "شبكة" : method === "tamara" ? "تمارا" : method === "مرتجع" ? "مرتجع" : "—";
 }
 
+function paymentLabelOf(p) {
+    return tamaraIsRefund(p) ? TAMARA_TEXT.refundMethodLabel : paymentMethodLabel(p ? p.method : "");
+}
+
 const CUSTOMER_FIELD_LABELS = {
     name: "اسم العميل",
     phone: "جوال العميل"
@@ -49353,6 +50197,10 @@ function applyEditProposal(pr, orderOverride, opts) {
     } else if (pr.kind === "payment_edit") {
         const payment = (order.customerPayments || []).find(p => p.id === pr.payment_id);
         if (!payment) return false;
+        if (payment.returnAdjustment) {
+            lastEditProposalBlockMessage = tamaraIsRefund(payment) ? TAMARA_TEXT.refundRowLocked : TAMARA_TEXT.refundRowLockedAny;
+            return false;
+        }
         if (tamaraPaymentStatus(order.id, payment) === "confirmed") {
             lastEditProposalBlockMessage = TAMARA_TEXT.paymentLocked;
             return false;
@@ -49370,6 +50218,13 @@ function applyEditProposal(pr, orderOverride, opts) {
     } else if (pr.kind === "payment_delete") {
         const existed = (order.customerPayments || []).some(p => p.id === pr.payment_id);
         if (!existed) return false;
+        {
+            const delTarget = (order.customerPayments || []).find(p => p.id === pr.payment_id);
+            if (delTarget && delTarget.returnAdjustment) {
+                lastEditProposalBlockMessage = tamaraIsRefund(delTarget) ? TAMARA_TEXT.refundRowLocked : TAMARA_TEXT.refundRowLockedAny;
+                return false;
+            }
+        }
         if (tamaraPaymentStatus(order.id, (order.customerPayments || []).find(p => p.id === pr.payment_id)) === "confirmed") {
             lastEditProposalBlockMessage = TAMARA_TEXT.paymentLocked;
             return false;
@@ -49460,6 +50315,10 @@ function applyEditProposal(pr, orderOverride, opts) {
         stampPartReturnCollected(part);
     } else if (pr.kind === "customer_refund_confirm") {
         const part = (order.parts || []).find(p => p.id === pr.part_id);
+        if (part && tamaraIsRefund((order.customerPayments || []).find(pay => pay.returnAdjustment && pay.linkedPartId === part.id))) {
+            lastEditProposalBlockMessage = TAMARA_TEXT.refundApprovalTamara;
+            return false;
+        }
         if (!part || !part.returned || part.customerRefundConfirmed) return false;
         const adjustment = (order.customerPayments || []).find(pay => pay.returnAdjustment && pay.linkedPartId === part.id);
         if (!adjustment) return false;
@@ -49581,8 +50440,15 @@ async function handleEditProposalDecision(proposalId, accept) {
 
 function editProposalAcceptMessage(pr) {
     const generic = "سيتم تطبيق التعديل مباشرة على الطلبية.";
+    if (pr && pr.kind === "order_delete") {
+        const delWarn = typeof tamaraDeletePendingWarning === "function" ? tamaraDeletePendingWarning(pr.order_id) : "";
+        return delWarn ? generic + " " + delWarn : generic;
+    }
     if (!pr || pr.kind !== "return_collect" && pr.kind !== "customer_refund_confirm") return generic;
-    if (pr.kind === "customer_refund_confirm") return "سيتم خصم المبلغ من صافي الصندوق بتاريخ اليوم (" + todayNumeric() + ").";
+    if (pr.kind === "customer_refund_confirm") {
+        const warn = tamaraCashRefundWarning((appData.orders || []).find(x => x.id === pr.order_id));
+        return "سيتم خصم المبلغ من صافي الصندوق بتاريخ اليوم (" + todayNumeric() + ")." + (warn ? " " + warn : "");
+    }
     const o = (appData.orders || []).find(x => x.id === pr.order_id);
     const p = o ? (o.parts || []).find(x => x.id === pr.part_id) : null;
     return o && p ? returnCollectDestination(o, p).confirmMessage : generic;
@@ -50346,7 +51212,7 @@ function accountsActivityForDate(isoDate, opts) {
     (appData.orders || []).forEach(o => {
         (o.customerPayments || []).forEach(p => {
             const linkedPart = p.returnAdjustment ? (o.parts || []).find(pp => pp.id === p.linkedPartId) : null;
-            if (p.returnAdjustment && linkedPart && linkedPart.customerRefundConfirmed) {
+            if (p.returnAdjustment && linkedPart && linkedPart.customerRefundConfirmed && !tamaraIsRefund(p)) {
                 const st = matchStamp(linkedPart.customerRefundConfirmedAt);
                 if (st !== null ? st : matchDmy(p.date)) {
                     customerRefundsPaid.push({
@@ -50356,6 +51222,23 @@ function accountsActivityForDate(isoDate, opts) {
                         amount: Number(p.amount) || 0,
                         description: linkedPart.description || "",
                         approx: st === null
+                    });
+                }
+            }
+            let tamaraRefundSettlement = null;
+            if (tamaraIsRefund(p)) {
+                tamaraRefundSettlement = tamaraSettlementForPayment(o.id, p.id);
+                if (tamaraRefundSettlement && matchDmy(tamaraRefundSettlement.receivedOn)) {
+                    customerRefundsPaid.push({
+                        orderId: o.id,
+                        orderNumber: o.orderNumber,
+                        orderLabel: orderDisplayLabel(o),
+                        amount: Number(p.amount) || 0,
+                        description: linkedPart ? linkedPart.description || "" : "",
+                        approx: false,
+                        tamara: true,
+                        settlementId: tamaraRefundSettlement.id,
+                        paidOn: tamaraRefundSettlement.receivedOn
                     });
                 }
             }
@@ -50379,6 +51262,11 @@ function accountsActivityForDate(isoDate, opts) {
             }
             if (p.returnAdjustment) {
                 row.confirmed = !!(linkedPart && linkedPart.customerRefundConfirmed);
+                if (tamaraIsRefund(p)) {
+                    row.tamara = true;
+                    row.tamaraStatus = tamaraRefundSettlement ? "confirmed" : "pending";
+                    row.settledOn = tamaraRefundSettlement ? tamaraRefundSettlement.receivedOn || "" : "";
+                }
                 customerRefunds.push(row);
             } else customerPayments.push(row);
         });
@@ -50804,7 +51692,7 @@ function treasuryTotals() {
     const supplierReturnReceivables = totalSupplierReturnReceivables();
     const customerRefundsPending = totalCustomerRefundsPending();
     const net = round2(fSnapshot.customerReceiptsTotal + supportAllTime - fSnapshot.directPaidTotal - fSnapshot.deliveryPaidTotal - custodyTopupsAllTime - allTimeExpenses);
-    const netAfterSettlement = round2(net + fSnapshot.dueFromCustomers + custodyBalance - fSnapshot.dueToScrapyard - fSnapshot.dueToSuppliers - fSnapshot.deliveryDueTotal + supplierReturnReceivables - customerRefundsPending + fSnapshot.tamaraPendingNet);
+    const netAfterSettlement = round2(net + fSnapshot.dueFromCustomers + custodyBalance - fSnapshot.dueToScrapyard - fSnapshot.dueToSuppliers - fSnapshot.deliveryDueTotal + supplierReturnReceivables - customerRefundsPending - fSnapshot.tamaraRefundPendingAmount + fSnapshot.tamaraPendingNet);
     const debtsToSuppliers = round2(custodyDeficit + fSnapshot.dueToScrapyard + fSnapshot.dueToSuppliers);
     const volumes = computeTreasuryVolumes();
     const netProfitVolume = round2(volumes.profitVolumePaid - extraIndicatorsExpenses);
@@ -50816,7 +51704,7 @@ function treasuryTotals() {
     });
     const breakdowns = {
         net: [ term("دفعات الزبائن (صافي)", fSnapshot.customerReceiptsTotal), term("الدعم الخارجي", supportAllTime), term("سداد مباشر (تشليح وموردين)", -fSnapshot.directPaidTotal), term("تسديد المناديب (التوصيل)", -fSnapshot.deliveryPaidTotal), term("سداد عهدة المشتريات", -custodyTopupsAllTime), term("المصاريف", -allTimeExpenses) ],
-        netAfterSettlement: [ term("الصندوق حاليًا", net), term("مستحق من الزبائن", fSnapshot.dueFromCustomers), ...fSnapshot.tamaraPendingCount > 0 ? [ term(TAMARA_TEXT.pendingTerm, fSnapshot.tamaraPendingNet) ] : [], term("رصيد المشتريات", custodyBalance), term("مستحق للتشليح", -fSnapshot.dueToScrapyard), term("مستحق للموردين", -fSnapshot.dueToSuppliers), term("مستحق للمناديب (توصيل غير مسدد)", -fSnapshot.deliveryDueTotal), term("مرتجعات مستحقة لنا", supplierReturnReceivables), term("مرتجعات مستحقة للعملاء", -customerRefundsPending) ],
+        netAfterSettlement: [ term("الصندوق حاليًا", net), term("مستحق من الزبائن", fSnapshot.dueFromCustomers), ...fSnapshot.tamaraPendingCount > 0 ? [ term(TAMARA_TEXT.pendingTerm, fSnapshot.tamaraPendingNet) ] : [], term("رصيد المشتريات", custodyBalance), term("مستحق للتشليح", -fSnapshot.dueToScrapyard), term("مستحق للموردين", -fSnapshot.dueToSuppliers), term("مستحق للمناديب (توصيل غير مسدد)", -fSnapshot.deliveryDueTotal), term("مرتجعات مستحقة لنا", supplierReturnReceivables), term("مرتجعات مستحقة للعملاء", -customerRefundsPending), ...fSnapshot.tamaraRefundPendingCount > 0 ? [ term(TAMARA_TEXT.refundPendingTerm, -fSnapshot.tamaraRefundPendingAmount) ] : [] ],
         uncollectedProfit: [ term("الربح المحصّل (كل الطلبيات)", fSnapshot.collectedProfit), term("الربح غير المحصّل", fSnapshot.uncollectedProfit) ],
         debtsToSuppliers: [ term("عجز عهدة المشتريات", custodyDeficit), term("مستحق للتشليح", fSnapshot.dueToScrapyard), term("مستحق للموردين", fSnapshot.dueToSuppliers) ],
         purchasingCustodyBalance: [ term("إجمالي المسدد للعهدة (بالإشارة)", custodyTopupsAllTime), term("المدفوع فعليًا للتشليح من العهدة", -paidToScrapyardForCustody) ],
@@ -50843,6 +51731,9 @@ function treasuryTotals() {
         tamaraPendingNet: fSnapshot.tamaraPendingNet,
         tamaraPendingCount: fSnapshot.tamaraPendingCount,
         tamaraOverdueCount: fSnapshot.tamaraOverdueCount,
+        tamaraRefundPendingAmount: fSnapshot.tamaraRefundPendingAmount,
+        tamaraRefundPendingCount: fSnapshot.tamaraRefundPendingCount,
+        tamaraRefundOverdueCount: fSnapshot.tamaraRefundOverdueCount,
         purchaseVolume: volumes.purchaseVolume,
         purchaseVolumePaid: volumes.purchaseVolumePaid,
         salesVolume: volumes.salesVolume,
@@ -50922,8 +51813,8 @@ function accountsActivityModalHtml() {
     })();
     const a = accountsActivityForDate(iso);
     const paymentsRowsHtml = a.customerPayments.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.orderNumber + (r.orderLabel ? " — " + r.orderLabel : ""), r.method === "cash" ? "كاش" : r.method === "card" ? "شبكة" : r.method === "tamara" ? "تمارا — استلام تحويل" + (r.paidOn ? " (دفعة الزبون بتاريخ " + r.paidOn + ")" : "") : "", r.amount, "text-green") + "</div>").join("");
-    const refundsRowsHtml = a.customerRefunds.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.orderNumber + (r.orderLabel ? " — " + r.orderLabel : ""), r.confirmed ? "مرتجع — تم رد المبلغ (يظهر في «ردّ مبالغ للزبائن» بتاريخ الرد)" : "مرتجع — بانتظار رد المبلغ", r.amount, "text-amber") + "</div>").join("");
-    const refundsPaidRowsHtml = a.customerRefundsPaid.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.orderNumber + (r.orderLabel ? " — " + r.orderLabel : ""), "رد مبلغ مرتجع" + (r.description ? " — " + r.description : "") + (r.approx ? " (تاريخ تقريبي: تاريخ الإرجاع — لا يوجد تاريخ رد مسجّل)" : ""), r.amount, "text-rust") + "</div>").join("");
+    const refundsRowsHtml = a.customerRefunds.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.orderNumber + (r.orderLabel ? " — " + r.orderLabel : ""), r.tamara ? r.tamaraStatus === "confirmed" ? TAMARA_TEXT.refundLabelSettled + r.settledOn : TAMARA_TEXT.refundLabelPending : r.confirmed ? "مرتجع — تم رد المبلغ (يظهر في «ردّ مبالغ للزبائن» بتاريخ الرد)" : "مرتجع — بانتظار رد المبلغ", r.amount, "text-amber") + "</div>").join("");
+    const refundsPaidRowsHtml = a.customerRefundsPaid.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.orderNumber + (r.orderLabel ? " — " + r.orderLabel : ""), "رد مبلغ مرتجع" + (r.tamara ? " " + TAMARA_TEXT.refundTag : "") + (r.description ? " — " + r.description : "") + (r.approx ? " (تاريخ تقريبي: تاريخ الإرجاع — لا يوجد تاريخ رد مسجّل)" : ""), r.amount, "text-rust") + "</div>").join("");
     const returnsCollectedRowsHtml = a.supplierReturnsCollected.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.orderNumber + (r.orderLabel ? " — " + r.orderLabel : ""), "تحصيل مرتجع" + (r.description ? " — " + r.description : "") + " — " + (r.dest === "box" ? "عاد إلى الصندوق" : r.dest === "amer" ? "عاد إلى عهدة عامر — غير داخل في الصافي" : "عاد إلى عهدة عمر — غير داخل في الصافي") + (r.approx ? " (تاريخ تقريبي: تاريخ الإرجاع — لا يوجد تاريخ تحصيل مسجّل)" : ""), r.amount, r.dest === "box" ? "text-green" : "text-amber") + "</div>").join("");
     const supplierRowsHtml = a.supplierPayments.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.orderNumber + (r.orderLabel ? " — " + r.orderLabel : ""), "تسديد " + r.kind + (r.kind !== "مورد" && r.kind !== "مورد (جديد)" ? " (من عهدة المشتريات — غير داخل في الصافي)" : ""), r.amount, "text-rust") + "</div>").join("");
     const expensesRowsHtml = a.expenses.map(r => '<div class="purchase-history-row" style="cursor:default;">' + accountsActivityRowHtml(r.label, r.note, r.amount, "text-rust") + "</div>").join("");
@@ -51511,7 +52402,7 @@ function totalCustomerRefundsPending() {
             if (!p.returned || p.customerRefundConfirmed) return;
             if (!partIsIncludedInOrder(o, p)) return;
             const adj = (o.customerPayments || []).find(pay => pay.returnAdjustment && pay.linkedPartId === p.id);
-            if (adj) total += Number(adj.amount) || 0;
+            if (adj && !tamaraIsRefund(adj)) total += Number(adj.amount) || 0;
         });
     });
     return round2(total);
@@ -52380,20 +53271,20 @@ async function exportAllDataToExcel() {
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRowsSafe(partsRows)), "تفاصيل القطع");
     const paymentsRows = [];
-    const tamaraExcelCols = tamaraElevated() && (appData.orders || []).some(o => tamaraOrderHasPayment(o));
+    const tamaraExcelCols = tamaraElevated() && (appData.orders || []).some(o => tamaraOrderHasPayment(o) || tamaraOrderHasRefund(o));
     (appData.orders || []).forEach(o => {
         (o.customerPayments || []).forEach(p => {
             const payRowObj = {
                 "رقم الطلب": o.orderNumber,
                 "المبلغ": p.amount,
-                "الطريقة": paymentMethodLabel(p.method),
+                "الطريقة": paymentLabelOf(p),
                 "التاريخ": p.date || "",
                 "حالة الطلبية": o.isQuote ? "عادت للتسعير" : ""
             };
             if (tamaraExcelCols) {
-                const tmSt = tamaraPaymentStatus(o.id, p);
+                const tmSt = tamaraSettledStatus(o.id, p);
                 const tmSettle = tmSt === "confirmed" ? tamaraSettlementForPayment(o.id, p.id) : null;
-                payRowObj["حالة تمارا"] = tmSt === "confirmed" ? "مؤكَّد استلامه" : tmSt === "pending" ? "بانتظار التحويل" : "";
+                payRowObj["حالة تمارا"] = tamaraIsRefund(p) ? tmSt === "confirmed" ? TAMARA_TEXT.excelRefundSettled : TAMARA_TEXT.excelRefundPending : tmSt === "confirmed" ? "مؤكَّد استلامه" : tmSt === "pending" ? "بانتظار التحويل" : "";
                 payRowObj["تاريخ استلام تمارا"] = tmSettle ? tmSettle.receivedOn : "";
             }
             paymentsRows.push(payRowObj);
@@ -52442,6 +53333,9 @@ async function exportAllDataToExcel() {
     }, ...summary.tamaraPendingCount > 0 ? [ {
         "المؤشر": TAMARA_TEXT.pendingTerm,
         "القيمة": summary.tamaraPendingNet
+    } ] : [], ...summary.tamaraRefundPendingCount > 0 ? [ {
+        "المؤشر": TAMARA_TEXT.refundPendingTerm,
+        "القيمة": -summary.tamaraRefundPendingAmount
     } ] : [], {
         "المؤشر": "الربح غير المحصّل",
         "القيمة": summary.uncollectedProfit
@@ -52586,6 +53480,10 @@ function normalizeImportedOrder(o) {
 function confirmImportOverwrite(parsedData) {
     if ((appData.tamaraSettlements || []).length || (appData.treasury && appData.treasury.tamaraFees || []).length || !tamaraDataComplete()) {
         showToast("لا يمكن استيراد نسخة بينما توجد تحويلات تمارا مؤكَّدة أو قيود رسوم تمارا — ألغِ تأكيدها أولًا", "error");
+        return;
+    }
+    if ((appData.orders || []).some(o => tamaraOrderHasPayment(o) || tamaraOrderHasRefund(o))) {
+        showToast("لا يمكن استيراد نسخة بينما توجد دفعات تمارا أو استردادات تمارا في الطلبيات الحالية — يستبدل الاستيراد الطلبيات فتضيع حالتها (بانتظار التحويل أو الخصم)", "error");
         return;
     }
     if (parsedData && parsedData.treasury && typeof parsedData.treasury === "object") delete parsedData.treasury.tamaraFees;
@@ -53507,10 +54405,23 @@ function tamaraLocalGross(items) {
         const p = o ? (o.customerPayments || []).find(function(x) {
             return x && x.id === items[i].paymentId;
         }) : null;
-        if (!p || !tamaraIsPayment(p)) return 0;
-        h += tamaraToHalalas(p.amount);
+        if (tamaraIsPayment(p)) h += tamaraToHalalas(p.amount); else if (tamaraIsRefund(p)) h -= tamaraToHalalas(p.amount); else return null;
     }
     return tamaraHalalasToRiyal(h);
+}
+
+function tamaraItemsHaveRefund(items) {
+    const list = Array.isArray(items) ? items : [];
+    for (let i = 0; i < list.length; i++) {
+        const o = (appData && appData.orders || []).find(function(x) {
+            return x && list[i] && x.id === list[i].orderId;
+        });
+        const p = o ? (o.customerPayments || []).find(function(x) {
+            return x && x.id === list[i].paymentId;
+        }) : null;
+        if (tamaraIsRefund(p)) return true;
+    }
+    return false;
 }
 
 async function tamaraConfirmSettlement(items, bankAmount, receivedOn, ref, note, expectedGross) {
@@ -53531,8 +54442,20 @@ async function tamaraConfirmSettlement(items, bankAmount, receivedOn, ref, note,
             code: "ERR",
             message: TAMARA_TEXT.generic
         };
+        if (expectedGross !== undefined && expectedGross !== null && Number(expectedGross) < 0) return {
+            ok: false,
+            code: "PT481",
+            message: TAMARA_TEXT.netNegative
+        };
+        const hasRefund = tamaraItemsHaveRefund(v.items);
+        const chk = tamaraSelectionCheck(v.items);
+        if (chk.code === "noPayment") return {
+            ok: false,
+            code: "PT481",
+            message: TAMARA_TEXT.noPayment
+        };
         const expected = expectedGross === undefined || expectedGross === null ? tamaraLocalGross(v.items) : tamaraHalalasToRiyal(tamaraToHalalas(expectedGross));
-        if (!(expected > 0)) {
+        if (expected === null || expected < 0 || expected === 0 && !hasRefund) {
             await tamaraRefreshAfterRpc();
             return {
                 ok: false,
@@ -53549,7 +54472,9 @@ async function tamaraConfirmSettlement(items, bankAmount, receivedOn, ref, note,
             p_note: v.note
         }), 2e4, "tamara_confirm_settlement");
         if (error) {
-            const m = tamaraMapRpcError(error);
+            const m = tamaraMapRpcError(error, {
+                hasRefunds: hasRefund
+            });
             if (m.refresh) await tamaraRefreshAfterRpc();
             return {
                 ok: false,
@@ -53573,6 +54498,181 @@ async function tamaraConfirmSettlement(items, bankAmount, receivedOn, ref, note,
             message: m.message
         };
     }
+}
+
+let tamaraRefundBusy = {};
+
+async function tamaraPurgeRefundConfirmProposals(orderId, partIds) {
+    try {
+        if (!sb || !partIds || !partIds.length) return;
+        const r = await withTimeout(sb.from("edit_proposals").delete().eq("order_id", orderId).eq("kind", "customer_refund_confirm").in("part_id", partIds), 15e3, "tamara_purge_proposals");
+        if (r && r.error) console.error("tamaraPurgeRefundConfirmProposals:", r.error);
+        await withTimeout(refreshEditProposals(), 15e3, "tamara_refresh_proposals");
+    } catch (e) {
+        console.error("tamaraPurgeRefundConfirmProposals:", e);
+    }
+}
+
+function tamaraDraftAddsRefund(liveOrder, newPayments) {
+    const cur = Array.isArray(newPayments) ? newPayments : [];
+    const old = liveOrder && liveOrder.customerPayments || [];
+    for (let i = 0; i < cur.length; i++) {
+        if (!tamaraIsRefund(cur[i])) continue;
+        let was = false;
+        for (let k = 0; k < old.length; k++) {
+            if (old[k] && old[k].id === cur[i].id && tamaraIsRefund(old[k])) {
+                was = true;
+                break;
+            }
+        }
+        if (!was) return true;
+    }
+    return false;
+}
+
+async function tamaraDraftRefundCoverCheck(order) {
+    try {
+        let fresh = await tamaraLoadSettlements(true);
+        if (!fresh) fresh = await tamaraLoadSettlements(true);
+        if (!fresh || !tamaraDataComplete()) return TAMARA_TEXT.dataIncompleteBlock;
+        return tamaraRefundAvailableSignedH(order) < 0 ? TAMARA_TEXT.saveRefundUncovered : "";
+    } catch (e) {
+        return TAMARA_TEXT.generic;
+    }
+}
+
+async function tamaraStaleOrderGuard(orderId) {
+    try {
+        if (!sb) return TAMARA_TEXT.generic;
+        const local = (appData && appData.orders || []).find(function(o) {
+            return o && o.id === orderId;
+        }) || null;
+        const r = await withTimeout(sb.from("orders").select("*").eq("id", orderId).maybeSingle(), 2e4, "tamara_cash_fresh");
+        if (r.error) return TAMARA_TEXT.generic;
+        if (!r.data) return TAMARA_TEXT.orderMissing;
+        const fresh = orderRowToObject(r.data);
+        if (!local || String(local.updatedAt || "") !== String(fresh.updatedAt || "")) {
+            applyRemoteOrderChange({
+                eventType: "UPDATE",
+                new: r.data
+            });
+            return TAMARA_TEXT.staleOrder;
+        }
+        return "";
+    } catch (e) {
+        return e && String(e.message || "").indexOf("TIMEOUT") >= 0 ? TAMARA_TEXT.timeout : TAMARA_TEXT.generic;
+    }
+}
+
+function tamaraConflictRefundNote(liveOrder, draftOrder) {
+    if (!tamaraElevated() || !liveOrder || !draftOrder) return "";
+    const live = liveOrder.customerPayments || [], mine = draftOrder.customerPayments || [];
+    for (let i = 0; i < live.length; i++) {
+        if (!tamaraIsRefund(live[i])) continue;
+        const m = mine.find(function(p) {
+            return p && p.id === live[i].id;
+        });
+        if (!m || !tamaraIsRefund(m)) return TAMARA_TEXT.conflictRefund;
+    }
+    return "";
+}
+
+async function tamaraRefundSaveFlow(orderId, partIds, mode) {
+    const fail = function(code, message, extra) {
+        return Object.assign({
+            ok: false,
+            code: code,
+            items: [],
+            message: message
+        }, extra || {});
+    };
+    const oid = String(orderId == null ? "" : orderId);
+    let busySet = false;
+    const release = function() {
+        if (busySet) {
+            busySet = false;
+            delete tamaraRefundBusy[oid];
+        }
+    };
+    try {
+        if (!tamaraElevated()) return fail("notElevated", TAMARA_TEXT.denied);
+        if (!tamaraDataComplete()) return fail("incomplete", TAMARA_TEXT.dataIncomplete);
+        if (!sb) return fail("ERR", TAMARA_TEXT.generic);
+        if (tamaraRefundBusy[oid]) return fail("busy", TAMARA_TEXT.busy);
+        tamaraRefundBusy[oid] = true;
+        busySet = true;
+        let settlementsFresh = await tamaraLoadSettlements(true);
+        if (!settlementsFresh) settlementsFresh = await tamaraLoadSettlements(true);
+        if (!settlementsFresh || !tamaraDataComplete()) return fail("incomplete", TAMARA_TEXT.dataIncomplete);
+        const ids = tamaraUniqueIds(partIds);
+        const local = (appData && appData.orders || []).find(function(o) {
+            return o && o.id === oid;
+        }) || null;
+        const r = await withTimeout(sb.from("orders").select("*").eq("id", oid).maybeSingle(), 2e4, "tamara_refund_fresh");
+        if (r.error) return fail("ERR", TAMARA_TEXT.generic);
+        if (!r.data) return fail("missing", TAMARA_TEXT.orderMissing);
+        const fresh = orderRowToObject(r.data);
+        if (!local || String(local.updatedAt || "") !== String(fresh.updatedAt || "")) {
+            applyRemoteOrderChange({
+                eventType: "UPDATE",
+                new: r.data
+            });
+            return fail("stale", TAMARA_TEXT.staleOrder);
+        }
+        const snaps = ids.map(function(id) {
+            const part = tamaraPartOf(fresh, id), row = tamaraRefundRowsOfPart(fresh, id)[0] || null;
+            return {
+                part: part,
+                row: row,
+                method: row ? row.method : null,
+                stamp: part ? partStampSnapshot(part, "customerRefundConfirmed") : null
+            };
+        });
+        const res = mode === "convert" ? tamaraConvertRefunds(fresh, ids) : tamaraUnconvertRefunds(fresh, ids);
+        if (!res.ok) return Object.assign({}, res, {
+            order: fresh
+        });
+        const prevUpdatedAt = fresh.updatedAt;
+        fresh.updatedAt = (new Date).toISOString();
+        const saved = await persistOrder(fresh);
+        release();
+        if (!saved) {
+            snaps.forEach(function(s) {
+                if (s.row) s.row.method = s.method;
+                if (s.part && s.stamp) partStampRestore(s.part, s.stamp);
+            });
+            fresh.updatedAt = prevUpdatedAt;
+            return fail("SAVE", TAMARA_TEXT.convertSaveFailed, {
+                toasted: true,
+                order: fresh
+            });
+        }
+        const idx = appData.orders.findIndex(function(o) {
+            return o.id === fresh.id;
+        });
+        if (idx >= 0) appData.orders[idx] = fresh; else appData.orders.push(fresh);
+        if (mode === "convert") await tamaraPurgeRefundConfirmProposals(oid, ids);
+        tamaraNotifyChanged();
+        return {
+            ok: true,
+            code: "",
+            items: res.items,
+            message: "",
+            order: fresh
+        };
+    } catch (e) {
+        return fail("ERR", e && String(e.message || "").indexOf("TIMEOUT") >= 0 ? TAMARA_TEXT.timeout : TAMARA_TEXT.generic);
+    } finally {
+        release();
+    }
+}
+
+async function tamaraConvertRefundsAndSave(orderId, partIds) {
+    return tamaraRefundSaveFlow(orderId, partIds, "convert");
+}
+
+async function tamaraUnconvertRefundsAndSave(orderId, partIds) {
+    return tamaraRefundSaveFlow(orderId, partIds, "unconvert");
 }
 
 async function tamaraUnconfirmSettlement(id) {
@@ -53720,20 +54820,23 @@ function tamaraPaymentLockHtml(orderId, p, elevated) {
     return msg ? '<div class="payment-tamara-lock" role="note">' + escapeHtml(msg) + "</div>" : "";
 }
 
-function tamaraCardCellHtml(label, valueText, cls) {
-    return '<div class="tamara-card-cell"><span class="tamara-card-cell-label">' + escapeHtml(label) + '</span><span class="tamara-card-cell-value num' + (cls ? " " + cls : "") + '">' + escapeHtml(valueText) + "</span></div>";
+function tamaraCardCellHtml(label, valueText, cls, note, valueIsHtml) {
+    return '<div class="tamara-card-cell"><span class="tamara-card-cell-label">' + escapeHtml(label) + '</span><span class="tamara-card-cell-value num' + (cls ? " " + cls : "") + '">' + (valueIsHtml ? valueText : escapeHtml(valueText)) + "</span>" + (note ? '<span class="tamara-card-cell-note">' + escapeHtml(note) + "</span>" : "") + "</div>";
 }
 
 function tamaraCardHtml(t) {
     if (!tamaraElevated()) return "";
     const count = Number(t && t.tamaraPendingCount) || 0;
     const overdue = Number(t && t.tamaraOverdueCount) || 0;
+    const refundCount = Number(t && t.tamaraRefundPendingCount) || 0;
+    const refundOverdue = Number(t && t.tamaraRefundOverdueCount) || 0;
     const settled = tamaraSettlementsList().length;
     const incomplete = !tamaraDataComplete() && tamaraAnyData();
-    if (!count && !settled && !incomplete) return "";
+    if (!count && !settled && !incomplete && !refundCount) return "";
+    const refundH = Math.round((Number(t && t.tamaraRefundPendingAmount) || 0) * 100);
     const grossText = tamaraMoneyText(Math.round((Number(t && t.tamaraPendingGross) || 0) * 100));
-    const netText = tamaraMoneyText(Math.round((Number(t && t.tamaraPendingNet) || 0) * 100));
-    return '<div class="tamara-card" id="tamara-card">' + '<div class="tamara-card-head"><span class="treasury-profit-label">تمارا — بانتظار التحويل</span>' + (overdue > 0 ? '<span class="stamp stamp-rust tamara-stamp">' + overdue + " متأخرة</span>" : "") + "</div>" + '<div class="tamara-card-grid">' + tamaraCardCellHtml("عدد الدفعات", String(count), "") + tamaraCardCellHtml("إجمالي الدفعات", grossText, "") + tamaraCardCellHtml("الصافي المتوقع", netText, "") + tamaraCardCellHtml("متأخرة (أكثر من " + TAMARA_OVERDUE_DAYS + " يومًا)", String(overdue), overdue > 0 ? "text-rust" : "") + "</div>" + (incomplete ? '<div class="tamara-card-warn text-rust" role="alert"><span>' + escapeHtml(TAMARA_TEXT.dataIncomplete) + '</span><button type="button" class="btn btn-ghost btn-sm" id="btn-tamara-retry">إعادة المحاولة</button></div>' : "") + '<button type="button" class="btn ' + (count ? "btn-primary" : "btn-ghost") + ' tamara-card-btn" id="btn-open-tamara-pop">' + (count ? "استلام تحويل من تمارا" : "تحويلات تمارا السابقة") + "</button>" + "</div>";
+    const netHtml = tamaraMoneyHtml(Math.round((Number(t && t.tamaraPendingNet) || 0) * 100) - refundH);
+    return '<div class="tamara-card" id="tamara-card">' + '<div class="tamara-card-head"><span class="treasury-profit-label">تمارا — بانتظار التحويل</span>' + (overdue > 0 ? '<span class="stamp stamp-rust tamara-stamp">' + overdue + " متأخرة</span>" : "") + "</div>" + '<div class="tamara-card-grid">' + tamaraCardCellHtml("عدد الدفعات", String(count), "") + tamaraCardCellHtml("إجمالي الدفعات", grossText, "") + tamaraCardCellHtml("الصافي المتوقع", netHtml, "", "", true) + tamaraCardCellHtml("متأخرة (أكثر من " + TAMARA_OVERDUE_DAYS + " يومًا)", String(overdue), overdue > 0 ? "text-rust" : "") + (refundCount > 0 ? tamaraCardCellHtml(TAMARA_TEXT.uiCardRefundCell, refundCount + " — " + tamaraMoneyText(refundH), refundOverdue > 0 ? "text-rust" : "", refundOverdue > 0 ? tamaraRefundLateText(refundOverdue) : "") : "") + "</div>" + (incomplete ? '<div class="tamara-card-warn text-rust" role="alert"><span>' + escapeHtml(TAMARA_TEXT.dataIncomplete) + '</span><button type="button" class="btn btn-ghost btn-sm" id="btn-tamara-retry">إعادة المحاولة</button></div>' : "") + '<button type="button" class="btn ' + (count ? "btn-primary" : "btn-ghost") + ' tamara-card-btn" id="btn-open-tamara-pop">' + (count ? "استلام تحويل من تمارا" : "تحويلات تمارا السابقة") + "</button>" + "</div>";
 }
 
 function tamaraPopKey(r) {
@@ -53751,11 +54854,20 @@ function tamaraPopSelectedRows(rows) {
     });
 }
 
-function tamaraPopPrune(rows) {
+function tamaraPopPrune(rows, refundRows) {
     const live = new Set(rows.map(tamaraPopKey));
+    (Array.isArray(refundRows) ? refundRows : tamaraPendingRefundList()).forEach(function(r) {
+        live.add(tamaraPopKey(r));
+    });
     Array.from(tamaraPop.sel).forEach(function(k) {
         if (!live.has(k)) tamaraPop.sel.delete(k);
     });
+}
+
+function tamaraPopDefaultSel() {
+    return new Set(tamaraPendingRefundList().filter(function(r) {
+        return !r.badAmount;
+    }).map(tamaraPopKey));
 }
 
 function tamaraPendingRowHtml(r) {
@@ -53772,36 +54884,126 @@ function tamaraPopPendingHtml(rows) {
         grossH += r.grossH;
     });
     const head = '<div class="purchase-history-section-title"><span>دفعات بانتظار التحويل (' + rows.length + ')</span><span class="num">' + tamaraMoneyText(grossH) + "</span></div>";
-    if (!rows.length) return head + '<div class="expense-empty-hint">لا توجد دفعات تمارا بانتظار التحويل</div>';
+    if (!rows.length) return head + '<div class="expense-empty-hint">' + (tamaraPendingRefundList().length ? escapeHtml(TAMARA_TEXT.uiPopNoPending) : "لا توجد دفعات تمارا بانتظار التحويل") + "</div>";
     const allOn = rows.every(function(r) {
         return r.badAmount || tamaraPop.sel.has(tamaraPopKey(r));
     });
     return head + (tamaraDataComplete() ? "" : '<div class="tamara-sum-note text-rust" role="alert">' + escapeHtml(TAMARA_TEXT.dataIncomplete) + "</div>") + '<label class="toggle-row tamara-selectall"><input type="checkbox" id="tamara-select-all"' + (allOn ? " checked" : "") + "><span>تحديد الكل</span></label>" + rows.map(tamaraPendingRowHtml).join("");
 }
 
-function tamaraSumRowHtml(label, valueText, strong) {
-    return '<div class="tamara-sum-row' + (strong ? " tamara-sum-strong" : "") + '"><span>' + escapeHtml(label) + '</span><span class="num">' + escapeHtml(valueText) + "</span></div>";
+function tamaraMoneyHtml(h) {
+    const t = tamaraMoneyText(h);
+    const m = /^(-[\d,]+\.\d{2})( ر\.س)$/.exec(t);
+    return m ? '<bdi dir="ltr">' + m[1] + "</bdi>" + m[2] : escapeHtml(t);
 }
 
-function tamaraPopSummaryHtml(rows) {
+function tamaraSumRowHtml(label, valueText, strong, neg, isHtml) {
+    return '<div class="tamara-sum-row' + (strong ? " tamara-sum-strong" : "") + '"><span>' + escapeHtml(label) + '</span><span class="num' + (neg ? " tamara-sum-neg" : "") + '">' + (isHtml ? valueText : escapeHtml(valueText)) + "</span></div>";
+}
+
+function tamaraPopSummaryHtml(rows, refundRows) {
     const sel = tamaraPopSelectedRows(rows);
-    if (!sel.length) return '<div class="tamara-sum-empty">حدّد دفعة واحدة على الأقل ليظهر ملخص التحويل</div>';
+    const selRef = tamaraPopSelectedRows(Array.isArray(refundRows) ? refundRows : tamaraPendingRefundList());
+    if (!sel.length && !selRef.length) return '<div class="tamara-sum-empty">حدّد دفعة واحدة على الأقل ليظهر ملخص التحويل</div>';
+    if (!sel.length) {
+        let onlyH = 0;
+        selRef.forEach(function(r) {
+            onlyH += r.grossH;
+        });
+        return tamaraSumRowHtml(TAMARA_TEXT.uiPopRefundsSel, tamaraMoneyHtml(-onlyH), false, true, true) + '<div class="tamara-sum-note text-rust">' + escapeHtml(rows.length ? TAMARA_TEXT.noPayment : TAMARA_TEXT.uiPopNoPending) + "</div>";
+    }
     const bankStr = String(tamaraPop.bank == null ? "" : tamaraPop.bank).trim();
     const hasBank = bankStr !== "";
     const pv = tamaraConfirmPreview(sel.map(function(r) {
         return r.amount;
-    }), hasBank ? bankStr : 0);
+    }), hasBank ? bankStr : 0, selRef.map(function(r) {
+        return r.amount;
+    }));
     const e = pv.expected;
-    let h = tamaraSumRowHtml("الدفعات المحددة", tamaraCountText(sel.length), false) + tamaraSumRowHtml("إجمالي الدفعات المحددة", tamaraMoneyText(e.grossH), false) + tamaraSumRowHtml("العمولة والضريبة المتوقعة", tamaraMoneyText(e.feeH + e.vatH), false);
+    const withRef = e.refundCount > 0;
+    let h = tamaraSumRowHtml("الدفعات المحددة", tamaraCountText(sel.length), false) + tamaraSumRowHtml("إجمالي الدفعات المحددة", tamaraMoneyText(e.grossH), false);
+    if (withRef) h += tamaraSumRowHtml(TAMARA_TEXT.uiPopRefundsSel, tamaraMoneyHtml(-e.refundsH), false, true, true) + tamaraSumRowHtml(TAMARA_TEXT.uiPopNetBeforeFee, tamaraMoneyHtml(e.netGrossH), false, e.netGrossH < 0, true);
+    h += tamaraSumRowHtml(withRef ? TAMARA_TEXT.uiPopFeeNew : "العمولة والضريبة المتوقعة", tamaraMoneyText(e.feeH + e.vatH), false);
     if (e.smallApplied) h += tamaraSumRowHtml("رسم التسوية الصغيرة (مقترح، شامل الضريبة)", tamaraMoneyText(e.smallH), false);
-    h += tamaraSumRowHtml("المبلغ المتوقع وصوله", tamaraMoneyText(e.expectedBankH), true);
+    if (pv.expectedNegative) h += '<div class="tamara-sum-note text-rust">' + escapeHtml(TAMARA_TEXT.expectedNegative) + "</div>"; else h += tamaraSumRowHtml(withRef ? TAMARA_TEXT.uiPopExpectedNoRefund : "المبلغ المتوقع وصوله", tamaraMoneyText(e.expectedBankH), true);
+    if (pv.netNegative) return h + '<div class="tamara-sum-note text-rust">' + escapeHtml(TAMARA_TEXT.netNegative) + "</div>";
     if (!hasBank) return h + '<div class="tamara-sum-note">أدخل المبلغ الواصل إلى البنك لمقارنته بالمتوقع.</div>';
     h += tamaraSumRowHtml("المبلغ الواصل المُدخل", tamaraMoneyText(pv.bankH), true);
-    h += '<div class="tamara-sum-row"><span>الفرق عن المتوقع</span><span class="num">' + (pv.diffH > 0 ? "+" : "") + tamaraMoneyText(pv.diffH) + ' <span class="stamp ' + (pv.matched ? "stamp-green" : "stamp-amber") + ' tamara-stamp">' + (pv.matched ? "مطابق" : "غير مطابق") + "</span></span></div>";
-    if (pv.bankAboveGross) return h + '<div class="tamara-sum-note text-rust">' + escapeHtml(TAMARA_TEXT.bankAboveGross + " " + TAMARA_TEXT.bankAboveGrossHint) + "</div>";
+    if (!pv.expectedNegative) h += '<div class="tamara-sum-row"><span>الفرق عن المتوقع</span><span class="num">' + (pv.diffH > 0 ? "+" : "") + tamaraMoneyText(pv.diffH) + ' <span class="stamp ' + (pv.matched ? "stamp-green" : "stamp-amber") + ' tamara-stamp">' + (pv.matched ? "مطابق" : "غير مطابق") + "</span></span></div>";
+    if (pv.bankAboveGross) return h + '<div class="tamara-sum-note text-rust">' + escapeHtml(tamaraBankAboveText(withRef)) + "</div>";
     h += tamaraSumRowHtml("يُقيَّد رسومًا على تمارا", tamaraMoneyText(pv.feeTotalH), false);
+    if (pv.netZero) h += '<div class="tamara-sum-note">' + escapeHtml(TAMARA_TEXT.netZeroNote) + "</div>";
+    if (pv.impliedFeeRefundH > 0) h += '<div class="tamara-sum-note">' + escapeHtml(TAMARA_TEXT.impliedFeeRefund + ": " + tamaraMoneyText(pv.impliedFeeRefundH)) + "</div>";
+    if (pv.refundMaybeNotDeducted) h += '<div class="tamara-sum-note text-rust">' + escapeHtml(TAMARA_TEXT.refundMaybeNotDeducted) + "</div>";
     if (pv.needsConfirm) h += '<div class="tamara-sum-note">الفرق أكبر من 1 ر.س — سيُطلب منك تأكيده قبل الحفظ.</div>';
     return h;
+}
+
+function tamaraRefundExecutedText(r) {
+    const d = r && r.executedIso ? new Date(r.executedIso) : null;
+    if (d && !isNaN(d.getTime())) {
+        const p2 = function(v) {
+            return (v < 10 ? "0" : "") + v;
+        };
+        return p2(d.getDate()) + "/" + p2(d.getMonth() + 1) + "/" + d.getFullYear();
+    }
+    return r && r.date ? String(r.date) : "";
+}
+
+function tamaraPopRefundGroups(refundRows) {
+    const byOrder = {};
+    const out = [];
+    (refundRows || []).forEach(function(r) {
+        let g = byOrder[r.orderId];
+        if (!g) {
+            g = byOrder[r.orderId] = {
+                orderId: r.orderId,
+                orderNumber: r.orderNumber,
+                orderLabel: r.orderLabel,
+                customerName: r.customerName,
+                keys: [],
+                parts: 0,
+                partDescription: r.partDescription,
+                grossH: 0,
+                days: r.days,
+                overdue: false,
+                badAmount: false,
+                executed: tamaraRefundExecutedText(r)
+            };
+            out.push(g);
+        }
+        g.keys.push(tamaraPopKey(r));
+        g.parts += 1;
+        g.grossH += r.grossH;
+        if (r.overdue) g.overdue = true;
+        if (r.badAmount) g.badAmount = true;
+        if (r.days !== null && r.days !== undefined && (g.days === null || g.days === undefined || r.days > g.days)) {
+            g.days = r.days;
+            g.executed = tamaraRefundExecutedText(r);
+        }
+    });
+    return out;
+}
+
+function tamaraPopRefundRowHtml(g) {
+    const nSel = g.keys.filter(function(k) {
+        return tamaraPop.sel.has(k);
+    }).length;
+    const on = g.keys.length > 0 && nSel === g.keys.length;
+    const title = String(g.orderNumber || g.orderId) + (g.orderLabel ? " — " + g.orderLabel : "") + (g.customerName ? " — " + g.customerName : "");
+    const days = tamaraDaysText(g.days);
+    return '<label class="tamara-row tamara-row-refund' + (on ? " tamara-row-on" : "") + '">' + '<input type="checkbox" class="tamara-refund-check" data-tamara-refund-order="' + escapeHtml(g.orderId) + '"' + (on ? " checked" : "") + (g.badAmount ? " disabled" : "") + ">" + '<span class="tamara-row-main">' + '<span class="tamara-row-title">' + escapeHtml(title) + "</span>" + '<span class="tamara-row-meta">' + (g.parts > 1 ? "<span>" + escapeHtml(tamaraPartsCountText(g.parts)) + "</span>" : g.partDescription ? "<span>" + escapeHtml(g.partDescription) + "</span>" : "") + "<span>" + escapeHtml(g.executed ? "نُفّذ " + g.executed : "بلا تاريخ") + "</span>" + (days ? "<span>" + escapeHtml(days) + "</span>" : "") + (g.overdue ? '<span class="stamp stamp-rust tamara-stamp">' + escapeHtml(TAMARA_TEXT.uiPopRefundLate) + "</span>" : "") + (g.badAmount ? '<span class="stamp stamp-rust tamara-stamp">' + escapeHtml(TAMARA_TEXT.badAmountMark) + "</span>" : "") + "</span>" + "</span>" + '<span class="tamara-row-amounts"><span class="num tamara-row-gross tamara-row-refund-amt">' + tamaraMoneyHtml(-g.grossH) + "</span></span>" + "</label>";
+}
+
+function tamaraPopRefundsHtml(refundRows) {
+    const groups = tamaraPopRefundGroups(refundRows);
+    if (!groups.length) return "";
+    let grossH = 0;
+    groups.forEach(function(g) {
+        grossH += g.grossH;
+    });
+    const incompleteNote = !tamaraDataComplete() && !tamaraPendingList().length ? '<div class="tamara-sum-note text-rust" role="alert">' + escapeHtml(TAMARA_TEXT.dataIncomplete) + "</div>" : "";
+    return incompleteNote + '<div class="purchase-history-section-title tamara-refunds-title"><span>' + escapeHtml(TAMARA_TEXT.uiPopRefundsTitle) + " (" + groups.length + ')</span><span class="num tamara-sum-neg">' + tamaraMoneyHtml(-grossH) + "</span></div>" + '<div class="tamara-sum-note">' + escapeHtml(TAMARA_TEXT.uiPopRefundsNote) + "</div>" + groups.map(tamaraPopRefundRowHtml).join("");
 }
 
 function tamaraSettlementOrdersText(s) {
@@ -53825,8 +55027,9 @@ function tamaraPopHistoryHtml() {
     const shown = tamaraPop.histAll ? list : list.slice(0, TAMARA_HISTORY_PAGE);
     let h = head;
     shown.forEach(function(s) {
-        const n = (s.items || []).length;
-        h += '<div class="tamara-hist-row" data-tamara-settlement="' + escapeHtml(s.id) + '">' + '<div class="tamara-hist-main">' + '<span class="tamara-hist-title">' + escapeHtml(s.receivedOn || "") + (s.ref ? " — " + escapeHtml(s.ref) : "") + "</span>" + '<span class="tamara-hist-meta">الإجمالي ' + tamaraMoneyText(tamaraToHalalas(s.grossTotal)) + " · الواصل " + tamaraMoneyText(tamaraToHalalas(s.bankAmount)) + " · الرسوم " + tamaraMoneyText(tamaraToHalalas(s.feeTotal)) + " · " + tamaraCountText(n) + "</span>" + '<span class="tamara-hist-meta">الطلبيات: ' + escapeHtml(tamaraSettlementOrdersText(s)) + "</span>" + "</div>" + '<button type="button" class="btn btn-danger-ghost btn-sm" data-tamara-act="unconfirm" data-tamara-id="' + escapeHtml(s.id) + '"' + (tamaraPop.busy ? " disabled" : "") + ">إلغاء التأكيد</button>" + "</div>";
+        const n = tamaraSettlementCounts(s).payments;
+        const refundH = tamaraToHalalas(s.refundTotal);
+        h += '<div class="tamara-hist-row" data-tamara-settlement="' + escapeHtml(s.id) + '">' + '<div class="tamara-hist-main">' + '<span class="tamara-hist-title">' + escapeHtml(s.receivedOn || "") + (s.ref ? " — " + escapeHtml(s.ref) : "") + "</span>" + '<span class="tamara-hist-meta">الإجمالي ' + tamaraMoneyText(tamaraToHalalas(s.grossTotal)) + (refundH > 0 ? " · " + TAMARA_TEXT.uiHistRefunds + tamaraMoneyHtml(-refundH) : "") + " · الواصل " + tamaraMoneyText(tamaraToHalalas(s.bankAmount)) + " · الرسوم " + tamaraMoneyText(tamaraToHalalas(s.feeTotal)) + " · " + tamaraCountText(n) + "</span>" + '<span class="tamara-hist-meta">الطلبيات: ' + escapeHtml(tamaraSettlementOrdersText(s)) + "</span>" + "</div>" + '<button type="button" class="btn btn-danger-ghost btn-sm" data-tamara-act="unconfirm" data-tamara-id="' + escapeHtml(s.id) + '"' + (tamaraPop.busy ? " disabled" : "") + ">إلغاء التأكيد</button>" + "</div>";
     });
     if (!tamaraPop.histAll && list.length > TAMARA_HISTORY_PAGE) h += '<button type="button" class="btn btn-ghost tamara-hist-more" data-tamara-act="hist-more">عرض كل التحويلات (' + list.length + ")</button>";
     return h;
@@ -53842,8 +55045,11 @@ function tamaraPopSyncBusy() {
     if (!card) return;
     const btn = card.querySelector("#tamara-pop-submit");
     if (btn) {
+        const nPay = tamaraPendingList().filter(function(r) {
+            return tamaraPop.sel.has(tamaraPopKey(r));
+        }).length;
         btn.disabled = tamaraPop.busy || tamaraPop.sel.size === 0 || !tamaraDataComplete();
-        btn.textContent = tamaraPop.busy ? "جارٍ التنفيذ…" : "تأكيد الاستلام" + (tamaraPop.sel.size ? " (" + tamaraPop.sel.size + ")" : "");
+        btn.textContent = tamaraPop.busy ? "جارٍ التنفيذ…" : "تأكيد الاستلام" + (nPay ? " (" + nPay + ")" : "");
     }
     card.querySelectorAll('[data-tamara-act="unconfirm"]').forEach(function(b) {
         b.disabled = tamaraPop.busy;
@@ -53854,7 +55060,7 @@ function tamaraPopRenderSummary() {
     const card = tamaraPopCard();
     if (!card) return;
     const sum = card.querySelector("#tamara-pop-summary");
-    if (sum) sum.innerHTML = tamaraPopSummaryHtml(tamaraPendingList());
+    if (sum) sum.innerHTML = tamaraPopSummaryHtml(tamaraPendingList(), tamaraPendingRefundList());
     tamaraPopSyncBusy();
 }
 
@@ -53862,11 +55068,12 @@ function tamaraPopRenderParts() {
     const card = tamaraPopCard();
     if (!card) return;
     const rows = tamaraPendingList();
-    tamaraPopPrune(rows);
+    const refundRows = tamaraPendingRefundList();
+    tamaraPopPrune(rows, refundRows);
     const pend = card.querySelector("#tamara-pop-pending");
-    if (pend) pend.innerHTML = tamaraPopPendingHtml(rows);
+    if (pend) pend.innerHTML = tamaraPopPendingHtml(rows) + tamaraPopRefundsHtml(refundRows);
     const sum = card.querySelector("#tamara-pop-summary");
-    if (sum) sum.innerHTML = tamaraPopSummaryHtml(rows);
+    if (sum) sum.innerHTML = tamaraPopSummaryHtml(rows, refundRows);
     const hist = card.querySelector("#tamara-pop-history");
     if (hist) hist.innerHTML = tamaraPopHistoryHtml();
     tamaraPopSyncBusy();
@@ -53882,6 +55089,25 @@ function tamaraPopSyncSelection() {
         const lab = chk.closest(".tamara-row");
         if (lab) lab.classList.toggle("tamara-row-on", on);
     });
+    const groups = tamaraPopRefundGroups(tamaraPendingRefundList());
+    card.querySelectorAll(".tamara-refund-check").forEach(function(chk) {
+        const oid = chk.getAttribute("data-tamara-refund-order");
+        let g = null;
+        for (let i = 0; i < groups.length; i++) {
+            if (groups[i].orderId === oid) {
+                g = groups[i];
+                break;
+            }
+        }
+        const n = g ? g.keys.filter(function(k) {
+            return tamaraPop.sel.has(k);
+        }).length : 0;
+        const all = !!g && g.keys.length > 0 && n === g.keys.length;
+        if (chk.checked !== all) chk.checked = all;
+        chk.indeterminate = n > 0 && !all;
+        const lab = chk.closest(".tamara-row");
+        if (lab) lab.classList.toggle("tamara-row-on", all);
+    });
     const all = card.querySelector("#tamara-select-all");
     if (all) all.checked = rows.length > 0 && rows.every(function(r) {
         return r.badAmount || tamaraPop.sel.has(tamaraPopKey(r));
@@ -53896,7 +55122,7 @@ function tamaraPopFocus(id) {
 }
 
 function tamaraPopResetFields() {
-    tamaraPop.sel = new Set;
+    tamaraPop.sel = tamaraPopDefaultSel();
     tamaraPop.bank = "";
     tamaraPop.ref = "";
     tamaraPop.date = tamaraTodayRiyadhIso();
@@ -53919,7 +55145,7 @@ function openTamaraPopup() {
     if (!root) return;
     tamaraPop.gen++;
     tamaraPop.busy = false;
-    tamaraPop.sel = new Set;
+    tamaraPop.sel = tamaraPopDefaultSel();
     tamaraPop.bank = "";
     tamaraPop.ref = "";
     tamaraPop.date = tamaraTodayRiyadhIso();
@@ -53988,7 +55214,18 @@ function tamaraPopOnChange(e) {
                 tamaraPop.sel.add(tamaraPopKey(r));
             });
             if (pickable.length > TAMARA_MAX_ITEMS) showToast(TAMARA_TEXT.selectAllCap, "error");
-        } else tamaraPop.sel.clear();
+        } else rows.forEach(function(r) {
+            tamaraPop.sel.delete(tamaraPopKey(r));
+        });
+        tamaraPopSyncSelection();
+        return;
+    }
+    if (t.classList && t.classList.contains("tamara-refund-check")) {
+        const oid = t.getAttribute("data-tamara-refund-order");
+        tamaraPendingRefundList().forEach(function(r) {
+            if (r.orderId !== oid) return;
+            if (t.checked) tamaraPop.sel.add(tamaraPopKey(r)); else tamaraPop.sel.delete(tamaraPopKey(r));
+        });
         tamaraPopSyncSelection();
         return;
     }
@@ -54023,6 +55260,16 @@ function tamaraPopOnKeydown(e) {
     }
 }
 
+function tamaraBankAboveText(withRefunds) {
+    return withRefunds ? TAMARA_TEXT.bankAboveNet + " — " + TAMARA_TEXT.bankAboveNetHint : TAMARA_TEXT.bankAboveGross + " " + TAMARA_TEXT.bankAboveGrossHint;
+}
+
+function tamaraDiffConfirmTextNet(diffH, feeTotalH) {
+    const d = Math.round(Number(diffH) || 0);
+    const lead = (d > 0 ? "الواصل أعلى من المتوقع بمقدار " : "الواصل أقل من المتوقع بمقدار ") + tamaraMoneyText(Math.abs(d)) + ".";
+    return lead + " سيُقيَّد ضمن رسوم تمارا مبلغ " + tamaraMoneyText(feeTotalH) + " (إجمالي الدفعات − الاستردادات − الواصل).";
+}
+
 function tamaraPopSubmit() {
     if (tamaraPop.busy) return;
     if (!tamaraElevated()) {
@@ -54035,16 +55282,39 @@ function tamaraPopSubmit() {
         return;
     }
     const rows = tamaraPendingList();
-    tamaraPopPrune(rows);
+    const refundRows = tamaraPendingRefundList();
+    tamaraPopPrune(rows, refundRows);
     const sel = tamaraPopSelectedRows(rows);
-    if (!sel.length) {
+    const selRef = tamaraPopSelectedRows(refundRows);
+    if (!sel.length && !selRef.length) {
         showToast("حدّد دفعة واحدة على الأقل", "error");
+        return;
+    }
+    if (!sel.length) {
+        showToast(rows.length ? TAMARA_TEXT.noPayment : TAMARA_TEXT.uiPopNoPending, "error");
         return;
     }
     if (sel.some(function(r) {
         return r.badAmount;
+    }) || selRef.some(function(r) {
+        return r.badAmount;
     })) {
         showToast(TAMARA_TEXT.badAmount, "error");
+        return;
+    }
+    if (sel.length + selRef.length > TAMARA_MAX_ITEMS) {
+        showToast(TAMARA_TEXT.uiTooMany, "error");
+        return;
+    }
+    const items = sel.concat(selRef).map(function(r) {
+        return {
+            orderId: r.orderId,
+            paymentId: r.paymentId
+        };
+    });
+    const chk = tamaraSelectionCheck(items);
+    if (!chk.ok && chk.code !== "unknown") {
+        showToast(chk.message, "error");
         return;
     }
     const bankStr = String(tamaraPop.bank == null ? "" : tamaraPop.bank).trim();
@@ -54069,37 +55339,51 @@ function tamaraPopSubmit() {
     }
     const pv = tamaraConfirmPreview(sel.map(function(r) {
         return r.amount;
-    }), bankStr);
+    }), bankStr, selRef.map(function(r) {
+        return r.amount;
+    }));
     if (pv.bankAboveGross) {
-        showToast(TAMARA_TEXT.bankAboveGross + " " + TAMARA_TEXT.bankAboveGrossHint, "error");
+        showToast(tamaraBankAboveText(selRef.length > 0), "error");
         tamaraPopFocus("tamara-pop-bank");
         return;
     }
-    let selGrossH = 0;
+    let selGrossH = 0, selRefundH = 0;
     sel.forEach(function(r) {
         selGrossH += r.grossH;
     });
+    selRef.forEach(function(r) {
+        selRefundH += r.grossH;
+    });
     const payload = {
-        items: sel.map(function(r) {
-            return {
-                orderId: r.orderId,
-                paymentId: r.paymentId
-            };
-        }),
+        items: items,
         bank: bankStr,
         date: dateIso,
         ref: String(tamaraPop.ref || "").trim(),
         count: sel.length,
-        expected: tamaraHalalasToRiyal(selGrossH)
+        refundCount: selRef.length,
+        expected: tamaraHalalasToRiyal(selGrossH - selRefundH)
     };
     const warnings = [];
-    if (pv.needsConfirm) warnings.push(tamaraDiffConfirmText(pv.diffH, pv.feeTotalH));
-    tamaraReceiptDateWarnings(dateIso, sel).forEach(function(w) {
+    if (pv.needsConfirm) {
+        if (pv.expectedNegative) {
+            warnings.push(TAMARA_TEXT.uiPopExpectedNegativeConfirm + " سيُقيَّد ضمن رسوم تمارا مبلغ " + tamaraMoneyText(pv.feeTotalH) + " (إجمالي الدفعات − الاستردادات − الواصل).");
+        } else {
+            warnings.push(selRef.length ? tamaraDiffConfirmTextNet(pv.diffH, pv.feeTotalH) : tamaraDiffConfirmText(pv.diffH, pv.feeTotalH));
+            if (pv.impliedFeeRefundH > 0) warnings.push(TAMARA_TEXT.impliedFeeRefund + ".");
+            if (pv.refundMaybeNotDeducted) warnings.push(TAMARA_TEXT.refundMaybeNotDeducted + ".");
+        }
+    }
+    const dateWarns = tamaraReceiptDateWarnings(dateIso, sel, undefined, selRef);
+    dateWarns.forEach(function(w) {
+        warnings.push(w);
+    });
+    const pairWarns = tamaraPairWarnings(items);
+    pairWarns.forEach(function(w) {
         warnings.push(w);
     });
     if (warnings.length) {
         confirmAction({
-            title: pv.needsConfirm ? warnings.length === 1 ? "المبلغ الواصل يختلف عن المتوقع" : "راجع قبل التأكيد" : "راجع تاريخ الاستلام",
+            title: pairWarns.length && !pv.needsConfirm && !dateWarns.length ? TAMARA_TEXT.uiPairTitle : pv.needsConfirm ? warnings.length === 1 ? "المبلغ الواصل يختلف عن المتوقع" : "راجع قبل التأكيد" : pairWarns.length ? "راجع قبل التأكيد" : "راجع تاريخ الاستلام",
             message: warnings.join(" "),
             confirmLabel: "متابعة التأكيد",
             cancelLabel: "رجوع",
@@ -54148,10 +55432,15 @@ function tamaraPopAskUnconfirm(id) {
         tamaraPopRenderParts();
         return;
     }
-    const n = (s.items || []).length;
+    const blockDec = tamaraUnconfirmDecision(id);
+    if (blockDec.code) {
+        showToast(blockDec.code === "self" ? TAMARA_TEXT.uiUnconfirmSelf : blockDec.code === "cover" ? TAMARA_TEXT.uiUnconfirmCover : TAMARA_TEXT.uiUnconfirmBlocked, "error");
+        return;
+    }
+    const cnt = tamaraSettlementCounts(s);
     confirmAction({
         title: "إلغاء تأكيد هذا التحويل؟",
-        message: "سيُلغى تأكيد هذا التحويل: تعود الدفعات (" + n + ") إلى بانتظار تمارا، ويُحذف قيد رسوم تمارا المرتبط، وينقص الصندوق. متابعة؟",
+        message: cnt.refunds > 0 ? "سيُلغى تأكيد هذا التحويل: تعود الدفعات (" + cnt.payments + ") إلى بانتظار تمارا وتعود الاستردادات (" + cnt.refunds + ") إلى بانتظار الخصم، ويُحذف قيد رسوم تمارا المرتبط، وينقص الصندوق بمقدار المبلغ الواصل. متابعة؟" : "سيُلغى تأكيد هذا التحويل: تعود الدفعات (" + cnt.payments + ") إلى بانتظار تمارا، ويُحذف قيد رسوم تمارا المرتبط، وينقص الصندوق. متابعة؟",
         confirmLabel: "إلغاء التأكيد",
         cancelLabel: "رجوع",
         dangerous: true,
@@ -54197,6 +55486,250 @@ function tamaraUiRefresh() {
         return;
     }
     tamaraPopRenderParts();
+}
+
+function tamaraOrderTamaraRefs(order) {
+    const out = [];
+    const pays = order && order.customerPayments || [];
+    for (let i = 0; i < pays.length; i++) {
+        if (!tamaraIsPayment(pays[i])) continue;
+        const r = tamaraSanitizeRef(pays[i].tamaraRef);
+        if (r && out.indexOf(r) < 0) out.push(r);
+    }
+    return out;
+}
+
+function tamaraRefundConfirmText(order, amountH) {
+    const refs = tamaraOrderTamaraRefs(order);
+    return "استرداد " + tamaraMoneyText(amountH) + " للعميل عبر تمارا — نفّذه من بوابة شركاء تمارا (Refund) بالمبلغ نفسه قبل التأكيد." + (refs.length ? " رقم/أرقام طلب تمارا: " + refs.join("، ") + "." : "") + " لن يخرج شيء من الصندوق الآن؛ يُخصم المبلغ عند استلام تحويل تمارا القادم.";
+}
+
+function tamaraRefundWhyShown(code) {
+    return [ "exceeds", "notConfirmed", "pendingPayment", "partExcluded", "multipleRows", "badAmount", "incomplete" ].indexOf(code) >= 0;
+}
+
+function tamaraOrderRefundView(order) {
+    const v = {
+        cashPendingIds: [],
+        cashPendingAmount: 0,
+        cashDone: 0,
+        tamaraPendingIds: [],
+        tamaraPending: 0,
+        settled: [],
+        settledIds: []
+    };
+    const pays = order && order.customerPayments || [];
+    (order && order.parts || []).forEach(function(p) {
+        if (!p || !p.returned) return;
+        let adj = null;
+        for (let i = 0; i < pays.length; i++) {
+            if (pays[i] && pays[i].returnAdjustment && pays[i].linkedPartId === p.id) {
+                adj = pays[i];
+                break;
+            }
+        }
+        if (!adj) return;
+        const amt = Number(adj.amount) || 0;
+        if (tamaraIsRefund(adj)) {
+            if (tamaraRefundStatus(order.id, adj) === "confirmed") {
+                const s = tamaraSettlementForPayment(order.id, adj.id);
+                v.settled.push({
+                    on: s ? s.receivedOn || "" : "",
+                    amount: amt
+                });
+                v.settledIds.push(p.id);
+            } else {
+                v.tamaraPending += amt;
+                v.tamaraPendingIds.push(p.id);
+            }
+        } else if (p.customerRefundConfirmed) {
+            v.cashDone += amt;
+        } else {
+            v.cashPendingAmount += amt;
+            v.cashPendingIds.push(p.id);
+        }
+    });
+    v.cashPendingAmount = round2(v.cashPendingAmount);
+    v.cashDone = round2(v.cashDone);
+    v.tamaraPending = round2(v.tamaraPending);
+    return v;
+}
+
+function tamaraRefundStatusHtml(order, fmt) {
+    const money = typeof fmt === "function" ? fmt : tamaraMoneyText;
+    const v = tamaraOrderRefundView(order);
+    let h = "";
+    if (v.cashPendingIds.length) {
+        const el = tamaraRefundEligibility(order, v.cashPendingIds);
+        let tamaraBtn = "", why = "";
+        if (el.ok) {
+            tamaraBtn = '<button type="button" class="btn btn-sm btn-ghost" id="order-tamara-refund-btn">' + escapeHtml(TAMARA_TEXT.uiRefundBtn) + "</button>";
+        } else if (tamaraRefundWhyShown(el.code)) {
+            const reason = tamaraRefundWhyText(el);
+            why = '<span class="customer-refund-why">' + escapeHtml(reason) + "</span>";
+            if (el.code === "exceeds") tamaraBtn = '<button type="button" class="btn btn-sm btn-ghost" id="order-tamara-refund-btn" disabled aria-disabled="true" title="' + escapeHtml(reason) + '">' + escapeHtml(TAMARA_TEXT.uiRefundBtn) + "</button>";
+        }
+        h += '<div class="customer-refund-status customer-refund-status-pending">يجب إرجاع ' + money(v.cashPendingAmount) + " للزبون " + '<span class="customer-refund-actions"><button type="button" class="btn btn-sm btn-danger-ghost" id="order-confirm-refund-btn">تم رد المبلغ للزبون</button>' + tamaraBtn + "</span>" + why + "</div>";
+    }
+    if (v.cashDone > 0) h += '<div class="customer-refund-status customer-refund-status-done">✅ تم إرجاع ' + money(v.cashDone) + " للزبون</div>";
+    if (v.tamaraPendingIds.length) {
+        h += '<div class="customer-refund-status customer-refund-status-done">✅ تم إرجاع ' + money(v.tamaraPending) + " للزبون" + escapeHtml(TAMARA_TEXT.uiStatusPending) + " " + '<span class="customer-refund-actions"><button type="button" class="btn btn-sm btn-ghost" id="order-tamara-undo-btn">' + escapeHtml(TAMARA_TEXT.uiUndoLink) + "</button></span></div>";
+    }
+    const byDate = {};
+    const dates = [];
+    v.settled.forEach(function(s) {
+        if (byDate[s.on] === undefined) {
+            byDate[s.on] = 0;
+            dates.push(s.on);
+        }
+        byDate[s.on] += s.amount;
+    });
+    dates.forEach(function(on) {
+        h += '<div class="customer-refund-status customer-refund-status-done">✅ تم إرجاع ' + money(round2(byDate[on])) + " للزبون" + escapeHtml(TAMARA_TEXT.uiStatusSettled) + escapeHtml(on) + "</div>";
+    });
+    return h;
+}
+
+function tamaraCashWarnSuffix(order) {
+    const w = tamaraCashRefundWarning(order);
+    return w ? " " + w : "";
+}
+
+let tamaraDraftConverted = {};
+
+function tamaraDraftConvertedNote(orderId, partIds) {
+    const k = String(orderId);
+    const cur = tamaraDraftConverted[k] || [];
+    (partIds || []).forEach(function(id) {
+        if (cur.indexOf(id) < 0) cur.push(id);
+    });
+    tamaraDraftConverted[k] = cur;
+}
+
+function tamaraDraftConvertedForget(orderId, partIds) {
+    const k = String(orderId);
+    if (!tamaraDraftConverted[k]) return;
+    tamaraDraftConverted[k] = tamaraDraftConverted[k].filter(function(id) {
+        return (partIds || []).indexOf(id) < 0;
+    });
+    if (!tamaraDraftConverted[k].length) delete tamaraDraftConverted[k];
+}
+
+function tamaraDraftPurgeAfterSave(order) {
+    try {
+        const k = String(order && order.id);
+        const ids = tamaraDraftConverted[k];
+        delete tamaraDraftConverted[k];
+        if (!ids || !ids.length) return Promise.resolve();
+        const live = ids.filter(function(id) {
+            const rows = tamaraRefundRowsOfPart(order, id);
+            return rows.length === 1 && tamaraIsRefund(rows[0]);
+        });
+        return live.length ? tamaraPurgeRefundConfirmProposals(order.id, live) : Promise.resolve();
+    } catch (e) {
+        return Promise.resolve();
+    }
+}
+
+function tamaraOrderModalConvert() {
+    if (!draft) return;
+    const target = draft;
+    const ids = tamaraOrderRefundView(target).cashPendingIds;
+    const el = tamaraRefundEligibility(target, ids);
+    if (!el.ok) {
+        showToast(tamaraRefundWhyText(el) || TAMARA_TEXT.generic, "error");
+        return;
+    }
+    confirmAction({
+        title: TAMARA_TEXT.uiRefundConfirmTitle,
+        message: tamaraRefundConfirmText(target, el.neededH),
+        confirmLabel: TAMARA_TEXT.uiRefundConfirmOk,
+        cancelLabel: TAMARA_TEXT.uiBack,
+        onConfirm: function() {
+            if (!draft || draft !== target) return;
+            const nowIds = tamaraOrderRefundView(draft).cashPendingIds;
+            const res = tamaraConvertRefunds(draft, nowIds);
+            if (!res.ok) {
+                showToast(res.message || TAMARA_TEXT.generic, "error");
+                return;
+            }
+            tamaraDraftConvertedNote(draft.id, nowIds);
+            refreshPartsList();
+            updateModalTotals();
+            showToast(TAMARA_TEXT.uiRefundDraftMarked, "ok");
+        }
+    });
+}
+
+function tamaraOrderModalUndo() {
+    if (!draft) return;
+    const target = draft;
+    confirmAction({
+        title: TAMARA_TEXT.uiUndoTitle,
+        message: TAMARA_TEXT.uiUndoMsg,
+        confirmLabel: TAMARA_TEXT.uiUndoOk,
+        cancelLabel: TAMARA_TEXT.uiBack,
+        dangerous: true,
+        onConfirm: function() {
+            if (!draft || draft !== target) return;
+            const view = tamaraOrderRefundView(draft);
+            const ids = view.tamaraPendingIds.length ? view.tamaraPendingIds : view.settledIds;
+            const res = tamaraUnconvertRefunds(draft, ids);
+            if (!res.ok) {
+                showToast(res.message || TAMARA_TEXT.generic, "error");
+                return;
+            }
+            tamaraDraftConvertedForget(draft.id, ids);
+            refreshPartsList();
+            updateModalTotals();
+            showToast(TAMARA_TEXT.uiUndoMarked, "ok");
+        }
+    });
+}
+
+function tamaraRefundRowExtra(row) {
+    const out = {
+        btn: "",
+        why: ""
+    };
+    if (!row || row.tamaraOk === undefined || !tamaraElevated()) return out;
+    if (row.tamaraOk) {
+        out.btn = '<button type="button" class="btn btn-sm btn-ghost customer-refund-tamara-btn" data-order-id="' + escapeHtml(row.orderId) + '" data-part-id="' + escapeHtml(row.partId) + '">' + escapeHtml(TAMARA_TEXT.uiRefundBtn) + "</button>";
+    } else if (tamaraRefundWhyShown(row.tamaraWhy)) {
+        out.why = '<span class="customer-refund-why">' + escapeHtml(tamaraRefundWhyText({
+            code: row.tamaraWhy,
+            availableH: row.tamaraAvailableH
+        })) + "</span>";
+    }
+    return out;
+}
+
+function tamaraListRefundClick(customerId, orderId, partId) {
+    const order = (appData.orders || []).find(o => o.id === orderId);
+    const el = order ? tamaraRefundEligibility(order, [ partId ]) : {
+        ok: false,
+        code: "noRows",
+        availableH: 0
+    };
+    if (!el.ok) {
+        showToast(tamaraRefundWhyText(el) || TAMARA_TEXT.generic, "error");
+        openCustomerHistoryModal(customerId);
+        return;
+    }
+    confirmAction({
+        title: TAMARA_TEXT.uiRefundConfirmTitle,
+        message: tamaraRefundConfirmText(order, el.neededH),
+        confirmLabel: TAMARA_TEXT.uiRefundConfirmOk,
+        cancelLabel: TAMARA_TEXT.uiBack,
+        onConfirm: async function() {
+            const res = await tamaraConvertRefundsAndSave(orderId, [ partId ]);
+            if (res.ok) showToast(TAMARA_TEXT.uiRefundDone, "ok"); else if (!res.toasted) showToast(res.message || TAMARA_TEXT.generic, "error");
+            refreshCustomersList();
+            updateCustomersBadge();
+            renderKPIs();
+            openCustomerHistoryModal(customerId);
+        }
+    });
 }
 
 async function replaceAllTreasuryEntries(treasuryObj) {
@@ -55619,14 +57152,22 @@ function customerRefundsPending(customerId) {
             if (!partIsIncludedInOrder(o, p)) return;
             const adjustment = (o.customerPayments || []).find(pay => pay.returnAdjustment && pay.linkedPartId === p.id);
             if (!adjustment) return;
-            rows.push({
+            if (tamaraIsRefund(adjustment)) return;
+            const row = {
                 orderId: o.id,
                 orderNumber: o.orderNumber,
                 orderLabel: orderDisplayLabel(o),
                 partId: p.id,
                 description: p.description || "",
                 amount: round2(Number(adjustment.amount) || 0)
-            });
+            };
+            if (tamaraElevated() && tamaraOrderHasPayment(o)) {
+                const el = tamaraRefundEligibility(o, [ p.id ]);
+                row.tamaraOk = el.ok;
+                row.tamaraWhy = el.code;
+                row.tamaraAvailableH = el.availableH;
+            }
+            rows.push(row);
         });
     });
     return rows;
@@ -55646,6 +57187,7 @@ function customerRefundsPendingIndex() {
             if (!partIsIncludedInOrder(o, p)) return;
             const adjustment = (o.customerPayments || []).find(pay => pay.returnAdjustment && pay.linkedPartId === p.id);
             if (!adjustment) return;
+            if (tamaraIsRefund(adjustment)) return;
             const amount = round2(Number(adjustment.amount) || 0);
             byCustomerRaw[o.customerId] = (byCustomerRaw[o.customerId] || 0) + amount;
         });
@@ -55659,7 +57201,9 @@ function customerRefundsPendingIndex() {
 
 function customerRefundRowHtml(row) {
     const pending = pendingActionProposalFor("customer_refund_confirm", row.orderId, row.partId);
-    const actionHtml = pending ? editProposalPendingHtml(pending) : '<button type="button" class="btn btn-sm btn-primary customer-refund-confirm-btn" data-order-id="' + escapeHtml(row.orderId) + '" data-part-id="' + escapeHtml(row.partId) + '">' + (hasElevatedAccess() ? "✅ تم إرجاع المبلغ للعميل" : "📨 طلب تأكيد الإرجاع") + "</button>";
+    let actionHtml = pending ? editProposalPendingHtml(pending) : '<button type="button" class="btn btn-sm btn-primary customer-refund-confirm-btn" data-order-id="' + escapeHtml(row.orderId) + '" data-part-id="' + escapeHtml(row.partId) + '">' + (hasElevatedAccess() ? "✅ تم إرجاع المبلغ للعميل" : "📨 طلب تأكيد الإرجاع") + "</button>";
+    const tx = tamaraRefundRowExtra(row);
+    if (tx.btn || tx.why) actionHtml = '<span class="customer-refund-actions">' + actionHtml + tx.btn + "</span>" + tx.why;
     return '<div class="purchase-history-row return-receivable-row" data-open-order="' + escapeHtml(row.orderId) + '">' + '<div class="purchase-history-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(row.description) + "</span>" + '<span class="num text-rust">' + fmtMoney(row.amount) + "</span>" + "</div>" + '<div class="purchase-history-row-sub">' + "<span>" + escapeHtml(row.orderNumber || "") + (row.orderLabel ? " — " + escapeHtml(row.orderLabel) : "") + "</span>" + actionHtml + "</div>" + "</div>";
 }
 
@@ -55789,6 +57333,12 @@ function openCustomerHistoryModal(customerId) {
             openModal("edit", btn.getAttribute("data-open-order"));
         });
     });
+    root.querySelectorAll(".customer-refund-tamara-btn").forEach(btn => {
+        btn.addEventListener("click", e => {
+            e.stopPropagation();
+            tamaraListRefundClick(customerId, btn.getAttribute("data-order-id"), btn.getAttribute("data-part-id"));
+        });
+    });
     root.querySelectorAll(".customer-refund-confirm-btn").forEach(btn => {
         btn.addEventListener("click", async e => {
             e.stopPropagation();
@@ -55801,7 +57351,7 @@ function openCustomerHistoryModal(customerId) {
             }
             confirmAction({
                 title: "تأكيد إرجاع هذا المبلغ للعميل؟",
-                message: "سيتم خصم المبلغ من صافي الصندوق بتاريخ اليوم (" + todayNumeric() + ").",
+                message: "سيتم خصم المبلغ من صافي الصندوق بتاريخ اليوم (" + todayNumeric() + ")." + tamaraCashWarnSuffix((appData.orders || []).find(o => o.id === orderId)),
                 confirmLabel: "تم الإرجاع",
                 dangerous: true,
                 onConfirm: async () => {
@@ -55813,6 +57363,19 @@ function openCustomerHistoryModal(customerId) {
                         showToast("تم تأكيد رد هذا المبلغ مسبقًا", "ok");
                         openCustomerHistoryModal(customerId);
                         return;
+                    }
+                    if (typeof tamaraStaleOrderGuard === "function" && tamaraElevated() && (tamaraOrderHasPayment(order) || tamaraOrderHasRefund(order))) {
+                        const staleWhy = await tamaraStaleOrderGuard(orderId);
+                        if (!staleWhy && (appData.orders || []).find(o => o.id === orderId) !== order) {
+                            showToast(TAMARA_TEXT.staleOrder, "error");
+                            openCustomerHistoryModal(customerId);
+                            return;
+                        }
+                        if (staleWhy) {
+                            showToast(staleWhy, "error");
+                            openCustomerHistoryModal(customerId);
+                            return;
+                        }
                     }
                     const prevUpdatedAt = order.updatedAt;
                     const prevStamp = partStampSnapshot(part, "customerRefundConfirmed");
