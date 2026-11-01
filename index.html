@@ -57699,14 +57699,15 @@ async function tamaraDepRun(st, fn, okText) {
 async function tamaraDepSaveForm(st) {
     if (!st || partPaySheet !== st || st.busy || partPayInFlight || !st.depForm) return;
     const f = st.depForm;
-    const v = tamaraDepositValidate({
+    const draft = {
         orderId: st.orderId,
         bucket: st.usedFlag ? "used" : "new",
         supplier: f.supplier,
         amount: f.amount,
         paidOn: f.paidOn,
         note: f.note
-    });
+    };
+    const v = tamaraDepositValidate(draft);
     if (!v.ok) {
         f.error = v.message;
         const msg = document.getElementById("dep-msg");
@@ -57715,7 +57716,7 @@ async function tamaraDepSaveForm(st) {
     }
     f.error = "";
     const res = await tamaraDepRun(st, function() {
-        return tamaraDepositCreateAndSave(v);
+        return tamaraDepositCreateAndSave(draft);
     }, TAMARA_DEP_TEXT.created);
     if (partPaySheet !== st) return;
     if (res && (res.ok || res.code === "TIMEOUT")) st.depForm = null;
