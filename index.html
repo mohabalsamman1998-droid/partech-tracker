@@ -88831,6 +88831,76 @@ function locEnhanceCustomerRows() {
     } catch (e) {
         console.error("LOC install:", e);
     }
+})();
+
+function locChipText(sel) {
+    const o = sel && sel.options && sel.options[sel.selectedIndex];
+    const t = o ? String(o.text || "") : "";
+    return sel && sel.value === "none" ? "توجيه ▾" : "← " + t.replace(/^موجّه إلى:\s*/, "");
+}
+
+function locChipSync(chip) {
+    const sel = chip.querySelector("select"), t = chip.querySelector(".qr-chip-t");
+    if (!sel || !t) return;
+    const txt = locChipText(sel);
+    if (t.textContent !== txt) t.textContent = txt;
+    chip.classList.toggle("qr-chip-on", sel.value !== "none");
+    chip.classList.toggle("qr-chip-off", !!sel.disabled);
+}
+
+function locDecorateQuotes() {
+    try {
+        document.querySelectorAll(".quote-row .qr-strip > select.qr-dest").forEach(function(sel) {
+            const strip = sel.parentNode;
+            const chip = document.createElement("span");
+            chip.className = "qr-chip";
+            chip.innerHTML = '<span class="qr-chip-t"></span>';
+            strip.insertBefore(chip, sel);
+            chip.appendChild(sel);
+            locChipSync(chip);
+        });
+        document.querySelectorAll(".quote-row .qr-chip").forEach(locChipSync);
+        [ "quotes-table-container", "scrapyard-quotes-items-list" ].forEach(function(id) {
+            const box = document.getElementById(id);
+            if (!box) return;
+            let n = 0;
+            box.querySelectorAll(".quote-row:not(.supply-req-row)").forEach(function(r) {
+                const vis = !r.classList.contains("trk-off") && !r.hidden && getComputedStyle(r).display !== "none";
+                const alt = vis && n++ % 2 === 1;
+                if (r.classList.contains("loc-alt") !== alt) r.classList.toggle("loc-alt", alt);
+            });
+        });
+    } catch (e) {
+        console.warn("locDecorateQuotes:", e);
+    }
+}
+
+(function locQuotesUiInstall() {
+    try {
+        const st = document.createElement("style");
+        st.textContent = ":root{--loc-teal:#2EC4B6;--loc-teal-bg:rgba(46,196,182,.14);--loc-teal-tx:#7FE0D6;--loc-teal-bd:rgba(46,196,182,.5);--loc-steel-bg:rgba(150,170,195,.16);--loc-steel-tx:#BCCBDB;--loc-steel-bd:rgba(150,170,195,.45);}" + ':root[data-theme="light"]{--loc-teal:#0F766E;--loc-teal-bg:#D3EEEB;--loc-teal-tx:#0A4A45;--loc-teal-bd:#8FD0C9;--loc-steel-bg:#E3E9EF;--loc-steel-tx:#33475A;--loc-steel-bd:#B7C5D3;}' + ".quote-row.loc-alt{background:color-mix(in srgb,var(--surface-2) 89%,var(--text) 11%);}" + ".quote-row.qr-row .qr-strip{order:20;flex:0 0 auto;padding:0;border-top:0;}" + ".qr-chip{position:relative;display:inline-flex;align-items:center;height:30px;box-sizing:border-box;padding:0 12px;border-radius:999px;border:1px dashed var(--text-faint);color:var(--text-dim);font-size:13px;font-weight:700;white-space:nowrap;}" + ".qr-chip.qr-chip-on{border-style:solid;border-color:var(--green-line);background:var(--green-dim);color:var(--green);}" + ".qr-chip.qr-chip-off{opacity:.6;}" + ".qr-chip select.qr-dest{position:absolute;inset:0;width:100%;height:100%;min-height:0;padding:0;border:0;opacity:0;font-size:16px;cursor:pointer;}" + "#orders-view.trk-s1 #quotes-table-container .quote-row.quote-row-ready{border-inline-start-color:var(--loc-teal);}" + ".trk-qtag,.trk-qappr{color:var(--loc-teal-tx);background:var(--loc-teal-bg);border-color:var(--loc-teal-bd);}" + '.smx-ret-chip,:root[data-theme="light"] .smx-ret-chip{color:var(--loc-steel-tx);background:var(--loc-steel-bg);border-color:var(--loc-steel-bd);}';
+        document.head.appendChild(st);
+        new MutationObserver(function() {
+            locDecorateQuotes();
+        }).observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: [ "class", "style", "hidden" ]
+        });
+        document.addEventListener("change", function(e) {
+            const c = e.target && e.target.closest ? e.target.closest(".qr-chip") : null;
+            if (c) {
+                locChipSync(c);
+                setTimeout(function() {
+                    locChipSync(c);
+                }, 500);
+            }
+        }, true);
+        locDecorateQuotes();
+    } catch (e) {
+        console.error("LOC quotes ui install:", e);
+    }
 })();</script>
 </body>
 </html>
