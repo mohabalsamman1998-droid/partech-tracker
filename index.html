@@ -10969,6 +10969,24 @@ function orderNumberSortKey(order) {
     return m ? parseInt(m[1], 10) : 0;
 }
 
+function orderListSortTime(order) {
+    const t = v => {
+        const n = v ? Date.parse(v) : NaN;
+        return isNaN(n) ? 0 : n;
+    };
+    let best = Math.max(t(order && order.suppliedAt), t(order && order.createdAt));
+    try {
+        orderActiveParts(order).forEach(p => {
+            if (p) best = Math.max(best, t(p.suppliedAt));
+        });
+    } catch (e) {}
+    return best;
+}
+
+function orderListSortCmp(a, b) {
+    return orderListSortTime(b) - orderListSortTime(a) || orderNumberSortKey(b) - orderNumberSortKey(a);
+}
+
 function isNarrowLayout() {
     return window.matchMedia("(max-width:760px)").matches;
 }
@@ -10990,7 +11008,7 @@ function renderTable() {
         if (typeof smxBeforeOrdersRender === "function") smxBeforeOrdersRender();
         const custIdx = buildCustomerByIdIndex();
         const includeArchived = currentFilter !== "all" || (currentSearch || "").trim() !== "";
-        const orders = appData.orders.filter(o => !o.isQuote).filter(o => includeArchived || !o.archived).filter(o => orderMatchesFilterAndSearch(o, currentFilter, currentSearch, custIdx)).sort((a, b) => orderNumberSortKey(b) - orderNumberSortKey(a));
+        const orders = appData.orders.filter(o => !o.isQuote).filter(o => includeArchived || !o.archived).filter(o => orderMatchesFilterAndSearch(o, currentFilter, currentSearch, custIdx)).sort(orderListSortCmp);
         if (orders.length === 0) {
             el.innerHTML = '<div class="empty-state">' + '<div class="empty-title">لا توجد طلبيات مطابقة</div>' + '<div class="empty-sub">جرّب تغيير الفلتر أو ابدأ طلبية جديدة من الأعلى.</div>' + "</div>";
             return;
