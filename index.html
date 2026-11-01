@@ -15129,18 +15129,42 @@ function costSplitPayStatusHtml(pi, view) {
     return bits.length ? bits.join("") : "—";
 }
 
+function costSplitDepositView(d, usedFlag, vw) {
+    try {
+        if (typeof tamaraDepositUiOn !== "function" || typeof tamaraDepositOpenSumH !== "function" || !tamaraDepositUiOn()) return null;
+        const openH = tamaraDepositOpenSumH(d.id, usedFlag ? "used" : "new");
+        if (!(openH > 0)) return null;
+        const dueH = Math.round((Number(vw.due) || 0) * 100), advH = Math.round((Number(vw.adv) || 0) * 100);
+        const useDue = Math.min(openH, dueH), useAdv = Math.min(openH - useDue, advH), covH = useDue + useAdv;
+        return {
+            openH: openH,
+            excessH: openH - covH,
+            view: {
+                paid: round2((Number(vw.paid) || 0) + covH / 100),
+                due: (dueH - useDue) / 100,
+                adv: (advH - useAdv) / 100,
+                cost: vw.cost
+            }
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
 function costSplitPayBoxHtml(d, pi, id, label) {
     const single = id === "cost-split-btn";
     const usedFlag = id === "cost-split-btn-scrapyard" ? true : id === "cost-split-btn-new" ? false : orderSingleBucket(orderTotals(d)) !== "new";
     const title = single ? "دفعات المورد" : usedFlag ? "دفعات التشليح" : "دفعات الجديد";
     const vw = partPayBucketView(d, pi);
+    const dv = costSplitDepositView(d, usedFlag, vw), sv = dv ? dv.view : vw;
     const batches = orderPayBatches(d, usedFlag);
     const unconfirmed = !d.confirmed && !pi.paidIds.length;
     const payable = pi.dueIds.length + pi.advIds.length > 0;
     const rows = batches.map(b => '<div class="supplier-pay-row">' + '<span class="num">' + partPayMoney(b.amount) + "</span>" + '<span class="supplier-pay-meta">' + (fmtDayMonth(b.atIso) ? fmtDayMonth(b.atIso) + " · " : "") + escapeHtml(PAY_PAYER_LABELS[b.payer] || "") + " · " + supplyCountGen(b.partIds.length) + "</span>" + "</div>").join("");
     const stat = (lbl, cls, v) => "<span>" + lbl + '<span class="num ' + cls + '">' + partPayMoney(v) + "</span></span>";
-    const stats = (pi.paidAmt > 0 ? stat("المسدّد للمورد", "text-green", vw.paid) : "") + (pi.dueAmt > 0 ? stat("مستحق الآن", "text-amber", vw.due) : "") + (pi.advAmt > 0 ? stat("لم يصل بعد", "", vw.adv) : "");
-    return '<div class="supplier-pay-block">' + '<div class="pay-block-head"><span class="pay-block-titles"><span class="section-title">' + title + '</span><span class="pay-block-tag pay-tag-out">صادرة</span></span><span class="supplier-pay-total">المجموع<span class="num"' + (single ? ' id="cost-split-display"' : "") + ">" + partPayMoney(vw.cost) + "</span></span></div>" + '<div class="supplier-pay-list">' + (rows || '<p class="supplier-pay-empty">لا توجد دفعات مسجّلة بعد.</p>') + "</div>" + '<div class="supplier-pay-actions">' + (payable || unconfirmed ? '<button type="button" id="' + id + '" class="btn btn-ghost btn-sm"' + (unconfirmed ? " disabled" : "") + ">+ إضافة دفعة</button>" : "") + (batches.length ? '<button type="button" id="' + id + '-batches" class="btn btn-ghost btn-sm">الدفعات (' + batches.length + ")</button>" : "") + (unconfirmed ? '<span class="supplier-pay-note">أكّد الطلبية أولًا لتسجيل السداد</span>' : "") + "</div>" + (stats ? '<div class="payment-summary-row">' + stats + "</div>" : "") + (pi.corruptIds && pi.corruptIds.length ? '<div class="supplier-pay-note" style="margin-top:8px;color:var(--amber);">' + partPayCorruptChipText(pi.corruptIds.length) + "</div>" : "") + "</div>";
+    const stats = (pi.paidAmt > 0 || dv && sv.paid > 0 ? stat(dv ? "المسدّد (يشمل العربون)" : "المسدّد للمورد", "text-green", sv.paid) : "") + (pi.dueAmt > 0 && !(dv && sv.due <= 0) ? stat("مستحق الآن", "text-amber", sv.due) : "") + (pi.advAmt > 0 && !(dv && sv.adv <= 0) ? stat("لم يصل بعد", "", sv.adv) : "");
+    const depNote = dv ? '<div class="supplier-pay-note" style="margin-top:8px;">عربون مفتوح −' + partPayMoney(dv.openH / 100) + " (يُخصم تلقائيًا عند السداد)" + (dv.excessH > 0 ? " · عربون زائد " + partPayMoney(dv.excessH / 100) : "") + "</div>" : "";
+    return '<div class="supplier-pay-block">' + '<div class="pay-block-head"><span class="pay-block-titles"><span class="section-title">' + title + '</span><span class="pay-block-tag pay-tag-out">صادرة</span></span><span class="supplier-pay-total">المجموع<span class="num"' + (single ? ' id="cost-split-display"' : "") + ">" + partPayMoney(vw.cost) + "</span></span></div>" + '<div class="supplier-pay-list">' + (rows || '<p class="supplier-pay-empty">لا توجد دفعات مسجّلة بعد.</p>') + "</div>" + '<div class="supplier-pay-actions">' + (payable || unconfirmed ? '<button type="button" id="' + id + '" class="btn btn-ghost btn-sm"' + (unconfirmed ? " disabled" : "") + ">+ إضافة دفعة</button>" : "") + (batches.length ? '<button type="button" id="' + id + '-batches" class="btn btn-ghost btn-sm">الدفعات (' + batches.length + ")</button>" : "") + (unconfirmed ? '<span class="supplier-pay-note">أكّد الطلبية أولًا لتسجيل السداد</span>' : "") + "</div>" + (stats ? '<div class="payment-summary-row">' + stats + "</div>" : "") + depNote + (pi.corruptIds && pi.corruptIds.length ? '<div class="supplier-pay-note" style="margin-top:8px;color:var(--amber);">' + partPayCorruptChipText(pi.corruptIds.length) + "</div>" : "") + "</div>";
 }
 
 function costSplitLegacyBoxHtml(d, t, usedFlag) {
