@@ -1659,13 +1659,13 @@
   /* SLIM END css */
   /* GRADE BEGIN css */
   /* اختيار جودة القطع (GRADE): أصلي / درجة أولى / المتوفر — أزرار بخلفية صلبة (قاعدة المالك: لا أزرار شفافة فوق الخلفية السوداء) وبحجم لمس مريح */
-  .grade-order{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 10px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);}
+  .grade-order{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 8px;padding:4px 8px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);}
   .grade-order-label{font-size:12.5px;font-weight:700;color:var(--text-dim);}
   .grade-order-note{font-size:12px;font-weight:700;color:var(--amber);}
   .grade-pick{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:6px 0 2px;}
   .grade-pick-label{font-size:11px;font-weight:700;color:var(--text-dim);}
   .grade-pills{display:flex;gap:8px;flex-wrap:wrap;}
-  .grade-pill{border:1px solid var(--border);background:var(--surface-2);color:var(--text);min-height:36px;padding:6px 14px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;font-family:'Cairo',sans-serif;line-height:1.4;}
+  .grade-pill{border:1px solid var(--border);background:var(--surface-2);color:var(--text);min-height:30px;padding:3px 12px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;font-family:'Cairo',sans-serif;line-height:1.4;}
   .grade-pill.on{background:var(--green);border-color:var(--green);color:var(--green-ink);}
   .grade-pill.on::before{content:'✓ ';}
   .grade-missing{outline:2px solid var(--rust);outline-offset:3px;border-radius:8px;}
@@ -2438,6 +2438,15 @@
   .trk-pr:not(.trk-prq) .part-row > .part-desc-wrap > .part-pn-block{order:3;}
   .trk-pr:not(.trk-prq) .part-row > .part-desc-wrap > .used-badge,.trk-pr:not(.trk-prq) .part-row > .part-desc-wrap > .part-condition-badge{order:4;flex:0 0 auto;}
   .trk-pr:not(.trk-prq) .part-row > .part-desc-wrap > .trk-pnbtn{order:5;flex:0 0 auto;}
+  /* طيّ التفاصيل (طلب المالك 2026-11-02): بالصف ثلاثة أشياء ظاهرة (العنوان + السعر + مدة التوفر) والباقي خلف «تفاصيل»؛ يبقى الصف مفتوحًا تلقائيًا إن كانت فيه جودة ناقصة (حارس الحفظ يعلّمها) */
+  .trk-pr .part-row:not(.trk-fold-open):not(:has(.grade-missing)) .grade-pick,.trk-pr .part-row:not(.trk-fold-open):not(:has(.grade-missing)) .part-pn-block,.trk-pr .part-row:not(.trk-fold-open):not(:has(.grade-missing)) .trk-pnbtn,.trk-pr .part-row:not(.trk-fold-open):not(:has(.grade-missing)) .trk-catbtn,.trk-pr .part-row:not(.trk-fold-open):not(:has(.grade-missing)) .trk-notebtn,.trk-pr .part-row:not(.trk-fold-open):not(:has(.grade-missing)) .part-media-btn,.trk-pr .part-row:not(.trk-fold-open):not(:has(.grade-missing)) .media-strip,.trk-pr .part-row:not(.trk-fold-open):not(:has(.grade-missing)) .part-notes-input,.trk-pr .part-row:not(.trk-fold-open):not(:has(.grade-missing)) .part-purchasing-notes-input{display:none !important;}
+  .trk-pr .trk-foldbtn{align-self:flex-end;margin-inline-start:auto;min-height:36px;padding:0 8px;font:inherit;font-size:13px;font-weight:600;color:var(--text-dim);background:none;border:0;cursor:pointer;white-space:nowrap;}
+  .trk-pr .part-row.trk-fold-open .trk-foldbtn{color:var(--text);}
+  .trk-pr .part-row > .part-desc-wrap > button.used-badge,.trk-pr .part-row > .part-desc-wrap > span.used-badge{min-height:32px;padding:0 10px;}
+  .trk-prq .part-row > .part-desc-wrap > button.used-badge,.trk-prq .part-row > .part-desc-wrap > span.used-badge{order:1;}
+  .trk-pr:not(.trk-prq) .part-row > .part-desc-wrap > .part-desc-row{flex:1 1 0;}
+  .trk-pr:not(.trk-prq) .part-row > .part-desc-wrap > button.used-badge,.trk-pr:not(.trk-prq) .part-row > .part-desc-wrap > span.used-badge{order:1;}
+  .trk-pr .grade-pick .grade-pill{min-height:32px;padding:2px 12px;}
   /* إنزال الواجهة بالجوال فقط (طلب المالك 2026-10-30: «المنطقة فوق صعبة الوصول» بكل الصفحات؛ آيفون 16): مقدار واحد --trk-rs يُنزل ترويسة التطبيق (فيُنزل زر القائمة وما تحته) وترويسات الصفحات الثابتة وحوارات النوافذ وترويسة القائمة؛ سطح المكتب بلا تغيير */
   .trk-rsbox{display:none;}
   @media (max-width:600px){
@@ -83537,6 +83546,674 @@ function pdocVOnInput(ev) {
     }
 })();
 
+const LOC_MAX = 500;
+
+const LOC_HOST_RE = /^https?:\/\/(?:maps\.app\.goo\.gl\/|goo\.gl\/maps\/|(?:www\.)?google\.(?:[a-z]{2,3}|com?\.[a-z]{2})\/maps(?:[\/?]|$)|maps\.google\.(?:[a-z]{2,3}|com?\.[a-z]{2})(?:[\/?]|$))/i;
+
+const LOC_BARE_RE = /^(?:maps\.app\.goo\.gl\/|goo\.gl\/maps\/|(?:www\.)?google\.(?:[a-z]{2,3}|com?\.[a-z]{2})\/maps|maps\.google\.(?:[a-z]{2,3}|com?\.[a-z]{2}))/i;
+
+let locPending = null;
+
+function locDigits(s) {
+    return String(s == null ? "" : s).replace(/[٠-٩]/g, function(d) {
+        return String(d.charCodeAt(0) - 1632);
+    }).replace(/[۰-۹]/g, function(d) {
+        return String(d.charCodeAt(0) - 1776);
+    });
+}
+
+function locParseUrl(raw) {
+    let s = locDigits(raw).trim();
+    if (!s) return {
+        ok: true,
+        url: ""
+    };
+    const c = /^(-?\d{1,3}(?:\.\d+)?)\s*[,،;]\s*(-?\d{1,3}(?:\.\d+)?)$/.exec(s);
+    if (c) {
+        if (Math.abs(Number(c[1])) <= 90 && Math.abs(Number(c[2])) <= 180) return {
+            ok: true,
+            url: "https://www.google.com/maps?q=" + c[1] + "," + c[2]
+        };
+        return {
+            ok: false,
+            error: "الإحداثيات خارج النطاق الصحيح"
+        };
+    }
+    const m = /https?:\/\/[^\s<>"']+/i.exec(s);
+    if (m) s = m[0].replace(/[.,،)\]]+$/, ""); else if (LOC_BARE_RE.test(s)) s = "https://" + s;
+    if (!LOC_HOST_RE.test(s) || s.length > LOC_MAX) return {
+        ok: false,
+        error: "الرابط ليس رابط خرائط جوجل صحيحًا"
+    };
+    return {
+        ok: true,
+        url: s
+    };
+}
+
+function locClean(loc) {
+    if (!loc || typeof loc !== "object") return null;
+    const url = typeof loc.url === "string" ? loc.url.trim() : "";
+    const text = typeof loc.text === "string" ? loc.text.trim() : "";
+    if (!url && !text) return null;
+    return {
+        url: url,
+        text: text
+    };
+}
+
+function locFromCustomer(c) {
+    return c ? locClean({
+        url: c.locationUrl,
+        text: c.locationText
+    }) : null;
+}
+
+function locCustomerOf(order) {
+    try {
+        const id = order && order.customerId;
+        if (!id) return null;
+        return (appData.customers || []).find(function(c) {
+            return c && c.id === id;
+        }) || null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function locOf(order) {
+    const own = order ? locClean(order.supplyLocation) : null;
+    if (own) return own;
+    try {
+        if (typeof currentUserRole !== "undefined" && currentUserRole === "full") return locFromCustomer(locCustomerOf(order));
+    } catch (e) {}
+    return null;
+}
+
+function locShareText(loc, orderNumber) {
+    const l = locClean(loc);
+    if (!l) return "";
+    return [ "📍 موقع التوصيل" + (orderNumber ? " — طلبية " + orderNumber : ""), l.text, l.url ].filter(Boolean).join("\n");
+}
+
+function locWaUrl(text) {
+    const t = String(text == null ? "" : text);
+    return t.trim() ? "https://wa.me/?text=" + encodeURIComponent(t) : "";
+}
+
+function locShareBtnHtml(kind, id) {
+    return '<button type="button" class="btn btn-sm btn-ghost loc-share-btn" data-loc-share="' + kind + '" data-loc-id="' + escapeHtml(id) + '" title="مشاركة الموقع عبر واتساب أو النسخ">📍 مشاركة الموقع</button>';
+}
+
+function locLinkHtml(loc) {
+    return loc && loc.url ? '<a class="loc-link" href="' + escapeHtml(loc.url) + '" target="_blank" rel="noopener noreferrer" dir="ltr">🗺️ فتح في خرائط جوجل</a>' : "";
+}
+
+function locBlockHtml(loc, shareHtml) {
+    return '<span class="loc-text">' + (loc.text ? escapeHtml(loc.text) : '<span class="loc-dim">موقع على الخرائط</span>') + "</span>" + locLinkHtml(loc) + (shareHtml || "");
+}
+
+function locFindOrder(id) {
+    try {
+        const a = (appData.orders || []).find(function(o) {
+            return o && o.id === id;
+        });
+        if (a) return a;
+    } catch (e) {}
+    try {
+        const l = (scrapyardSharedState.supplyRequests || []).find(function(o) {
+            return o && o.id === id;
+        });
+        if (l) return l;
+    } catch (e) {}
+    return null;
+}
+
+function locShareDialog(loc, orderNumber) {
+    const root = document.getElementById("confirm-root");
+    const text = locShareText(loc, orderNumber);
+    if (!root || !text) return false;
+    const wa = locWaUrl(text);
+    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true" data-loc-dialog>' + '<div class="modal-title">📍 مشاركة الموقع</div>' + '<pre class="loc-preview" dir="auto">' + escapeHtml(text) + "</pre>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" data-loc-close>إغلاق</button>' + '<button type="button" class="btn btn-ghost" data-loc-copy>📋 نسخ فقط</button>' + (wa ? '<a class="btn btn-primary" href="' + escapeHtml(wa) + '" target="_blank" rel="noopener" data-loc-wa>💬 واتساب</a>' : "") + "</div>" + "</div>" + "</div>";
+    root.classList.add("modal-open");
+    const close = function() {
+        root.innerHTML = "";
+        root.classList.remove("modal-open");
+    };
+    root.querySelector("[data-close-confirm]").addEventListener("click", function(e) {
+        if (e.target.hasAttribute("data-close-confirm")) close();
+    });
+    root.querySelector("[data-loc-close]").addEventListener("click", close);
+    root.querySelector("[data-loc-copy]").addEventListener("click", function() {
+        Promise.resolve(writeTextToClipboard(text)).then(function(ok) {
+            showToast(ok ? "تم نسخ الموقع" : "تعذر النسخ التلقائي، انسخ النص يدويًا", ok ? "ok" : "error");
+            if (ok) close();
+        });
+    });
+    const waEl = root.querySelector("[data-loc-wa]");
+    if (waEl) waEl.addEventListener("click", function() {
+        setTimeout(close, 250);
+    });
+    return true;
+}
+
+function locOnClick(e) {
+    const t = e && e.target && e.target.closest ? e.target.closest("[data-loc-share]") : null;
+    if (!t) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+        const kind = t.getAttribute("data-loc-share"), id = t.getAttribute("data-loc-id");
+        if (kind === "cust") {
+            const c = (appData.customers || []).find(function(x) {
+                return x && x.id === id;
+            });
+            const loc = locFromCustomer(c);
+            if (!loc) {
+                showToast("لا يوجد موقع محفوظ لهذا العميل", "error");
+                return;
+            }
+            locShareDialog(loc, "");
+            return;
+        }
+        const o = locFindOrder(id), loc = locOf(o);
+        if (!loc) {
+            showToast("لا يوجد موقع محدد لهذه الطلبية", "error");
+            return;
+        }
+        locShareDialog(loc, o.orderNumber);
+    } catch (err) {
+        console.error("LOC share:", err);
+    }
+}
+
+async function locSaveCustomer(cid, url, text) {
+    if (typeof sb === "undefined" || !sb || !cid) throw new Error("NO_DB");
+    const r = await withTimeout(sb.from("customers").update({
+        location_url: url || null,
+        location_text: text || null
+    }).eq("id", cid).select("id"), 15e3, "customers location");
+    if (r.error) throw r.error;
+    if (!r.data || !r.data.length) {
+        const e = new Error("NO_ROW");
+        e.code = "NO_ROW";
+        throw e;
+    }
+    const c = (appData.customers || []).find(function(x) {
+        return x && x.id === cid;
+    });
+    if (c) {
+        c.locationUrl = url || "";
+        c.locationText = text || "";
+    }
+    return true;
+}
+
+function locSaveError(e) {
+    return e && e.code === "NO_ROW" ? "العميل غير موجود — ربما حُذف من مكان آخر" : typeof friendlyErrorText === "function" ? friendlyErrorText(e) : "تعذر الحفظ";
+}
+
+function locChooseDialog(order, onDone) {
+    const root = document.getElementById("confirm-root");
+    if (!root) return false;
+    const cust = locCustomerOf(order), saved = locFromCustomer(cust);
+    let mode = saved ? "saved" : "other";
+    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true" data-loc-choose>' + '<div class="modal-title">موقع التوصيل</div>' + '<p class="modal-sub">اختر الموقع الذي سيظهر للمشتريات مع طلب التوريد.</p>' + '<div class="suptgt-chips" role="group" aria-label="موقع التوصيل">' + '<button type="button" class="chip' + (mode === "saved" ? " chip-active" : "") + '" data-loc-mode="saved" aria-pressed="' + (mode === "saved") + '"' + (saved ? "" : " disabled") + ">موقع العميل المحفوظ</button>" + '<button type="button" class="chip' + (mode === "other" ? " chip-active" : "") + '" data-loc-mode="other" aria-pressed="' + (mode === "other") + '">إدخال موقع آخر</button>' + "</div>" + '<div class="loc-pane" data-loc-pane="saved"' + (mode === "saved" ? "" : ' style="display:none"') + ">" + (saved ? '<div class="loc-saved">' + locBlockHtml(saved, "") + "</div>" : "") + "</div>" + '<div class="loc-pane" data-loc-pane="other"' + (mode === "other" ? "" : ' style="display:none"') + ">" + (saved ? "" : '<p class="modal-sub">لا يوجد موقع محفوظ لهذا العميل — أدخل موقع التوصيل.</p>') + '<label class="field"><span class="field-label">رابط خرائط جوجل أو الإحداثيات</span><input type="text" id="loc-dlg-url" dir="ltr" autocomplete="off" placeholder="https://maps.app.goo.gl/…  أو  24.7136,46.6753"></label>' + '<label class="field"><span class="field-label">أو وصف الموقع</span><input type="text" id="loc-dlg-text" maxlength="' + LOC_MAX + '" autocomplete="off" placeholder="الحي، الشارع، أقرب معلم"></label>' + (cust ? '<label class="supplier-kind-toggle"><input type="checkbox" id="loc-dlg-save"><span>حفظه في معلومات العميل' + (saved ? " (يستبدل الموقع المحفوظ)" : "") + "</span></label>" : "") + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" data-loc-cancel>إلغاء</button>' + '<button type="button" class="btn btn-primary" data-loc-ok>متابعة</button>' + "</div>" + "</div>" + "</div>";
+    root.classList.add("modal-open");
+    const close = function() {
+        root.innerHTML = "";
+        root.classList.remove("modal-open");
+    };
+    root.querySelector("[data-close-confirm]").addEventListener("click", function(e) {
+        if (e.target.hasAttribute("data-close-confirm")) close();
+    });
+    root.querySelector("[data-loc-cancel]").addEventListener("click", close);
+    root.querySelectorAll("[data-loc-mode]").forEach(function(b) {
+        b.addEventListener("click", function() {
+            if (b.disabled) return;
+            mode = b.getAttribute("data-loc-mode");
+            root.querySelectorAll("[data-loc-mode]").forEach(function(x) {
+                const on = x.getAttribute("data-loc-mode") === mode;
+                x.classList.toggle("chip-active", on);
+                x.setAttribute("aria-pressed", on ? "true" : "false");
+            });
+            root.querySelectorAll("[data-loc-pane]").forEach(function(p) {
+                p.style.display = p.getAttribute("data-loc-pane") === mode ? "" : "none";
+            });
+        });
+    });
+    root.querySelector("[data-loc-ok]").addEventListener("click", function() {
+        let loc = null, save = false;
+        if (mode === "saved" && saved) {
+            loc = saved;
+        } else {
+            const pu = locParseUrl(root.querySelector("#loc-dlg-url").value);
+            if (!pu.ok) {
+                showToast(pu.error, "error");
+                return;
+            }
+            const text = String(root.querySelector("#loc-dlg-text").value || "").trim();
+            if (!pu.url && !text) {
+                showToast("أدخل رابط خرائط جوجل أو وصفًا للموقع", "error");
+                return;
+            }
+            if (text.length > LOC_MAX) {
+                showToast("وصف الموقع طويل جدًا", "error");
+                return;
+            }
+            loc = {
+                url: pu.url,
+                text: text
+            };
+            const sv = root.querySelector("#loc-dlg-save");
+            save = !!(sv && sv.checked && cust);
+        }
+        close();
+        onDone({
+            orderId: order.id,
+            loc: loc,
+            save: save,
+            customerId: cust ? cust.id : "",
+            ts: Date.now()
+        });
+    });
+    const first = root.querySelector(mode === "other" ? "#loc-dlg-url" : "[data-loc-ok]");
+    if (first && first.focus) first.focus();
+    return true;
+}
+
+function locSetLocal(orderId, loc) {
+    [ (appData.orders || []).find(function(o) {
+        return o && o.id === orderId;
+    }), typeof draft !== "undefined" && draft && draft.id === orderId ? draft : null ].forEach(function(o) {
+        if (!o) return;
+        if (loc) o.supplyLocation = loc; else delete o.supplyLocation;
+    });
+}
+
+function locAfterSend(orderId, seen, pend) {
+    const loc = seen && typeof seen === "object" ? locClean(seen.supplyLocation) : null;
+    locSetLocal(orderId, loc);
+    if (pend.save && pend.customerId && loc && seen.changed !== false) {
+        locSaveCustomer(pend.customerId, loc.url, loc.text).then(function() {
+            showToast("حُفظ الموقع في معلومات العميل", "ok");
+            try {
+                if (typeof refreshCustomersViewIfOpen === "function") refreshCustomersViewIfOpen();
+            } catch (e) {}
+        }, function(e) {
+            console.error("LOC save customer:", e);
+            showToast("أُرسل الطلب لكن تعذّر حفظ الموقع في معلومات العميل: " + locSaveError(e), "error");
+        });
+    }
+}
+
+function locWithRpc(orderId, run) {
+    const pend = locPending;
+    if (!pend || pend.orderId !== orderId || Date.now() - pend.ts > 6e5 || typeof sb === "undefined" || !sb || typeof sb.rpc !== "function") return run();
+    locPending = null;
+    const had = Object.prototype.hasOwnProperty.call(sb, "rpc"), orig = sb.rpc, arg = {};
+    if (pend.loc.url) arg.url = pend.loc.url;
+    if (pend.loc.text) arg.text = pend.loc.text;
+    let p, seen = null;
+    sb.rpc = function(name, args) {
+        const rest = Array.prototype.slice.call(arguments, 2);
+        if (!(name === "set_order_supply_request" && args && args.p_order_id === orderId && args.p_requested)) return orig.apply(sb, arguments);
+        return Promise.resolve(orig.apply(sb, [ name, Object.assign({}, args, {
+            p_location: arg
+        }) ].concat(rest))).then(function(res) {
+            try {
+                const d = res && res.data;
+                seen = Array.isArray(d) ? d[0] : d;
+            } catch (e) {}
+            return res;
+        });
+    };
+    try {
+        p = run();
+    } finally {
+        if (had) sb.rpc = orig; else delete sb.rpc;
+    }
+    return Promise.resolve(p).then(function(ok) {
+        if (ok) {
+            try {
+                locAfterSend(orderId, seen, pend);
+            } catch (e) {
+                console.error("LOC after send:", e);
+            }
+        }
+        return ok;
+    });
+}
+
+function locAddFieldsHtml() {
+    return '<label class="field"><span class="field-label">موقع العميل — رابط خرائط جوجل أو الإحداثيات</span><input type="text" id="quick-customer-loc-url" dir="ltr" autocomplete="off" placeholder="https://maps.app.goo.gl/…  أو  24.7136,46.6753"></label>' + '<label class="field"><span class="field-label">أو وصف الموقع</span><input type="text" id="quick-customer-loc-text" maxlength="' + LOC_MAX + '" autocomplete="off" placeholder="الحي، الشارع، أقرب معلم"></label>' + '<p class="modal-sub" style="margin:-4px 0 0;">الموقع مطلوب: أدخل أحد الحقلين على الأقل.</p>';
+}
+
+let locAddPending = null;
+
+function locOnAddSaveClick(e) {
+    const btn = e && e.target && e.target.closest ? e.target.closest("#quick-customer-save-btn") : null;
+    if (!btn) return;
+    const u = document.getElementById("quick-customer-loc-url"), t = document.getElementById("quick-customer-loc-text");
+    if (!u || !t) return;
+    const pu = locParseUrl(u.value), text = String(t.value || "").trim();
+    let err = "";
+    if (!pu.ok) err = pu.error; else if (!pu.url && !text) err = "موقع العميل مطلوب: أدخل رابط خرائط جوجل أو وصفًا للموقع";
+    if (err) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        showToast(err, "error");
+        return;
+    }
+    locAddPending = {
+        url: pu.url,
+        text: text
+    };
+}
+
+function locEnhanceCustomerRows() {
+    try {
+        document.querySelectorAll("#customers-items-list .task-item-row[data-customer-id]").forEach(function(row) {
+            if (row.querySelector(".loc-cust")) return;
+            const cid = row.getAttribute("data-customer-id");
+            const c = (appData.customers || []).find(function(x) {
+                return x && x.id === cid;
+            });
+            if (!c) return;
+            const editing = typeof editingCustomers !== "undefined" && !!editingCustomers[cid];
+            const loc = locFromCustomer(c);
+            if (!editing) {
+                row.insertAdjacentHTML("beforeend", '<div class="purchase-history-row-sub loc-cust">📍 ' + (loc ? locBlockHtml(loc, locShareBtnHtml("cust", c.id)) : '<span class="loc-dim">لم يُسجَّل موقع لهذا العميل</span>') + "</div>");
+                return;
+            }
+            row.insertAdjacentHTML("beforeend", '<div class="loc-cust loc-cust-edit">' + '<label class="field"><span class="field-label">📍 رابط خرائط جوجل أو الإحداثيات</span><input type="text" class="loc-cust-url" dir="ltr" autocomplete="off" value="' + escapeHtml(c.locationUrl || "") + '" placeholder="https://maps.app.goo.gl/…"></label>' + '<label class="field"><span class="field-label">وصف الموقع</span><input type="text" class="loc-cust-text" maxlength="' + LOC_MAX + '" autocomplete="off" value="' + escapeHtml(c.locationText || "") + '" placeholder="الحي، الشارع، أقرب معلم"></label>' + '<button type="button" class="btn btn-sm btn-ghost loc-cust-save">💾 حفظ الموقع</button>' + "</div>");
+            const box = row.querySelector(".loc-cust-edit"), btn = box.querySelector(".loc-cust-save");
+            btn.addEventListener("click", async function(ev) {
+                ev.stopPropagation();
+                const pu = locParseUrl(box.querySelector(".loc-cust-url").value), text = String(box.querySelector(".loc-cust-text").value || "").trim();
+                if (!pu.ok) {
+                    showToast(pu.error, "error");
+                    return;
+                }
+                if (btn.disabled) return;
+                btn.disabled = true;
+                try {
+                    await locSaveCustomer(cid, pu.url, text);
+                    box.querySelector(".loc-cust-url").value = pu.url;
+                    showToast("تم حفظ موقع العميل", "ok");
+                } catch (err) {
+                    console.error("LOC save:", err);
+                    showToast("تعذر حفظ الموقع: " + locSaveError(err), "error");
+                } finally {
+                    btn.disabled = false;
+                }
+            });
+        });
+    } catch (e) {
+        console.warn("locEnhanceCustomerRows:", e);
+    }
+}
+
+(function locInstall() {
+    try {
+        const st = document.createElement("style");
+        st.textContent = ".loc-share-btn{white-space:nowrap;padding:2px 10px;font-size:12px;}" + ".loc-text{overflow-wrap:anywhere;min-width:0;}" + ".loc-dim{color:var(--text-dim);}" + ".loc-link{color:var(--supply-req);font-weight:700;font-size:12.5px;text-decoration:none;white-space:nowrap;}" + ".loc-preview{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin:10px 0 0;font:inherit;font-size:13.5px;color:var(--text);}" + ".loc-saved,.loc-view-body,.loc-cust{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0;}" + ".loc-saved{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin-top:10px;}" + ".loc-view{margin:10px 0 0;padding:10px 12px;border:1px solid var(--supply-req-line);border-radius:var(--radius-sm);background:var(--supply-req-dim);}" + ".loc-pane{margin-top:10px;}" + ".loc-cust{flex:0 0 100%;margin-top:6px;}" + ".loc-cust-edit{align-items:flex-end;}" + ".loc-cust-edit .field{flex:1 1 160px;min-width:0;margin:0;}" + ".loc-cust-edit input{width:100%;box-sizing:border-box;}" + ".cell-order .loc-share-btn{margin-inline-start:6px;}";
+        document.head.appendChild(st);
+        document.addEventListener("click", locOnClick, true);
+        document.addEventListener("click", locOnAddSaveClick, true);
+        if (typeof taxinvCustomerCols === "function") {
+            const prev = globalThis.taxinvCustomerCols;
+            taxinvCustomerCols = function(r) {
+                const o = prev.apply(this, arguments) || {};
+                try {
+                    if (r && typeof r === "object" && ("location_url" in r || "location_text" in r)) {
+                        o.locationUrl = r.location_url || "";
+                        o.locationText = r.location_text || "";
+                    }
+                } catch (e2) {}
+                return o;
+            };
+        }
+        if (typeof bindCustomerRowEvents === "function") {
+            const prev = globalThis.bindCustomerRowEvents;
+            bindCustomerRowEvents = function() {
+                const r = prev.apply(this, arguments);
+                locEnhanceCustomerRows();
+                return r;
+            };
+        }
+        if (typeof openQuickAddCustomerModal === "function") {
+            const prev = globalThis.openQuickAddCustomerModal;
+            openQuickAddCustomerModal = function(onSaved, prefill) {
+                locAddPending = null;
+                const wrapped = function(c) {
+                    const pend = locAddPending;
+                    locAddPending = null;
+                    const done = function() {
+                        try {
+                            if (onSaved) onSaved(c);
+                        } catch (e) {
+                            console.error("LOC onSaved:", e);
+                        }
+                    };
+                    if (!pend || !c || !pend.url && !pend.text) {
+                        done();
+                        return;
+                    }
+                    locSaveCustomer(c.id, pend.url, pend.text).then(done, function(err) {
+                        console.error("LOC new customer location:", err);
+                        showToast("أُضيف العميل لكن تعذّر حفظ موقعه: " + locSaveError(err) + " — أضِفه من تعديل العميل", "error");
+                        done();
+                    });
+                };
+                const r = prev.call(this, wrapped, prefill);
+                try {
+                    const foot = document.querySelector("#confirm-root #quick-customer-save-btn");
+                    const actions = foot && foot.closest ? foot.closest(".modal-footer-actions") : null;
+                    if (actions && !document.getElementById("quick-customer-loc-url")) actions.insertAdjacentHTML("beforebegin", locAddFieldsHtml());
+                } catch (e) {
+                    console.error("LOC add fields:", e);
+                }
+                return r;
+            };
+        }
+        if (typeof onSupplyRequestButtonClick === "function") {
+            const prev = globalThis.onSupplyRequestButtonClick;
+            onSupplyRequestButtonClick = function() {
+                const self = this, args = arguments;
+                try {
+                    locPending = null;
+                    if (typeof draft !== "undefined" && draft && !draft.supplyRequestedAt && typeof currentUserRole !== "undefined" && currentUserRole === "full" && !supplyRequestBlockReason(draft)) {
+                        if (locChooseDialog(draft, function(p) {
+                            locPending = p;
+                            prev.apply(self, args);
+                        })) return;
+                    }
+                } catch (e) {
+                    console.error("LOC supply button:", e);
+                }
+                return prev.apply(self, args);
+            };
+        }
+        if (typeof setOrderSupplyRequest === "function") {
+            const prev = globalThis.setOrderSupplyRequest;
+            setOrderSupplyRequest = function(orderId, on) {
+                const self = this, args = arguments;
+                if (!on) return prev.apply(self, args);
+                return locWithRpc(orderId, function() {
+                    return prev.apply(self, args);
+                });
+            };
+        }
+        if (typeof suptgtSendRequest === "function") {
+            const prev = globalThis.suptgtSendRequest;
+            suptgtSendRequest = function(orderId) {
+                const self = this, args = arguments;
+                return locWithRpc(orderId, function() {
+                    return prev.apply(self, args);
+                });
+            };
+        }
+        if (typeof setSupplyRequestFields === "function") {
+            const prev = globalThis.setSupplyRequestFields;
+            setSupplyRequestFields = function(order, on) {
+                const r = prev.apply(this, arguments);
+                try {
+                    if (order && !on) delete order.supplyLocation;
+                } catch (e) {}
+                return r;
+            };
+        }
+        if (typeof adoptLiveSupplyRequest === "function") {
+            const prev = globalThis.adoptLiveSupplyRequest;
+            adoptLiveSupplyRequest = function(target, live) {
+                const changed = prev.apply(this, arguments);
+                try {
+                    if (target && live) {
+                        const before = JSON.stringify(target.supplyLocation || null), nv = live.supplyRequestedAt ? locClean(live.supplyLocation) : null;
+                        if (nv) target.supplyLocation = nv; else delete target.supplyLocation;
+                        if (JSON.stringify(target.supplyLocation || null) !== before) return true;
+                    }
+                } catch (e) {}
+                return changed;
+            };
+        }
+        const addBtn = function(h, o) {
+            const loc = locOf(o);
+            if (!h || !o || !loc) return h;
+            const i = h.lastIndexOf("</div>");
+            return i < 0 ? h : h.slice(0, i) + locShareBtnHtml("order", o.id) + h.slice(i);
+        };
+        if (typeof smxSupplyBadgeHtml === "function") {
+            const prev = globalThis.smxSupplyBadgeHtml;
+            smxSupplyBadgeHtml = function(order) {
+                const h = prev.apply(this, arguments);
+                try {
+                    return h && order && locOf(order) ? h + locShareBtnHtml("order", order.id) : h;
+                } catch (e) {
+                    return h;
+                }
+            };
+        }
+        if (typeof smxSupplyRowHtml === "function") {
+            const prev = globalThis.smxSupplyRowHtml;
+            smxSupplyRowHtml = function(o) {
+                const h = prev.apply(this, arguments);
+                try {
+                    return addBtn(h, o);
+                } catch (e) {
+                    return h;
+                }
+            };
+        }
+        if (typeof supplyRequestRowHtml === "function") {
+            const prev = globalThis.supplyRequestRowHtml;
+            supplyRequestRowHtml = function(o) {
+                const h = prev.apply(this, arguments);
+                try {
+                    return addBtn(h, o);
+                } catch (e) {
+                    return h;
+                }
+            };
+        }
+        if (typeof supplyRequestViewHtml === "function") {
+            const prev = globalThis.supplyRequestViewHtml;
+            supplyRequestViewHtml = function(order) {
+                const h = prev.apply(this, arguments);
+                try {
+                    const loc = order ? locOf(order) : null;
+                    if (!h || !loc) return h;
+                    const anchor = '<p class="modal-sub" style="margin-top:10px;">للاطلاع فقط', i = h.lastIndexOf(anchor);
+                    return i < 0 ? h : h.slice(0, i) + '<div class="loc-view"><div class="field-label">📍 موقع التوصيل</div><div class="loc-view-body">' + locBlockHtml(loc, locShareBtnHtml("order", order.id)) + "</div></div>" + h.slice(i);
+                } catch (e) {
+                    return h;
+                }
+            };
+        }
+    } catch (e) {
+        console.error("LOC install:", e);
+    }
+})();
+
+function locChipText(sel) {
+    const o = sel && sel.options && sel.options[sel.selectedIndex];
+    const t = o ? String(o.text || "") : "";
+    return sel && sel.value === "none" ? "توجيه ▾" : "← " + t.replace(/^موجّه إلى:\s*/, "");
+}
+
+function locChipSync(chip) {
+    const sel = chip.querySelector("select"), t = chip.querySelector(".qr-chip-t");
+    if (!sel || !t) return;
+    const txt = locChipText(sel);
+    if (t.textContent !== txt) t.textContent = txt;
+    chip.classList.toggle("qr-chip-on", sel.value !== "none");
+    chip.classList.toggle("qr-chip-off", !!sel.disabled);
+}
+
+function locDecorateQuotes() {
+    try {
+        document.querySelectorAll(".quote-row .qr-strip > select.qr-dest").forEach(function(sel) {
+            const strip = sel.parentNode;
+            const chip = document.createElement("span");
+            chip.className = "qr-chip";
+            chip.innerHTML = '<span class="qr-chip-t"></span>';
+            strip.insertBefore(chip, sel);
+            chip.appendChild(sel);
+            locChipSync(chip);
+        });
+        document.querySelectorAll(".quote-row .qr-chip").forEach(locChipSync);
+        [ "quotes-table-container", "scrapyard-quotes-items-list" ].forEach(function(id) {
+            const box = document.getElementById(id);
+            if (!box) return;
+            let n = 0;
+            box.querySelectorAll(".quote-row:not(.supply-req-row)").forEach(function(r) {
+                const vis = !r.classList.contains("trk-off") && !r.hidden && getComputedStyle(r).display !== "none";
+                const alt = vis && n++ % 2 === 1;
+                if (r.classList.contains("loc-alt") !== alt) r.classList.toggle("loc-alt", alt);
+            });
+        });
+    } catch (e) {
+        console.warn("locDecorateQuotes:", e);
+    }
+}
+
+let LOC_HIDE_QUOTE_ARROWS = true;
+
+(function locQuotesUiInstall() {
+    try {
+        if (typeof canReorderQuotePriority === "function") {
+            const prevCan = globalThis.canReorderQuotePriority;
+            canReorderQuotePriority = function() {
+                return LOC_HIDE_QUOTE_ARROWS ? false : prevCan.apply(this, arguments);
+            };
+        }
+        const st = document.createElement("style");
+        st.textContent = ".quote-row.loc-alt{background:color-mix(in srgb,var(--surface-2) 89%,var(--text) 11%);}" + ".quote-row.qr-row .qr-strip{order:20;flex:0 0 auto;padding:0;border-top:0;}" + ".qr-chip{position:relative;display:inline-flex;align-items:center;height:30px;box-sizing:border-box;padding:0 12px;border-radius:999px;border:1px dashed var(--text-faint);color:var(--text-dim);font-size:13px;font-weight:700;white-space:nowrap;}" + ".qr-chip.qr-chip-on{border-style:solid;border-color:var(--green-line);background:var(--green-dim);color:var(--green);}" + ".qr-chip.qr-chip-off{opacity:.6;}" + ":root .quote-row .quote-priority-btn:not(:hover),:root .quote-row .icon-btn:not(:hover){background:var(--surface);border-color:color-mix(in srgb,var(--text) 30%,var(--surface-2));}" + ".qr-chip select.qr-dest{position:absolute;inset:0;width:100%;height:100%;min-height:0;padding:0;border:0;opacity:0;font-size:16px;cursor:pointer;}";
+        document.head.appendChild(st);
+        new MutationObserver(function() {
+            locDecorateQuotes();
+        }).observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: [ "class", "style", "hidden" ]
+        });
+        document.addEventListener("change", function(e) {
+            const c = e.target && e.target.closest ? e.target.closest(".qr-chip") : null;
+            if (c) {
+                locChipSync(c);
+                setTimeout(function() {
+                    locChipSync(c);
+                }, 500);
+            }
+        }, true);
+        locDecorateQuotes();
+    } catch (e) {
+        console.error("LOC quotes ui install:", e);
+    }
+})();
+
 const TRACK_STAGES = [ {
     id: 1,
     label: "طلبات التسعير",
@@ -86134,6 +86811,8 @@ function trackOrderModalApply() {
     }
 }
 
+const trackPrFold = new Set;
+
 const trackPrOpen = {
     cat: new Set,
     note: new Set,
@@ -86191,6 +86870,21 @@ function trackPrApply() {
                     if (pb) pb.remove();
                     row.classList.remove("trk-pn-open");
                 }
+                const fpg = row.querySelector(":scope > .part-price-group");
+                let fb = row.querySelector(".trk-foldbtn");
+                if (fpg) {
+                    const fon = trackPrFold.has(key);
+                    if (!fb) fb = trackPrBtn("trk-foldbtn", "");
+                    if (fb.parentNode !== fpg) fpg.appendChild(fb);
+                    row.classList.toggle("trk-fold-open", fon);
+                    const more = !!row.querySelector(".part-notes-input:not(:placeholder-shown), .part-purchasing-notes-input:not(:placeholder-shown), .part-pn-input:not(:placeholder-shown), .media-strip:not(:empty)");
+                    const ft = "تفاصيل " + (fon ? "▴" : "▾") + (more && !fon ? " •" : "");
+                    if (fb.textContent !== ft) fb.textContent = ft;
+                    fb.setAttribute("aria-expanded", fon ? "true" : "false");
+                } else {
+                    if (fb) fb.remove();
+                    row.classList.remove("trk-fold-open");
+                }
                 if (pair[1]) {
                     const ni = row.querySelector(".part-notes-input, .part-purchasing-notes-input");
                     let nb = row.querySelector(".trk-notebtn");
@@ -86217,6 +86911,14 @@ function trackPrApply() {
 
 function trackPrOff() {
     trackPrDead = true;
+    try {
+        [].slice.call(document.querySelectorAll(".trk-foldbtn")).forEach(function(b) {
+            b.remove();
+        });
+        [].slice.call(document.querySelectorAll(".trk-fold-open")).forEach(function(r) {
+            r.classList.remove("trk-fold-open");
+        });
+    } catch (e) {}
     try {
         if (trackPrObs) trackPrObs.disconnect();
     } catch (e) {}
@@ -86295,10 +86997,27 @@ function trackPrOnClick(ev) {
     }
 }
 
+function trackPrFoldClick(ev) {
+    if (trackPrDead) return;
+    try {
+        const b = ev.target && ev.target.closest ? ev.target.closest(".trk-foldbtn") : null;
+        if (!b) return;
+        const row = b.closest(".part-row"), list = row ? row.closest(".trk-pr") : null;
+        if (!list) return;
+        ev.preventDefault();
+        const fk = trackPrKey(list, row);
+        if (trackPrFold.has(fk)) trackPrFold.delete(fk); else trackPrFold.add(fk);
+        trackPrApply();
+    } catch (e) {
+        console.error("TRACK part row fold:", e);
+    }
+}
+
 function trackPrInstall() {
     try {
         if (typeof document === "undefined" || !document.getElementById || !document.addEventListener) return;
         document.addEventListener("click", trackPrOnClick);
+        document.addEventListener("click", trackPrFoldClick);
         const root = document.getElementById("modal-root");
         if (root && typeof MutationObserver === "function") {
             trackPrObs = new MutationObserver(function() {
@@ -86307,6 +87026,7 @@ function trackPrInstall() {
                     trackPrOpen.note.clear();
                     trackPrOpen.pn.clear();
                 }
+                if (!root.querySelector("#quote-parts-list, #parts-list")) trackPrFold.clear();
             });
             trackPrObs.observe(root, {
                 childList: true,
@@ -88240,674 +88960,6 @@ function trackTaskAddBind(key) {
         document.addEventListener("change", trackOnChange, false);
     } catch (e) {
         console.error("TRACK install:", e);
-    }
-})();
-
-const LOC_MAX = 500;
-
-const LOC_HOST_RE = /^https?:\/\/(?:maps\.app\.goo\.gl\/|goo\.gl\/maps\/|(?:www\.)?google\.(?:[a-z]{2,3}|com?\.[a-z]{2})\/maps(?:[\/?]|$)|maps\.google\.(?:[a-z]{2,3}|com?\.[a-z]{2})(?:[\/?]|$))/i;
-
-const LOC_BARE_RE = /^(?:maps\.app\.goo\.gl\/|goo\.gl\/maps\/|(?:www\.)?google\.(?:[a-z]{2,3}|com?\.[a-z]{2})\/maps|maps\.google\.(?:[a-z]{2,3}|com?\.[a-z]{2}))/i;
-
-let locPending = null;
-
-function locDigits(s) {
-    return String(s == null ? "" : s).replace(/[٠-٩]/g, function(d) {
-        return String(d.charCodeAt(0) - 1632);
-    }).replace(/[۰-۹]/g, function(d) {
-        return String(d.charCodeAt(0) - 1776);
-    });
-}
-
-function locParseUrl(raw) {
-    let s = locDigits(raw).trim();
-    if (!s) return {
-        ok: true,
-        url: ""
-    };
-    const c = /^(-?\d{1,3}(?:\.\d+)?)\s*[,،;]\s*(-?\d{1,3}(?:\.\d+)?)$/.exec(s);
-    if (c) {
-        if (Math.abs(Number(c[1])) <= 90 && Math.abs(Number(c[2])) <= 180) return {
-            ok: true,
-            url: "https://www.google.com/maps?q=" + c[1] + "," + c[2]
-        };
-        return {
-            ok: false,
-            error: "الإحداثيات خارج النطاق الصحيح"
-        };
-    }
-    const m = /https?:\/\/[^\s<>"']+/i.exec(s);
-    if (m) s = m[0].replace(/[.,،)\]]+$/, ""); else if (LOC_BARE_RE.test(s)) s = "https://" + s;
-    if (!LOC_HOST_RE.test(s) || s.length > LOC_MAX) return {
-        ok: false,
-        error: "الرابط ليس رابط خرائط جوجل صحيحًا"
-    };
-    return {
-        ok: true,
-        url: s
-    };
-}
-
-function locClean(loc) {
-    if (!loc || typeof loc !== "object") return null;
-    const url = typeof loc.url === "string" ? loc.url.trim() : "";
-    const text = typeof loc.text === "string" ? loc.text.trim() : "";
-    if (!url && !text) return null;
-    return {
-        url: url,
-        text: text
-    };
-}
-
-function locFromCustomer(c) {
-    return c ? locClean({
-        url: c.locationUrl,
-        text: c.locationText
-    }) : null;
-}
-
-function locCustomerOf(order) {
-    try {
-        const id = order && order.customerId;
-        if (!id) return null;
-        return (appData.customers || []).find(function(c) {
-            return c && c.id === id;
-        }) || null;
-    } catch (e) {
-        return null;
-    }
-}
-
-function locOf(order) {
-    const own = order ? locClean(order.supplyLocation) : null;
-    if (own) return own;
-    try {
-        if (typeof currentUserRole !== "undefined" && currentUserRole === "full") return locFromCustomer(locCustomerOf(order));
-    } catch (e) {}
-    return null;
-}
-
-function locShareText(loc, orderNumber) {
-    const l = locClean(loc);
-    if (!l) return "";
-    return [ "📍 موقع التوصيل" + (orderNumber ? " — طلبية " + orderNumber : ""), l.text, l.url ].filter(Boolean).join("\n");
-}
-
-function locWaUrl(text) {
-    const t = String(text == null ? "" : text);
-    return t.trim() ? "https://wa.me/?text=" + encodeURIComponent(t) : "";
-}
-
-function locShareBtnHtml(kind, id) {
-    return '<button type="button" class="btn btn-sm btn-ghost loc-share-btn" data-loc-share="' + kind + '" data-loc-id="' + escapeHtml(id) + '" title="مشاركة الموقع عبر واتساب أو النسخ">📍 مشاركة الموقع</button>';
-}
-
-function locLinkHtml(loc) {
-    return loc && loc.url ? '<a class="loc-link" href="' + escapeHtml(loc.url) + '" target="_blank" rel="noopener noreferrer" dir="ltr">🗺️ فتح في خرائط جوجل</a>' : "";
-}
-
-function locBlockHtml(loc, shareHtml) {
-    return '<span class="loc-text">' + (loc.text ? escapeHtml(loc.text) : '<span class="loc-dim">موقع على الخرائط</span>') + "</span>" + locLinkHtml(loc) + (shareHtml || "");
-}
-
-function locFindOrder(id) {
-    try {
-        const a = (appData.orders || []).find(function(o) {
-            return o && o.id === id;
-        });
-        if (a) return a;
-    } catch (e) {}
-    try {
-        const l = (scrapyardSharedState.supplyRequests || []).find(function(o) {
-            return o && o.id === id;
-        });
-        if (l) return l;
-    } catch (e) {}
-    return null;
-}
-
-function locShareDialog(loc, orderNumber) {
-    const root = document.getElementById("confirm-root");
-    const text = locShareText(loc, orderNumber);
-    if (!root || !text) return false;
-    const wa = locWaUrl(text);
-    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true" data-loc-dialog>' + '<div class="modal-title">📍 مشاركة الموقع</div>' + '<pre class="loc-preview" dir="auto">' + escapeHtml(text) + "</pre>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" data-loc-close>إغلاق</button>' + '<button type="button" class="btn btn-ghost" data-loc-copy>📋 نسخ فقط</button>' + (wa ? '<a class="btn btn-primary" href="' + escapeHtml(wa) + '" target="_blank" rel="noopener" data-loc-wa>💬 واتساب</a>' : "") + "</div>" + "</div>" + "</div>";
-    root.classList.add("modal-open");
-    const close = function() {
-        root.innerHTML = "";
-        root.classList.remove("modal-open");
-    };
-    root.querySelector("[data-close-confirm]").addEventListener("click", function(e) {
-        if (e.target.hasAttribute("data-close-confirm")) close();
-    });
-    root.querySelector("[data-loc-close]").addEventListener("click", close);
-    root.querySelector("[data-loc-copy]").addEventListener("click", function() {
-        Promise.resolve(writeTextToClipboard(text)).then(function(ok) {
-            showToast(ok ? "تم نسخ الموقع" : "تعذر النسخ التلقائي، انسخ النص يدويًا", ok ? "ok" : "error");
-            if (ok) close();
-        });
-    });
-    const waEl = root.querySelector("[data-loc-wa]");
-    if (waEl) waEl.addEventListener("click", function() {
-        setTimeout(close, 250);
-    });
-    return true;
-}
-
-function locOnClick(e) {
-    const t = e && e.target && e.target.closest ? e.target.closest("[data-loc-share]") : null;
-    if (!t) return;
-    e.preventDefault();
-    e.stopPropagation();
-    try {
-        const kind = t.getAttribute("data-loc-share"), id = t.getAttribute("data-loc-id");
-        if (kind === "cust") {
-            const c = (appData.customers || []).find(function(x) {
-                return x && x.id === id;
-            });
-            const loc = locFromCustomer(c);
-            if (!loc) {
-                showToast("لا يوجد موقع محفوظ لهذا العميل", "error");
-                return;
-            }
-            locShareDialog(loc, "");
-            return;
-        }
-        const o = locFindOrder(id), loc = locOf(o);
-        if (!loc) {
-            showToast("لا يوجد موقع محدد لهذه الطلبية", "error");
-            return;
-        }
-        locShareDialog(loc, o.orderNumber);
-    } catch (err) {
-        console.error("LOC share:", err);
-    }
-}
-
-async function locSaveCustomer(cid, url, text) {
-    if (typeof sb === "undefined" || !sb || !cid) throw new Error("NO_DB");
-    const r = await withTimeout(sb.from("customers").update({
-        location_url: url || null,
-        location_text: text || null
-    }).eq("id", cid).select("id"), 15e3, "customers location");
-    if (r.error) throw r.error;
-    if (!r.data || !r.data.length) {
-        const e = new Error("NO_ROW");
-        e.code = "NO_ROW";
-        throw e;
-    }
-    const c = (appData.customers || []).find(function(x) {
-        return x && x.id === cid;
-    });
-    if (c) {
-        c.locationUrl = url || "";
-        c.locationText = text || "";
-    }
-    return true;
-}
-
-function locSaveError(e) {
-    return e && e.code === "NO_ROW" ? "العميل غير موجود — ربما حُذف من مكان آخر" : typeof friendlyErrorText === "function" ? friendlyErrorText(e) : "تعذر الحفظ";
-}
-
-function locChooseDialog(order, onDone) {
-    const root = document.getElementById("confirm-root");
-    if (!root) return false;
-    const cust = locCustomerOf(order), saved = locFromCustomer(cust);
-    let mode = saved ? "saved" : "other";
-    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true" data-loc-choose>' + '<div class="modal-title">موقع التوصيل</div>' + '<p class="modal-sub">اختر الموقع الذي سيظهر للمشتريات مع طلب التوريد.</p>' + '<div class="suptgt-chips" role="group" aria-label="موقع التوصيل">' + '<button type="button" class="chip' + (mode === "saved" ? " chip-active" : "") + '" data-loc-mode="saved" aria-pressed="' + (mode === "saved") + '"' + (saved ? "" : " disabled") + ">موقع العميل المحفوظ</button>" + '<button type="button" class="chip' + (mode === "other" ? " chip-active" : "") + '" data-loc-mode="other" aria-pressed="' + (mode === "other") + '">إدخال موقع آخر</button>' + "</div>" + '<div class="loc-pane" data-loc-pane="saved"' + (mode === "saved" ? "" : ' style="display:none"') + ">" + (saved ? '<div class="loc-saved">' + locBlockHtml(saved, "") + "</div>" : "") + "</div>" + '<div class="loc-pane" data-loc-pane="other"' + (mode === "other" ? "" : ' style="display:none"') + ">" + (saved ? "" : '<p class="modal-sub">لا يوجد موقع محفوظ لهذا العميل — أدخل موقع التوصيل.</p>') + '<label class="field"><span class="field-label">رابط خرائط جوجل أو الإحداثيات</span><input type="text" id="loc-dlg-url" dir="ltr" autocomplete="off" placeholder="https://maps.app.goo.gl/…  أو  24.7136,46.6753"></label>' + '<label class="field"><span class="field-label">أو وصف الموقع</span><input type="text" id="loc-dlg-text" maxlength="' + LOC_MAX + '" autocomplete="off" placeholder="الحي، الشارع، أقرب معلم"></label>' + (cust ? '<label class="supplier-kind-toggle"><input type="checkbox" id="loc-dlg-save"><span>حفظه في معلومات العميل' + (saved ? " (يستبدل الموقع المحفوظ)" : "") + "</span></label>" : "") + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" data-loc-cancel>إلغاء</button>' + '<button type="button" class="btn btn-primary" data-loc-ok>متابعة</button>' + "</div>" + "</div>" + "</div>";
-    root.classList.add("modal-open");
-    const close = function() {
-        root.innerHTML = "";
-        root.classList.remove("modal-open");
-    };
-    root.querySelector("[data-close-confirm]").addEventListener("click", function(e) {
-        if (e.target.hasAttribute("data-close-confirm")) close();
-    });
-    root.querySelector("[data-loc-cancel]").addEventListener("click", close);
-    root.querySelectorAll("[data-loc-mode]").forEach(function(b) {
-        b.addEventListener("click", function() {
-            if (b.disabled) return;
-            mode = b.getAttribute("data-loc-mode");
-            root.querySelectorAll("[data-loc-mode]").forEach(function(x) {
-                const on = x.getAttribute("data-loc-mode") === mode;
-                x.classList.toggle("chip-active", on);
-                x.setAttribute("aria-pressed", on ? "true" : "false");
-            });
-            root.querySelectorAll("[data-loc-pane]").forEach(function(p) {
-                p.style.display = p.getAttribute("data-loc-pane") === mode ? "" : "none";
-            });
-        });
-    });
-    root.querySelector("[data-loc-ok]").addEventListener("click", function() {
-        let loc = null, save = false;
-        if (mode === "saved" && saved) {
-            loc = saved;
-        } else {
-            const pu = locParseUrl(root.querySelector("#loc-dlg-url").value);
-            if (!pu.ok) {
-                showToast(pu.error, "error");
-                return;
-            }
-            const text = String(root.querySelector("#loc-dlg-text").value || "").trim();
-            if (!pu.url && !text) {
-                showToast("أدخل رابط خرائط جوجل أو وصفًا للموقع", "error");
-                return;
-            }
-            if (text.length > LOC_MAX) {
-                showToast("وصف الموقع طويل جدًا", "error");
-                return;
-            }
-            loc = {
-                url: pu.url,
-                text: text
-            };
-            const sv = root.querySelector("#loc-dlg-save");
-            save = !!(sv && sv.checked && cust);
-        }
-        close();
-        onDone({
-            orderId: order.id,
-            loc: loc,
-            save: save,
-            customerId: cust ? cust.id : "",
-            ts: Date.now()
-        });
-    });
-    const first = root.querySelector(mode === "other" ? "#loc-dlg-url" : "[data-loc-ok]");
-    if (first && first.focus) first.focus();
-    return true;
-}
-
-function locSetLocal(orderId, loc) {
-    [ (appData.orders || []).find(function(o) {
-        return o && o.id === orderId;
-    }), typeof draft !== "undefined" && draft && draft.id === orderId ? draft : null ].forEach(function(o) {
-        if (!o) return;
-        if (loc) o.supplyLocation = loc; else delete o.supplyLocation;
-    });
-}
-
-function locAfterSend(orderId, seen, pend) {
-    const loc = seen && typeof seen === "object" ? locClean(seen.supplyLocation) : null;
-    locSetLocal(orderId, loc);
-    if (pend.save && pend.customerId && loc && seen.changed !== false) {
-        locSaveCustomer(pend.customerId, loc.url, loc.text).then(function() {
-            showToast("حُفظ الموقع في معلومات العميل", "ok");
-            try {
-                if (typeof refreshCustomersViewIfOpen === "function") refreshCustomersViewIfOpen();
-            } catch (e) {}
-        }, function(e) {
-            console.error("LOC save customer:", e);
-            showToast("أُرسل الطلب لكن تعذّر حفظ الموقع في معلومات العميل: " + locSaveError(e), "error");
-        });
-    }
-}
-
-function locWithRpc(orderId, run) {
-    const pend = locPending;
-    if (!pend || pend.orderId !== orderId || Date.now() - pend.ts > 6e5 || typeof sb === "undefined" || !sb || typeof sb.rpc !== "function") return run();
-    locPending = null;
-    const had = Object.prototype.hasOwnProperty.call(sb, "rpc"), orig = sb.rpc, arg = {};
-    if (pend.loc.url) arg.url = pend.loc.url;
-    if (pend.loc.text) arg.text = pend.loc.text;
-    let p, seen = null;
-    sb.rpc = function(name, args) {
-        const rest = Array.prototype.slice.call(arguments, 2);
-        if (!(name === "set_order_supply_request" && args && args.p_order_id === orderId && args.p_requested)) return orig.apply(sb, arguments);
-        return Promise.resolve(orig.apply(sb, [ name, Object.assign({}, args, {
-            p_location: arg
-        }) ].concat(rest))).then(function(res) {
-            try {
-                const d = res && res.data;
-                seen = Array.isArray(d) ? d[0] : d;
-            } catch (e) {}
-            return res;
-        });
-    };
-    try {
-        p = run();
-    } finally {
-        if (had) sb.rpc = orig; else delete sb.rpc;
-    }
-    return Promise.resolve(p).then(function(ok) {
-        if (ok) {
-            try {
-                locAfterSend(orderId, seen, pend);
-            } catch (e) {
-                console.error("LOC after send:", e);
-            }
-        }
-        return ok;
-    });
-}
-
-function locAddFieldsHtml() {
-    return '<label class="field"><span class="field-label">موقع العميل — رابط خرائط جوجل أو الإحداثيات</span><input type="text" id="quick-customer-loc-url" dir="ltr" autocomplete="off" placeholder="https://maps.app.goo.gl/…  أو  24.7136,46.6753"></label>' + '<label class="field"><span class="field-label">أو وصف الموقع</span><input type="text" id="quick-customer-loc-text" maxlength="' + LOC_MAX + '" autocomplete="off" placeholder="الحي، الشارع، أقرب معلم"></label>' + '<p class="modal-sub" style="margin:-4px 0 0;">الموقع مطلوب: أدخل أحد الحقلين على الأقل.</p>';
-}
-
-let locAddPending = null;
-
-function locOnAddSaveClick(e) {
-    const btn = e && e.target && e.target.closest ? e.target.closest("#quick-customer-save-btn") : null;
-    if (!btn) return;
-    const u = document.getElementById("quick-customer-loc-url"), t = document.getElementById("quick-customer-loc-text");
-    if (!u || !t) return;
-    const pu = locParseUrl(u.value), text = String(t.value || "").trim();
-    let err = "";
-    if (!pu.ok) err = pu.error; else if (!pu.url && !text) err = "موقع العميل مطلوب: أدخل رابط خرائط جوجل أو وصفًا للموقع";
-    if (err) {
-        e.stopImmediatePropagation();
-        e.preventDefault();
-        showToast(err, "error");
-        return;
-    }
-    locAddPending = {
-        url: pu.url,
-        text: text
-    };
-}
-
-function locEnhanceCustomerRows() {
-    try {
-        document.querySelectorAll("#customers-items-list .task-item-row[data-customer-id]").forEach(function(row) {
-            if (row.querySelector(".loc-cust")) return;
-            const cid = row.getAttribute("data-customer-id");
-            const c = (appData.customers || []).find(function(x) {
-                return x && x.id === cid;
-            });
-            if (!c) return;
-            const editing = typeof editingCustomers !== "undefined" && !!editingCustomers[cid];
-            const loc = locFromCustomer(c);
-            if (!editing) {
-                row.insertAdjacentHTML("beforeend", '<div class="purchase-history-row-sub loc-cust">📍 ' + (loc ? locBlockHtml(loc, locShareBtnHtml("cust", c.id)) : '<span class="loc-dim">لم يُسجَّل موقع لهذا العميل</span>') + "</div>");
-                return;
-            }
-            row.insertAdjacentHTML("beforeend", '<div class="loc-cust loc-cust-edit">' + '<label class="field"><span class="field-label">📍 رابط خرائط جوجل أو الإحداثيات</span><input type="text" class="loc-cust-url" dir="ltr" autocomplete="off" value="' + escapeHtml(c.locationUrl || "") + '" placeholder="https://maps.app.goo.gl/…"></label>' + '<label class="field"><span class="field-label">وصف الموقع</span><input type="text" class="loc-cust-text" maxlength="' + LOC_MAX + '" autocomplete="off" value="' + escapeHtml(c.locationText || "") + '" placeholder="الحي، الشارع، أقرب معلم"></label>' + '<button type="button" class="btn btn-sm btn-ghost loc-cust-save">💾 حفظ الموقع</button>' + "</div>");
-            const box = row.querySelector(".loc-cust-edit"), btn = box.querySelector(".loc-cust-save");
-            btn.addEventListener("click", async function(ev) {
-                ev.stopPropagation();
-                const pu = locParseUrl(box.querySelector(".loc-cust-url").value), text = String(box.querySelector(".loc-cust-text").value || "").trim();
-                if (!pu.ok) {
-                    showToast(pu.error, "error");
-                    return;
-                }
-                if (btn.disabled) return;
-                btn.disabled = true;
-                try {
-                    await locSaveCustomer(cid, pu.url, text);
-                    box.querySelector(".loc-cust-url").value = pu.url;
-                    showToast("تم حفظ موقع العميل", "ok");
-                } catch (err) {
-                    console.error("LOC save:", err);
-                    showToast("تعذر حفظ الموقع: " + locSaveError(err), "error");
-                } finally {
-                    btn.disabled = false;
-                }
-            });
-        });
-    } catch (e) {
-        console.warn("locEnhanceCustomerRows:", e);
-    }
-}
-
-(function locInstall() {
-    try {
-        const st = document.createElement("style");
-        st.textContent = ".loc-share-btn{white-space:nowrap;padding:2px 10px;font-size:12px;}" + ".loc-text{overflow-wrap:anywhere;min-width:0;}" + ".loc-dim{color:var(--text-dim);}" + ".loc-link{color:var(--supply-req);font-weight:700;font-size:12.5px;text-decoration:none;white-space:nowrap;}" + ".loc-preview{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin:10px 0 0;font:inherit;font-size:13.5px;color:var(--text);}" + ".loc-saved,.loc-view-body,.loc-cust{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0;}" + ".loc-saved{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin-top:10px;}" + ".loc-view{margin:10px 0 0;padding:10px 12px;border:1px solid var(--supply-req-line);border-radius:var(--radius-sm);background:var(--supply-req-dim);}" + ".loc-pane{margin-top:10px;}" + ".loc-cust{flex:0 0 100%;margin-top:6px;}" + ".loc-cust-edit{align-items:flex-end;}" + ".loc-cust-edit .field{flex:1 1 160px;min-width:0;margin:0;}" + ".loc-cust-edit input{width:100%;box-sizing:border-box;}" + ".cell-order .loc-share-btn{margin-inline-start:6px;}";
-        document.head.appendChild(st);
-        document.addEventListener("click", locOnClick, true);
-        document.addEventListener("click", locOnAddSaveClick, true);
-        if (typeof taxinvCustomerCols === "function") {
-            const prev = globalThis.taxinvCustomerCols;
-            taxinvCustomerCols = function(r) {
-                const o = prev.apply(this, arguments) || {};
-                try {
-                    if (r && typeof r === "object" && ("location_url" in r || "location_text" in r)) {
-                        o.locationUrl = r.location_url || "";
-                        o.locationText = r.location_text || "";
-                    }
-                } catch (e2) {}
-                return o;
-            };
-        }
-        if (typeof bindCustomerRowEvents === "function") {
-            const prev = globalThis.bindCustomerRowEvents;
-            bindCustomerRowEvents = function() {
-                const r = prev.apply(this, arguments);
-                locEnhanceCustomerRows();
-                return r;
-            };
-        }
-        if (typeof openQuickAddCustomerModal === "function") {
-            const prev = globalThis.openQuickAddCustomerModal;
-            openQuickAddCustomerModal = function(onSaved, prefill) {
-                locAddPending = null;
-                const wrapped = function(c) {
-                    const pend = locAddPending;
-                    locAddPending = null;
-                    const done = function() {
-                        try {
-                            if (onSaved) onSaved(c);
-                        } catch (e) {
-                            console.error("LOC onSaved:", e);
-                        }
-                    };
-                    if (!pend || !c || !pend.url && !pend.text) {
-                        done();
-                        return;
-                    }
-                    locSaveCustomer(c.id, pend.url, pend.text).then(done, function(err) {
-                        console.error("LOC new customer location:", err);
-                        showToast("أُضيف العميل لكن تعذّر حفظ موقعه: " + locSaveError(err) + " — أضِفه من تعديل العميل", "error");
-                        done();
-                    });
-                };
-                const r = prev.call(this, wrapped, prefill);
-                try {
-                    const foot = document.querySelector("#confirm-root #quick-customer-save-btn");
-                    const actions = foot && foot.closest ? foot.closest(".modal-footer-actions") : null;
-                    if (actions && !document.getElementById("quick-customer-loc-url")) actions.insertAdjacentHTML("beforebegin", locAddFieldsHtml());
-                } catch (e) {
-                    console.error("LOC add fields:", e);
-                }
-                return r;
-            };
-        }
-        if (typeof onSupplyRequestButtonClick === "function") {
-            const prev = globalThis.onSupplyRequestButtonClick;
-            onSupplyRequestButtonClick = function() {
-                const self = this, args = arguments;
-                try {
-                    locPending = null;
-                    if (typeof draft !== "undefined" && draft && !draft.supplyRequestedAt && typeof currentUserRole !== "undefined" && currentUserRole === "full" && !supplyRequestBlockReason(draft)) {
-                        if (locChooseDialog(draft, function(p) {
-                            locPending = p;
-                            prev.apply(self, args);
-                        })) return;
-                    }
-                } catch (e) {
-                    console.error("LOC supply button:", e);
-                }
-                return prev.apply(self, args);
-            };
-        }
-        if (typeof setOrderSupplyRequest === "function") {
-            const prev = globalThis.setOrderSupplyRequest;
-            setOrderSupplyRequest = function(orderId, on) {
-                const self = this, args = arguments;
-                if (!on) return prev.apply(self, args);
-                return locWithRpc(orderId, function() {
-                    return prev.apply(self, args);
-                });
-            };
-        }
-        if (typeof suptgtSendRequest === "function") {
-            const prev = globalThis.suptgtSendRequest;
-            suptgtSendRequest = function(orderId) {
-                const self = this, args = arguments;
-                return locWithRpc(orderId, function() {
-                    return prev.apply(self, args);
-                });
-            };
-        }
-        if (typeof setSupplyRequestFields === "function") {
-            const prev = globalThis.setSupplyRequestFields;
-            setSupplyRequestFields = function(order, on) {
-                const r = prev.apply(this, arguments);
-                try {
-                    if (order && !on) delete order.supplyLocation;
-                } catch (e) {}
-                return r;
-            };
-        }
-        if (typeof adoptLiveSupplyRequest === "function") {
-            const prev = globalThis.adoptLiveSupplyRequest;
-            adoptLiveSupplyRequest = function(target, live) {
-                const changed = prev.apply(this, arguments);
-                try {
-                    if (target && live) {
-                        const before = JSON.stringify(target.supplyLocation || null), nv = live.supplyRequestedAt ? locClean(live.supplyLocation) : null;
-                        if (nv) target.supplyLocation = nv; else delete target.supplyLocation;
-                        if (JSON.stringify(target.supplyLocation || null) !== before) return true;
-                    }
-                } catch (e) {}
-                return changed;
-            };
-        }
-        const addBtn = function(h, o) {
-            const loc = locOf(o);
-            if (!h || !o || !loc) return h;
-            const i = h.lastIndexOf("</div>");
-            return i < 0 ? h : h.slice(0, i) + locShareBtnHtml("order", o.id) + h.slice(i);
-        };
-        if (typeof smxSupplyBadgeHtml === "function") {
-            const prev = globalThis.smxSupplyBadgeHtml;
-            smxSupplyBadgeHtml = function(order) {
-                const h = prev.apply(this, arguments);
-                try {
-                    return h && order && locOf(order) ? h + locShareBtnHtml("order", order.id) : h;
-                } catch (e) {
-                    return h;
-                }
-            };
-        }
-        if (typeof smxSupplyRowHtml === "function") {
-            const prev = globalThis.smxSupplyRowHtml;
-            smxSupplyRowHtml = function(o) {
-                const h = prev.apply(this, arguments);
-                try {
-                    return addBtn(h, o);
-                } catch (e) {
-                    return h;
-                }
-            };
-        }
-        if (typeof supplyRequestRowHtml === "function") {
-            const prev = globalThis.supplyRequestRowHtml;
-            supplyRequestRowHtml = function(o) {
-                const h = prev.apply(this, arguments);
-                try {
-                    return addBtn(h, o);
-                } catch (e) {
-                    return h;
-                }
-            };
-        }
-        if (typeof supplyRequestViewHtml === "function") {
-            const prev = globalThis.supplyRequestViewHtml;
-            supplyRequestViewHtml = function(order) {
-                const h = prev.apply(this, arguments);
-                try {
-                    const loc = order ? locOf(order) : null;
-                    if (!h || !loc) return h;
-                    const anchor = '<p class="modal-sub" style="margin-top:10px;">للاطلاع فقط', i = h.lastIndexOf(anchor);
-                    return i < 0 ? h : h.slice(0, i) + '<div class="loc-view"><div class="field-label">📍 موقع التوصيل</div><div class="loc-view-body">' + locBlockHtml(loc, locShareBtnHtml("order", order.id)) + "</div></div>" + h.slice(i);
-                } catch (e) {
-                    return h;
-                }
-            };
-        }
-    } catch (e) {
-        console.error("LOC install:", e);
-    }
-})();
-
-function locChipText(sel) {
-    const o = sel && sel.options && sel.options[sel.selectedIndex];
-    const t = o ? String(o.text || "") : "";
-    return sel && sel.value === "none" ? "توجيه ▾" : "← " + t.replace(/^موجّه إلى:\s*/, "");
-}
-
-function locChipSync(chip) {
-    const sel = chip.querySelector("select"), t = chip.querySelector(".qr-chip-t");
-    if (!sel || !t) return;
-    const txt = locChipText(sel);
-    if (t.textContent !== txt) t.textContent = txt;
-    chip.classList.toggle("qr-chip-on", sel.value !== "none");
-    chip.classList.toggle("qr-chip-off", !!sel.disabled);
-}
-
-function locDecorateQuotes() {
-    try {
-        document.querySelectorAll(".quote-row .qr-strip > select.qr-dest").forEach(function(sel) {
-            const strip = sel.parentNode;
-            const chip = document.createElement("span");
-            chip.className = "qr-chip";
-            chip.innerHTML = '<span class="qr-chip-t"></span>';
-            strip.insertBefore(chip, sel);
-            chip.appendChild(sel);
-            locChipSync(chip);
-        });
-        document.querySelectorAll(".quote-row .qr-chip").forEach(locChipSync);
-        [ "quotes-table-container", "scrapyard-quotes-items-list" ].forEach(function(id) {
-            const box = document.getElementById(id);
-            if (!box) return;
-            let n = 0;
-            box.querySelectorAll(".quote-row:not(.supply-req-row)").forEach(function(r) {
-                const vis = !r.classList.contains("trk-off") && !r.hidden && getComputedStyle(r).display !== "none";
-                const alt = vis && n++ % 2 === 1;
-                if (r.classList.contains("loc-alt") !== alt) r.classList.toggle("loc-alt", alt);
-            });
-        });
-    } catch (e) {
-        console.warn("locDecorateQuotes:", e);
-    }
-}
-
-let LOC_HIDE_QUOTE_ARROWS = true;
-
-(function locQuotesUiInstall() {
-    try {
-        if (typeof canReorderQuotePriority === "function") {
-            const prevCan = globalThis.canReorderQuotePriority;
-            canReorderQuotePriority = function() {
-                return LOC_HIDE_QUOTE_ARROWS ? false : prevCan.apply(this, arguments);
-            };
-        }
-        const st = document.createElement("style");
-        st.textContent = ".quote-row.loc-alt{background:color-mix(in srgb,var(--surface-2) 89%,var(--text) 11%);}" + ".quote-row.qr-row .qr-strip{order:20;flex:0 0 auto;padding:0;border-top:0;}" + ".qr-chip{position:relative;display:inline-flex;align-items:center;height:30px;box-sizing:border-box;padding:0 12px;border-radius:999px;border:1px dashed var(--text-faint);color:var(--text-dim);font-size:13px;font-weight:700;white-space:nowrap;}" + ".qr-chip.qr-chip-on{border-style:solid;border-color:var(--green-line);background:var(--green-dim);color:var(--green);}" + ".qr-chip.qr-chip-off{opacity:.6;}" + ":root .quote-row .quote-priority-btn:not(:hover),:root .quote-row .icon-btn:not(:hover){background:var(--surface);border-color:color-mix(in srgb,var(--text) 30%,var(--surface-2));}" + ".qr-chip select.qr-dest{position:absolute;inset:0;width:100%;height:100%;min-height:0;padding:0;border:0;opacity:0;font-size:16px;cursor:pointer;}";
-        document.head.appendChild(st);
-        new MutationObserver(function() {
-            locDecorateQuotes();
-        }).observe(document.body, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            attributeFilter: [ "class", "style", "hidden" ]
-        });
-        document.addEventListener("change", function(e) {
-            const c = e.target && e.target.closest ? e.target.closest(".qr-chip") : null;
-            if (c) {
-                locChipSync(c);
-                setTimeout(function() {
-                    locChipSync(c);
-                }, 500);
-            }
-        }, true);
-        locDecorateQuotes();
-    } catch (e) {
-        console.error("LOC quotes ui install:", e);
     }
 })();</script>
 </body>
