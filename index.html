@@ -3922,6 +3922,8 @@
   .acn-help[open] > summary{border-bottom:1px solid var(--border-soft);}
   .acn-help .acn-note{margin:0;padding:10px 14px;}
   .acn-help .acn-note + .acn-note{padding-top:0;}
+  .acn-tools{margin:2px 0 10px;}
+  .acn-tools-row{display:flex;flex-wrap:wrap;gap:8px;padding:10px 14px;}
 
   /* ---- الشهر (طيّ/فتح) ---- */
   .acn-month{margin-bottom:10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);overflow:hidden;}
@@ -6960,6 +6962,7 @@ const TAMARA_PLAN_TEXT = {
     splitMonths: "أقساط شهرية بدءًا من",
     splitApply: "تعبئة",
     addRow: "+ إضافة قسط",
+    flexHint: "عند تعديل مبلغ قسط تُوزَّع بقية الإجمالي تلقائيًا بالتساوي على الأقساط التي بعده (ما عدّلته يدويًا يبقى كما هو).",
     sumRows: "مجموع الأقساط",
     sumTotal: "الإجمالي",
     sumDiff: "الفرق عن الإجمالي",
@@ -8576,6 +8579,36 @@ function tamaraPlanSplit(principalH, n, firstDueIso) {
     for (let k = 0; k < N; k++) out.push({
         dueOn: tamaraPlanAddMonthsIso(firstDueIso, k),
         amountH: base + (k < rem ? 1 : 0)
+    });
+    return out;
+}
+
+function tamaraPlanRebalance(rows, editedIdx, principalH) {
+    const list = Array.isArray(rows) ? rows : [];
+    const P = Number(principalH), e = Number(editedIdx);
+    if (!isFinite(P) || Math.floor(P) !== P || P <= 0) return null;
+    if (!isFinite(e) || Math.floor(e) !== e || e < 0 || e >= list.length) return null;
+    let fixedH = 0;
+    const flex = [];
+    for (let k = 0; k < list.length; k++) {
+        const r = list[k] || {};
+        if (k > e && !r.locked) {
+            flex.push(k);
+            continue;
+        }
+        const h = tamaraPlanParseH(r.amount);
+        if (h === null) return null;
+        fixedH += h;
+    }
+    if (!flex.length) return null;
+    const remH = P - fixedH;
+    if (remH < flex.length) return null;
+    const base = Math.floor(remH / flex.length), extra = remH - base * flex.length;
+    const out = list.map(function() {
+        return null;
+    });
+    flex.forEach(function(k, j) {
+        out[k] = base + (j < extra ? 1 : 0);
     });
     return out;
 }
@@ -55278,6 +55311,7 @@ function applyRemoteTreasuryChange(payload) {
     if (view && view.style.display !== "none") {
         renderTreasuryView();
     }
+    if (typeof acnOnTreasuryChange === "function") acnOnTreasuryChange();
     const scrapRoot = document.getElementById("scrapyard-root");
     const onScrapyardScreen = scrapRoot && scrapRoot.style.display !== "none";
     if (!onScrapyardScreen) {
@@ -57215,7 +57249,7 @@ function tamaraPlanCreateHtml(ui) {
     const chips = TAMARA_PLAN_CATEGORIES.concat([ "supplierPayment" ]).map(function(key) {
         return '<button type="button" class="chip expense-type-chip' + (d.category === key ? " chip-active" : "") + '" data-tp-act="cat" data-tp-cat="' + escapeHtml(key) + '">' + escapeHtml(TAMARA_PLAN_TEXT.categories[key]) + "</button>";
     }).join("");
-    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card tamara-plan-pop" role="dialog" aria-modal="true" aria-labelledby="tamara-plan-title">' + '<div class="modal-header"><div class="modal-title" id="tamara-plan-title">' + escapeHtml(TAMARA_PLAN_TEXT.btn) + "</div>" + '<button type="button" class="icon-btn" data-tp-act="close" aria-label="إغلاق">✕</button></div>' + '<div class="modal-body">' + '<p class="modal-sub">' + escapeHtml(TAMARA_PLAN_TEXT.createIntro) + "</p>" + '<label class="field"><span class="field-label">' + escapeHtml(TAMARA_PLAN_TEXT.fTitle) + ' *</span><input type="text" dir="auto" maxlength="80" autocomplete="off" id="tp-title" placeholder="مثلًا: جهاز حاسوب" value="' + escapeHtml(d.title) + '"></label>' + '<div class="field"><span class="field-label">' + escapeHtml(TAMARA_PLAN_TEXT.fCategory) + ' *</span><div class="expense-type-chips" id="tp-cats">' + chips + "</div>" + '<p class="modal-sub" id="tp-kind-help" style="margin:8px 0 0;font-size:12px;"' + (d.category === "supplierPayment" ? "" : " hidden") + ">" + escapeHtml(TAMARA_PLAN_TEXT.supplierHelp) + "</p></div>" + '<label class="field"><span class="field-label">' + escapeHtml(TAMARA_PLAN_TEXT.fDate) + ' *</span><input type="date" id="tp-date" min="' + TAMARA_PLAN_MIN_DATE + '" max="' + escapeHtml(today) + '" value="' + escapeHtml(d.purchaseDate) + '"></label>' + '<label class="field"><span class="field-label">' + escapeHtml(TAMARA_PLAN_TEXT.fTotal) + ' *</span><input type="number" min="0" step="0.01" inputmode="decimal" autocomplete="off" id="tp-total" placeholder="الإجمالي" value="' + escapeHtml(d.total) + '"></label>' + '<div style="margin-bottom:16px;min-width:0;"><span class="field-label">' + escapeHtml(TAMARA_PLAN_TEXT.fRows) + " *</span>" + '<div class="expense-entry-row" id="tp-split">' + '<span class="field-label" style="margin:0;">' + escapeHtml(TAMARA_PLAN_TEXT.splitOn) + "</span>" + '<input type="number" min="1" max="' + TAMARA_PLAN_MAX_INSTALLMENTS + '" step="1" inputmode="numeric" class="expense-entry-amount-input num" style="flex:0 0 64px;width:64px;min-width:0;" id="tp-split-n" aria-label="عدد الأقساط" value="' + escapeHtml(d.splitN) + '">' + '<span class="field-label" style="margin:0;">' + escapeHtml(TAMARA_PLAN_TEXT.splitMonths) + "</span>" + '<input type="date" class="expense-entry-date-input" style="flex:1 1 130px;min-width:0;" id="tp-split-from" aria-label="تاريخ أول قسط" value="' + escapeHtml(d.splitFrom) + '">' + '<button type="button" class="btn btn-ghost btn-sm" data-tp-act="split">' + escapeHtml(TAMARA_PLAN_TEXT.splitApply) + "</button>" + "</div>" + '<div class="expense-entries-list" id="tp-rows" style="margin-top:8px;">' + tamaraPlanRowsHtml(d.rows) + "</div>" + '<button type="button" class="btn btn-ghost btn-sm expense-add-entry-btn" data-tp-act="add">' + escapeHtml(TAMARA_PLAN_TEXT.addRow) + "</button>" + "</div>" + '<div class="tamara-summary" id="tp-summary" aria-live="polite"></div>' + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" data-tp-act="close">' + escapeHtml(TAMARA_PLAN_TEXT.cancel) + "</button>" + '<button type="button" class="btn btn-primary" id="tp-save" data-tp-act="save" disabled>' + escapeHtml(TAMARA_PLAN_TEXT.save) + "</button>" + "</div>" + "</div>" + "</div>";
+    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card tamara-plan-pop" role="dialog" aria-modal="true" aria-labelledby="tamara-plan-title">' + '<div class="modal-header"><div class="modal-title" id="tamara-plan-title">' + escapeHtml(TAMARA_PLAN_TEXT.btn) + "</div>" + '<button type="button" class="icon-btn" data-tp-act="close" aria-label="إغلاق">✕</button></div>' + '<div class="modal-body">' + '<p class="modal-sub">' + escapeHtml(TAMARA_PLAN_TEXT.createIntro) + "</p>" + '<label class="field"><span class="field-label">' + escapeHtml(TAMARA_PLAN_TEXT.fTitle) + ' *</span><input type="text" dir="auto" maxlength="80" autocomplete="off" id="tp-title" placeholder="مثلًا: جهاز حاسوب" value="' + escapeHtml(d.title) + '"></label>' + '<div class="field"><span class="field-label">' + escapeHtml(TAMARA_PLAN_TEXT.fCategory) + ' *</span><div class="expense-type-chips" id="tp-cats">' + chips + "</div>" + '<p class="modal-sub" id="tp-kind-help" style="margin:8px 0 0;font-size:12px;"' + (d.category === "supplierPayment" ? "" : " hidden") + ">" + escapeHtml(TAMARA_PLAN_TEXT.supplierHelp) + "</p></div>" + '<label class="field"><span class="field-label">' + escapeHtml(TAMARA_PLAN_TEXT.fDate) + ' *</span><input type="date" id="tp-date" min="' + TAMARA_PLAN_MIN_DATE + '" max="' + escapeHtml(today) + '" value="' + escapeHtml(d.purchaseDate) + '"></label>' + '<label class="field"><span class="field-label">' + escapeHtml(TAMARA_PLAN_TEXT.fTotal) + ' *</span><input type="number" min="0" step="0.01" inputmode="decimal" autocomplete="off" id="tp-total" placeholder="الإجمالي" value="' + escapeHtml(d.total) + '"></label>' + '<div style="margin-bottom:16px;min-width:0;"><span class="field-label">' + escapeHtml(TAMARA_PLAN_TEXT.fRows) + " *</span>" + '<div class="expense-entry-row" id="tp-split">' + '<span class="field-label" style="margin:0;">' + escapeHtml(TAMARA_PLAN_TEXT.splitOn) + "</span>" + '<input type="number" min="1" max="' + TAMARA_PLAN_MAX_INSTALLMENTS + '" step="1" inputmode="numeric" class="expense-entry-amount-input num" style="flex:0 0 64px;width:64px;min-width:0;" id="tp-split-n" aria-label="عدد الأقساط" value="' + escapeHtml(d.splitN) + '">' + '<span class="field-label" style="margin:0;">' + escapeHtml(TAMARA_PLAN_TEXT.splitMonths) + "</span>" + '<input type="date" class="expense-entry-date-input" style="flex:1 1 130px;min-width:0;" id="tp-split-from" aria-label="تاريخ أول قسط" value="' + escapeHtml(d.splitFrom) + '">' + '<button type="button" class="btn btn-ghost btn-sm" data-tp-act="split">' + escapeHtml(TAMARA_PLAN_TEXT.splitApply) + "</button>" + "</div>" + '<div class="expense-entries-list" id="tp-rows" style="margin-top:8px;">' + tamaraPlanRowsHtml(d.rows) + "</div>" + '<p class="modal-sub" id="tp-flex-hint" style="margin:8px 0 0;font-size:12px;">' + escapeHtml(TAMARA_PLAN_TEXT.flexHint) + "</p>" + '<button type="button" class="btn btn-ghost btn-sm expense-add-entry-btn" data-tp-act="add">' + escapeHtml(TAMARA_PLAN_TEXT.addRow) + "</button>" + "</div>" + '<div class="tamara-summary" id="tp-summary" aria-live="polite"></div>' + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" data-tp-act="close">' + escapeHtml(TAMARA_PLAN_TEXT.cancel) + "</button>" + '<button type="button" class="btn btn-primary" id="tp-save" data-tp-act="save" disabled>' + escapeHtml(TAMARA_PLAN_TEXT.save) + "</button>" + "</div>" + "</div>" + "</div>";
 }
 
 function tamaraPlanDetailInnerHtml(plan, ui, nowDate) {
@@ -57362,6 +57396,20 @@ function tamaraPlanUiRefresh() {
     if (ui.mode === "detail") tamaraPlanRenderDetail();
 }
 
+function tamaraPlanRebalanceRows(d, editedIdx) {
+    const hs = tamaraPlanRebalance(d.rows, editedIdx, tamaraPlanParseH(d.total));
+    if (!hs) return false;
+    const card = tamaraPlanCard();
+    hs.forEach(function(h, k) {
+        if (h === null) return;
+        const txt = String(tamaraHalalasToRiyal(h));
+        d.rows[k].amount = txt;
+        const inp = card ? card.querySelector('input[data-tp-row="' + k + '"][data-tp-f="amount"]') : null;
+        if (inp) inp.value = txt;
+    });
+    return true;
+}
+
 function tamaraPlanOnField(e) {
     const ui = tamaraPlanUi;
     const t = e && e.target;
@@ -57388,6 +57436,10 @@ function tamaraPlanOnField(e) {
     } else if (rowAttr !== null && rowAttr !== undefined) {
         const i = parseInt(rowAttr, 10), f = t.getAttribute("data-tp-f");
         if (d.rows[i] && (f === "dueOn" || f === "amount")) d.rows[i][f] = t.value;
+        if (d.rows[i] && f === "amount") {
+            d.rows[i].locked = true;
+            tamaraPlanRebalanceRows(d, i);
+        }
     } else return;
     tamaraPlanSyncCreate();
 }
@@ -87325,6 +87377,34 @@ function acnCashHtml(model, st) {
     return bridge + payers + recon + '<p class="acn-note">كل الأرقام هنا مجموع ' + (model.hasHistory ? "من بداية السجل (مارس 2026)" : "منذ بداية بيانات التطبيق") + "، وليست مقيّدة بشهر.</p>";
 }
 
+const ACN_TOOLS = [ {
+    key: "tamara",
+    label: "🏦 تحويلات تمارا",
+    fn: "openTamaraPopup"
+}, {
+    key: "plan",
+    label: "📅 مصروف بأقساط تمارا",
+    fn: "openTamaraPlanCreate"
+}, {
+    key: "expense",
+    label: "💰 إضافة مصروف بالصندوق",
+    fn: "openAddExpenseModal"
+}, {
+    key: "activity",
+    label: "📜 حركة الحسابات",
+    fn: "openAccountsActivityModal"
+}, {
+    key: "proposals",
+    label: "📋 طلبات التعديل",
+    fn: "openEditProposalsModal"
+} ];
+
+function acnToolsHtml() {
+    return '<details class="acn-help acn-tools"><summary>أدوات الصندوق (تمارا والمصاريف وغيرها)</summary><div class="acn-tools-row">' + ACN_TOOLS.map(function(t) {
+        return '<button type="button" class="chip" data-acn-act="tool" data-acn-tool="' + t.key + '">' + t.label + "</button>";
+    }).join("") + "</div></details>";
+}
+
 function acnScreenHtml() {
     const st = acnState;
     const model = st && st.model;
@@ -87338,7 +87418,7 @@ function acnScreenHtml() {
     body = body.replace(/(<p class="acn-note">[\s\S]*?<\/p>\s*)+/g, function(m) {
         return '<details class="acn-help"><summary>ملاحظات وتفاصيل</summary>' + m + "</details>";
     });
-    return '<div class="acn-screen">' + head + '<div class="acn-col">' + tabs + body + "</div></div>";
+    return '<div class="acn-screen">' + head + '<div class="acn-col">' + acnToolsHtml() + tabs + body + "</div></div>";
 }
 
 function acnRender() {
@@ -87374,7 +87454,7 @@ function acnRecompute() {
     }
 }
 
-async function acnOpen() {
+async function acnOpen(startTab) {
     if (typeof hasElevatedAccess === "function" && !hasElevatedAccess()) {
         if (typeof showToast === "function") showToast("غير متاح", "error");
         return;
@@ -87383,7 +87463,9 @@ async function acnOpen() {
     if (!root) return;
     const gen = ++acnGen;
     acnState = {
-        tab: "ops",
+        tab: typeof startTab === "string" && ACN_TABS.some(function(x) {
+            return x.key === startTab;
+        }) ? startTab : "ops",
         openMonths: null,
         model: null,
         error: "",
@@ -87419,6 +87501,10 @@ async function acnOpen() {
 
 function acnCloseScreen() {
     acnGen++;
+    if (acnTreasuryTimer) {
+        clearTimeout(acnTreasuryTimer);
+        acnTreasuryTimer = null;
+    }
     if (typeof acnEntriesTeardown === "function") acnEntriesTeardown();
     const root = document.getElementById("acn-root");
     if (root) {
@@ -87445,14 +87531,31 @@ function acnOnDataChange() {
     acnRender();
 }
 
+let acnTreasuryTimer = null;
+
+function acnOnTreasuryChange() {
+    if (!acnState) return;
+    if (acnTreasuryTimer) clearTimeout(acnTreasuryTimer);
+    acnTreasuryTimer = setTimeout(function() {
+        acnTreasuryTimer = null;
+        if (acnState) acnOnDataChange();
+    }, 150);
+}
+
 function acnChipHtml() {
     if (typeof hasElevatedAccess === "function" && !hasElevatedAccess()) return "";
-    return '<button type="button" id="btn-open-accountant" class="chip acn-chip">🧮 المحاسب</button>';
+    return '<button type="button" id="btn-open-accountant" class="chip acn-chip">🧮 المحاسب</button>' + '<button type="button" id="btn-open-accountant-members" class="chip acn-chip">👥 حسابات الأعضاء</button>';
 }
 
 function acnBindChip(scope) {
     const btn = scope && scope.querySelector ? scope.querySelector("#btn-open-accountant") : null;
-    if (btn) btn.addEventListener("click", acnOpen);
+    if (btn) btn.addEventListener("click", function() {
+        acnOpen();
+    });
+    const mbtn = scope && scope.querySelector ? scope.querySelector("#btn-open-accountant-members") : null;
+    if (mbtn) mbtn.addEventListener("click", function() {
+        acnOpen("members");
+    });
 }
 
 function acnOnClick(e) {
@@ -87472,6 +87575,18 @@ function acnOnClick(e) {
     const act = el.getAttribute("data-acn-act");
     if (act === "close") {
         acnCloseScreen();
+        return;
+    }
+    if (act === "tool") {
+        const tl = ACN_TOOLS.find(function(x) {
+            return x.key === el.getAttribute("data-acn-tool");
+        });
+        const fn = tl ? globalThis[tl.fn] : null;
+        if (typeof hasElevatedAccess === "function" && !hasElevatedAccess()) {
+            if (typeof showToast === "function") showToast("غير متاح", "error");
+            return;
+        }
+        if (typeof fn === "function") fn(); else if (typeof showToast === "function") showToast("غير متاح", "error");
         return;
     }
     if (act === "refresh") {
