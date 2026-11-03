@@ -3958,12 +3958,37 @@
   .acn-line-strong .acn-line-l,.acn-line-strong .acn-line-v{font-weight:800;}
   .acn-line-v{direction:ltr;white-space:nowrap;flex:0 0 auto;}
   .acn-sub{padding:12px 0 2px;font-size:12px;font-weight:700;color:var(--text-dim);border-bottom:1px solid var(--border-soft);}
+  .acn-actions-row{display:flex;gap:8px;margin:0 0 10px;}
+  .acn-eg{margin-bottom:10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);overflow:hidden;}
+  .acn-eg-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;padding:10px 14px;background:var(--surface-2);font-family:'Cairo',sans-serif;font-weight:800;font-size:14.5px;}
+  .acn-eg-meta{font-size:12.5px;font-weight:600;color:var(--text-dim);}
+  .acn-eg-total{margin-inline-start:auto;direction:ltr;}
+  .acn-tbl-entries{min-width:640px;}
+  .acn-desc{white-space:normal !important;min-width:180px;max-width:320px;}
+  .acn-acts{white-space:nowrap;text-align:center;}
+  .acn-ibtn{background:transparent;border:1px solid var(--border);color:var(--text);font-family:inherit;font-weight:700;font-size:12.5px;border-radius:var(--radius-sm);padding:6px 10px;min-height:36px;cursor:pointer;margin-inline-start:6px;}
+  .acn-ibtn-del{color:var(--rust);border-color:var(--rust-line);}
+  .acn-warn{margin:0 0 10px;padding:10px 14px;border:1px solid var(--rust-line);background:var(--rust-dim);color:var(--rust);border-radius:var(--radius-sm);font-weight:700;font-size:13px;line-height:1.7;}
+  .acn-chips-row{display:flex;gap:8px;flex-wrap:wrap;}
+  .acn-form-err{min-height:18px;margin:8px 0 0;color:var(--rust);font-size:12.5px;font-weight:700;}
   .acn-tbl-report{min-width:960px;}
 
   @media (max-width:600px){
     .acn-head{padding-top:calc(6px + env(safe-area-inset-top) + var(--trk-rs, 0px));}
     .acn-col{padding-inline:12px;}
     .acn-month-head{padding:8px 10px;}
+    /* قيود النفقات والرواتب على الجوال: كل قيد بطاقة (لا تمرير أفقي) وأزرار تعديل/حذف ظاهرة */
+    .acn-tbl-entries{min-width:0;display:block;}
+    .acn-tbl-entries thead{display:none;}
+    .acn-tbl-entries tbody{display:block;}
+    .acn-tbl-entries tr{display:block;padding:10px 12px;border-bottom:1px solid var(--border-soft);}
+    .acn-tbl-entries tr:last-child{border-bottom:0;}
+    .acn-tbl-entries td{display:block;border:0;padding:2px 0;white-space:normal;background:transparent !important;position:static;max-width:none;min-width:0;}
+    .acn-tbl-entries td:empty{display:none;}
+    .acn-tbl-entries td[data-l]::before{content:attr(data-l) ': ';color:var(--text-dim);font-weight:600;}
+    .acn-tbl-entries .acn-desc{font-weight:800;font-size:14px;}
+    .acn-tbl-entries .acn-n,.acn-tbl-entries .acn-d{direction:rtl;text-align:start;}
+    .acn-tbl-entries .acn-acts{padding-top:8px;text-align:start;}
   }
   @media print{#acn-root{display:none !important;}}
   /* ACN END css */
@@ -86620,6 +86645,12 @@ const ACN_TABS = [ {
     key: "ops",
     label: "العمليات"
 }, {
+    key: "expenses",
+    label: "النفقات"
+}, {
+    key: "salaries",
+    label: "الرواتب"
+}, {
     key: "report",
     label: "التقرير الشهري"
 }, {
@@ -86975,20 +87006,35 @@ function acnReconcile(rows, orders, balance) {
     };
 }
 
-function acnBridge(rows, orders, treasury) {
+function acnBridge(rows, orders, treasury, entries) {
     const sum = function(k) {
         return round2(rows.reduce(function(s, r) {
             return s + r[k];
         }, 0));
     };
     const ops = sum("I");
-    let expenses = 0;
+    let boxExpenses = 0;
     ACN_EXPENSE_CATEGORIES.forEach(function(k) {
-        expenses += acnSumCat(treasury, k);
+        boxExpenses += acnSumCat(treasury, k);
     });
-    expenses = round2(expenses);
-    const salaries = acnSumCat(treasury, "salaries");
-    const members = acnSumCat(treasury, "support");
+    boxExpenses = round2(boxExpenses);
+    const boxSalaries = acnSumCat(treasury, "salaries");
+    const support = acnSumCat(treasury, "support");
+    let memberExpenses = 0, memberSalaries = 0;
+    const byPayer = {
+        homam: 0,
+        mahab: 0,
+        bashar: 0
+    };
+    (entries || []).forEach(function(e) {
+        if (e.kind === "salary") memberSalaries += e.amount; else memberExpenses += e.amount;
+        if (byPayer[e.paidBy] !== undefined) byPayer[e.paidBy] = round2(byPayer[e.paidBy] + e.amount);
+    });
+    memberExpenses = round2(memberExpenses);
+    memberSalaries = round2(memberSalaries);
+    const expenses = round2(boxExpenses + memberExpenses);
+    const salaries = round2(boxSalaries + memberSalaries);
+    const members = round2(support + memberExpenses + memberSalaries);
     const dueFromCustomers = sum("F");
     const dueToMerchants = sum("D");
     const net = round2(ops - expenses - salaries);
@@ -87008,7 +87054,13 @@ function acnBridge(rows, orders, treasury) {
         dueFromCustomers: dueFromCustomers,
         dueToMerchants: dueToMerchants,
         balance: balance,
-        recon: recon
+        recon: recon,
+        boxExpenses: boxExpenses,
+        boxSalaries: boxSalaries,
+        support: support,
+        memberExpenses: memberExpenses,
+        memberSalaries: memberSalaries,
+        byPayer: byPayer
     };
 }
 
@@ -87016,6 +87068,7 @@ function acnComputeModel(src) {
     const dataRef = typeof appData !== "undefined" ? appData : {};
     const orders = src && src.orders || dataRef.orders || [];
     const treasury = src && src.treasury || dataRef.treasury || {};
+    const entries = src && src.entries || acnState && acnState.entries || [];
     const listed = orders.filter(acnOrderListed);
     const rows = listed.map(acnOrderRow).concat(acnDeliveryRowsForOrders(orders), acnDeliveryRowsForEntries(treasury.delivery));
     const months = acnGroupMonths(rows, acnRequestsByMonth(orders));
@@ -87026,7 +87079,9 @@ function acnComputeModel(src) {
         months: months,
         totals: totals,
         report: acnReport(months, totals),
-        bridge: acnBridge(rows, orders, treasury)
+        bridge: acnBridge(rows, orders, treasury, entries),
+        expensesData: acnGroupExpenses(entries, treasury),
+        salariesData: acnGroupSalaries(entries, treasury)
     };
 }
 
@@ -87111,22 +87166,30 @@ function acnLineHtml(label, value, opts) {
     return '<div class="acn-line' + (o.strong ? " acn-line-strong" : "") + '"><span class="acn-line-l">' + escapeHtml(label) + (o.sub ? "<small>" + escapeHtml(o.sub) + "</small>" : "") + "</span>" + '<span class="acn-line-v num' + (value < 0 && !o.noneg ? " acn-neg" : "") + '">' + (o.text !== undefined ? escapeHtml(o.text) : acnNum(value)) + "</span></div>";
 }
 
-function acnCashHtml(model) {
+function acnCashHtml(model, st) {
     const b = model.bridge;
-    const bridge = '<h3 class="acn-h3">حسابات الصندوق</h3><div class="acn-card">' + acnLineHtml("الرصيد السابق", 0, {
+    const bridge = acnWarnHtml(st) + '<h3 class="acn-h3">حسابات الصندوق</h3><div class="acn-card">' + acnLineHtml("الرصيد السابق", 0, {
         text: "—",
         sub: "يُضاف مع السجل القديم (مارس–يوليو) في مرحلة لاحقة"
     }) + acnLineHtml("مردود العمليات", b.ops) + acnLineHtml("النفقات", -b.expenses, {
-        sub: "مواصلات وخسائر وموارد بشرية وأخرى ورسوم تمارا (التوصيل ضمن مردود العمليات)"
-    }) + acnLineHtml("الرواتب", -b.salaries) + acnLineHtml("صافي الأرباح", b.net, {
+        sub: "مواصلات وخسائر وموارد بشرية وأخرى ورسوم تمارا" + (b.memberExpenses ? "، منها " + acnNum(b.memberExpenses) + " دفعها الأعضاء من جيوبهم" : "") + " (التوصيل ضمن مردود العمليات)"
+    }) + acnLineHtml("الرواتب", -b.salaries, b.memberSalaries ? {
+        sub: "منها " + acnNum(b.memberSalaries) + " دفعها الأعضاء من جيوبهم"
+    } : undefined) + acnLineHtml("صافي الأرباح", b.net, {
         strong: true,
         sub: "بلا الرصيد السابق"
     }) + acnLineHtml("حسابات الأعضاء الجارية", b.members, {
-        sub: "الدعم الخارجي المسجّل بالصندوق حاليًا — حسابات همام ومهاب وبشار تأتي في مرحلة لاحقة"
+        sub: "الدعم الخارجي بالصندوق (" + acnNum(b.support) + ") + نفقات ورواتب دفعها الأعضاء من جيوبهم (" + acnNum(b.memberExpenses + b.memberSalaries) + ") — التفصيل لكل عضو في مرحلة لاحقة"
     }) + acnLineHtml("مستحقاتنا على العملاء", -b.dueFromCustomers) + acnLineHtml("مستحقات التجار علينا", b.dueToMerchants) + acnLineHtml("رصيد الصندوق الحالي", b.balance, {
         strong: true,
         sub: "بمعادلة بشار، قبل الرصيد السابق وحسابات الأعضاء الكاملة"
     }) + "</div>";
+    const paid = b.byPayer || {};
+    const payers = paid.homam || paid.mahab || paid.bashar ? '<h3 class="acn-h3">ما دفعه الأعضاء من جيوبهم</h3><div class="acn-card">' + Object.keys(ACN_MEMBERS).map(function(k) {
+        return acnLineHtml(ACN_MEMBERS[k], paid[k] || 0, {
+            noneg: true
+        });
+    }).join("") + "</div>" : "";
     let recon = "";
     const r = b.recon;
     if (r) {
@@ -87149,7 +87212,7 @@ function acnCashHtml(model) {
             sub: Math.abs(r.unexplained) < 1 ? "لا فرق — الأرقام متطابقة" : "يستحق المراجعة"
         }) + "</div>";
     }
-    return bridge + recon + '<p class="acn-note">كل الأرقام هنا مجموع منذ بداية بيانات التطبيق، وليست مقيّدة بشهر.</p>';
+    return bridge + payers + recon + '<p class="acn-note">كل الأرقام هنا مجموع منذ بداية بيانات التطبيق، وليست مقيّدة بشهر.</p>';
 }
 
 function acnScreenHtml() {
@@ -87161,7 +87224,7 @@ function acnScreenHtml() {
         return '<button type="button" role="tab" class="acn-tab' + (on ? " acn-tab-on" : "") + '" aria-selected="' + (on ? "true" : "false") + '" data-acn-act="tab" data-acn-tab="' + tb.key + '">' + tb.label + "</button>";
     }).join("") + "</div>";
     let body;
-    if (!model) body = '<div class="acn-empty">' + (st && st.error ? escapeHtml(st.error) : "جاري تحميل البيانات…") + "</div>"; else if (st.tab === "report") body = acnReportHtml(model); else if (st.tab === "cash") body = acnCashHtml(model); else body = acnOpsHtml(model, st);
+    if (!model) body = '<div class="acn-empty">' + (st && st.error ? escapeHtml(st.error) : "جاري تحميل البيانات…") + "</div>"; else if (st.tab === "report") body = acnReportHtml(model); else if (st.tab === "cash") body = acnCashHtml(model, st); else if (st.tab === "expenses") body = acnExpensesTabHtml(model, st); else if (st.tab === "salaries") body = acnSalariesTabHtml(model, st); else body = acnOpsHtml(model, st);
     return '<div class="acn-screen">' + head + '<div class="acn-col">' + tabs + body + "</div></div>";
 }
 
@@ -87202,7 +87265,10 @@ async function acnOpen() {
         tab: "ops",
         openMonths: null,
         model: null,
-        error: ""
+        error: "",
+        entries: [],
+        entriesOk: null,
+        busy: false
     };
     acnBindOnce(root);
     root.style.display = "";
@@ -87216,6 +87282,9 @@ async function acnOpen() {
         if (typeof archivedOrdersHydration !== "undefined" && archivedOrdersHydration) await archivedOrdersHydration;
     } catch (e) {}
     if (gen !== acnGen || !acnState) return;
+    if (typeof acnEntriesLoad === "function") await acnEntriesLoad();
+    if (gen !== acnGen || !acnState) return;
+    if (typeof acnEntriesSubscribe === "function") acnEntriesSubscribe();
     acnRecompute();
     acnRender();
     try {
@@ -87225,6 +87294,7 @@ async function acnOpen() {
 
 function acnCloseScreen() {
     acnGen++;
+    if (typeof acnEntriesTeardown === "function") acnEntriesTeardown();
     const root = document.getElementById("acn-root");
     if (root) {
         root.innerHTML = "";
@@ -87280,8 +87350,10 @@ function acnOnClick(e) {
         return;
     }
     if (act === "refresh") {
-        acnRecompute();
-        acnRender();
+        if (typeof acnEntriesReloadAndRender === "function") acnEntriesReloadAndRender(); else {
+            acnRecompute();
+            acnRender();
+        }
         return;
     }
     if (act === "tab") {
@@ -87299,7 +87371,9 @@ function acnOnClick(e) {
         acnState.openMonths = acnState.openMonths || {};
         acnState.openMonths[ym] = !acnState.openMonths[ym];
         acnRender();
+        return;
     }
+    if (typeof acnEntriesAct === "function") acnEntriesAct(act, el);
 }
 
 function acnOnKey(e) {
@@ -87315,6 +87389,680 @@ function acnBindOnce(root) {
     acnBound = true;
     root.addEventListener("click", acnOnClick);
     document.addEventListener("keydown", acnOnKey);
+}
+
+const ACN_MEMBERS = {
+    homam: "همام",
+    mahab: "مهاب",
+    bashar: "بشار"
+};
+
+const ACN_EMAIL_MEMBER = {
+    "homam.techno@gmail.com": "homam",
+    "mohabalsamman1998@gmail.com": "mahab",
+    "sammaneng@gmail.com": "bashar"
+};
+
+const ACN_SECTION_HINTS = [ "تكاليف السيارة RAM", "تكاليف السيارة سبارك", "بنزين لمهاب", "إقامة مهاب", "عبد الرحمن", "عامر", "تكاليف أصول للشركة", "تكاليف برمجيات" ];
+
+const ACN_STAFF_HINTS = [ "عامر", "عبد الرحمن", "عمر" ];
+
+const ACN_PERSON_KEYS = [ [ "عبد الرحمن", "عبدالرحمن" ], [ "عامر" ], [ "عمر" ], [ "مهاب" ], [ "همام" ], [ "بشار" ] ];
+
+const ACN_UNKNOWN_PERSON = "غير محدد";
+
+let acnEntriesChannel = null;
+
+let acnEntriesTimer = null;
+
+function acnEntryFromRow(r) {
+    if (!r || typeof r !== "object") return null;
+    return {
+        id: String(r.id || ""),
+        kind: r.kind === "salary" ? "salary" : "expense",
+        section: String(r.section || ""),
+        description: String(r.description || ""),
+        reference: String(r.reference || ""),
+        ymd: String(r.entry_date || "").slice(0, 10),
+        amount: round2(Number(r.amount) || 0),
+        paidBy: String(r.paid_by || ""),
+        person: String(r.person || ""),
+        forMonth: String(r.for_month || ""),
+        createdBy: String(r.created_by || ""),
+        updatedBy: String(r.updated_by || ""),
+        updatedAt: String(r.updated_at || "")
+    };
+}
+
+function acnClean(s) {
+    return String(s == null ? "" : s).replace(/\s+/g, " ").trim();
+}
+
+function acnRealYmd(ymd) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return false;
+    const d = new Date(ymd + "T00:00:00Z");
+    return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === ymd && ymd >= "2024-01-01" && ymd <= "2100-01-01";
+}
+
+function acnEntryValidate(f) {
+    f = f || {};
+    const kind = f.kind === "salary" ? "salary" : f.kind === "expense" ? "expense" : "";
+    if (!kind) return {
+        ok: false,
+        error: "نوع القيد غير صالح"
+    };
+    const amount = round2(Number(f.amount));
+    if (!(amount > 0) || amount > 1e8) return {
+        ok: false,
+        error: "أدخل مبلغًا صحيحًا"
+    };
+    const date = String(f.date || "").trim();
+    if (!acnRealYmd(date)) return {
+        ok: false,
+        error: "أدخل تاريخًا صحيحًا"
+    };
+    if (!ACN_MEMBERS[f.paidBy]) return {
+        ok: false,
+        error: "اختر من دفع المبلغ"
+    };
+    let description = acnClean(f.description);
+    const reference = acnClean(f.reference);
+    let section = "", person = "", forMonth = "";
+    if (kind === "expense") {
+        section = acnClean(f.section);
+        if (!section) return {
+            ok: false,
+            error: "اكتب القسم"
+        };
+        if (!description) return {
+            ok: false,
+            error: "اكتب البند"
+        };
+    } else {
+        person = acnClean(f.person);
+        forMonth = acnClean(f.forMonth);
+        if (!person) return {
+            ok: false,
+            error: "اكتب اسم الموظف"
+        };
+        if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(forMonth)) return {
+            ok: false,
+            error: "اختر شهر الراتب"
+        };
+        if (!description) description = "راتب " + person + " عن " + forMonth.slice(5) + "/" + forMonth.slice(0, 4);
+    }
+    if (section.length > 80 || description.length > 300 || reference.length > 80 || person.length > 60) return {
+        ok: false,
+        error: "النص أطول من المسموح"
+    };
+    return {
+        ok: true,
+        row: {
+            kind: kind,
+            section: section,
+            description: description,
+            reference: reference,
+            entry_date: date,
+            amount: amount,
+            paid_by: f.paidBy,
+            person: person,
+            for_month: forMonth
+        }
+    };
+}
+
+function acnPersonFromNote(note) {
+    const n = normalizeArabicSearch(String(note || ""));
+    for (let i = 0; i < ACN_PERSON_KEYS.length; i++) {
+        const keys = ACN_PERSON_KEYS[i];
+        for (let k = 0; k < keys.length; k++) {
+            if (n.indexOf(normalizeArabicSearch(keys[k])) >= 0) return keys[0];
+        }
+    }
+    return "";
+}
+
+function acnMemberOfEmail(email) {
+    return ACN_EMAIL_MEMBER[String(email || "").toLowerCase()] || "";
+}
+
+function acnMonthLabel(forMonth) {
+    return /^\d{4}-\d{2}$/.test(forMonth || "") ? forMonth.slice(5) + "/" + forMonth.slice(0, 4) : "";
+}
+
+function acnEntryRow(e) {
+    const dt = acnParseDmy(e.ymd.slice(8, 10) + "/" + e.ymd.slice(5, 7) + "/" + e.ymd.slice(0, 4));
+    return {
+        id: e.id,
+        source: "members",
+        editable: true,
+        description: e.description,
+        reference: e.reference,
+        ymd: e.ymd,
+        dmy: dt ? dt.dmy : "",
+        amount: e.amount,
+        paidBy: e.paidBy,
+        month: acnMonthLabel(e.forMonth)
+    };
+}
+
+function acnBoxRow(t, fallbackLabel) {
+    const dt = acnParseDmy(t.date);
+    return {
+        id: "box-" + String(t.id || ""),
+        source: "box",
+        editable: false,
+        description: String(t.note || "").trim() || fallbackLabel,
+        reference: "",
+        ymd: dt ? dt.ymd : "",
+        dmy: dt ? dt.dmy : "",
+        amount: round2(Number(t.amount) || 0),
+        paidBy: "box",
+        month: ""
+    };
+}
+
+function acnCategoryLabel(key) {
+    const c = (typeof EXPENSE_CATEGORIES !== "undefined" ? EXPENSE_CATEGORIES : []).find(function(x) {
+        return x.key === key;
+    });
+    return c && c.label ? c.label : key;
+}
+
+function acnGroupBuild(items) {
+    const by = {}, order = [];
+    items.forEach(function(it) {
+        if (!by[it.key]) {
+            by[it.key] = {
+                key: it.key,
+                label: it.label,
+                source: it.source,
+                rows: [],
+                total: 0,
+                box: 0,
+                members: 0
+            };
+            order.push(it.key);
+        }
+        const g = by[it.key];
+        g.rows.push(it.row);
+        g.total = round2(g.total + it.row.amount);
+        if (it.row.source === "box") g.box = round2(g.box + it.row.amount); else g.members = round2(g.members + it.row.amount);
+    });
+    return order.map(function(k) {
+        const g = by[k];
+        g.rows.sort(function(a, b) {
+            return String(a.ymd).localeCompare(String(b.ymd)) || String(a.id).localeCompare(String(b.id));
+        });
+        return g;
+    });
+}
+
+function acnTotalsOf(groups) {
+    let total = 0, box = 0, members = 0;
+    groups.forEach(function(g) {
+        total += g.total;
+        box += g.box;
+        members += g.members;
+    });
+    return {
+        total: round2(total),
+        box: round2(box),
+        members: round2(members)
+    };
+}
+
+function acnGroupExpenses(entries, treasury) {
+    const items = [];
+    (entries || []).forEach(function(e) {
+        if (e.kind === "expense") items.push({
+            key: "m:" + e.section,
+            label: e.section,
+            source: "members",
+            row: acnEntryRow(e)
+        });
+    });
+    ACN_EXPENSE_CATEGORIES.forEach(function(cat) {
+        (treasury && treasury[cat] || []).forEach(function(t) {
+            if (!round2(Number(t && t.amount) || 0)) return;
+            items.push({
+                key: "b:" + cat,
+                label: "من الصندوق — " + acnCategoryLabel(cat),
+                source: "box",
+                row: acnBoxRow(t, acnCategoryLabel(cat))
+            });
+        });
+    });
+    const groups = acnGroupBuild(items);
+    groups.sort(function(a, b) {
+        return a.source === b.source ? a.source === "members" ? a.label.localeCompare(b.label, "ar") : 0 : a.source === "members" ? -1 : 1;
+    });
+    return {
+        groups: groups,
+        totals: acnTotalsOf(groups)
+    };
+}
+
+function acnGroupSalaries(entries, treasury) {
+    const items = [];
+    (entries || []).forEach(function(e) {
+        if (e.kind === "salary") items.push({
+            key: "p:" + e.person,
+            label: e.person,
+            source: "members",
+            row: acnEntryRow(e)
+        });
+    });
+    (treasury && treasury.salaries || []).forEach(function(t) {
+        if (!round2(Number(t && t.amount) || 0)) return;
+        const who = acnPersonFromNote(t.note) || ACN_UNKNOWN_PERSON;
+        items.push({
+            key: "p:" + who,
+            label: who,
+            source: "box",
+            row: acnBoxRow(t, "راتب")
+        });
+    });
+    const groups = acnGroupBuild(items);
+    groups.sort(function(a, b) {
+        return a.label === ACN_UNKNOWN_PERSON ? 1 : b.label === ACN_UNKNOWN_PERSON ? -1 : a.label.localeCompare(b.label, "ar");
+    });
+    return {
+        groups: groups,
+        totals: acnTotalsOf(groups)
+    };
+}
+
+function acnSectionNames(entries) {
+    const seen = {}, out = [];
+    (entries || []).forEach(function(e) {
+        if (e.kind === "expense" && e.section && !seen[e.section]) {
+            seen[e.section] = 1;
+            out.push(e.section);
+        }
+    });
+    ACN_SECTION_HINTS.forEach(function(s) {
+        if (!seen[s]) {
+            seen[s] = 1;
+            out.push(s);
+        }
+    });
+    return out;
+}
+
+function acnPersonNames(entries) {
+    const seen = {}, out = [];
+    (entries || []).forEach(function(e) {
+        if (e.kind === "salary" && e.person && !seen[e.person]) {
+            seen[e.person] = 1;
+            out.push(e.person);
+        }
+    });
+    ACN_STAFF_HINTS.forEach(function(s) {
+        if (!seen[s]) {
+            seen[s] = 1;
+            out.push(s);
+        }
+    });
+    return out;
+}
+
+function acnFindEntry(id) {
+    const list = acnState && acnState.entries || [];
+    for (let i = 0; i < list.length; i++) {
+        if (list[i].id === id) return list[i];
+    }
+    return null;
+}
+
+async function acnEntriesLoad() {
+    const gen = acnGen;
+    if (typeof sb === "undefined" || !sb || !acnState) {
+        if (acnState) acnState.entriesOk = false;
+        return false;
+    }
+    try {
+        const all = [];
+        for (let page = 0; page < 20; page++) {
+            const r = await withTimeout(sb.from("acn_entries").select("*").order("entry_date", {
+                ascending: true
+            }).order("id", {
+                ascending: true
+            }).range(page * 1e3, page * 1e3 + 999), 2e4, "acn-load");
+            if (r && r.error) throw r.error;
+            const rows = r && r.data || [];
+            rows.forEach(function(x) {
+                all.push(x);
+            });
+            if (rows.length < 1e3) break;
+        }
+        if (!acnState || gen !== acnGen) return false;
+        acnState.entries = all.map(acnEntryFromRow).filter(Boolean);
+        acnState.entriesOk = true;
+        return true;
+    } catch (e) {
+        if (acnState && gen === acnGen) acnState.entriesOk = false;
+        if (typeof console !== "undefined") console.error("ACN entries load", e);
+        return false;
+    }
+}
+
+async function acnEntryWrite(run) {
+    try {
+        if (typeof sb === "undefined" || !sb) return {
+            ok: false,
+            error: "الاتصال بقاعدة البيانات غير متاح حاليًا"
+        };
+        const r = await run();
+        return r;
+    } catch (e) {
+        return {
+            ok: false,
+            error: friendlyErrorText(e)
+        };
+    }
+}
+
+async function acnEntrySave(form, editingId) {
+    const v = acnEntryValidate(form);
+    if (!v.ok) return {
+        ok: false,
+        error: v.error
+    };
+    return acnEntryWrite(async function() {
+        if (editingId) {
+            const cur = acnFindEntry(editingId);
+            if (!cur) return {
+                ok: false,
+                stale: true,
+                error: "القيد لم يعد موجودًا — حُدِّثت القائمة"
+            };
+            const r = await withTimeout(sb.from("acn_entries").update(v.row).eq("id", editingId).eq("updated_at", cur.updatedAt).select("id"), 2e4, "acn-update");
+            if (r && r.error) throw r.error;
+            if (!r || !r.data || !r.data.length) return {
+                ok: false,
+                stale: true,
+                error: "تغيّر هذا القيد من مستخدم آخر أو لم يعد موجودًا — حُدِّثت القائمة، راجعه ثم أعد المحاولة"
+            };
+            return {
+                ok: true
+            };
+        }
+        const r = await withTimeout(sb.from("acn_entries").insert(Object.assign({
+            id: uid("acn")
+        }, v.row)), 2e4, "acn-insert");
+        if (r && r.error) throw r.error;
+        return {
+            ok: true
+        };
+    });
+}
+
+async function acnEntryDelete(id) {
+    return acnEntryWrite(async function() {
+        const r = await withTimeout(sb.from("acn_entries").delete().eq("id", id).select("id"), 2e4, "acn-delete");
+        if (r && r.error) throw r.error;
+        if (!r || !r.data || !r.data.length) return {
+            ok: false,
+            stale: true,
+            error: "القيد لم يعد موجودًا — حُدِّثت القائمة"
+        };
+        return {
+            ok: true
+        };
+    });
+}
+
+async function acnEntriesReloadAndRender() {
+    await acnEntriesLoad();
+    acnRecompute();
+    acnRender();
+}
+
+function acnEntriesSubscribe() {
+    if (typeof sb === "undefined" || !sb || acnEntriesChannel) return;
+    try {
+        acnEntriesChannel = sb.channel("acn-entries-changes").on("postgres_changes", {
+            event: "*",
+            schema: "public",
+            table: "acn_entries"
+        }, acnEntriesRealtime).subscribe();
+    } catch (e) {
+        acnEntriesChannel = null;
+    }
+}
+
+function acnEntriesRealtime() {
+    if (!acnState) return;
+    if (acnEntriesTimer) clearTimeout(acnEntriesTimer);
+    acnEntriesTimer = setTimeout(function() {
+        acnEntriesTimer = null;
+        if (acnState) acnEntriesReloadAndRender();
+    }, 300);
+}
+
+function acnEntriesTeardown() {
+    if (acnEntriesTimer) {
+        clearTimeout(acnEntriesTimer);
+        acnEntriesTimer = null;
+    }
+    try {
+        if (typeof sb !== "undefined" && sb && acnEntriesChannel) sb.removeChannel(acnEntriesChannel);
+    } catch (e) {}
+    acnEntriesChannel = null;
+}
+
+function acnPaidByLabel(p) {
+    return p === "box" ? "الصندوق" : ACN_MEMBERS[p] || p;
+}
+
+function acnWarnHtml(st) {
+    return st && st.entriesOk === false ? '<div class="acn-warn" role="alert">تعذّر تحميل قيود المحاسب — النفقات والرواتب هنا (ومعها صفحة الصندوق) غير مكتملة. اضغط «تحديث» لإعادة المحاولة.</div>' : "";
+}
+
+function acnEntryRowHtml(r, salary) {
+    const acts = r.editable ? '<button type="button" class="acn-ibtn" data-acn-act="entry-edit" data-acn-id="' + escapeHtml(r.id) + '">تعديل</button><button type="button" class="acn-ibtn acn-ibtn-del" data-acn-act="entry-del" data-acn-id="' + escapeHtml(r.id) + '">حذف</button>' : "";
+    return '<tr class="acn-tr' + (r.editable ? "" : " acn-tr-dlv") + '">' + '<td class="acn-sticky acn-desc" title="' + escapeHtml(r.description) + '">' + escapeHtml(r.description) + "</td>" + '<td class="acn-d" data-l="' + (salary ? "الشهر" : "المرجع") + '">' + escapeHtml(salary ? r.month : r.reference) + "</td>" + '<td class="acn-d" data-l="التاريخ">' + escapeHtml(r.dmy) + "</td>" + '<td class="acn-n" data-l="المبلغ">' + acnNum(r.amount) + "</td>" + '<td class="acn-d" data-l="' + (salary ? "دفعه" : "دفعها") + '">' + escapeHtml(acnPaidByLabel(r.paidBy)) + "</td>" + '<td class="acn-acts">' + acts + "</td></tr>";
+}
+
+function acnEntryGroupHtml(g, salary) {
+    const head = '<thead><tr><th class="acn-sticky">البند</th><th>' + (salary ? "الشهر" : "المرجع") + "</th><th>التاريخ</th><th>المبلغ</th><th>" + (salary ? "دفعه" : "دفعها") + "</th><th></th></tr></thead>";
+    return '<section class="acn-eg"><div class="acn-eg-head"><span class="acn-eg-name">' + escapeHtml(g.label) + '</span><span class="acn-eg-meta">' + g.rows.length + " بند</span>" + '<span class="acn-eg-total num">' + acnNum(g.total) + "</span></div>" + '<div class="acn-tbl-wrap"><table class="acn-tbl acn-tbl-entries">' + head + "<tbody>" + g.rows.map(function(r) {
+        return acnEntryRowHtml(r, salary);
+    }).join("") + "</tbody></table></div></section>";
+}
+
+function acnEntriesTabHtml(data, st, salary) {
+    const t = data.totals;
+    const strip = '<div class="acn-stats">' + acnStatCell(salary ? "إجمالي الرواتب" : "إجمالي النفقات", acnNum(t.total)) + acnStatCell("من الصندوق (للقراءة فقط)", acnNum(t.box)) + acnStatCell("دفعها الأعضاء من جيوبهم", acnNum(t.members)) + "</div>";
+    const add = '<div class="acn-actions-row"><button type="button" class="btn btn-primary" data-acn-act="entry-add" data-acn-kind="' + (salary ? "salary" : "expense") + '">' + (salary ? "+ إضافة راتب" : "+ إضافة نفقة") + "</button></div>";
+    const groups = data.groups.length ? data.groups.map(function(g) {
+        return acnEntryGroupHtml(g, salary);
+    }).join("") : '<div class="acn-empty">لا توجد قيود بعد</div>';
+    const note = salary ? '<p class="acn-note">رواتب الصندوق تظهر هنا تلقائيًا للقراءة فقط (الموظف مخمَّن من وصف القيد، وما لم يُعرف يظهر «غير محدد»). «+ إضافة راتب» لراتب دفعه أحد الأعضاء من جيبه: يُسجَّل في حسابه ولا يدخل الصندوق.</p>' : '<p class="acn-note">مصاريف الصندوق (غير التوصيل والرواتب) تظهر هنا تلقائيًا للقراءة فقط، والتوصيل ضمن العمليات. «+ إضافة نفقة» لنفقة دفعها أحد الأعضاء من جيبه بقسم من أقسام بشار: تُسجَّل في حسابه ولا تدخل الصندوق.</p>';
+    return acnWarnHtml(st) + strip + add + groups + note;
+}
+
+function acnExpensesTabHtml(model, st) {
+    return acnEntriesTabHtml(model.expensesData, st, false);
+}
+
+function acnSalariesTabHtml(model, st) {
+    return acnEntriesTabHtml(model.salariesData, st, true);
+}
+
+function acnFormTodayYmd() {
+    const d = acnRiyadh((new Date).toISOString());
+    return d ? d.ymd : "";
+}
+
+function acnEntryFormHtml(kind, e) {
+    const salary = kind === "salary";
+    const v = e || {};
+    const payer = v.paidBy || acnMemberOfEmail(typeof presenceEmail !== "undefined" ? presenceEmail : "") || "homam";
+    const dl = function(id, arr) {
+        return '<datalist id="' + id + '">' + arr.map(function(x) {
+            return '<option value="' + escapeHtml(x) + '"></option>';
+        }).join("") + "</datalist>";
+    };
+    const entries = acnState && acnState.entries || [];
+    const ymd = v.ymd || acnFormTodayYmd();
+    const monthDefault = v.forMonth || ymd.slice(0, 7);
+    return '<div class="modal-backdrop" data-close-backdrop><div class="modal-card modal-card-sm" role="dialog" aria-modal="true">' + '<div class="modal-title">' + (e ? "✏️ تعديل " : "➕ إضافة ") + (salary ? "راتب" : "نفقة") + "</div>" + (salary ? '<label class="field"><span class="field-label">الموظف</span><input type="text" id="acn-f-person" list="acn-dl-person" autocomplete="off" value="' + escapeHtml(v.person || "") + '" placeholder="مثلا: عامر"></label>' + dl("acn-dl-person", acnPersonNames(entries)) + '<label class="field"><span class="field-label">شهر الراتب</span><input type="month" id="acn-f-month" value="' + escapeHtml(monthDefault) + '"></label>' : '<label class="field"><span class="field-label">القسم</span><input type="text" id="acn-f-section" list="acn-dl-section" autocomplete="off" value="' + escapeHtml(v.section || "") + '" placeholder="مثلا: تكاليف السيارة RAM"></label>' + dl("acn-dl-section", acnSectionNames(entries))) + '<label class="field"><span class="field-label">' + (salary ? "البند (اختياري — يُكتب تلقائيًا)" : "البند") + '</span><input type="text" id="acn-f-desc" maxlength="300" value="' + escapeHtml(v.description || "") + '"></label>' + (salary ? "" : '<label class="field"><span class="field-label">المرجع (اختياري)</span><input type="text" id="acn-f-ref" maxlength="80" value="' + escapeHtml(v.reference || "") + '"></label>') + '<label class="field"><span class="field-label">التاريخ</span><input type="date" id="acn-f-date" value="' + escapeHtml(ymd) + '"></label>' + '<label class="field"><span class="field-label">المبلغ</span><input type="number" inputmode="decimal" min="0" step="0.01" id="acn-f-amount" value="' + (v.amount ? escapeHtml(String(v.amount)) : "") + '" placeholder="المبلغ"></label>' + '<div class="field"><span class="field-label">' + (salary ? "دفعه" : "دفعها") + '</span><div class="acn-chips-row" id="acn-f-payer">' + Object.keys(ACN_MEMBERS).map(function(k) {
+        return '<button type="button" class="chip' + (k === payer ? " chip-active" : "") + '" data-acn-payer="' + k + '">' + ACN_MEMBERS[k] + "</button>";
+    }).join("") + "</div></div>" + '<p class="acn-form-err" id="acn-f-err" role="alert"></p>' + '<div class="modal-footer-actions" style="margin-top:12px;justify-content:flex-end;"><button type="button" class="btn btn-ghost" id="acn-f-cancel">إلغاء</button><button type="button" class="btn btn-primary" id="acn-f-save">💾 حفظ</button></div>' + "</div></div>";
+}
+
+function acnPopupClose() {
+    const root = document.getElementById("modal-root");
+    if (root) {
+        root.innerHTML = "";
+        root.classList.remove("modal-open");
+    }
+}
+
+function acnEntryOpenForm(kind, id) {
+    if (typeof hasElevatedAccess === "function" && !hasElevatedAccess()) {
+        if (typeof showToast === "function") showToast("غير متاح", "error");
+        return false;
+    }
+    const root = document.getElementById("modal-root");
+    if (!root || !acnState) return false;
+    let e = null;
+    if (id) {
+        e = acnFindEntry(id);
+        if (!e) {
+            if (typeof showToast === "function") showToast("القيد غير موجود — أعد التحميل", "error");
+            return false;
+        }
+        kind = e.kind;
+    }
+    root.innerHTML = acnEntryFormHtml(kind === "salary" ? "salary" : "expense", e);
+    root.classList.add("modal-open");
+    let payer = root.querySelector(".chip-active") && root.querySelector(".chip-active").getAttribute("data-acn-payer") || "homam";
+    root.querySelector("[data-close-backdrop]").addEventListener("click", function(ev) {
+        if (ev.target && ev.target.hasAttribute && ev.target.hasAttribute("data-close-backdrop")) acnPopupClose();
+    });
+    root.querySelector("#acn-f-cancel").addEventListener("click", acnPopupClose);
+    root.querySelectorAll("[data-acn-payer]").forEach(function(btn) {
+        btn.addEventListener("click", function() {
+            payer = btn.getAttribute("data-acn-payer");
+            root.querySelectorAll("[data-acn-payer]").forEach(function(b) {
+                b.classList.remove("chip-active");
+            });
+            btn.classList.add("chip-active");
+        });
+    });
+    const val = function(sel) {
+        const el = root.querySelector(sel);
+        return el ? el.value : "";
+    };
+    const saveBtn = root.querySelector("#acn-f-save");
+    saveBtn.addEventListener("click", async function() {
+        const form = {
+            kind: kind === "salary" ? "salary" : "expense",
+            section: val("#acn-f-section"),
+            person: val("#acn-f-person"),
+            forMonth: val("#acn-f-month"),
+            description: val("#acn-f-desc"),
+            reference: val("#acn-f-ref"),
+            date: val("#acn-f-date"),
+            amount: val("#acn-f-amount"),
+            paidBy: payer
+        };
+        const errEl = root.querySelector("#acn-f-err");
+        if (errEl) errEl.textContent = "";
+        saveBtn.disabled = true;
+        let res;
+        try {
+            res = await acnEntrySubmit(form, e ? e.id : "");
+        } finally {
+            saveBtn.disabled = false;
+        }
+        if (errEl && res && !res.ok && !res.busy) errEl.textContent = res.error || "تعذر حفظ القيد";
+    });
+    return true;
+}
+
+async function acnEntrySubmit(form, editingId) {
+    if (!acnState) return {
+        ok: false,
+        error: "الشاشة مغلقة"
+    };
+    if (acnState.busy) return {
+        ok: false,
+        busy: true
+    };
+    const pre = acnEntryValidate(form);
+    if (!pre.ok) return {
+        ok: false,
+        error: pre.error
+    };
+    acnState.busy = true;
+    let res;
+    try {
+        res = await acnEntrySave(form, editingId);
+    } finally {
+        if (acnState) acnState.busy = false;
+    }
+    if (res.ok) {
+        acnPopupClose();
+        if (typeof showToast === "function") showToast("تم حفظ القيد", "ok");
+        await acnEntriesReloadAndRender();
+    } else {
+        if (typeof showToast === "function") showToast("تعذر حفظ القيد: " + (res.error || ""), "error");
+        if (res.stale) await acnEntriesReloadAndRender();
+    }
+    return res;
+}
+
+function acnEntryConfirmDelete(id) {
+    if (typeof hasElevatedAccess === "function" && !hasElevatedAccess()) {
+        if (typeof showToast === "function") showToast("غير متاح", "error");
+        return false;
+    }
+    const e = acnFindEntry(id);
+    if (!e) {
+        if (typeof showToast === "function") showToast("القيد غير موجود — أعد التحميل", "error");
+        return false;
+    }
+    confirmAction({
+        title: "حذف هذا القيد؟",
+        message: e.description + " — " + acnNum(e.amount) + " ريال (" + (ACN_MEMBERS[e.paidBy] || "") + "). لا يمكن التراجع.",
+        confirmLabel: "حذف",
+        dangerous: true,
+        onConfirm: async function() {
+            if (acnState && acnState.busy) return;
+            if (acnState) acnState.busy = true;
+            let res;
+            try {
+                res = await acnEntryDelete(id);
+            } finally {
+                if (acnState) acnState.busy = false;
+            }
+            if (res.ok) {
+                if (typeof showToast === "function") showToast("تم حذف القيد", "ok");
+            } else if (typeof showToast === "function") showToast("تعذر حذف القيد: " + (res.error || ""), "error");
+            await acnEntriesReloadAndRender();
+        }
+    });
+    return true;
+}
+
+function acnEntriesAct(act, el) {
+    if (act === "entry-add") {
+        acnEntryOpenForm(el.getAttribute("data-acn-kind") === "salary" ? "salary" : "expense", "");
+        return true;
+    }
+    if (act === "entry-edit") {
+        acnEntryOpenForm("", el.getAttribute("data-acn-id"));
+        return true;
+    }
+    if (act === "entry-del") {
+        acnEntryConfirmDelete(el.getAttribute("data-acn-id"));
+        return true;
+    }
+    return false;
 }
 
 const TRACK_STAGES = [ {
