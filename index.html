@@ -75430,6 +75430,12 @@ const PDFIMG_OBJ3 = "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ";
 
 const PDFIMG_HEAD = PDFIMG_HDR + PDFIMG_OBJ1 + PDFIMG_OBJ2 + PDFIMG_OBJ3;
 
+const PDFIMG_PRODUCER2 = "PARTECH-IMG2PDF/2";
+
+const PDFIMG_MAX_PAGES = 10;
+
+const PDFIMG_HEAD2 = PDFIMG_HDR + PDFIMG_OBJ1 + "2 0 obj\n<< /Type /Pages /Kids [3 0 R 6 0 R";
+
 function pdfimgAscii(s) {
     const u = new Uint8Array(s.length);
     for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i) & 255;
@@ -75570,6 +75576,127 @@ function pdfimgExtract(b) {
     }
 }
 
+function pdfimgPageBox(info) {
+    const land = info.width > info.height, pw = land ? 842 : 595, ph = land ? 595 : 842, m = PDFIMG_MARGIN;
+    const sc = Math.min((pw - 2 * m) / info.width, (ph - 2 * m) / info.height);
+    const dw = info.width * sc, dh = info.height * sc;
+    return {
+        pw: pw,
+        ph: ph,
+        content: "q " + pdfimgNum(dw) + " 0 0 " + pdfimgNum(dh) + " " + pdfimgNum((pw - dw) / 2) + " " + pdfimgNum((ph - dh) / 2) + " cm /Im0 Do Q\n"
+    };
+}
+
+function pdfimgAssembleMulti(items) {
+    const n = items.length, parts = [], offs = [];
+    let off = 0, kids = "";
+    const put = x => {
+        const u = typeof x === "string" ? pdfimgAscii(x) : x;
+        parts.push(u);
+        off += u.length;
+    };
+    for (let i = 0; i < n; i++) kids += (i ? " " : "") + (3 + 3 * i) + " 0 R";
+    put(PDFIMG_HDR);
+    offs[1] = off;
+    put(PDFIMG_OBJ1);
+    offs[2] = off;
+    put("2 0 obj\n<< /Type /Pages /Kids [" + kids + "] /Count " + n + " >>\nendobj\n");
+    for (let i = 0; i < n; i++) {
+        const it = items[i], box = pdfimgPageBox(it.info), po = 3 + 3 * i;
+        offs[po] = off;
+        put(po + " 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 " + box.pw + " " + box.ph + "] /Resources << /XObject << /Im0 " + (po + 1) + " 0 R >> /ProcSet [/PDF /ImageB /ImageC] >> /Contents " + (po + 2) + " 0 R >>\nendobj\n");
+        offs[po + 1] = off;
+        put(po + 1 + " 0 obj\n<< /Type /XObject /Subtype /Image /Width " + it.info.width + " /Height " + it.info.height + " /ColorSpace /" + (it.info.comps === 1 ? "DeviceGray" : "DeviceRGB") + " /BitsPerComponent 8 /Filter /DCTDecode /Length " + it.data.length + " >>\nstream\n");
+        put(it.data);
+        put("\nendstream\nendobj\n");
+        offs[po + 2] = off;
+        put(po + 2 + " 0 obj\n<< /Length " + box.content.length + " >>\nstream\n" + box.content + "endstream\nendobj\n");
+    }
+    const io = 3 + 3 * n;
+    offs[io] = off;
+    put(io + " 0 obj\n<< /Producer (" + PDFIMG_PRODUCER2 + ") /Title (" + PDFIMG_TITLE + ") >>\nendobj\n");
+    const xref = off, size = io + 1;
+    let x = "xref\n0 " + size + "\n0000000000 65535 f \n";
+    for (let k = 1; k < size; k++) x += String(offs[k]).padStart(10, "0") + " 00000 n \n";
+    put(x + "trailer\n<< /Size " + size + " /Root 1 0 R /Info " + io + " 0 R >>\nstartxref\n" + xref + "\n%%EOF\n");
+    const out = new Uint8Array(off);
+    let p = 0;
+    for (let k = 0; k < parts.length; k++) {
+        out.set(parts[k], p);
+        p += parts[k].length;
+    }
+    return out;
+}
+
+function pdfimgBuildMulti(jpegs) {
+    if (!Array.isArray(jpegs) || jpegs.length < 2 || jpegs.length > PDFIMG_MAX_PAGES) return null;
+    const items = [];
+    let total = 0;
+    for (let i = 0; i < jpegs.length; i++) {
+        const j = jpegs[i], info = pdfimgJpegInfo(j);
+        if (!info || info.end > PDFIMG_MAX_BYTES) return null;
+        const data = info.end === j.length ? j : j.subarray(0, info.end);
+        total += data.length;
+        if (total > PDFIMG_MAX_BYTES) return null;
+        items.push({
+            data: data,
+            info: info
+        });
+    }
+    const out = pdfimgAssembleMulti(items);
+    const back = pdfimgExtractMulti(out);
+    if (!back || back.length !== items.length) return null;
+    for (let i = 0; i < items.length; i++) {
+        const d = items[i].data, e = back[i];
+        if (e.length !== d.length) return null;
+        for (let k = 0; k < d.length; k++) {
+            if (e[k] !== d[k]) return null;
+        }
+    }
+    return out;
+}
+
+function pdfimgExtractMulti(b) {
+    try {
+        const n = b && typeof b.length === "number" ? b.length : 0;
+        if (n < 1e3 || n > 9e6) return null;
+        const head = pdfimgLatin1(b, 0, Math.min(n, 400));
+        if (head.indexOf(PDFIMG_HEAD2) !== 0) return null;
+        const cm = /^\/Kids \[[0-9 R]+\] \/Count (\d{1,2}) >>\nendobj\n/.exec(head.slice(PDFIMG_HDR.length + PDFIMG_OBJ1.length + "2 0 obj\n<< /Type /Pages ".length));
+        if (!cm) return null;
+        const cnt = Number(cm[1]);
+        if (!(cnt >= 2 && cnt <= PDFIMG_MAX_PAGES)) return null;
+        const pages = [], items = [];
+        let pos = PDFIMG_HDR.length + PDFIMG_OBJ1.length;
+        for (let i = 0; i < cnt; i++) {
+            const win = pdfimgLatin1(b, pos, pos + 900), tag = "\n" + (4 + 3 * i) + " 0 obj\n<< /Type /XObject /Subtype /Image /Width ";
+            const o = win.indexOf(tag);
+            if (o < 0) return null;
+            const mm = /\/BitsPerComponent 8 \/Filter \/DCTDecode \/Length (\d{1,8}) >>\nstream\n/.exec(win.slice(o));
+            if (!mm) return null;
+            const len = Number(mm[1]), start = pos + o + mm.index + mm[0].length;
+            if (!(len >= PDFIMG_MIN_BYTES) || start + len + 18 > n) return null;
+            if (b[start] !== 255 || b[start + 1] !== 216 || b[start + len - 2] !== 255 || b[start + len - 1] !== 217) return null;
+            const jpg = b.subarray(start, start + len), info = pdfimgJpegInfo(jpg);
+            if (!info || info.end !== len) return null;
+            pages.push(jpg);
+            items.push({
+                data: jpg,
+                info: info
+            });
+            pos = start + len;
+        }
+        const ref = pdfimgAssembleMulti(items);
+        if (ref.length !== n) return null;
+        for (let k = 0; k < n; k++) {
+            if (ref[k] !== b[k]) return null;
+        }
+        return pages;
+    } catch (e) {
+        return null;
+    }
+}
+
 function pdfimgReadBytes(blob) {
     return new Promise(function(resolve, reject) {
         try {
@@ -75609,6 +75736,24 @@ async function pdfimgFromJpeg(blob) {
     }
 }
 
+async function pdfimgFromJpegs(blobs) {
+    try {
+        if (!PDFIMG_ENABLED || !Array.isArray(blobs) || blobs.length < 1 || blobs.length > PDFIMG_MAX_PAGES) return null;
+        const bytes = [];
+        for (let i = 0; i < blobs.length; i++) {
+            const bl = blobs[i];
+            if (!bl || typeof bl.size !== "number" || bl.size < PDFIMG_MIN_BYTES || bl.size > PDFIMG_MAX_BYTES) return null;
+            bytes.push(await pdfimgReadBytes(bl));
+        }
+        const pdf = bytes.length === 1 ? pdfimgBuild(bytes[0]) : pdfimgBuildMulti(bytes);
+        return pdf ? new Blob([ pdf ], {
+            type: "application/pdf"
+        }) : null;
+    } catch (e) {
+        return null;
+    }
+}
+
 function pdfimgPdfName(name) {
     let s = String(name === null || name === undefined ? "" : name).replace(/\.[A-Za-z0-9]{1,5}$/, "").slice(0, PDFIMG_NAME_MAX);
     const c = s.charCodeAt(s.length - 1);
@@ -75622,10 +75767,18 @@ function pdfimgPreview(sh, done) {
         const blob = sh.blob;
         const headPart = typeof blob.slice === "function" && blob.size > 800 ? blob.slice(0, 800) : blob;
         pdfimgReadBytes(headPart).then(function(h) {
-            if (pdfimgLatin1(h, 0, h.length).indexOf(PDFIMG_HEAD) !== 0) return null;
+            const hs = pdfimgLatin1(h, 0, h.length);
+            if (hs.indexOf(PDFIMG_HEAD) !== 0 && hs.indexOf(PDFIMG_HEAD2) !== 0) return null;
             return headPart === blob ? h : pdfimgReadBytes(blob);
         }).then(function(u8) {
-            const jpg = u8 ? pdfimgExtract(u8) : null;
+            let jpg = u8 ? pdfimgExtract(u8) : null, pg = 1;
+            if (!jpg && u8) {
+                const mp = pdfimgExtractMulti(u8);
+                if (mp) {
+                    jpg = mp[0];
+                    pg = mp.length;
+                }
+            }
             if (!jpg || sh.blob !== blob || sh.blobUrl) return;
             let url = "";
             try {
@@ -75637,6 +75790,7 @@ function pdfimgPreview(sh, done) {
             }
             if (!url) return;
             sh.blobUrl = url;
+            sh.pdfPages = pg;
             if (typeof done === "function") {
                 try {
                     done();
@@ -75648,8 +75802,394 @@ function pdfimgPreview(sh, done) {
 
 function pdfimgOpenBtnHtml(doc, sh) {
     if (!doc || !sh || doc.mime !== "application/pdf" || sh.blobState !== "ready" || !sh.blobUrl) return "";
-    return '<button type="button" class="acct2-chip" data-acct2-act="file-open">📄 فتح PDF</button>';
+    return '<button type="button" class="acct2-chip" data-acct2-act="file-open">📄 فتح PDF' + (sh.pdfPages > 1 ? " (" + sh.pdfPages + " صفحات)" : "") + "</button>";
 }
+
+const PDFSCAN_CAM = 'button[data-acct2-act="cam"], button[data-acct2-act="exp-cam"]';
+
+let pdfscanSess = null, pdfscanInput = null, pdfscanObs = null, pdfscanSeq = 0, pdfscanCssOn = false;
+
+function pdfscanIo() {
+    try {
+        return typeof acct2Io === "function" ? acct2Io() : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function pdfscanToast(msg, kind) {
+    try {
+        if (typeof acct2Toast === "function") acct2Toast(msg, kind); else if (typeof showToast === "function") showToast(msg, kind);
+    } catch (e) {}
+}
+
+function pdfscanTxt(k, fb) {
+    try {
+        const t = ACCT2_TXT.toasts[k];
+        return typeof t === "string" && t !== "" ? t : fb;
+    } catch (e) {
+        return fb;
+    }
+}
+
+function pdfscanBytes(s) {
+    let t = 0;
+    for (let i = 0; i < s.pages.length; i++) t += Number(s.pages[i].bytes) || 0;
+    return t;
+}
+
+function pdfscanEvent(ev) {
+    try {
+        if (typeof acct2OnIoEvent === "function") acct2OnIoEvent(ev);
+    } catch (e) {}
+}
+
+function pdfscanStyle() {
+    if (pdfscanCssOn || typeof document === "undefined") return;
+    pdfscanCssOn = true;
+    try {
+        const st = document.createElement("style");
+        st.setAttribute("data-pdfimg-scan", "1");
+        st.textContent = "#pdfimg-scan-root{position:fixed;inset:0;z-index:96;display:flex;align-items:flex-end;justify-content:center;background:rgba(4,6,5,.72);overflow-y:auto;}" + ".pdfimg-scan-sheet{width:100%;max-width:560px;max-height:92vh;overflow-y:auto;overscroll-behavior:contain;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0;padding:14px 16px calc(16px + env(safe-area-inset-bottom));}" + ".pdfimg-scan-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;}" + '.pdfimg-scan-title{font-family:"Cairo",sans-serif;font-weight:800;font-size:16px;}' + ".pdfimg-scan-close{min-width:44px;min-height:44px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:16px;cursor:pointer;}" + ".pdfimg-scan-sub{margin:0 0 10px;color:var(--text-dim);font-size:13px;line-height:1.7;}" + ".pdfimg-scan-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px;}" + ".pdfimg-scan-pg{position:relative;aspect-ratio:3/4;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);}" + ".pdfimg-scan-pg img{display:block;width:100%;height:100%;object-fit:cover;}" + ".pdfimg-scan-wait{display:flex;align-items:center;justify-content:center;padding:6px;text-align:center;color:var(--text-dim);font-size:13px;}" + '.pdfimg-scan-n{position:absolute;top:4px;inset-inline-start:4px;min-width:24px;padding:1px 6px;border-radius:999px;background:var(--surface);border:1px solid var(--border);font-family:"Cairo",sans-serif;font-weight:800;font-size:13px;text-align:center;}' + ".pdfimg-scan-x{position:absolute;top:2px;inset-inline-end:2px;min-width:40px;min-height:40px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:14px;cursor:pointer;}" + ".pdfimg-scan-acts{display:flex;gap:8px;flex-wrap:wrap;}" + ".pdfimg-scan-acts .btn{flex:1 1 150px;min-height:48px;font-size:14px;}";
+        (document.head || document.body).appendChild(st);
+    } catch (e) {}
+}
+
+function pdfscanRender() {
+    try {
+        if (typeof document === "undefined" || !document.body) return;
+        const s = pdfscanSess;
+        let root = document.getElementById("pdfimg-scan-root");
+        if (!s) {
+            if (root && root.parentNode) root.parentNode.removeChild(root);
+            return;
+        }
+        pdfscanStyle();
+        if (!root) {
+            root = document.createElement("div");
+            root.id = "pdfimg-scan-root";
+            document.body.appendChild(root);
+        }
+        const n = s.pages.length, full = n >= PDFIMG_MAX_PAGES, busy = !!(s.busy || s.sending);
+        let grid = "";
+        for (let i = 0; i < n; i++) {
+            grid += '<div class="pdfimg-scan-pg"><img src="' + s.pages[i].url + '" alt="صفحة ' + (i + 1) + '"><span class="pdfimg-scan-n">' + (i + 1) + "</span>" + '<button type="button" class="pdfimg-scan-x" data-pdfimg-act="del" data-pdfimg-id="' + s.pages[i].id + '" aria-label="حذف الصفحة ' + (i + 1) + '"' + (busy ? " disabled" : "") + ">✕</button></div>";
+        }
+        if (s.busy) grid += '<div class="pdfimg-scan-pg pdfimg-scan-wait" role="status">جارٍ تجهيز الصفحة…</div>';
+        root.innerHTML = '<div class="pdfimg-scan-sheet" role="dialog" aria-modal="true" aria-label="مسح ورقة">' + '<div class="pdfimg-scan-head"><span class="pdfimg-scan-title">📄 مسح ورقة</span>' + '<button type="button" class="pdfimg-scan-close" data-pdfimg-act="cancel" aria-label="إغلاق"' + (s.sending ? " disabled" : "") + ">✕</button></div>" + '<p class="pdfimg-scan-sub">' + (n ? (n === 1 ? "صفحة واحدة" : n + " صفحات") + " — تُرفع كلها ملف PDF واحدًا" : "صوّر الصفحة الأولى، ثم أضف ما تشاء من الصفحات، وتُرفع كلها ملف PDF واحدًا") + "</p>" + (grid ? '<div class="pdfimg-scan-grid">' + grid + "</div>" : "") + (full ? '<p class="pdfimg-scan-sub">بلغت الحد الأقصى (' + PDFIMG_MAX_PAGES + " صفحات)</p>" : "") + '<div class="pdfimg-scan-acts">' + (full ? "" : '<button type="button" class="btn" data-pdfimg-act="add"' + (busy ? " disabled" : "") + ">" + (n ? "➕ صفحة أخرى" : "📷 صوّر الصفحة الأولى") + "</button>") + '<button type="button" class="btn btn-primary" data-pdfimg-act="done"' + (busy || !n ? " disabled" : "") + ">" + (s.sending ? "جارٍ التجهيز…" : "✔ إنهاء ورفع") + "</button>" + "</div></div>";
+    } catch (e) {}
+}
+
+function pdfscanClose() {
+    const s = pdfscanSess;
+    pdfscanSess = null;
+    if (s) {
+        s.pages.forEach(function(p) {
+            try {
+                if (p.url) URL.revokeObjectURL(p.url);
+            } catch (e) {}
+        });
+    }
+    pdfscanRender();
+}
+
+function pdfscanInputEl() {
+    try {
+        if (pdfscanInput && pdfscanInput.parentNode) return pdfscanInput;
+        const el = document.createElement("input");
+        el.type = "file";
+        el.id = "pdfimg-scan-in";
+        el.accept = "image/*";
+        el.setAttribute("capture", "environment");
+        el.style.display = "none";
+        el.addEventListener("change", function() {
+            const f = el.files && el.files.length ? el.files[0] : null;
+            try {
+                el.value = "";
+            } catch (e) {}
+            if (f) pdfscanOnFile(f);
+        });
+        document.body.appendChild(el);
+        pdfscanInput = el;
+        return el;
+    } catch (e) {
+        return null;
+    }
+}
+
+function pdfscanAdd() {
+    const s = pdfscanSess;
+    if (!s || s.busy || s.sending || s.pages.length >= PDFIMG_MAX_PAGES) return;
+    const el = pdfscanInputEl();
+    if (el && typeof el.click === "function") el.click();
+}
+
+async function pdfscanOnFile(file) {
+    const s = pdfscanSess;
+    if (!s || s.busy || s.sending) return;
+    s.busy = true;
+    pdfscanRender();
+    try {
+        const io = pdfscanIo();
+        if (!io || typeof io.compress !== "function" || !file || !(file.size > 0)) throw new Error("scan_input");
+        const comp = await io.compress(file, {
+            color: !!(typeof acct2ColorOn === "function" && acct2ColorOn())
+        });
+        if (pdfscanSess !== s) return;
+        if (!comp || !comp.ok) {
+            const r = comp && comp.reason;
+            pdfscanToast(r === "too_big" ? pdfscanTxt("tooBig", "الصورة كبيرة جدًا") : r === "decode" ? pdfscanTxt("decode", "تعذّرت قراءة الصورة") : pdfscanTxt("failed", "تعذّر تجهيز الصفحة"), "error");
+        } else if (pdfscanBytes(s) + (Number(comp.bytes) || 0) > PDFIMG_MAX_BYTES) {
+            pdfscanToast("حجم الصفحات كبير — ارفع ما صوّرته ثم ابدأ مستندًا آخر", "error");
+        } else {
+            let url = "";
+            try {
+                url = URL.createObjectURL(comp.blob);
+            } catch (e) {
+                url = "";
+            }
+            s.pages.push({
+                id: "pg" + ++pdfscanSeq,
+                blob: comp.blob,
+                bytes: Number(comp.bytes) || 0,
+                url: url
+            });
+        }
+    } catch (e) {
+        pdfscanToast(pdfscanTxt("failed", "تعذّر تجهيز الصفحة"), "error");
+    } finally {
+        if (pdfscanSess === s) {
+            s.busy = false;
+            pdfscanRender();
+        }
+    }
+}
+
+function pdfscanDel(id) {
+    const s = pdfscanSess;
+    if (!s || s.busy || s.sending) return;
+    for (let i = 0; i < s.pages.length; i++) {
+        if (s.pages[i].id === id) {
+            try {
+                if (s.pages[i].url) URL.revokeObjectURL(s.pages[i].url);
+            } catch (e) {}
+            s.pages.splice(i, 1);
+            break;
+        }
+    }
+    pdfscanRender();
+}
+
+async function pdfscanFinish() {
+    const s = pdfscanSess;
+    if (!s || s.busy || s.sending || !s.pages.length) return;
+    const io = pdfscanIo();
+    if (!io || typeof io.attach !== "function" || typeof pdfimgFromJpegs !== "function") {
+        pdfscanToast(pdfscanTxt("failed", "تعذّر الرفع"), "error");
+        return;
+    }
+    s.sending = true;
+    pdfscanRender();
+    let pdf = null;
+    try {
+        pdf = typeof pdfimgFromJpegs === "function" ? await pdfimgFromJpegs(s.pages.map(function(p) {
+            return p.blob;
+        })) : null;
+    } catch (e) {
+        pdf = null;
+    }
+    if (pdfscanSess !== s) return;
+    if (!pdf) {
+        s.sending = false;
+        pdfscanRender();
+        pdfscanToast("تعذّر تجهيز ملف PDF — جرّب مرة أخرى", "error");
+        return;
+    }
+    const ctx = s.ctx, key = s.key;
+    let file = null;
+    try {
+        file = new File([ pdf ], "scan.pdf", {
+            type: "application/pdf"
+        });
+    } catch (e) {
+        file = null;
+    }
+    if (!file) {
+        s.sending = false;
+        pdfscanRender();
+        pdfscanToast(pdfscanTxt("failed", "تعذّر الرفع"), "error");
+        return;
+    }
+    pdfscanEvent({
+        type: "queue",
+        preparing: true,
+        slotKey: key,
+        linkLater: !!ctx.linkLater
+    });
+    let res = null;
+    try {
+        res = await io.attach(ctx, file, {
+            source: "camera"
+        });
+    } catch (e) {
+        res = null;
+    }
+    if (!res) res = {
+        ok: false,
+        id: "",
+        state: "refused",
+        reason: "error"
+    };
+    pdfscanEvent({
+        type: "queue",
+        id: res.id,
+        slotKey: key,
+        picked: true,
+        ok: res.ok,
+        state: res.state,
+        reason: res.reason || "",
+        linkLater: !!ctx.linkLater,
+        offline: !!res.offline,
+        duplicate: !!res.duplicate,
+        warn: res.warn === "pdf_large" ? "" : res.warn || "",
+        bytes: res.bytes || 0
+    });
+    if (pdfscanSess !== s) return;
+    if (res.ok) pdfscanClose(); else {
+        s.sending = false;
+        pdfscanRender();
+    }
+}
+
+function pdfscanStart(btn) {
+    try {
+        if (pdfscanSess) return;
+        const io = pdfscanIo();
+        if (!io || typeof io.compress !== "function" || typeof io.attach !== "function" || typeof pdfimgFromJpegs !== "function") return;
+        if (typeof acct2WritesOn === "function" && !acct2WritesOn()) {
+            pdfscanToast(pdfscanTxt("paused", "الرفع متوقف مؤقتًا"), "error");
+            return;
+        }
+        const kind = btn.getAttribute("data-pdfimg-scan");
+        let ctx = null, key = "";
+        if (kind === "exp") {
+            ctx = {
+                linkLater: true,
+                facts: {
+                    kind: "expense_receipt",
+                    evidence: "unknown",
+                    medium: "photo_of_paper"
+                }
+            };
+            try {
+                const staged = typeof acct2StagedList === "function" ? acct2StagedList() : [];
+                if (staged.length) ctx.pageOf = staged[0].id;
+            } catch (e) {}
+            try {
+                const a = document.getElementById("expense-add-amount-input");
+                const h = a && typeof PTX_ACCT !== "undefined" ? PTX_ACCT.money.toH(a.value) : 0;
+                if (h > 0) ctx.facts.expected_h = h;
+            } catch (e) {}
+        } else {
+            key = btn.getAttribute("data-pdfimg-key") || "";
+            ctx = typeof acct2SlotCtx === "function" ? acct2SlotCtx(key) : null;
+            if (!ctx) {
+                pdfscanToast(function() {
+                    try {
+                        return ACCT2_TXT.card.saveFirst;
+                    } catch (e) {
+                        return "احفظ أولًا";
+                    }
+                }(), "error");
+                return;
+            }
+            ctx.facts = {
+                medium: "photo_of_paper"
+            };
+        }
+        pdfscanSess = {
+            ctx: ctx,
+            key: key,
+            kind: kind,
+            pages: [],
+            busy: false,
+            sending: false
+        };
+        try {
+            if (typeof acct2St !== "undefined" && acct2St && acct2St.sheet && acct2St.sheet.type === "chooser" && typeof acct2CloseSheet === "function") acct2CloseSheet();
+        } catch (e) {}
+        pdfscanRender();
+        pdfscanAdd();
+    } catch (e) {
+        pdfscanSess = null;
+    }
+}
+
+function pdfscanEnsureBtn(cam) {
+    try {
+        if (!cam || !cam.parentNode) return;
+        const nx = cam.nextElementSibling;
+        if (nx && nx.hasAttribute && nx.hasAttribute("data-pdfimg-scan")) return;
+        const exp = cam.getAttribute("data-acct2-act") === "exp-cam";
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = cam.className;
+        b.setAttribute("data-pdfimg-scan", exp ? "exp" : "slot");
+        if (!exp) b.setAttribute("data-pdfimg-key", cam.getAttribute("data-acct2-key") || "");
+        b.setAttribute("aria-label", "مسح ورقة");
+        b.textContent = "📄";
+        cam.parentNode.insertBefore(b, cam.nextSibling);
+    } catch (e) {}
+}
+
+function pdfscanSweep(root) {
+    try {
+        if (!root || root.nodeType !== 1) return;
+        if (root.matches && root.matches(PDFSCAN_CAM)) pdfscanEnsureBtn(root);
+        const list = root.querySelectorAll ? root.querySelectorAll(PDFSCAN_CAM) : [];
+        for (let i = 0; i < list.length; i++) pdfscanEnsureBtn(list[i]);
+    } catch (e) {}
+}
+
+function pdfscanOnClick(ev) {
+    try {
+        const t = ev.target && ev.target.closest ? ev.target.closest("[data-pdfimg-scan], [data-pdfimg-act]") : null;
+        if (!t) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (t.hasAttribute("data-pdfimg-scan")) {
+            pdfscanStart(t);
+            return;
+        }
+        const act = t.getAttribute("data-pdfimg-act");
+        if (act === "add") pdfscanAdd(); else if (act === "del") pdfscanDel(t.getAttribute("data-pdfimg-id") || ""); else if (act === "done") pdfscanFinish(); else if (act === "cancel") {
+            const s = pdfscanSess;
+            if (s && !s.sending) pdfscanClose();
+        }
+    } catch (e) {}
+}
+
+function pdfscanInstall() {
+    try {
+        if (typeof document === "undefined" || !document.body || pdfscanObs) return;
+        pdfscanSweep(document.body);
+        if (typeof MutationObserver === "function") {
+            pdfscanObs = new MutationObserver(function(ms) {
+                for (let i = 0; i < ms.length; i++) {
+                    const add = ms[i].addedNodes;
+                    for (let k = 0; k < add.length; k++) pdfscanSweep(add[k]);
+                }
+            });
+            pdfscanObs.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+        } else pdfscanObs = true;
+        document.addEventListener("click", pdfscanOnClick, true);
+    } catch (e) {}
+}
+
+pdfscanInstall();
 
 const KPIW_METRICS = {
     created: {
