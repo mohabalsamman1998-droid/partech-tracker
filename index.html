@@ -76763,7 +76763,7 @@ function pdfimgOpenBtnHtml(doc, sh) {
 
 const PDFSCAN_CAM = 'button[data-acct2-act="cam"], button[data-acct2-act="exp-cam"]';
 
-let pdfscanSess = null, pdfscanInput = null, pdfscanObs = null, pdfscanSeq = 0, pdfscanCssOn = false, pdfscanAuto = false;
+let pdfscanSess = null, pdfscanInput = null, pdfscanObs = null, pdfscanSeq = 0, pdfscanCssOn = false, pdfscanGate = null, pdfscanResizeFn = null;
 
 function pdfscanIo() {
     try {
@@ -76800,265 +76800,99 @@ function pdfscanEvent(ev) {
     } catch (e) {}
 }
 
-const PDFSCAN_AN_SIDE = 320;
-
-const PDFSCAN_THR_BIAS = .6;
-
-const PDFSCAN_MIN_AREA = .08;
-
-const PDFSCAN_SKIP_AREA = .9;
-
-const PDFSCAN_CROP_SIDE = 2400;
-
-const PDFSCAN_K_MID = .35;
-
-const PDFSCAN_K_LOW = .18;
-
-const PDFSCAN_STAB = 1.08;
-
 const PDFSCAN_RAW_MAX = 62914560;
 
 const PDFSCAN_PDF_MS = 6e4;
 
+const PDFSCAN_PREP_MS = 6e4;
+
+const PDFSCAN_DEL_GAP_MS = 450;
+
 const PDFSCAN_ATTACH_MS = 9e4;
 
-function pdfscanBlur(g, w, h, r) {
-    const t = new Uint8Array(w * h), o = new Uint8Array(w * h), d = 2 * r + 1;
-    for (let y = 0; y < h; y++) {
-        const row = y * w;
-        let s = 0;
-        for (let x = -r; x <= r; x++) s += g[row + Math.min(w - 1, Math.max(0, x))];
-        for (let x = 0; x < w; x++) {
-            t[row + x] = Math.round(s / d);
-            s += g[row + Math.min(w - 1, x + r + 1)] - g[row + Math.max(0, x - r)];
-        }
-    }
-    for (let x = 0; x < w; x++) {
-        let s = 0;
-        for (let y = -r; y <= r; y++) s += t[Math.min(h - 1, Math.max(0, y)) * w + x];
-        for (let y = 0; y < h; y++) {
-            o[y * w + x] = Math.round(s / d);
-            s += t[Math.min(h - 1, y + r + 1) * w + x] - t[Math.max(0, y - r) * w + x];
-        }
-    }
-    return o;
+const PDFSCAN_CROP_MAX = 3e3;
+
+const PDFSCAN_PREVIEW_MAX = 1400;
+
+const PDFSCAN_CROP_MIN = .1;
+
+const PDFSCAN_HIT_PX = 30;
+
+const PDFSCAN_STAGE_PAD = 34;
+
+function pdfscanClamp(v, lo, hi) {
+    return v < lo ? lo : v > hi ? hi : v;
 }
 
-function pdfscanOtsu(g) {
-    const n = g.length, hist = [];
-    for (let i = 0; i < 256; i++) hist.push(0);
-    for (let i = 0; i < n; i++) hist[g[i]]++;
-    let sum = 0;
-    for (let i = 0; i < 256; i++) sum += i * hist[i];
-    let wB = 0, sB = 0, bestV = -1, bestT = 0;
-    for (let t = 0; t < 256; t++) {
-        wB += hist[t];
-        if (!wB) continue;
-        const wF = n - wB;
-        if (!wF) break;
-        sB += t * hist[t];
-        const mB = sB / wB, mF = (sum - sB) / wF, v = wB * wF * (mB - mF) * (mB - mF);
-        if (v > bestV) {
-            bestV = v;
-            bestT = t;
-        }
-    }
-    let n0 = 0, s0 = 0;
-    for (let i = 0; i <= bestT; i++) {
-        n0 += hist[i];
-        s0 += i * hist[i];
-    }
-    if (!n0 || n0 >= n) return null;
+function pdfscanCropHit(r, x, y, T) {
+    if (x < r.x0 - T || x > r.x1 + T || y < r.y0 - T || y > r.y1 + T) return "";
+    const dl = Math.abs(x - r.x0), dr = Math.abs(x - r.x1), dt = Math.abs(y - r.y0), db = Math.abs(y - r.y1);
+    const h = dl <= T || dr <= T ? dl <= dr ? "l" : "r" : "", v = dt <= T || db <= T ? dt <= db ? "t" : "b" : "";
+    if (h && v) return v + h;
+    if (h || v) return h || v;
+    return x > r.x0 && x < r.x1 && y > r.y0 && y < r.y1 ? "move" : "";
+}
+
+function pdfscanCropDrag(rect, mode, dx, dy, minN) {
+    let x0 = rect.x, y0 = rect.y, x1 = rect.x + rect.w, y1 = rect.y + rect.h;
+    if (mode === "move") return {
+        x: pdfscanClamp(x0 + dx, 0, 1 - rect.w),
+        y: pdfscanClamp(y0 + dy, 0, 1 - rect.h),
+        w: rect.w,
+        h: rect.h
+    };
+    if (mode.indexOf("l") >= 0) x0 = pdfscanClamp(x0 + dx, 0, x1 - minN);
+    if (mode.indexOf("r") >= 0) x1 = pdfscanClamp(x1 + dx, x0 + minN, 1);
+    if (mode.indexOf("t") >= 0) y0 = pdfscanClamp(y0 + dy, 0, y1 - minN);
+    if (mode.indexOf("b") >= 0) y1 = pdfscanClamp(y1 + dy, y0 + minN, 1);
     return {
-        t: bestT,
-        m0: s0 / n0,
-        m1: (sum - s0) / (n - n0)
+        x: x0,
+        y: y0,
+        w: x1 - x0,
+        h: y1 - y0
     };
 }
 
-function pdfscanBlobs(mask, w, h) {
-    const lab = new Int32Array(w * h), stack = new Int32Array(w * h), areas = [ 0 ];
-    let n = 0;
-    for (let i = 0; i < w * h; i++) {
-        if (!mask[i] || lab[i]) continue;
-        n++;
-        let sp = 0, a = 0;
-        stack[sp++] = i;
-        lab[i] = n;
-        while (sp) {
-            const p = stack[--sp], x = p % w, y = (p - x) / w;
-            a++;
-            if (x > 0 && mask[p - 1] && !lab[p - 1]) {
-                lab[p - 1] = n;
-                stack[sp++] = p - 1;
-            }
-            if (x < w - 1 && mask[p + 1] && !lab[p + 1]) {
-                lab[p + 1] = n;
-                stack[sp++] = p + 1;
-            }
-            if (y > 0 && mask[p - w] && !lab[p - w]) {
-                lab[p - w] = n;
-                stack[sp++] = p - w;
-            }
-            if (y < h - 1 && mask[p + w] && !lab[p + w]) {
-                lab[p + w] = n;
-                stack[sp++] = p + w;
-            }
-        }
-        areas[n] = a;
-    }
+function pdfscanCropRotRect(r) {
     return {
-        lab: lab,
-        n: n,
-        areas: areas
+        x: 1 - r.y - r.h,
+        y: r.x,
+        w: r.h,
+        h: r.w
     };
 }
 
-function pdfscanHull(pts) {
-    const p = pts.slice().sort(function(a, b) {
-        return a[0] - b[0] || a[1] - b[1];
-    });
-    if (p.length < 3) return p;
-    const cr = function(o, a, b) {
-        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
-    };
-    const lo = [], up = [];
-    for (let i = 0; i < p.length; i++) {
-        while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p[i]) <= 0) lo.pop();
-        lo.push(p[i]);
-    }
-    for (let i = p.length - 1; i >= 0; i--) {
-        while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p[i]) <= 0) up.pop();
-        up.push(p[i]);
-    }
-    lo.pop();
-    up.pop();
-    return lo.concat(up);
-}
-
-function pdfscanPolyArea(poly) {
-    let s = 0;
-    for (let i = 0; i < poly.length; i++) {
-        const a = poly[i], b = poly[(i + 1) % poly.length];
-        s += a[0] * b[1] - b[0] * a[1];
-    }
-    return Math.abs(s) / 2;
-}
-
-function pdfscanMinRect(hull) {
-    let best = null;
-    const n = hull.length;
-    for (let i = 0; i < n; i++) {
-        const a = hull[i], b = hull[(i + 1) % n], ang = Math.atan2(b[1] - a[1], b[0] - a[0]), c = Math.cos(ang), s = Math.sin(ang);
-        let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
-        for (let k = 0; k < n; k++) {
-            const dx = hull[k][0] - a[0], dy = hull[k][1] - a[1], u = dx * c + dy * s, v = -dx * s + dy * c;
-            if (u < x0) x0 = u;
-            if (u > x1) x1 = u;
-            if (v < y0) y0 = v;
-            if (v > y1) y1 = v;
-        }
-        const area = (x1 - x0) * (y1 - y0);
-        if (!best || area < best.area) best = {
-            area: area,
-            ang: ang,
-            c: c,
-            s: s,
-            ox: a[0],
-            oy: a[1],
-            x0: x0,
-            x1: x1,
-            y0: y0,
-            y1: y1
-        };
-    }
-    if (!best) return null;
-    const cu = (best.x0 + best.x1) / 2, cv = (best.y0 + best.y1) / 2;
-    let rw = best.x1 - best.x0, rh = best.y1 - best.y0, ang = best.ang;
-    const cx = best.ox + cu * best.c - cv * best.s, cy = best.oy + cu * best.s + cv * best.c;
-    while (ang > Math.PI / 4) {
-        ang -= Math.PI / 2;
-        const t = rw;
-        rw = rh;
-        rh = t;
-    }
-    while (ang <= -Math.PI / 4) {
-        ang += Math.PI / 2;
-        const t = rw;
-        rw = rh;
-        rh = t;
-    }
+function pdfscanCropPlan(iw, ih, q, rect, maxSide) {
+    q = (Math.round(q) % 4 + 4) % 4;
+    const RW = q % 2 ? ih : iw, RH = q % 2 ? iw : ih;
+    const cx = rect.x * RW, cy = rect.y * RH, cw = Math.max(1, rect.w * RW), ch = Math.max(1, rect.h * RH);
+    const k = Math.min(1, maxSide / Math.max(cw, ch));
     return {
+        q: q,
+        RW: RW,
+        RH: RH,
         cx: cx,
         cy: cy,
-        rw: rw,
-        rh: rh,
-        ang: ang,
-        area: best.area
+        cw: cw,
+        ch: ch,
+        k: k,
+        ow: Math.max(1, Math.round(cw * k)),
+        oh: Math.max(1, Math.round(ch * k)),
+        tx: q === 1 || q === 2 ? RW : 0,
+        ty: q === 2 || q === 3 ? RH : 0,
+        ang: q * Math.PI / 2
     };
 }
 
-function pdfscanRectAt(b, w, h, thr) {
-    const n = w * h, mask = new Uint8Array(n);
-    let on = 0;
-    for (let i = 0; i < n; i++) {
-        if (b[i] > thr) {
-            mask[i] = 1;
-            on++;
-        }
-    }
-    if (on < PDFSCAN_MIN_AREA * n || on > .985 * n) return null;
-    const bl = pdfscanBlobs(mask, w, h);
-    let best = 0, second = 0, bi = 0;
-    for (let k = 1; k <= bl.n; k++) {
-        const a = bl.areas[k];
-        if (a > best) {
-            second = best;
-            best = a;
-            bi = k;
-        } else if (a > second) second = a;
-    }
-    if (best < PDFSCAN_MIN_AREA * n || best > .985 * n) return null;
-    if (second > .25 * best) return null;
-    const pts = [];
-    for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-            const p = y * w + x;
-            if (bl.lab[p] !== bi) continue;
-            if (x === 0 || y === 0 || x === w - 1 || y === h - 1 || bl.lab[p - 1] !== bi || bl.lab[p + 1] !== bi || bl.lab[p - w] !== bi || bl.lab[p + w] !== bi) pts.push([ x, y ]);
-        }
-    }
-    const hull = pdfscanHull(pts);
-    if (hull.length < 3) return null;
-    const ha = pdfscanPolyArea(hull);
-    if (!(ha > 0) || best / ha < .7) return null;
-    const r = pdfscanMinRect(hull);
-    if (!r || !(r.rw > 0) || !(r.rh > 0) || ha / (r.rw * r.rh) < .8) return null;
-    return r;
-}
-
-function pdfscanPaperFind(g, w, h) {
-    const n = w * h;
-    if (!g || g.length !== n || w < 16 || h < 16) return null;
-    const b = pdfscanBlur(g, w, h, 2), o = pdfscanOtsu(b);
-    if (!o || o.m1 - o.m0 < 35) return null;
-    const at = function(k) {
-        return pdfscanRectAt(b, w, h, o.m0 + k * (o.t - o.m0));
+function pdfscanFit(aw, ah, pw, ph) {
+    if (!(aw > 0 && ah > 0 && pw > 0 && ph > 0)) return {
+        w: 0,
+        h: 0
     };
-    const hi = at(PDFSCAN_THR_BIAS), mid = at(PDFSCAN_K_MID), low = at(PDFSCAN_K_LOW);
-    if (!hi || !mid || !low) return null;
-    if (low.rw * low.rh / (mid.rw * mid.rh) > PDFSCAN_STAB) return null;
-    const r = mid, m = .012 * Math.max(r.rw, r.rh) + 2.5;
-    const rw = r.rw + 2 * m, rh = r.rh + 2 * m, frac = rw * rh / n;
-    if (frac > 1) return null;
-    if (frac >= PDFSCAN_SKIP_AREA && Math.abs(r.ang) < .026) return null;
+    const k = Math.min(aw / pw, ah / ph);
     return {
-        cx: r.cx,
-        cy: r.cy,
-        rw: rw,
-        rh: rh,
-        ang: r.ang,
-        tone: Math.round(o.m1)
+        w: Math.max(1, Math.floor(pw * k)),
+        h: Math.max(1, Math.floor(ph * k))
     };
 }
 
@@ -77093,60 +76927,6 @@ function pdfscanLoad(file) {
         };
         img.src = url;
     });
-}
-
-async function pdfscanCrop(file) {
-    let url = "", src = null, an = null, out = null;
-    try {
-        const ld = await pdfscanLoad(file);
-        if (!ld) return null;
-        url = ld.url;
-        const iw = ld.img.naturalWidth, ih = ld.img.naturalHeight;
-        if (!(iw > 0 && ih > 0)) return null;
-        const k = Math.min(1, PDFSCAN_CROP_SIDE / Math.max(iw, ih)), sw = Math.max(1, Math.round(iw * k)), sh = Math.max(1, Math.round(ih * k));
-        src = pdfscanCanvas(sw, sh);
-        src.getContext("2d").drawImage(ld.img, 0, 0, sw, sh);
-        const ka = Math.min(1, PDFSCAN_AN_SIDE / Math.max(sw, sh)), aw = Math.max(16, Math.round(sw * ka)), ah = Math.max(16, Math.round(sh * ka));
-        an = pdfscanCanvas(aw, ah);
-        const actx = an.getContext("2d");
-        actx.drawImage(src, 0, 0, aw, ah);
-        const px = actx.getImageData(0, 0, aw, ah).data, g = new Uint8Array(aw * ah);
-        for (let i = 0, p = 0; i < g.length; i++, p += 4) g[i] = px[p] * 77 + px[p + 1] * 151 + px[p + 2] * 28 >> 8;
-        const r = pdfscanPaperFind(g, aw, ah);
-        if (!r) return null;
-        const f = sw / aw, ow = Math.round(r.rw * f), oh = Math.round(r.rh * f);
-        if (ow < 200 || oh < 200 || ow > 4e3 || oh > 4e3) return null;
-        out = pdfscanCanvas(ow, oh);
-        const c2 = out.getContext("2d"), tn = Math.max(170, Math.min(255, Math.round(r.tone || 255)));
-        c2.fillStyle = "rgb(" + tn + "," + tn + "," + tn + ")";
-        c2.fillRect(0, 0, ow, oh);
-        c2.imageSmoothingEnabled = true;
-        c2.imageSmoothingQuality = "high";
-        c2.translate(ow / 2, oh / 2);
-        c2.rotate(-r.ang);
-        c2.drawImage(src, -r.cx * f, -r.cy * f);
-        const blob = await new Promise(function(res) {
-            out.toBlob(res, "image/jpeg", .92);
-        });
-        if (!blob || !(blob.size > 0)) return null;
-        return new File([ blob ], "page.jpg", {
-            type: "image/jpeg"
-        });
-    } catch (e) {
-        return null;
-    } finally {
-        try {
-            if (url) URL.revokeObjectURL(url);
-        } catch (e) {}
-        [ src, an, out ].forEach(function(c) {
-            if (c) {
-                try {
-                    c.width = 0;
-                    c.height = 0;
-                } catch (e) {}
-            }
-        });
-    }
 }
 
 function pdfscanOn() {
@@ -77186,7 +76966,7 @@ function pdfscanStyle() {
     try {
         const st = document.createElement("style");
         st.setAttribute("data-pdfimg-scan", "1");
-        st.textContent = "#pdfimg-scan-root{position:fixed;inset:0;z-index:96;display:flex;align-items:flex-end;justify-content:center;background:rgba(4,6,5,.72);overflow-y:auto;}" + ".pdfimg-scan-sheet{width:100%;max-width:560px;max-height:92vh;overflow-y:auto;overscroll-behavior:contain;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0;padding:14px 16px 0;}" + ".pdfimg-scan-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;}" + '.pdfimg-scan-title{font-family:"Cairo",sans-serif;font-weight:800;font-size:16px;}' + ".pdfimg-scan-close{min-width:44px;min-height:44px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:16px;cursor:pointer;}" + ".pdfimg-scan-sub{margin:0 0 10px;color:var(--text-dim);font-size:13px;line-height:1.7;}" + ".pdfimg-scan-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:12px;}" + ".pdfimg-scan-pg{position:relative;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);}" + ".pdfimg-scan-i{position:relative;display:block;overflow:hidden;padding:0;border:0;aspect-ratio:3/4;background:var(--surface-2);cursor:zoom-in;}" + ".pdfimg-scan-i img{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;}" + ".pdfimg-scan-wait{align-items:center;justify-content:center;min-height:120px;padding:6px;text-align:center;color:var(--text-dim);font-size:13px;}" + '.pdfimg-scan-n{position:absolute;top:4px;inset-inline-start:4px;min-width:24px;padding:1px 6px;border-radius:999px;background:var(--surface);border:1px solid var(--border);font-family:"Cairo",sans-serif;font-weight:800;font-size:13px;text-align:center;}' + ".pdfimg-scan-bar{display:flex;gap:6px;padding:6px;border-top:1px solid var(--border);}" + '.pdfimg-scan-bar button{flex:1 1 0;min-width:44px;min-height:44px;padding:0 2px;line-height:1.25;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:"Cairo",sans-serif;font-weight:700;font-size:13px;cursor:pointer;}' + ".pdfimg-scan-bar button:disabled,.pdfimg-scan-close:disabled,.pdfimg-scan-acts .btn:disabled{opacity:.5;cursor:not-allowed;}" + ".pdfimg-scan-opt{margin:0 0 10px;}" + ".pdfimg-scan-tag{position:absolute;top:4px;inset-inline-end:4px;padding:1px 8px;border-radius:999px;background:var(--surface);border:1px solid var(--border);color:var(--text-dim);font-size:13px;}" + ".pdfimg-scan-acts{display:flex;gap:8px;flex-wrap:wrap;position:sticky;bottom:0;padding:8px 0 calc(16px + env(safe-area-inset-bottom));background:var(--surface);}" + ".pdfimg-scan-acts .btn{flex:1 1 150px;min-height:48px;font-size:14px;}" + "#pdfimg-scan-view{position:fixed;inset:0;z-index:97;display:flex;align-items:center;justify-content:center;padding:12px;background:rgba(0,0,0,.92);cursor:zoom-out;}" + "#pdfimg-scan-view img{max-width:100%;max-height:100%;object-fit:contain;}" + "body:has(#pdfimg-scan-root) .toast-root{bottom:auto;top:calc(12px + env(safe-area-inset-top,0px));}" + "body:has(#pdfimg-scan-root) .toast{pointer-events:none;}";
+        st.textContent = "#pdfimg-scan-root{position:fixed;inset:0;z-index:96;display:flex;align-items:flex-end;justify-content:center;background:rgba(4,6,5,.72);overflow-y:auto;}" + ".pdfimg-scan-sheet{width:100%;max-width:560px;max-height:92vh;overflow-y:auto;overscroll-behavior:contain;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0;padding:14px 16px 0;}" + ".pdfimg-scan-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;}" + '.pdfimg-scan-title{font-family:"Cairo",sans-serif;font-weight:800;font-size:16px;}' + ".pdfimg-scan-close{min-width:44px;min-height:44px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:16px;cursor:pointer;}" + ".pdfimg-scan-sub{margin:0 0 10px;color:var(--text-dim);font-size:13px;line-height:1.7;}" + ".pdfimg-scan-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:12px;}" + ".pdfimg-scan-pg{position:relative;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);}" + ".pdfimg-scan-i{position:relative;display:block;overflow:hidden;padding:0;border:0;aspect-ratio:3/4;background:var(--surface-2);cursor:zoom-in;}" + ".pdfimg-scan-i img{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;}" + ".pdfimg-scan-wait{align-items:center;justify-content:center;min-height:120px;padding:6px;text-align:center;color:var(--text-dim);font-size:13px;}" + '.pdfimg-scan-n{position:absolute;top:4px;inset-inline-start:4px;min-width:24px;padding:1px 6px;border-radius:999px;background:var(--surface);border:1px solid var(--border);font-family:"Cairo",sans-serif;font-weight:800;font-size:13px;text-align:center;}' + ".pdfimg-scan-bar{display:flex;gap:6px;padding:6px;border-top:1px solid var(--border);}" + '.pdfimg-scan-bar button{flex:1 1 0;min-width:44px;min-height:44px;padding:0 2px;line-height:1.25;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:"Cairo",sans-serif;font-weight:700;font-size:13px;cursor:pointer;}' + ".pdfimg-scan-bar button:disabled,.pdfimg-scan-close:disabled,.pdfimg-scan-acts .btn:disabled{opacity:.5;cursor:not-allowed;}" + ".pdfimg-scan-acts{display:flex;gap:8px;flex-wrap:wrap;position:sticky;bottom:0;padding:8px 0 calc(16px + env(safe-area-inset-bottom));background:var(--surface);}" + ".pdfimg-scan-acts .btn{flex:1 1 150px;min-height:48px;font-size:14px;}" + "#pdfimg-scan-view{position:fixed;inset:0;z-index:97;display:flex;align-items:center;justify-content:center;padding:12px;background:rgba(0,0,0,.92);cursor:zoom-out;}" + "#pdfimg-scan-view img{max-width:100%;max-height:100%;object-fit:contain;}" + "#pdfimg-scan-crop{position:fixed;inset:0;z-index:98;display:flex;flex-direction:column;overscroll-behavior:none;background:rgba(0,0,0,.96);color:rgba(255,255,255,.92);}" + ".pdfimg-crop-top{display:flex;flex-direction:column;gap:2px;padding:calc(12px + env(safe-area-inset-top,0px)) 16px 4px;}" + ".pdfimg-crop-top .pdfimg-scan-sub{margin:0;color:rgba(255,255,255,.72);}" + ".pdfimg-crop-stage{position:relative;flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;padding:34px;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}" + ".pdfimg-crop-box{position:relative;flex:none;}" + ".pdfimg-crop-cv{position:absolute;inset:0;display:block;width:100%;height:100%;}" + ".pdfimg-crop-mask{position:absolute;background:rgba(0,0,0,.6);pointer-events:none;}" + ".pdfimg-crop-rect{position:absolute;box-sizing:border-box;border:2px solid var(--green);pointer-events:none;}" + ".pdfimg-crop-dot{position:absolute;width:20px;height:20px;margin:-10px 0 0 -10px;box-sizing:border-box;border-radius:50%;background:rgba(255,255,255,.95);border:2px solid var(--green);pointer-events:none;}" + ".pdfimg-crop-load{position:absolute;color:rgba(255,255,255,.8);font-size:14px;}" + ".pdfimg-crop-bar{display:flex;gap:8px;padding:10px 16px calc(14px + env(safe-area-inset-bottom,0px));}" + '.pdfimg-crop-bar button{flex:1 1 0;min-width:0;min-height:48px;padding:0 4px;touch-action:manipulation;font-family:"Cairo",sans-serif;font-weight:700;font-size:14px;line-height:1.25;border-radius:var(--radius-sm);cursor:pointer;}' + ".pdfimg-crop-b{background:var(--surface);color:var(--text);border:1px solid var(--border);}" + ".pdfimg-crop-bar button:disabled{opacity:.5;cursor:not-allowed;}" + "body:has(#pdfimg-scan-root) .toast-root{bottom:auto;top:calc(12px + env(safe-area-inset-top,0px));}" + "body:has(#pdfimg-scan-root) .toast{pointer-events:none;}";
         (document.head || document.body).appendChild(st);
     } catch (e) {}
 }
@@ -77197,9 +76977,9 @@ function pdfscanRender() {
         const s = pdfscanSess;
         let root = document.getElementById("pdfimg-scan-root");
         if (!s) {
-            if (root && root.parentNode) root.parentNode.removeChild(root);
-            const vw = document.getElementById("pdfimg-scan-view");
-            if (vw && vw.parentNode) vw.parentNode.removeChild(vw);
+            [ root, document.getElementById("pdfimg-scan-view"), document.getElementById("pdfimg-scan-crop") ].forEach(function(el) {
+                if (el && el.parentNode) el.parentNode.removeChild(el);
+            });
             return;
         }
         pdfscanStyle();
@@ -77209,14 +76989,14 @@ function pdfscanRender() {
             document.body.appendChild(root);
         }
         const old = root.querySelector(".pdfimg-scan-sheet"), top = old ? old.scrollTop : 0;
-        const n = s.pages.length, full = n >= PDFIMG_MAX_PAGES, busy = !!(s.busy || s.sending), redo = typeof s.at === "number" && s.at >= 0 && s.at < n;
+        const n = s.pages.length, full = n >= PDFIMG_MAX_PAGES, busy = !!(s.busy || s.sending), hole = Array.isArray(s.holes) && s.holes.length && s.holes[0] < n ? s.holes[0] : -1, redo = hole >= 0;
         let grid = "";
         for (let i = 0; i < n; i++) {
             const p = s.pages[i];
-            grid += '<div class="pdfimg-scan-pg"><button type="button" class="pdfimg-scan-i" data-pdfimg-act="view" data-pdfimg-id="' + p.id + '" aria-label="عرض الصفحة ' + (i + 1) + ' كاملة"><img src="' + p.url + '" alt="صفحة ' + (i + 1) + '"></button><span class="pdfimg-scan-n">' + (i + 1) + "</span>" + (p.miss ? '<span class="pdfimg-scan-tag">لم يُقصّ</span>' : "") + '<div class="pdfimg-scan-bar"><button type="button" data-pdfimg-act="del" data-pdfimg-id="' + p.id + '"' + (busy ? " disabled" : "") + ">حذف</button>" + '<button type="button" data-pdfimg-act="crop" data-pdfimg-id="' + p.id + '"' + (busy ? " disabled" : "") + ">" + (p.cropped ? "إلغاء القص" : "قص الورقة") + "</button></div></div>";
+            grid += '<div class="pdfimg-scan-pg"><button type="button" class="pdfimg-scan-i" data-pdfimg-act="view" data-pdfimg-id="' + p.id + '" aria-label="عرض الصفحة ' + (i + 1) + ' كاملة"><img src="' + p.url + '" alt="صفحة ' + (i + 1) + '"></button><span class="pdfimg-scan-n">' + (i + 1) + "</span>" + '<div class="pdfimg-scan-bar"><button type="button" data-pdfimg-act="del" data-pdfimg-id="' + p.id + '"' + (busy ? " disabled" : "") + ">حذف</button>" + '<button type="button" data-pdfimg-act="crop" data-pdfimg-id="' + p.id + '"' + (busy ? " disabled" : "") + ">" + (p.edited ? "تعديل" : "قص") + "</button></div></div>";
         }
-        if (s.busy) grid += '<div class="pdfimg-scan-pg pdfimg-scan-wait" role="status">جارٍ تجهيز الصفحة…</div>';
-        root.innerHTML = '<div class="pdfimg-scan-sheet" role="dialog" aria-modal="true" aria-label="مسح ورقة">' + '<div class="pdfimg-scan-head"><span class="pdfimg-scan-title">مسح ورقة</span>' + '<button type="button" class="pdfimg-scan-close" data-pdfimg-act="cancel" aria-label="إغلاق">✕</button></div>' + '<p class="pdfimg-scan-sub">' + (n ? pdfscanPagesAr(n) + " — تُرفع كلها ملف PDF واحدًا" : "صوّر الصفحات واحدة تلو الأخرى — تُرفع كلها ملف PDF واحدًا") + "</p>" + '<label class="acct2-opt pdfimg-scan-opt"><input type="checkbox" data-pdfimg-opt="auto"' + (pdfscanAuto ? " checked" : "") + (busy ? " disabled" : "") + "><span>قص تلقائي للورقة</span></label>" + (grid ? '<div class="pdfimg-scan-grid">' + grid + "</div>" : "") + (full ? '<p class="pdfimg-scan-sub">بلغت الحد الأقصى (' + PDFIMG_MAX_PAGES + " صفحات)</p>" : "") + '<div class="pdfimg-scan-acts">' + (full ? "" : '<button type="button" class="btn" data-pdfimg-act="add"' + (busy ? " disabled" : "") + ">" + (redo ? "تصوير بديل للصفحة " + (s.at + 1) : n ? "صفحة أخرى" : "صوّر الصفحة الأولى") + "</button>") + '<button type="button" class="btn btn-primary" data-pdfimg-act="done"' + (busy || !n ? " disabled" : "") + ">" + (s.sending ? "جارٍ التجهيز…" : "إنهاء ورفع") + "</button>" + "</div></div>";
+        if (s.busy && !s.editor) grid += '<div class="pdfimg-scan-pg pdfimg-scan-wait" role="status">جارٍ تجهيز الصفحة…</div>';
+        root.innerHTML = '<div class="pdfimg-scan-sheet" role="dialog" aria-modal="true" aria-label="مسح ورقة">' + '<div class="pdfimg-scan-head"><span class="pdfimg-scan-title">مسح ورقة</span>' + '<button type="button" class="pdfimg-scan-close" data-pdfimg-act="cancel" aria-label="إغلاق">✕</button></div>' + '<p class="pdfimg-scan-sub">' + (n ? pdfscanPagesAr(n) + " — تُرفع كلها ملف PDF واحدًا" : "صوّر الصفحات واحدة تلو الأخرى — تُرفع كلها ملف PDF واحدًا") + "</p>" + (grid ? '<div class="pdfimg-scan-grid">' + grid + "</div>" : "") + (full ? '<p class="pdfimg-scan-sub">بلغت الحد الأقصى (' + PDFIMG_MAX_PAGES + " صفحات)</p>" : "") + '<div class="pdfimg-scan-acts">' + (full ? "" : '<button type="button" class="btn" data-pdfimg-act="add"' + (busy ? " disabled" : "") + ">" + (redo ? "تصوير بديل للصفحة " + (hole + 1) : n ? "صفحة أخرى" : "صوّر الصفحة الأولى") + "</button>") + '<button type="button" class="btn btn-primary" data-pdfimg-act="done"' + (busy || !n ? " disabled" : "") + ">" + (s.sending ? "جارٍ التجهيز…" : "إنهاء ورفع") + "</button>" + "</div></div>";
         const vp = s.view ? s.pages.filter(function(p) {
             return p.id === s.view;
         })[0] : null;
@@ -77246,8 +77026,34 @@ function pdfscanClose() {
                 if (p.url) URL.revokeObjectURL(p.url);
             } catch (e) {}
         });
+        pdfscanCropClose(s);
     }
+    pdfscanWatchGate(false);
     pdfscanRender();
+}
+
+function pdfscanWatchGate(on) {
+    try {
+        if (pdfscanGate) {
+            try {
+                pdfscanGate.disconnect();
+            } catch (e) {}
+            pdfscanGate = null;
+        }
+        if (!on || typeof MutationObserver !== "function" || typeof document === "undefined") return;
+        const gate = document.getElementById("auth-gate");
+        if (!gate) return;
+        pdfscanGate = new MutationObserver(function() {
+            const s = pdfscanSess;
+            if (s && !pdfscanHostOk(s)) pdfscanClose();
+        });
+        pdfscanGate.observe(gate, {
+            attributes: true,
+            attributeFilter: [ "class", "style" ]
+        });
+    } catch (e) {
+        pdfscanGate = null;
+    }
 }
 
 function pdfscanInputEl() {
@@ -77276,7 +77082,7 @@ function pdfscanInputEl() {
 
 function pdfscanAdd() {
     const s = pdfscanSess;
-    if (!s || s.busy || s.sending || s.pages.length >= PDFIMG_MAX_PAGES) return;
+    if (!s || s.busy || s.sending || s.editor || s.pages.length >= PDFIMG_MAX_PAGES) return;
     const el = pdfscanInputEl();
     if (el && typeof el.click === "function") el.click();
 }
@@ -77290,39 +77096,9 @@ function pdfscanFail(comp) {
     pdfscanToast(r === "too_big" ? pdfscanTxt("tooBig", "الصورة كبيرة جدًا") : r === "decode" ? pdfscanTxt("decode", "تعذّرت قراءة الصورة") : "تعذّر تجهيز الصفحة — أعد التصوير", "error");
 }
 
-async function pdfscanPrep(io, file, wantCrop, cropOnly) {
-    let src = file, cropped = false;
-    if (wantCrop) {
-        const c = await pdfscanCrop(file);
-        if (c) {
-            src = c;
-            cropped = true;
-        } else if (cropOnly) return {
-            comp: null,
-            cropped: false,
-            tried: true,
-            nocrop: true
-        };
-    }
-    let comp = await io.compress(src, {
-        color: pdfscanColor()
-    });
-    if ((!comp || !comp.ok) && cropped) {
-        cropped = false;
-        comp = await io.compress(file, {
-            color: pdfscanColor()
-        });
-    }
-    return {
-        comp: comp,
-        cropped: cropped,
-        tried: !!wantCrop
-    };
-}
-
 async function pdfscanOnFile(file) {
     const s = pdfscanSess;
-    if (!s || s.busy || s.sending) return;
+    if (!s || s.busy || s.sending || s.editor) return;
     if (!pdfscanGuard(s)) return;
     if (s.pages.length >= PDFIMG_MAX_PAGES) {
         pdfscanToast("بلغت الحد الأقصى (" + PDFIMG_MAX_PAGES + " صفحات)", "error");
@@ -77339,9 +77115,10 @@ async function pdfscanOnFile(file) {
             });
             return;
         }
-        const pr = await pdfscanPrep(io, file, pdfscanAuto);
+        const comp = await pdfscanLimit(io.compress(file, {
+            color: pdfscanColor()
+        }), PDFSCAN_PREP_MS);
         if (pdfscanSess !== s) return;
-        const comp = pr.comp;
         if (!comp || !comp.ok) pdfscanFail(comp); else if (pdfscanBytes(s) + (Number(comp.bytes) || 0) > PDFIMG_MAX_BYTES) pdfscanToast("حجم الصفحات كبير — ارفع ما صوّرته ثم ابدأ مستندًا آخر", "error"); else {
             let url = "";
             try {
@@ -77355,54 +77132,18 @@ async function pdfscanOnFile(file) {
                 bytes: Number(comp.bytes) || 0,
                 url: url,
                 orig: file,
-                cropped: pr.cropped,
-                miss: !!(pr.tried && !pr.cropped)
+                edited: false,
+                rot: 0,
+                crop: null
             };
-            const at = typeof s.at === "number" && s.at >= 0 && s.at <= s.pages.length ? s.at : s.pages.length;
+            const at = s.holes.length ? Math.min(s.holes[0], s.pages.length) : s.pages.length;
             s.pages.splice(at, 0, pg);
-            s.at = null;
-        }
-    } catch (e) {
-        pdfscanToast("تعذّر تجهيز الصفحة — أعد التصوير", "error");
-    } finally {
-        if (pdfscanSess === s) {
-            s.busy = false;
-            pdfscanRender();
-        }
-    }
-}
-
-async function pdfscanRework(id) {
-    const s = pdfscanSess;
-    if (!s || s.busy || s.sending) return;
-    if (!pdfscanGuard(s)) return;
-    let pg = null;
-    for (let i = 0; i < s.pages.length; i++) {
-        if (s.pages[i].id === id) pg = s.pages[i];
-    }
-    const io = pdfscanIo();
-    if (!pg || !pg.orig || !io || typeof io.compress !== "function") return;
-    const wantCrop = !pg.cropped;
-    s.busy = true;
-    pdfscanRender();
-    try {
-        const pr = await pdfscanPrep(io, pg.orig, wantCrop, true);
-        if (pdfscanSess !== s) return;
-        if (pr.nocrop || wantCrop && !pr.cropped && pr.comp && pr.comp.ok) pdfscanToast("تعذّر تحديد حدود الورقة — بقيت الصفحة كما هي", "error"); else if (!pr.comp || !pr.comp.ok) pdfscanFail(pr.comp); else if (pdfscanBytes(s) - pg.bytes + (Number(pr.comp.bytes) || 0) > PDFIMG_MAX_BYTES) pdfscanToast("حجم الصفحات كبير — ارفع ما صوّرته ثم ابدأ مستندًا آخر", "error"); else {
-            let url = "";
-            try {
-                url = URL.createObjectURL(pr.comp.blob);
-            } catch (e) {
-                url = "";
+            if (s.holes.length) {
+                s.holes.shift();
+                s.holes = s.holes.map(function(h) {
+                    return h >= at ? h + 1 : h;
+                });
             }
-            try {
-                if (pg.url) URL.revokeObjectURL(pg.url);
-            } catch (e) {}
-            pg.blob = pr.comp.blob;
-            pg.bytes = Number(pr.comp.bytes) || 0;
-            pg.url = url;
-            pg.cropped = pr.cropped;
-            pg.miss = false;
         }
     } catch (e) {
         pdfscanToast("تعذّر تجهيز الصفحة — أعد التصوير", "error");
@@ -77416,14 +77157,25 @@ async function pdfscanRework(id) {
 
 function pdfscanDel(id) {
     const s = pdfscanSess;
-    if (!s || s.busy || s.sending) return;
+    if (!s || s.busy || s.sending || s.editor) return;
+    const now = Date.now();
+    if (s.delAt && now - s.delAt < PDFSCAN_DEL_GAP_MS) return;
     for (let i = 0; i < s.pages.length; i++) {
         if (s.pages[i].id === id) {
             try {
                 if (s.pages[i].url) URL.revokeObjectURL(s.pages[i].url);
             } catch (e) {}
             s.pages.splice(i, 1);
-            s.at = i < s.pages.length ? i : null;
+            s.delAt = now;
+            s.holes = s.holes.map(function(h) {
+                return h > i ? h - 1 : h;
+            });
+            s.holes.push(i);
+            s.holes = s.holes.filter(function(h) {
+                return h < s.pages.length;
+            }).sort(function(a, b) {
+                return a - b;
+            });
             break;
         }
     }
@@ -77441,9 +77193,468 @@ function pdfscanView(id) {
     pdfscanRender();
 }
 
+function pdfscanMk(tag, cls, text) {
+    const el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (text) el.textContent = text;
+    return el;
+}
+
+function pdfscanCropWatch(on) {
+    try {
+        document.removeEventListener("pointerdown", pdfscanOnPointerDown, true);
+        document.removeEventListener("pointermove", pdfscanOnPointerMove, true);
+        document.removeEventListener("pointerup", pdfscanOnPointerUp, true);
+        document.removeEventListener("pointercancel", pdfscanOnPointerUp, true);
+        if (pdfscanResizeFn && typeof window !== "undefined" && window.removeEventListener) window.removeEventListener("resize", pdfscanResizeFn);
+        pdfscanResizeFn = null;
+        if (!on) return;
+        document.addEventListener("pointerdown", pdfscanOnPointerDown, true);
+        document.addEventListener("pointermove", pdfscanOnPointerMove, true);
+        document.addEventListener("pointerup", pdfscanOnPointerUp, true);
+        document.addEventListener("pointercancel", pdfscanOnPointerUp, true);
+        if (typeof window !== "undefined" && window.addEventListener) {
+            pdfscanResizeFn = function() {
+                const s = pdfscanSess;
+                if (s && s.editor && s.editor.ready) pdfscanCropLayout(s.editor);
+            };
+            window.addEventListener("resize", pdfscanResizeFn);
+        }
+    } catch (e) {}
+}
+
+function pdfscanCropShow(ed) {
+    pdfscanStyle();
+    const old = document.getElementById("pdfimg-scan-crop");
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+    const root = pdfscanMk("div", "");
+    root.id = "pdfimg-scan-crop";
+    root.setAttribute("role", "dialog");
+    root.setAttribute("aria-modal", "true");
+    root.setAttribute("aria-label", "قص الصفحة");
+    const top = pdfscanMk("div", "pdfimg-crop-top");
+    top.appendChild(pdfscanMk("span", "pdfimg-scan-title", "قص الصفحة"));
+    top.appendChild(pdfscanMk("span", "pdfimg-scan-sub", "اسحب حواف الإطار أو زواياه حتى يحيط بالورقة"));
+    const stage = pdfscanMk("div", "pdfimg-crop-stage");
+    stage.setAttribute("data-pdfimg-stage", "1");
+    const load = pdfscanMk("span", "pdfimg-crop-load", "جارٍ تحميل الصورة…");
+    const box = pdfscanMk("div", "pdfimg-crop-box");
+    const cv = document.createElement("canvas");
+    cv.className = "pdfimg-crop-cv";
+    box.appendChild(cv);
+    const masks = [];
+    for (let i = 0; i < 4; i++) {
+        const m = pdfscanMk("div", "pdfimg-crop-mask");
+        masks.push(m);
+        box.appendChild(m);
+    }
+    const rect = pdfscanMk("div", "pdfimg-crop-rect");
+    const dots = [];
+    [ [ 0, 0 ], [ .5, 0 ], [ 1, 0 ], [ 1, .5 ], [ 1, 1 ], [ .5, 1 ], [ 0, 1 ], [ 0, .5 ] ].forEach(function(p) {
+        const d = pdfscanMk("span", "pdfimg-crop-dot");
+        d.style.left = p[0] * 100 + "%";
+        d.style.top = p[1] * 100 + "%";
+        dots.push(d);
+        rect.appendChild(d);
+    });
+    box.appendChild(rect);
+    box.style.display = "none";
+    stage.appendChild(load);
+    stage.appendChild(box);
+    const bar = pdfscanMk("div", "pdfimg-crop-bar");
+    const mkb = function(act, text, cls) {
+        const b = pdfscanMk("button", cls, text);
+        b.type = "button";
+        b.setAttribute("data-pdfimg-act", act);
+        bar.appendChild(b);
+        return b;
+    };
+    const rot = mkb("crop-rot", "تدوير", "pdfimg-crop-b"), reset = mkb("crop-reset", "الأصل", "pdfimg-crop-b"), cancel = mkb("crop-cancel", "إلغاء", "pdfimg-crop-b"), go = mkb("crop-apply", "تم", "btn btn-primary");
+    rot.disabled = reset.disabled = go.disabled = true;
+    root.appendChild(top);
+    root.appendChild(stage);
+    root.appendChild(bar);
+    document.body.appendChild(root);
+    ed.els = {
+        root: root,
+        stage: stage,
+        box: box,
+        cv: cv,
+        rect: rect,
+        masks: masks,
+        dots: dots,
+        load: load,
+        rot: rot,
+        reset: reset,
+        cancel: cancel,
+        go: go
+    };
+    pdfscanCropWatch(true);
+}
+
+function pdfscanCropBusy(ed, on) {
+    try {
+        const e = ed.els;
+        if (!e) return;
+        e.go.textContent = on ? "جارٍ التجهيز…" : "تم";
+        e.go.disabled = e.rot.disabled = e.reset.disabled = !!on;
+    } catch (e2) {}
+}
+
+function pdfscanCropPaintTo(cv, img, plan) {
+    const c2 = cv.getContext("2d");
+    c2.imageSmoothingEnabled = true;
+    c2.imageSmoothingQuality = "high";
+    c2.scale(plan.k, plan.k);
+    c2.translate(-plan.cx, -plan.cy);
+    c2.translate(plan.tx, plan.ty);
+    c2.rotate(plan.ang);
+    c2.drawImage(img, 0, 0);
+}
+
+function pdfscanCropPaint(ed) {
+    const r = ed.rect, e = ed.els, pc = function(v) {
+        return v * 100 + "%";
+    };
+    e.rect.style.left = pc(r.x);
+    e.rect.style.top = pc(r.y);
+    e.rect.style.width = pc(r.w);
+    e.rect.style.height = pc(r.h);
+    const m = [ [ 0, 0, 1, r.y ], [ 0, r.y + r.h, 1, 1 - r.y - r.h ], [ 0, r.y, r.x, r.h ], [ r.x + r.w, r.y, 1 - r.x - r.w, r.h ] ];
+    for (let i = 0; i < 4; i++) {
+        const st = e.masks[i].style;
+        st.left = pc(m[i][0]);
+        st.top = pc(m[i][1]);
+        st.width = pc(m[i][2]);
+        st.height = pc(m[i][3]);
+    }
+}
+
+function pdfscanCropLayout(ed) {
+    try {
+        const st = ed.els.stage.getBoundingClientRect();
+        const f = pdfscanFit(st.width - 2 * PDFSCAN_STAGE_PAD, st.height - 2 * PDFSCAN_STAGE_PAD, ed.pw, ed.ph);
+        ed.els.box.style.width = f.w + "px";
+        ed.els.box.style.height = f.h + "px";
+        pdfscanCropPaint(ed);
+    } catch (e) {}
+}
+
+function pdfscanCropDraw(ed) {
+    try {
+        const plan = pdfscanCropPlan(ed.iw, ed.ih, ed.q, {
+            x: 0,
+            y: 0,
+            w: 1,
+            h: 1
+        }, PDFSCAN_PREVIEW_MAX);
+        ed.pw = plan.ow;
+        ed.ph = plan.oh;
+        ed.els.cv.width = plan.ow;
+        ed.els.cv.height = plan.oh;
+        pdfscanCropPaintTo(ed.els.cv, ed.img, plan);
+        ed.els.box.style.display = "";
+        ed.els.load.style.display = "none";
+        ed.els.rot.disabled = ed.els.reset.disabled = ed.els.go.disabled = false;
+        pdfscanCropLayout(ed);
+    } catch (e) {
+        pdfscanToast(pdfscanTxt("decode", "تعذّرت قراءة الصورة"), "error");
+        pdfscanCropClose(pdfscanSess);
+        pdfscanRender();
+    }
+}
+
+function pdfscanOnPointerDown(ev) {
+    try {
+        const s = pdfscanSess, ed = s && s.editor;
+        if (!ed || !ed.ready || ed.busy || ed.drag) return;
+        const st = ev.target && ev.target.closest ? ev.target.closest("[data-pdfimg-stage]") : null;
+        if (!st) return;
+        const br = ed.els.box.getBoundingClientRect();
+        if (!(br.width > 0 && br.height > 0)) return;
+        const r = ed.rect;
+        const mode = pdfscanCropHit({
+            x0: r.x * br.width,
+            y0: r.y * br.height,
+            x1: (r.x + r.w) * br.width,
+            y1: (r.y + r.h) * br.height
+        }, ev.clientX - br.left, ev.clientY - br.top, PDFSCAN_HIT_PX);
+        if (!mode) return;
+        ev.preventDefault();
+        ed.drag = {
+            mode: mode,
+            sx: ev.clientX,
+            sy: ev.clientY,
+            rect: {
+                x: r.x,
+                y: r.y,
+                w: r.w,
+                h: r.h
+            },
+            bw: br.width,
+            bh: br.height,
+            id: ev.pointerId
+        };
+        try {
+            if (st.setPointerCapture && ev.pointerId !== undefined) st.setPointerCapture(ev.pointerId);
+        } catch (e) {}
+    } catch (e) {}
+}
+
+function pdfscanOnPointerMove(ev) {
+    try {
+        const s = pdfscanSess, ed = s && s.editor, d = ed && ed.drag;
+        if (!d || d.id !== undefined && ev.pointerId !== d.id) return;
+        ev.preventDefault();
+        ed.rect = pdfscanCropDrag(d.rect, d.mode, (ev.clientX - d.sx) / d.bw, (ev.clientY - d.sy) / d.bh, PDFSCAN_CROP_MIN);
+        pdfscanCropPaint(ed);
+    } catch (e) {}
+}
+
+function pdfscanOnPointerUp(ev) {
+    try {
+        const s = pdfscanSess, ed = s && s.editor, d = ed && ed.drag;
+        if (!d || d.id !== undefined && ev.pointerId !== d.id) return;
+        ed.drag = null;
+    } catch (e) {}
+}
+
+async function pdfscanCropOpen(id) {
+    const s = pdfscanSess;
+    if (!s || s.busy || s.sending || s.editor) return;
+    if (!pdfscanGuard(s)) return;
+    let pg = null;
+    for (let i = 0; i < s.pages.length; i++) {
+        if (s.pages[i].id === id) pg = s.pages[i];
+    }
+    if (!pg || !pg.orig) return;
+    s.view = "";
+    const rect = pg.crop ? {
+        x: pg.crop.x,
+        y: pg.crop.y,
+        w: pg.crop.w,
+        h: pg.crop.h
+    } : {
+        x: 0,
+        y: 0,
+        w: 1,
+        h: 1
+    };
+    const ed = {
+        id: id,
+        q: pg.rot || 0,
+        rect: rect,
+        img: null,
+        url: "",
+        iw: 0,
+        ih: 0,
+        pw: 0,
+        ph: 0,
+        els: null,
+        drag: null,
+        ready: false,
+        busy: false
+    };
+    s.editor = ed;
+    try {
+        pdfscanCropShow(ed);
+    } catch (e) {
+        pdfscanCropClose(s);
+        pdfscanToast("تعذّر فتح شاشة القص", "error");
+        return;
+    }
+    let ld = null;
+    try {
+        ld = await pdfscanLimit(pdfscanLoad(pg.orig), PDFSCAN_PREP_MS);
+    } catch (e) {
+        ld = null;
+    }
+    if (pdfscanSess !== s || s.editor !== ed) {
+        if (ld && ld.url) {
+            try {
+                URL.revokeObjectURL(ld.url);
+            } catch (e) {}
+        }
+        return;
+    }
+    const iw = ld && ld.img ? ld.img.naturalWidth : 0, ih = ld && ld.img ? ld.img.naturalHeight : 0;
+    if (!(iw > 0 && ih > 0)) {
+        if (ld && ld.url) {
+            try {
+                URL.revokeObjectURL(ld.url);
+            } catch (e) {}
+        }
+        pdfscanToast(pdfscanTxt("decode", "تعذّرت قراءة الصورة"), "error");
+        pdfscanCropClose(s);
+        pdfscanRender();
+        return;
+    }
+    ed.img = ld.img;
+    ed.url = ld.url;
+    ed.iw = iw;
+    ed.ih = ih;
+    ed.ready = true;
+    pdfscanCropDraw(ed);
+}
+
+function pdfscanCropRotate() {
+    const ed = pdfscanSess && pdfscanSess.editor;
+    if (!ed || !ed.ready || ed.busy) return;
+    ed.q = (ed.q + 1) % 4;
+    ed.rect = pdfscanCropRotRect(ed.rect);
+    ed.drag = null;
+    pdfscanCropDraw(ed);
+}
+
+function pdfscanCropReset() {
+    const ed = pdfscanSess && pdfscanSess.editor;
+    if (!ed || !ed.ready || ed.busy) return;
+    ed.q = 0;
+    ed.rect = {
+        x: 0,
+        y: 0,
+        w: 1,
+        h: 1
+    };
+    ed.drag = null;
+    pdfscanCropDraw(ed);
+}
+
+function pdfscanCropCancel() {
+    const s = pdfscanSess, ed = s && s.editor;
+    if (!ed) return;
+    if (ed.busy) {
+        ed.busy = false;
+        s.busy = false;
+    }
+    pdfscanCropClose(s);
+    pdfscanRender();
+}
+
+async function pdfscanCropRender(ed) {
+    let out = null;
+    try {
+        const plan = pdfscanCropPlan(ed.iw, ed.ih, ed.q, ed.rect, PDFSCAN_CROP_MAX);
+        out = pdfscanCanvas(plan.ow, plan.oh);
+        pdfscanCropPaintTo(out, ed.img, plan);
+        const blob = await new Promise(function(res) {
+            out.toBlob(res, "image/jpeg", .92);
+        });
+        if (!blob || !(blob.size > 0)) return null;
+        return new File([ blob ], "page.jpg", {
+            type: "image/jpeg"
+        });
+    } catch (e) {
+        return null;
+    } finally {
+        if (out) {
+            try {
+                out.width = 0;
+                out.height = 0;
+            } catch (e) {}
+        }
+    }
+}
+
+async function pdfscanCropApply() {
+    const s = pdfscanSess, ed = s && s.editor;
+    if (!s || !ed || !ed.ready || ed.busy || s.busy || s.sending) return;
+    if (!pdfscanGuard(s)) return;
+    let pg = null;
+    for (let i = 0; i < s.pages.length; i++) {
+        if (s.pages[i].id === ed.id) pg = s.pages[i];
+    }
+    const io = pdfscanIo();
+    if (!pg || !io || typeof io.compress !== "function") {
+        pdfscanCropClose(s);
+        pdfscanRender();
+        return;
+    }
+    ed.busy = true;
+    s.busy = true;
+    pdfscanCropBusy(ed, true);
+    try {
+        const r = ed.rect, whole = ed.q === 0 && r.x <= .002 && r.y <= .002 && r.w >= .996 && r.h >= .996;
+        let src = pg.orig, edited = false;
+        if (!whole) {
+            src = await pdfscanLimit(pdfscanCropRender(ed), PDFSCAN_PREP_MS);
+            if (!src) throw new Error("crop_render");
+            edited = true;
+        }
+        const comp = await pdfscanLimit(io.compress(src, {
+            color: pdfscanColor()
+        }), PDFSCAN_PREP_MS);
+        if (pdfscanSess !== s || s.editor !== ed) return;
+        if (!comp || !comp.ok) {
+            pdfscanFail(comp);
+            return;
+        }
+        if (pdfscanBytes(s) - pg.bytes + (Number(comp.bytes) || 0) > PDFIMG_MAX_BYTES) {
+            pdfscanToast("حجم الصفحات كبير — ارفع ما صوّرته ثم ابدأ مستندًا آخر", "error");
+            return;
+        }
+        let url = "";
+        try {
+            url = URL.createObjectURL(comp.blob);
+        } catch (e) {
+            url = "";
+        }
+        try {
+            if (pg.url) URL.revokeObjectURL(pg.url);
+        } catch (e) {}
+        pg.blob = comp.blob;
+        pg.bytes = Number(comp.bytes) || 0;
+        pg.url = url;
+        pg.edited = edited;
+        pg.rot = ed.q;
+        pg.crop = edited ? {
+            x: r.x,
+            y: r.y,
+            w: r.w,
+            h: r.h
+        } : null;
+        pdfscanCropClose(s);
+    } catch (e) {
+        if (pdfscanSess === s && s.editor === ed) pdfscanToast("تعذّر تجهيز الصفحة — أعد المحاولة", "error");
+    } finally {
+        if (pdfscanSess === s) {
+            if (ed.busy) {
+                ed.busy = false;
+                s.busy = false;
+                pdfscanCropBusy(ed, false);
+            }
+            pdfscanRender();
+        }
+    }
+}
+
+function pdfscanCropClose(s) {
+    const ed = s && s.editor;
+    if (s) s.editor = null;
+    if (ed) {
+        ed.drag = null;
+        try {
+            if (ed.url) URL.revokeObjectURL(ed.url);
+        } catch (e) {}
+        try {
+            if (ed.els && ed.els.cv) {
+                ed.els.cv.width = 0;
+                ed.els.cv.height = 0;
+            }
+        } catch (e) {}
+        ed.img = null;
+        ed.url = "";
+    }
+    try {
+        const root = document.getElementById("pdfimg-scan-crop");
+        if (root && root.parentNode) root.parentNode.removeChild(root);
+    } catch (e) {}
+    pdfscanCropWatch(false);
+}
+
 async function pdfscanFinish() {
     const s = pdfscanSess;
-    if (!s || s.busy || s.sending || !s.pages.length) return;
+    if (!s || s.busy || s.sending || s.editor || !s.pages.length) return;
     if (!pdfscanGuard(s)) return;
     const io = pdfscanIo();
     if (!io || typeof io.attach !== "function" || typeof pdfimgFromJpegs !== "function") {
@@ -77487,11 +77698,31 @@ async function pdfscanFinish() {
             slotKey: key,
             linkLater: !!ctx.linkLater
         });
+        const sig = s.pages.map(function(p) {
+            return p.id + ":" + p.bytes;
+        }).join("|");
+        let job = s.inflight && s.inflight.sig === sig ? s.inflight.p : null;
+        if (!job) {
+            try {
+                job = Promise.resolve(io.attach(ctx, file, {
+                    source: "camera"
+                }));
+            } catch (e) {
+                job = Promise.reject(e);
+            }
+            const mine = {
+                sig: sig,
+                p: job
+            };
+            s.inflight = mine;
+            const settled = function() {
+                if (s.inflight === mine) s.inflight = null;
+            };
+            job.then(settled, settled);
+        }
         let res = null;
         try {
-            res = await pdfscanLimit(io.attach(ctx, file, {
-                source: "camera"
-            }), PDFSCAN_ATTACH_MS);
+            res = await pdfscanLimit(job, PDFSCAN_ATTACH_MS);
         } catch (e) {
             res = null;
         }
@@ -77578,10 +77809,14 @@ function pdfscanStart(btn) {
             pages: [],
             busy: false,
             sending: false,
-            at: null,
+            holes: [],
             view: "",
+            delAt: 0,
+            inflight: null,
+            editor: null,
             acct: typeof acct2St !== "undefined" ? acct2St : null
         };
+        pdfscanWatchGate(true);
         try {
             if (typeof acct2St !== "undefined" && acct2St && acct2St.sheet && acct2St.sheet.type === "chooser" && typeof acct2CloseSheet === "function") acct2CloseSheet();
         } catch (e) {}
@@ -77630,14 +77865,7 @@ function pdfscanOnClick(ev) {
             return;
         }
         const act = t.getAttribute("data-pdfimg-act");
-        if (act === "add") pdfscanAdd(); else if (act === "del") pdfscanDel(t.getAttribute("data-pdfimg-id") || ""); else if (act === "done") pdfscanFinish(); else if (act === "crop") pdfscanRework(t.getAttribute("data-pdfimg-id") || ""); else if (act === "view") pdfscanView(t.getAttribute("data-pdfimg-id") || ""); else if (act === "unview") pdfscanView(""); else if (act === "cancel") pdfscanClose();
-    } catch (e) {}
-}
-
-function pdfscanOnChange(ev) {
-    try {
-        const t = ev.target;
-        if (t && t.getAttribute && t.getAttribute("data-pdfimg-opt") === "auto") pdfscanAuto = !!t.checked;
+        if (act === "add") pdfscanAdd(); else if (act === "del") pdfscanDel(t.getAttribute("data-pdfimg-id") || ""); else if (act === "done") pdfscanFinish(); else if (act === "crop") pdfscanCropOpen(t.getAttribute("data-pdfimg-id") || ""); else if (act === "crop-rot") pdfscanCropRotate(); else if (act === "crop-reset") pdfscanCropReset(); else if (act === "crop-cancel") pdfscanCropCancel(); else if (act === "crop-apply") pdfscanCropApply(); else if (act === "view") pdfscanView(t.getAttribute("data-pdfimg-id") || ""); else if (act === "unview") pdfscanView(""); else if (act === "cancel") pdfscanClose();
     } catch (e) {}
 }
 
@@ -77658,7 +77886,6 @@ function pdfscanInstall() {
             });
         } else pdfscanObs = true;
         document.addEventListener("click", pdfscanOnClick, true);
-        document.addEventListener("change", pdfscanOnChange, true);
     } catch (e) {}
 }
 
