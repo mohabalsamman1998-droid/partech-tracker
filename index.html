@@ -53116,6 +53116,7 @@ function renderTreasuryView() {
     updateScrapyardBadges();
     updateTreasurySummary();
     bindTreasuryCardToggles(el);
+    if (typeof acnOnTreasuryChange === "function") acnOnTreasuryChange();
 }
 
 function bindTreasuryPeriodFilter() {
@@ -87382,6 +87383,26 @@ function acnCashHtml(model, st) {
 }
 
 const ACN_TOOLS = [ {
+    key: "extra",
+    label: "📊 مؤشرات إضافية",
+    section: "extra"
+}, {
+    key: "expenses",
+    label: "💰 المصاريف",
+    fn: "acnExpensesDialogOpen"
+}, {
+    key: "suppliers",
+    label: "🧾 سداد الموردين",
+    section: "suppliers"
+}, {
+    key: "activity",
+    label: "📜 حركة الحسابات",
+    fn: "openAccountsActivityModal"
+}, {
+    key: "proposals",
+    label: "📋 طلبات التعديل",
+    fn: "openEditProposalsModal"
+}, {
     key: "tamara",
     label: "🏦 تحويلات تمارا",
     fn: "openTamaraPopup"
@@ -87393,15 +87414,105 @@ const ACN_TOOLS = [ {
     key: "expense",
     label: "💰 إضافة مصروف بالصندوق",
     fn: "openAddExpenseModal"
-}, {
-    key: "activity",
-    label: "📜 حركة الحسابات",
-    fn: "openAccountsActivityModal"
-}, {
-    key: "proposals",
-    label: "📋 طلبات التعديل",
-    fn: "openEditProposalsModal"
 } ];
+
+const ACN_SECTIONS = {
+    extra: {
+        btn: "btn-toggle-extra-indicators",
+        wrap: "extra-indicators-wrap",
+        isOpen: function() {
+            return !!extraIndicatorsOpen;
+        }
+    },
+    suppliers: {
+        btn: "btn-toggle-suppliers-settlement",
+        wrap: "suppliers-settlement-wrap",
+        isOpen: function() {
+            return !!suppliersSettlementMenuOpen;
+        }
+    }
+};
+
+function acnOpenCashSection(key) {
+    const sec = ACN_SECTIONS[key];
+    const btn = sec ? document.getElementById(sec.btn) : null;
+    if (!btn) {
+        if (typeof showToast === "function") showToast("غير متاح", "error");
+        return;
+    }
+    acnCloseScreen();
+    let open = false;
+    try {
+        open = !!sec.isOpen();
+    } catch (e) {}
+    if (!open) btn.click();
+    const wrap = document.getElementById(sec.wrap);
+    if (wrap && typeof wrap.scrollIntoView === "function") {
+        try {
+            wrap.scrollIntoView({
+                block: "start"
+            });
+        } catch (e) {}
+    }
+}
+
+function acnExpensesDialogHtml() {
+    const t = typeof appData !== "undefined" && appData && appData.treasury || {};
+    const cats = EXPENSE_CATEGORIES.filter(function(c) {
+        return !c.system || (t[c.key] || []).length > 0;
+    });
+    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card modal-card-sm" role="dialog" aria-modal="true" aria-labelledby="acn-exp-title">' + '<div class="modal-header"><div class="modal-title" id="acn-exp-title">💰 المصاريف</div>' + '<button type="button" class="icon-btn" id="acn-exp-close" aria-label="إغلاق">✕</button></div>' + '<p class="modal-sub">كل مبلغ بتاريخه على حدة. اضغط 📋 لتعديل قائمة أو حذف مبلغ منها.</p>' + '<div class="expense-categories">' + cats.map(expenseCategoryRowHtml).join("") + treasurySupportRowHtml() + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-primary btn-sm" id="acn-exp-add">➕ إضافة مصاريف</button></div>' + "</div></div>";
+}
+
+function acnExpensesDialogOpen() {
+    const root = document.getElementById("modal-root");
+    if (!root) return;
+    if (typeof treasuryPeriodFilter !== "undefined" && treasuryPeriodFilter !== "all") {
+        treasuryPeriodFilter = "all";
+        try {
+            renderTreasuryView();
+        } catch (e) {}
+        if (typeof showToast === "function") showToast('أعدنا فلتر الفترة إلى "الكل" حتى تظهر القوائم كاملة', "ok");
+    }
+    root.innerHTML = acnExpensesDialogHtml();
+    root.classList.add("modal-open");
+    const close = function() {
+        root.innerHTML = "";
+        root.classList.remove("modal-open");
+    };
+    const backdrop = root.querySelector("[data-close-backdrop]");
+    if (backdrop) backdrop.addEventListener("click", function(e) {
+        if (e.target.hasAttribute("data-close-backdrop")) close();
+    });
+    const x = root.querySelector("#acn-exp-close");
+    if (x) x.addEventListener("click", close);
+    const back = function() {
+        try {
+            renderTreasuryView();
+        } catch (e) {}
+        if (acnState) acnExpensesDialogOpen();
+    };
+    root.querySelectorAll("[data-history-key]").forEach(function(btn) {
+        btn.addEventListener("click", function() {
+            openExpenseHistoryModal(btn.getAttribute("data-history-key"), btn.getAttribute("data-history-label") || "", back);
+        });
+    });
+    const add = root.querySelector("#acn-exp-add");
+    if (add) add.addEventListener("click", function() {
+        close();
+        openAddExpenseModal();
+    });
+    const sup = root.querySelector("[data-add-entry-key]");
+    if (sup) sup.addEventListener("click", function() {
+        const real = document.querySelector('#treasury-view [data-add-entry-key="support"]');
+        if (!real) {
+            if (typeof showToast === "function") showToast("غير متاح", "error");
+            return;
+        }
+        close();
+        real.click();
+    });
+}
 
 function acnToolsHtml() {
     return '<details class="acn-help acn-tools"><summary>أدوات الصندوق (تمارا والمصاريف وغيرها)</summary><div class="acn-tools-row">' + ACN_TOOLS.map(function(t) {
@@ -87429,8 +87540,14 @@ function acnRender() {
     const root = document.getElementById("acn-root");
     if (!root || !acnState) return;
     const top = root.scrollTop;
+    const prevTools = root.querySelector ? root.querySelector(".acn-tools") : null;
+    const toolsWereOpen = !!(prevTools && prevTools.open);
     root.innerHTML = acnScreenHtml();
     root.scrollTop = top;
+    if (toolsWereOpen) {
+        const nt = root.querySelector(".acn-tools");
+        if (nt) nt.open = true;
+    }
     const tabsEl = root.querySelector ? root.querySelector(".acn-tabs") : null;
     const on = tabsEl && tabsEl.querySelector ? tabsEl.querySelector(".acn-tab-on") : null;
     if (on && typeof on.getBoundingClientRect === "function") {
@@ -87585,12 +87702,19 @@ function acnOnClick(e) {
         const tl = ACN_TOOLS.find(function(x) {
             return x.key === el.getAttribute("data-acn-tool");
         });
-        const fn = tl ? globalThis[tl.fn] : null;
-        if (typeof hasElevatedAccess === "function" && !hasElevatedAccess()) {
+        const denied = function() {
             if (typeof showToast === "function") showToast("غير متاح", "error");
+        };
+        if (typeof hasElevatedAccess === "function" && !hasElevatedAccess()) {
+            denied();
             return;
         }
-        if (typeof fn === "function") fn(); else if (typeof showToast === "function") showToast("غير متاح", "error");
+        if (tl && tl.section) {
+            acnOpenCashSection(tl.section);
+            return;
+        }
+        const fn = tl && tl.fn ? globalThis[tl.fn] : null;
+        if (typeof fn === "function") fn(); else denied();
         return;
     }
     if (act === "refresh") {
