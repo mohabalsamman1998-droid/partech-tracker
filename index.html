@@ -215,6 +215,24 @@
   .employee-map-history-select{flex:1;min-width:120px;}
   .employee-map-history-time{flex:1 1 100%;min-width:0;}
   .attendance-chart-date-row .employee-map-history-time{flex:1;min-width:130px;}
+  /* شريط التنقّل الزمني بمراقبة المواقع: مقبض يُسحب يمينًا وشمالًا فيتحرك الموظف على الخريطة إلى مكانه بذلك الوقت. الأقدم يمينًا (اتجاه القراءة) */
+  .loc-tl{margin-top:12px;}
+  .loc-tl-read{display:flex;flex-wrap:wrap;justify-content:space-between;gap:2px 12px;font-size:13px;line-height:1.6;margin-bottom:4px;}
+  .loc-tl-read-main{font-weight:800;color:var(--text);}
+  .loc-tl-read-sub{color:var(--text-dim);}
+  .loc-tl-read.loc-tl-none .loc-tl-read-main,.loc-tl-read.loc-tl-gap .loc-tl-read-main{color:var(--amber);}
+  .loc-tl-wrap{position:relative;padding:9px 0;direction:rtl;}
+  .loc-tl-track{position:relative;height:26px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);overflow:hidden;cursor:pointer;touch-action:none;-webkit-user-select:none;user-select:none;}
+  .loc-tl-seg{position:absolute;top:0;bottom:0;min-width:3px;background:var(--green);opacity:.7;}
+  .loc-tl-gap{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(45deg,var(--text-faint) 0 3px,transparent 3px 6px);opacity:.6;}
+  .loc-tl-now{position:absolute;top:0;bottom:0;width:2px;background:var(--text);opacity:.7;}
+  .loc-tl-handle{position:absolute;top:50%;width:30px;height:30px;margin-top:-15px;margin-inline-start:-15px;box-sizing:border-box;border-radius:50%;background:var(--sg-blue);border:3px solid var(--text);box-shadow:0 1px 6px rgba(0,0,0,.55);cursor:grab;touch-action:none;z-index:2;}
+  .loc-tl-handle:active{cursor:grabbing;}
+  .loc-tl-handle:focus-visible{outline:2px solid var(--sg-blue);outline-offset:3px;}
+  .loc-tl-ticks{display:flex;justify-content:space-between;direction:rtl;font-size:12px;color:var(--text-dim);margin-top:2px;}
+  .loc-tl-legend{font-size:12.5px;color:var(--text-dim);margin-top:6px;}
+  .loc-tl-lg-seg{color:var(--green);}
+  .loc-tl-lg-gap{color:var(--text-faint);}
   /* الرسم كامل (محور + صفوف) عمدًا LTR رغم إن الصفحة RTL — لأنه بيحتاج تمرير أفقي (٢٥ علامة كل
      ساعة بنظام ١٢ ساعة) وscrollLeft:0 بحاوية RTL بيعرض آخر اليوم مو أوله بمتصفحات Chromium، يلخبط
      كل منطق التمرير والـsticky. عزل هالجزء كوحدة LTR مستقلة (زي أي أداة رسم بياني/تقويم) أبسط وأصح. */
@@ -3734,6 +3752,15 @@
   .att-bar-now{position:absolute;top:0;bottom:0;width:2px;background:var(--text);}
   .att-bar-labels{display:flex;justify-content:space-between;font-size:12px;color:var(--text-dim);margin-top:4px;}
   .att-legend{font-size:12.5px;color:var(--text-dim);margin-top:6px;}
+  /* شريط التنقّل الزمني (المقبض نفسه صنفه loc-tl-handle من css الصفحة): حاوية الشريط تتسع لمقبض 30px لمسًا */
+  .att-scrub-wrap{position:relative;padding:9px 0;}
+  .att-scrub-read{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:2px 10px;margin-top:6px;font-size:13px;line-height:1.6;}
+  .att-scrub-text{display:flex;flex-direction:column;}
+  .att-scrub-main{font-weight:800;color:var(--text);}
+  .att-scrub-sub{color:var(--text-dim);}
+  .att-scrub-gap .att-scrub-main,.att-scrub-none .att-scrub-main{color:var(--amber);}
+  .att-mk-dim{opacity:.3;}
+  .att-mk-scrub{border-color:var(--sg-blue);}
   .att-lg-in{color:var(--green);}
   .att-lg-out{color:var(--amber);}
   .att-lg-gap{color:var(--text-faint);}
@@ -66536,28 +66563,73 @@ let locationReportTimer = null;
 
 let locationReportStartTimeout = null;
 
+const LOCATION_FIX_MAX_ACC_M = 1e3;
+
+const LOCATION_MIN_RECORD_GAP_MS = 20 * 1e3;
+
+let locationLastRecordMs = 0;
+
+function locationFixTimeMs(pos, nowMs) {
+    const t = pos && Number(pos.timestamp);
+    return isFinite(t) && t > nowMs - 12e4 && t <= nowMs + 2e3 ? t : nowMs;
+}
+
+function locationFixToRow(email, pos, nowMs) {
+    const c = pos && pos.coords;
+    if (!email || !c) return null;
+    const lat = Number(c.latitude), lng = Number(c.longitude), acc = Number(c.accuracy);
+    if (!isFinite(lat) || !isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180 || lat === 0 && lng === 0) return null;
+    if (!isFinite(acc) || acc < 0 || acc > LOCATION_FIX_MAX_ACC_M) return null;
+    return {
+        email: email,
+        lat: lat,
+        lng: lng,
+        accuracy: acc,
+        recorded_at: new Date(locationFixTimeMs(pos, nowMs)).toISOString()
+    };
+}
+
+function locationGetFix(onOk, onErr) {
+    const geo = navigator.geolocation;
+    geo.getCurrentPosition(onOk, e => {
+        if (e && e.code === 1) {
+            onErr(e);
+            return;
+        }
+        geo.getCurrentPosition(onOk, onErr, {
+            enableHighAccuracy: false,
+            timeout: 1e4,
+            maximumAge: 3e4
+        });
+    }, {
+        enableHighAccuracy: true,
+        timeout: 12e3,
+        maximumAge: 0
+    });
+}
+
+async function locationInsertRow(row, tag) {
+    try {
+        const {error: error} = await sb.from("employee_location_history").insert(row);
+        if (error) console.error(tag + ":", error);
+    } catch (e) {
+        console.error(tag + ":", e);
+    }
+}
+
 function recordLocationPoint() {
     if (!sb || !presenceEmail || !navigator.geolocation) return;
     if (LOCATION_SHARING_EXCLUDED_EMAILS.includes(presenceEmail)) return;
     if (document.visibilityState !== "visible") return;
-    navigator.geolocation.getCurrentPosition(async pos => {
-        try {
-            await sb.from("employee_location_history").insert({
-                email: presenceEmail,
-                lat: pos.coords.latitude,
-                lng: pos.coords.longitude,
-                accuracy: pos.coords.accuracy,
-                recorded_at: (new Date).toISOString()
-            });
-        } catch (e) {
-            console.error("recordLocationPoint:", e);
-        }
+    const nowMs = Date.now();
+    if (nowMs - locationLastRecordMs < LOCATION_MIN_RECORD_GAP_MS) return;
+    locationLastRecordMs = nowMs;
+    const email = presenceEmail;
+    locationGetFix(pos => {
+        const row = locationFixToRow(email, pos, Date.now());
+        if (row) locationInsertRow(row, "recordLocationPoint");
     }, e => {
         console.error("geolocation error:", e);
-    }, {
-        enableHighAccuracy: false,
-        timeout: 15e3,
-        maximumAge: 6e4
     });
 }
 
@@ -66649,26 +66721,16 @@ function enforceLocationRequired(email) {
     if (LOCATION_SHARING_EXCLUDED_EMAILS.includes(email)) return;
     if (!navigator.geolocation) return;
     function attempt() {
-        navigator.geolocation.getCurrentPosition(async pos => {
+        locationGetFix(async pos => {
             hideLocationGate();
             if (!sb) return;
-            try {
-                await sb.from("employee_location_history").insert({
-                    email: email,
-                    lat: pos.coords.latitude,
-                    lng: pos.coords.longitude,
-                    accuracy: pos.coords.accuracy,
-                    recorded_at: (new Date).toISOString()
-                });
-            } catch (e) {
-                console.error("enforceLocationRequired insert:", e);
-            }
+            const row = locationFixToRow(email, pos, Date.now());
+            if (!row) return;
+            locationLastRecordMs = Date.now();
+            await locationInsertRow(row, "enforceLocationRequired insert");
         }, err => {
             if (LOCATION_MANDATORY_EXEMPT_EMAILS.includes(email)) return;
             showLocationGate(attempt, err.code === 1 ? "denied" : "unavailable");
-        }, {
-            enableHighAccuracy: false,
-            timeout: 15e3
         });
     }
     attempt();
@@ -66684,7 +66746,11 @@ let employeeMapStaleTimer = null;
 
 let employeeMapModalOpen = false;
 
-let employeeMapHistoryMarker = null;
+let employeeMapCircles = {};
+
+let employeeMapScrub = null;
+
+let employeeMapScrubToken = 0;
 
 const EMPLOYEE_LOCATION_STALE_MS = 2 * 60 * 1e3;
 
@@ -66745,14 +66811,42 @@ function renderEmployeeMapMarkers(rows) {
             employeeMapMarkers[row.email] = L.marker([ row.lat, row.lng ], {
                 icon: icon
             }).addTo(employeeMapInstance).bindTooltip(tooltipText);
+            if (employeeMapScrub && employeeMapScrub.email === row.email && employeeMapScrub.dim) employeeMapMarkers[row.email].setOpacity(.3);
         }
+        employeeMapDrawAccuracy(row);
     });
     Object.keys(employeeMapMarkers).forEach(email => {
         if (!seen.has(email)) {
             employeeMapInstance.removeLayer(employeeMapMarkers[email]);
             delete employeeMapMarkers[email];
+            if (employeeMapCircles[email]) {
+                employeeMapInstance.removeLayer(employeeMapCircles[email]);
+                delete employeeMapCircles[email];
+            }
         }
     });
+}
+
+function employeeMapDrawAccuracy(row) {
+    const r = Number(row.accuracy), old = employeeMapCircles[row.email];
+    if (!isFinite(r) || r <= 0) {
+        if (old) {
+            employeeMapInstance.removeLayer(old);
+            delete employeeMapCircles[row.email];
+        }
+        return;
+    }
+    const radius = Math.min(r, LOC_TL_MAX_USABLE_ACC_M);
+    if (old) {
+        old.setLatLng([ row.lat, row.lng ]);
+        old.setRadius(radius);
+    } else employeeMapCircles[row.email] = L.circle([ row.lat, row.lng ], {
+        radius: radius,
+        color: "#4DA3FF",
+        weight: 1,
+        fillOpacity: .1,
+        interactive: false
+    }).addTo(employeeMapInstance);
 }
 
 async function loadEmployeeLocations() {
@@ -66762,7 +66856,9 @@ async function loadEmployeeLocations() {
         console.error("loadEmployeeLocations:", error);
         return [];
     }
-    return (data || []).filter(row => !LOCATION_SHARING_EXCLUDED_EMAILS.includes(row.email));
+    const rows = (data || []).filter(row => !LOCATION_SHARING_EXCLUDED_EMAILS.includes(row.email));
+    const fixed = await Promise.all(rows.map(locTlLiveRow));
+    return fixed.filter(Boolean);
 }
 
 async function loadEmployeeLocationHistoryEmails() {
@@ -66777,16 +66873,391 @@ async function loadEmployeeLocationHistoryEmails() {
     return emails;
 }
 
-async function searchLocationAtTime(email, isoTime) {
-    if (!sb || !email || !isoTime) return null;
-    const {data: data, error: error} = await sb.from("employee_location_history").select("email, lat, lng, accuracy, recorded_at").eq("email", email).lte("recorded_at", isoTime).order("recorded_at", {
+const LOC_TL_MAX_USABLE_ACC_M = 1e3;
+
+const LOC_TL_GOOD_ACC_M = 65;
+
+const LOC_TL_CONFLICT_WINDOW_MS = 15 * 60 * 1e3;
+
+const LOC_TL_MAX_SPEED_MS = 40;
+
+const LOC_TL_SPOT_RADIUS_M = 400;
+
+const LOC_TL_SPOT_MEMORY_MS = 12 * 60 * 60 * 1e3;
+
+const LOC_TL_GAP_MS = 10 * 60 * 1e3;
+
+const LOC_TL_LIVE_HISTORY_MS = 4 * 60 * 60 * 1e3;
+
+function locTlDistM(aLat, aLng, bLat, bLng) {
+    const rad = Math.PI / 180, dLat = (bLat - aLat) * rad, dLng = (bLng - aLng) * rad;
+    const h = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(aLat * rad) * Math.cos(bLat * rad) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return 2 * 6371e3 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function locTlContradicts(g, p) {
+    if (g.acc > LOC_TL_GOOD_ACC_M || g.acc * 1.5 > p.acc) return false;
+    return locTlDistM(g.lat, g.lng, p.lat, p.lng) - g.acc - p.acc > LOC_TL_MAX_SPEED_MS * Math.abs(p.ms - g.ms) / 1e3;
+}
+
+function locTlCleanRows(rows) {
+    const pts = [], dropped = [];
+    (rows || []).forEach(r => {
+        if (!r) return;
+        const lat = r.lat == null ? NaN : Number(r.lat), lng = r.lng == null ? NaN : Number(r.lng), ms = Date.parse(r.recorded_at);
+        if (!isFinite(lat) || !isFinite(lng) || !isFinite(ms) || Math.abs(lat) > 90 || Math.abs(lng) > 180 || lat === 0 && lng === 0) {
+            dropped.push({
+                row: r,
+                reason: "invalid"
+            });
+            return;
+        }
+        const a = r.accuracy == null || r.accuracy === "" ? NaN : Number(r.accuracy);
+        pts.push({
+            row: r,
+            lat: lat,
+            lng: lng,
+            ms: ms,
+            acc: isFinite(a) && a >= 0 ? a : 500,
+            drop: "",
+            decoy: false
+        });
+    });
+    pts.sort((x, y) => x.ms - y.ms);
+    let prev = null;
+    pts.forEach(p => {
+        if (p.acc > LOC_TL_MAX_USABLE_ACC_M) p.drop = "coarse"; else if (prev && prev.ms === p.ms && prev.lat === p.lat && prev.lng === p.lng) p.drop = "dup";
+        if (!p.drop) prev = p;
+    });
+    const live = pts.filter(p => !p.drop), spots = [];
+    live.forEach((p, i) => {
+        if (p.acc <= LOC_TL_GOOD_ACC_M) return;
+        let bad = false;
+        for (let k = i - 1; k >= 0 && !bad && p.ms - live[k].ms <= LOC_TL_CONFLICT_WINDOW_MS; k--) bad = locTlContradicts(live[k], p);
+        for (let k = i + 1; k < live.length && !bad && live[k].ms - p.ms <= LOC_TL_CONFLICT_WINDOW_MS; k++) bad = locTlContradicts(live[k], p);
+        if (!bad) return;
+        p.decoy = true;
+        const s = spots.find(x => locTlDistM(x.lat, x.lng, p.lat, p.lng) <= LOC_TL_SPOT_RADIUS_M);
+        if (s) {
+            s.from = Math.min(s.from, p.ms);
+            s.to = Math.max(s.to, p.ms);
+        } else spots.push({
+            lat: p.lat,
+            lng: p.lng,
+            from: p.ms,
+            to: p.ms
+        });
+    });
+    live.forEach(p => {
+        if (p.acc <= LOC_TL_GOOD_ACC_M) return;
+        if (p.decoy) {
+            p.drop = "conflict";
+            return;
+        }
+        if (spots.some(s => p.ms >= s.from - LOC_TL_SPOT_MEMORY_MS && p.ms <= s.to + LOC_TL_SPOT_MEMORY_MS && locTlDistM(s.lat, s.lng, p.lat, p.lng) <= Math.max(LOC_TL_SPOT_RADIUS_M, p.acc))) p.drop = "spot";
+    });
+    const keep = [];
+    pts.forEach(p => {
+        if (p.drop) dropped.push({
+            row: p.row,
+            reason: p.drop
+        }); else keep.push(p);
+    });
+    return {
+        rows: keep.map(p => p.row),
+        track: keep.map(p => ({
+            ms: p.ms,
+            lat: p.lat,
+            lng: p.lng,
+            acc: p.acc,
+            row: p.row
+        })),
+        dropped: dropped
+    };
+}
+
+async function locTlLiveRow(row) {
+    const acc = Number(row.accuracy);
+    if (isFinite(acc) && acc <= LOC_TL_GOOD_ACC_M) return row;
+    const unusable = isFinite(acc) && acc > LOC_TL_MAX_USABLE_ACC_M;
+    const since = new Date(Date.now() - LOC_TL_LIVE_HISTORY_MS).toISOString();
+    const {data: data, error: error} = await sb.from("employee_location_history").select("email, lat, lng, accuracy, recorded_at").eq("email", row.email).gte("recorded_at", since).order("recorded_at", {
         ascending: false
-    }).limit(1).maybeSingle();
+    }).limit(400);
     if (error) {
-        console.error("searchLocationAtTime:", error);
-        return null;
+        console.error("locTlLiveRow:", error);
+        return unusable ? null : row;
     }
-    return data;
+    if (!data || !data.length) return unusable ? null : row;
+    const clean = locTlCleanRows(data);
+    return clean.rows.length ? clean.rows[clean.rows.length - 1] : null;
+}
+
+async function loadEmployeeDayTrack(email, dayStr) {
+    if (!sb || !email || !dayStr || LOCATION_SHARING_EXCLUDED_EMAILS.includes(email)) return {
+        ok: false,
+        rows: []
+    };
+    const start = new Date(dayStr + "T00:00:00"), end = new Date(start.getTime() + 24 * 60 * 60 * 1e3);
+    if (isNaN(start.getTime())) return {
+        ok: false,
+        rows: []
+    };
+    const cols = "email, lat, lng, accuracy, recorded_at", day = [];
+    for (let from = 0; from < 5e3; from += 1e3) {
+        const {data: data, error: error} = await sb.from("employee_location_history").select(cols).eq("email", email).gte("recorded_at", start.toISOString()).lt("recorded_at", end.toISOString()).order("recorded_at", {
+            ascending: true
+        }).range(from, from + 999);
+        if (error) {
+            console.error("loadEmployeeDayTrack:", error);
+            return {
+                ok: false,
+                rows: []
+            };
+        }
+        (data || []).forEach(r => day.push(r));
+        if (!data || data.length < 1e3) break;
+    }
+    const before = await sb.from("employee_location_history").select(cols).eq("email", email).lt("recorded_at", start.toISOString()).order("recorded_at", {
+        ascending: false
+    }).limit(30);
+    if (before.error) {
+        console.error("loadEmployeeDayTrack (قبل اليوم):", before.error);
+        return {
+            ok: false,
+            rows: []
+        };
+    }
+    return {
+        ok: true,
+        rows: (before.data || []).slice().reverse().concat(day),
+        startMs: start.getTime(),
+        endMs: end.getTime()
+    };
+}
+
+function locTlPosAt(track, ms) {
+    if (!track || !track.length || !isFinite(ms)) return {
+        kind: "none",
+        next: null
+    };
+    let a = 0, b = track.length - 1, idx = -1;
+    while (a <= b) {
+        const mid = a + b >> 1;
+        if (track[mid].ms <= ms) {
+            idx = mid;
+            a = mid + 1;
+        } else b = mid - 1;
+    }
+    if (idx < 0) return {
+        kind: "none",
+        next: track[0]
+    };
+    const prev = track[idx], next = track[idx + 1] || null;
+    if (prev.ms === ms) return {
+        kind: "exact",
+        lat: prev.lat,
+        lng: prev.lng,
+        acc: prev.acc,
+        ms: ms,
+        prev: prev,
+        next: next
+    };
+    if (next && next.ms - prev.ms <= LOC_TL_GAP_MS) {
+        const f = (ms - prev.ms) / (next.ms - prev.ms);
+        return {
+            kind: "interp",
+            lat: prev.lat + (next.lat - prev.lat) * f,
+            lng: prev.lng + (next.lng - prev.lng) * f,
+            acc: Math.max(prev.acc, next.acc),
+            ms: ms,
+            prev: prev,
+            next: next
+        };
+    }
+    return {
+        kind: next ? "gap" : "last",
+        lat: prev.lat,
+        lng: prev.lng,
+        acc: prev.acc,
+        ms: ms,
+        prev: prev,
+        next: next
+    };
+}
+
+function locTlCoverage(track, lo, hi, nowMs) {
+    const segs = [], gaps = [];
+    let cur = null;
+    (track || []).forEach(p => {
+        if (p.ms < lo || p.ms >= hi) return;
+        if (cur && p.ms - cur.to <= LOC_TL_GAP_MS) {
+            cur.to = p.ms;
+            return;
+        }
+        if (cur) gaps.push({
+            from: cur.to,
+            to: p.ms
+        });
+        cur = {
+            from: p.ms,
+            to: p.ms
+        };
+        segs.push(cur);
+    });
+    if (cur && nowMs && nowMs - cur.to > LOC_TL_GAP_MS) gaps.push({
+        from: cur.to,
+        to: Math.min(nowMs, hi)
+    });
+    return {
+        segs: segs,
+        gaps: gaps
+    };
+}
+
+function locTlDateLabel(ms) {
+    return new Date(ms).toLocaleDateString("ar-SY", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year: "numeric"
+    });
+}
+
+function locTlReadout(pos, ms, opts) {
+    const o = opts || {};
+    const ft = typeof o.fmtTime === "function" ? o.fmtTime : fmtHm, fd = typeof o.fmtDate === "function" ? o.fmtDate : locTlDateLabel;
+    const accTx = pos && pos.acc != null ? "دقة ±" + Math.round(pos.acc) + " م" : "";
+    const freshLive = o.live && pos && pos.prev && ms - pos.prev.ms <= 5 * 60 * 1e3;
+    if (freshLive) return {
+        cls: "live",
+        main: "الآن — " + ft(ms),
+        sub: "الموقع الحيّ" + (accTx ? " · " + accTx : "")
+    };
+    const when = ft(ms) + " — " + fd(ms);
+    if (!pos || pos.kind === "none") return {
+        cls: "none",
+        main: when,
+        sub: "لا توجد بيانات قبل هذا الوقت" + (pos && pos.next ? " — أول نقطة الساعة " + ft(pos.next.ms) : "")
+    };
+    if (pos.kind === "exact" || pos.kind === "interp") {
+        return {
+            cls: "ok",
+            main: when,
+            sub: accTx + (pos.kind === "interp" ? " · موقع مستوفى بين نقطتين" : "") + (pos.acc > 100 ? " · موقع تقريبي" : "")
+        };
+    }
+    const ago = "آخر موقع معروف قبل " + attendanceSessionDurationLabel(pos.prev.ms, ms);
+    return {
+        cls: pos.kind === "gap" ? "gap" : "ok",
+        main: when,
+        sub: (pos.kind === "gap" ? "لا توجد بيانات في هذا الوقت — " : "") + ago + (accTx ? " · " + accTx : "")
+    };
+}
+
+function locTlAttach(host, cfg) {
+    cfg = cfg || {};
+    const lo = Number(cfg.lo), hi = Number(cfg.hi);
+    if (!host || !isFinite(lo) || !isFinite(hi) || hi <= lo) return null;
+    const maxMs = isFinite(Number(cfg.maxMs)) ? Math.max(lo, Math.min(hi, Number(cfg.maxMs))) : hi;
+    const clampMs = v => Math.max(lo, Math.min(maxMs, v));
+    const rtl = cfg.rtl !== undefined ? !!cfg.rtl : typeof getComputedStyle === "function" ? getComputedStyle(host).direction === "rtl" : true;
+    let ms = clampMs(isFinite(Number(cfg.ms)) ? Number(cfg.ms) : maxMs), dragging = false, dead = false;
+    const handle = document.createElement("div");
+    handle.className = "loc-tl-handle";
+    handle.setAttribute("role", "slider");
+    handle.setAttribute("tabindex", "0");
+    handle.setAttribute("aria-label", cfg.label || "الوقت");
+    handle.setAttribute("aria-valuemin", String(Math.round(lo / 1e3)));
+    handle.setAttribute("aria-valuemax", String(Math.round(maxMs / 1e3)));
+    host.style.touchAction = "none";
+    host.appendChild(handle);
+    function paint() {
+        handle.style.insetInlineStart = ((ms - lo) / (hi - lo) * 100).toFixed(3) + "%";
+        handle.setAttribute("aria-valuenow", String(Math.round(ms / 1e3)));
+        handle.setAttribute("aria-valuetext", fmtHm(ms));
+    }
+    function set(v, silent) {
+        if (dead) return;
+        ms = clampMs(v);
+        paint();
+        if (!silent && typeof cfg.onChange === "function") cfg.onChange(ms);
+    }
+    function msAt(clientX) {
+        const r = host.getBoundingClientRect();
+        if (!r.width) return ms;
+        const f = Math.max(0, Math.min(1, rtl ? (r.right - clientX) / r.width : (clientX - r.left) / r.width));
+        return lo + f * (hi - lo);
+    }
+    const down = e => {
+        if (dead || e.button !== undefined && e.button > 0) return;
+        dragging = true;
+        try {
+            host.setPointerCapture(e.pointerId);
+        } catch (x) {}
+        if (e.preventDefault) e.preventDefault();
+        set(msAt(e.clientX));
+        try {
+            handle.focus({
+                preventScroll: true
+            });
+        } catch (x) {}
+    };
+    const move = e => {
+        if (dragging && !dead) set(msAt(e.clientX));
+    };
+    const up = e => {
+        if (!dragging) return;
+        dragging = false;
+        try {
+            host.releasePointerCapture(e.pointerId);
+        } catch (x) {}
+    };
+    const key = e => {
+        const fwd = rtl ? "ArrowLeft" : "ArrowRight", back = rtl ? "ArrowRight" : "ArrowLeft";
+        let d = 0;
+        if (e.key === fwd || e.key === "ArrowUp") d = 6e4; else if (e.key === back || e.key === "ArrowDown") d = -6e4; else if (e.key === "PageUp") d = 15 * 6e4; else if (e.key === "PageDown") d = -15 * 6e4; else if (e.key === "Home") {
+            e.preventDefault();
+            set(lo);
+            return;
+        } else if (e.key === "End") {
+            e.preventDefault();
+            set(maxMs);
+            return;
+        } else return;
+        e.preventDefault();
+        set(ms + d);
+    };
+    host.addEventListener("pointerdown", down);
+    host.addEventListener("pointermove", move);
+    host.addEventListener("pointerup", up);
+    host.addEventListener("pointercancel", up);
+    handle.addEventListener("keydown", key);
+    paint();
+    return {
+        getMs: () => ms,
+        isDragging: () => dragging,
+        setMs: (v, silent) => set(v, silent),
+        destroy: () => {
+            dead = true;
+            dragging = false;
+            host.removeEventListener("pointerdown", down);
+            host.removeEventListener("pointermove", move);
+            host.removeEventListener("pointerup", up);
+            host.removeEventListener("pointercancel", up);
+            handle.removeEventListener("keydown", key);
+            if (handle.parentNode) handle.parentNode.removeChild(handle);
+        }
+    };
+}
+
+function locTlTrackHtml(cov, lo, hi, nowMs) {
+    const pct = v => Math.max(0, Math.min(100, (v - lo) / (hi - lo) * 100));
+    const box = (cls, a, b) => {
+        const l = pct(a);
+        return '<div class="' + cls + '" style="inset-inline-start:' + l.toFixed(3) + "%;width:" + Math.max(0, pct(b) - l).toFixed(3) + '%"></div>';
+    };
+    return cov.gaps.map(g => box("loc-tl-gap", g.from, g.to)).join("") + cov.segs.map(s => box("loc-tl-seg", s.from, s.to)).join("") + (nowMs && nowMs >= lo && nowMs <= hi ? '<div class="loc-tl-now" style="inset-inline-start:' + pct(nowMs).toFixed(3) + '%"></div>' : "");
 }
 
 function pingEmployeeLocations() {
@@ -66909,49 +67380,161 @@ function closeEmployeeMap() {
         employeeMapInstance = null;
     }
     employeeMapMarkers = {};
-    employeeMapHistoryMarker = null;
+    employeeMapCircles = {};
+    employeeMapScrubToken++;
+    if (employeeMapScrub && employeeMapScrub.ctl) employeeMapScrub.ctl.destroy();
+    employeeMapScrub = null;
 }
 
 function employeeMapEscListener(e) {
     if (e.key === "Escape") closeEmployeeMap();
 }
 
-async function handleEmployeeMapHistorySearch() {
-    if (!employeeMapInstance) return;
-    const select = document.getElementById("employee-map-history-select");
-    const timeInput = document.getElementById("employee-map-history-time");
-    const resultEl = document.getElementById("employee-map-history-result");
-    const email = select && select.value;
-    if (!email) {
-        if (resultEl) resultEl.textContent = "اختر موظفًا أولًا";
-        return;
+function employeeMapTlRead(cls, main, sub) {
+    const el = document.getElementById("employee-map-tl-read");
+    if (!el) return;
+    el.className = "loc-tl-read" + (cls ? " loc-tl-" + cls : "");
+    el.innerHTML = '<span class="loc-tl-read-main">' + escapeHtml(main) + '</span><span class="loc-tl-read-sub">' + escapeHtml(sub || "") + "</span>";
+}
+
+function employeeMapDimLive(email, on) {
+    const m = employeeMapMarkers[email];
+    if (m) m.setOpacity(on ? .3 : 1);
+    if (employeeMapScrub && employeeMapScrub.email === email) employeeMapScrub.dim = !!on;
+}
+
+function employeeMapScrubClear() {
+    const st = employeeMapScrub;
+    if (!st) return;
+    if (st.ctl) st.ctl.destroy();
+    if (employeeMapInstance) {
+        [ "marker", "circle", "line" ].forEach(k => {
+            if (st[k]) {
+                try {
+                    employeeMapInstance.removeLayer(st[k]);
+                } catch (e) {}
+            }
+        });
     }
-    const timeVal = timeInput && timeInput.value;
-    const isLatest = !timeVal;
-    const isoTime = isLatest ? (new Date).toISOString() : new Date(timeVal).toISOString();
-    if (resultEl) resultEl.textContent = "جاري البحث…";
-    const point = await searchLocationAtTime(email, isoTime);
-    if (!employeeMapInstance) return;
-    if (!point) {
-        if (resultEl) resultEl.textContent = "لا يوجد أي موقع مسجّل لهذا الموظف" + (isLatest ? "" : " قبل هذا الوقت");
-        return;
-    }
-    if (employeeMapHistoryMarker) {
-        employeeMapInstance.removeLayer(employeeMapHistoryMarker);
-        employeeMapHistoryMarker = null;
-    }
-    employeeMapHistoryMarker = L.marker([ point.lat, point.lng ], {
-        icon: employeeMapMarkerIcon(point.email, false, "history")
-    }).addTo(employeeMapInstance);
-    employeeMapInstance.setView([ point.lat, point.lng ], 15);
-    const recordedLabel = new Date(point.recorded_at).toLocaleString("ar-SY", {
-        hour: "2-digit",
-        minute: "2-digit",
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric"
+    employeeMapDimLive(st.email, false);
+    employeeMapScrub = null;
+}
+
+function employeeMapScrubApply(ms) {
+    const st = employeeMapScrub;
+    if (!st || !employeeMapInstance) return;
+    const map = employeeMapInstance;
+    const pos = locTlPosAt(st.track, ms);
+    const live = st.isToday && ms >= st.maxMs - 1e3 && pos.kind !== "none";
+    const rd = locTlReadout(pos, ms, {
+        live: live
     });
-    if (resultEl) resultEl.textContent = (isLatest ? "آخر موقع معروف لـ " : "آخر موقع مسجّل لـ ") + displayNameForEmail(point.email) + " — الساعة " + recordedLabel;
+    employeeMapTlRead(rd.cls, rd.main, rd.sub);
+    employeeMapDimLive(st.email, !live && pos.kind !== "none");
+    if (live || pos.kind === "none") {
+        if (st.marker) {
+            map.removeLayer(st.marker);
+            st.marker = null;
+        }
+        if (st.circle) {
+            map.removeLayer(st.circle);
+            st.circle = null;
+        }
+        return;
+    }
+    const ll = [ pos.lat, pos.lng ];
+    if (st.marker) st.marker.setLatLng(ll); else st.marker = L.marker(ll, {
+        icon: employeeMapMarkerIcon(st.email, false, "history"),
+        keyboard: false,
+        interactive: false
+    }).addTo(map);
+    st.marker.setOpacity(pos.kind === "gap" || pos.kind === "last" ? .6 : 1);
+    const radius = Math.min(Number(pos.acc) || 0, LOC_TL_MAX_USABLE_ACC_M);
+    if (radius > 0) {
+        if (st.circle) {
+            st.circle.setLatLng(ll);
+            st.circle.setRadius(radius);
+        } else st.circle = L.circle(ll, {
+            radius: radius,
+            color: "#4DA3FF",
+            weight: 1,
+            fillOpacity: .12,
+            interactive: false
+        }).addTo(map);
+    }
+    if (!map.getBounds().pad(-.15).contains(ll)) map.panTo(ll, {
+        animate: false
+    });
+}
+
+async function employeeMapScrubLoad(initialMs, fit) {
+    const select = document.getElementById("employee-map-history-select");
+    const dayInput = document.getElementById("employee-map-history-day");
+    const tlTrackEl = document.getElementById("employee-map-tl-track"), wrapEl = document.getElementById("employee-map-tl-wrap"), ticksEl = document.getElementById("employee-map-tl-ticks");
+    const resultEl = document.getElementById("employee-map-history-result");
+    const email = select && select.value, dayStr = dayInput && dayInput.value;
+    const myTok = ++employeeMapScrubToken;
+    employeeMapScrubClear();
+    if (tlTrackEl) tlTrackEl.innerHTML = "";
+    if (ticksEl) ticksEl.innerHTML = "";
+    if (resultEl) resultEl.textContent = "";
+    if (!employeeMapInstance || !wrapEl) return;
+    if (!email || !dayStr) {
+        employeeMapTlRead("none", "اختر موظفًا ويومًا", "");
+        return;
+    }
+    employeeMapTlRead("", "جاري تحميل مسار اليوم…", "");
+    const res = await loadEmployeeDayTrack(email, dayStr);
+    if (myTok !== employeeMapScrubToken || !employeeMapInstance) return;
+    if (!res.ok) {
+        employeeMapTlRead("none", "تعذّر تحميل مسار هذا اليوم", "غيّر الموظف أو اليوم لإعادة المحاولة");
+        return;
+    }
+    const cleaned = locTlCleanRows(res.rows);
+    const lo = res.startMs, hi = res.endMs, nowMs = Date.now();
+    const isToday = dayStr === dateToDateInputValue(new Date);
+    const maxMs = isToday ? Math.min(hi, nowMs) : hi;
+    if (tlTrackEl) tlTrackEl.innerHTML = locTlTrackHtml(locTlCoverage(cleaned.track, lo, hi, isToday ? nowMs : 0), lo, hi, isToday ? nowMs : 0);
+    if (ticksEl) ticksEl.innerHTML = [ 0, 6, 12, 18, 24 ].map(h => "<span>" + escapeHtml(fmtHm(lo + h * 36e5)) + "</span>").join("");
+    const dayPts = cleaned.track.filter(p => p.ms >= lo && p.ms < hi);
+    const startMs = isFinite(Number(initialMs)) ? Number(initialMs) : isToday ? maxMs : dayPts.length ? dayPts[0].ms : lo + 12 * 36e5;
+    const st = employeeMapScrub = {
+        email: email,
+        dayStr: dayStr,
+        track: cleaned.track,
+        lo: lo,
+        hi: hi,
+        maxMs: maxMs,
+        isToday: isToday,
+        ctl: null,
+        marker: null,
+        circle: null,
+        line: null,
+        dim: false
+    };
+    if (dayPts.length >= 2) st.line = L.polyline(dayPts.map(p => [ p.lat, p.lng ]), {
+        color: "#22D07A",
+        weight: 2,
+        opacity: .45,
+        dashArray: "4,6",
+        interactive: false
+    }).addTo(employeeMapInstance);
+    if (fit && dayPts.length) employeeMapInstance.fitBounds(L.latLngBounds(dayPts.map(p => [ p.lat, p.lng ])), {
+        padding: [ 40, 40 ],
+        maxZoom: 16
+    });
+    st.ctl = locTlAttach(wrapEl, {
+        lo: lo,
+        hi: hi,
+        maxMs: maxMs,
+        ms: startMs,
+        rtl: true,
+        label: "وقت الموقع",
+        onChange: employeeMapScrubApply
+    });
+    if (st.ctl) employeeMapScrubApply(st.ctl.getMs());
+    const hidden = cleaned.dropped.filter(d => d.reason === "conflict" || d.reason === "spot" || d.reason === "coarse").length;
+    if (resultEl && hidden) resultEl.textContent = "أُخفيت " + hidden + " نقطة غير موثوقة (جهاز آخر بنفس الحساب أو دقة ضعيفة جدًا).";
 }
 
 async function openEmployeeMap() {
@@ -66960,29 +67543,34 @@ async function openEmployeeMap() {
     employeeMapModalOpen = true;
     const myToken = ++employeeMapOpenToken;
     const root = document.getElementById("confirm-root");
-    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">🗺️ مواقع الموظفين</div><div class="modal-sub">تتبع مستمر تلقائي — نقطة كل دقيقتين تقريبًا</div></div>' + '<button class="icon-btn" id="employee-map-close-btn" aria-label="إغلاق">✕</button></div>' + '<div id="employee-map-wrap" class="employee-map-wrap"></div>' + '<div class="employee-map-legend"><span>🟢 خلال آخر دقيقتين &nbsp; ⚪ أقدم</span><button type="button" class="btn btn-ghost btn-sm" id="employee-map-refresh-btn">🔄 تحديث الآن</button></div>' + '<div class="employee-map-history-row">' + '<select id="employee-map-history-select" class="employee-map-history-select"><option value="">جاري التحميل…</option></select>' + '<input type="datetime-local" id="employee-map-history-time" class="employee-map-history-time">' + '<button type="button" class="btn btn-ghost btn-sm" id="employee-map-history-search-btn">🕐 الموقع</button>' + "</div>" + '<div class="filter-chips" id="employee-map-history-presets" style="margin-top:8px;">' + EMPLOYEE_MAP_TIME_PRESETS.map(p => '<button type="button" class="chip' + (p.minutes === 0 ? " chip-active" : "") + '" data-history-minutes-ago="' + p.minutes + '">' + p.label + "</button>").join("") + "</div>" + '<div id="employee-map-history-result" class="muted" style="margin-top:6px;font-size:12.5px;"></div>' + "</div>" + "</div>";
+    root.innerHTML = '<div class="modal-backdrop" data-close-confirm>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">🗺️ مواقع الموظفين</div><div class="modal-sub">تتبع مستمر تلقائي — نقطة كل دقيقتين تقريبًا</div></div>' + '<button class="icon-btn" id="employee-map-close-btn" aria-label="إغلاق">✕</button></div>' + '<div id="employee-map-wrap" class="employee-map-wrap"></div>' + '<div class="employee-map-legend"><span>🟢 خلال آخر دقيقتين &nbsp; ⚪ أقدم</span><button type="button" class="btn btn-ghost btn-sm" id="employee-map-refresh-btn">🔄 تحديث الآن</button></div>' + '<div class="employee-map-history-row attendance-chart-date-row">' + '<select id="employee-map-history-select" class="employee-map-history-select"><option value="">جاري التحميل…</option></select>' + '<input type="date" id="employee-map-history-day" class="employee-map-history-time">' + "</div>" + '<div class="filter-chips" id="employee-map-history-presets" style="margin-top:8px;">' + EMPLOYEE_MAP_TIME_PRESETS.map(p => '<button type="button" class="chip' + (p.minutes === 0 ? " chip-active" : "") + '" data-history-minutes-ago="' + p.minutes + '">' + p.label + "</button>").join("") + "</div>" + '<div class="loc-tl">' + '<div class="loc-tl-read loc-tl-none" id="employee-map-tl-read"><span class="loc-tl-read-main">اختر موظفًا لعرض مساره</span><span class="loc-tl-read-sub"></span></div>' + '<div class="loc-tl-wrap" id="employee-map-tl-wrap"><div class="loc-tl-track" id="employee-map-tl-track"></div></div>' + '<div class="loc-tl-ticks" id="employee-map-tl-ticks"></div>' + '<div class="loc-tl-legend"><span class="loc-tl-lg-seg">■</span> توجد بيانات &nbsp; <span class="loc-tl-lg-gap">▨</span> لا توجد بيانات &nbsp; — اسحب المقبض (الأقدم يمينًا)</div>' + "</div>" + '<div id="employee-map-history-result" class="muted" style="margin-top:6px;font-size:12.5px;"></div>' + "</div>" + "</div>";
     root.classList.add("modal-open");
     root.querySelector("[data-close-confirm]").addEventListener("click", e => {
         if (e.target.hasAttribute("data-close-confirm")) closeEmployeeMap();
     });
     root.querySelector("#employee-map-close-btn").addEventListener("click", closeEmployeeMap);
     root.querySelector("#employee-map-refresh-btn").addEventListener("click", pingEmployeeLocations);
-    root.querySelector("#employee-map-history-search-btn").addEventListener("click", handleEmployeeMapHistorySearch);
     document.addEventListener("keydown", employeeMapEscListener);
-    const historyTimeInput = document.getElementById("employee-map-history-time");
-    if (historyTimeInput) {
-        historyTimeInput.value = dateToDatetimeLocalValue(new Date);
-        historyTimeInput.addEventListener("input", () => {
-            root.querySelectorAll("[data-history-minutes-ago]").forEach(c => c.classList.remove("chip-active"));
+    const historyDayInput = document.getElementById("employee-map-history-day");
+    const historySelectEl = document.getElementById("employee-map-history-select");
+    const clearChips = () => root.querySelectorAll("[data-history-minutes-ago]").forEach(c => c.classList.remove("chip-active"));
+    if (historyDayInput) {
+        historyDayInput.value = dateToDateInputValue(new Date);
+        historyDayInput.max = historyDayInput.value;
+        historyDayInput.addEventListener("change", () => {
+            if (!historyDayInput.value) return;
+            clearChips();
+            employeeMapScrubLoad(undefined, true);
         });
     }
+    if (historySelectEl) historySelectEl.addEventListener("change", () => employeeMapScrubLoad(undefined, true));
     root.querySelectorAll("[data-history-minutes-ago]").forEach(chip => {
         chip.addEventListener("click", () => {
-            root.querySelectorAll("[data-history-minutes-ago]").forEach(c => c.classList.remove("chip-active"));
+            clearChips();
             chip.classList.add("chip-active");
-            const minutesAgo = Number(chip.getAttribute("data-history-minutes-ago")) || 0;
-            if (historyTimeInput) historyTimeInput.value = dateToDatetimeLocalValue(new Date(Date.now() - minutesAgo * 6e4));
-            handleEmployeeMapHistorySearch();
+            const target = Date.now() - (Number(chip.getAttribute("data-history-minutes-ago")) || 0) * 6e4;
+            if (historyDayInput) historyDayInput.value = dateToDateInputValue(new Date(target));
+            employeeMapScrubLoad(target, true);
         });
     });
     await ensureLeaflet();
@@ -67021,6 +67609,7 @@ async function openEmployeeMap() {
             return '<option value="' + escapeHtml(email) + '">' + escapeHtml(displayNameForEmail(email)) + suffix + "</option>";
         }).join("") : '<option value="">لا يوجد سجل مواقع بعد</option>';
     }
+    employeeMapScrubLoad(undefined, false);
     subscribeEmployeeMapRealtime();
     employeeMapStaleTimer = setInterval(refreshEmployeeMapMarkersThrottled, 3e4);
     pingEmployeeLocations();
@@ -67050,7 +67639,7 @@ async function loadEmployeeLocationHistoryForDay(dayStr) {
     if (!sb || !dayStr) return [];
     const start = new Date(dayStr + "T00:00:00");
     const end = new Date(start.getTime() + 24 * 60 * 60 * 1e3);
-    const {data: data, error: error} = await sb.from("employee_location_history").select("email, lat, lng, recorded_at").gte("recorded_at", start.toISOString()).lt("recorded_at", end.toISOString()).order("email", {
+    const {data: data, error: error} = await sb.from("employee_location_history").select("email, lat, lng, accuracy, recorded_at").gte("recorded_at", start.toISOString()).lt("recorded_at", end.toISOString()).order("email", {
         ascending: true
     }).order("recorded_at", {
         ascending: true
@@ -67059,7 +67648,15 @@ async function loadEmployeeLocationHistoryForDay(dayStr) {
         console.error("loadEmployeeLocationHistoryForDay:", error);
         return [];
     }
-    return (data || []).filter(row => !LOCATION_SHARING_EXCLUDED_EMAILS.includes(row.email));
+    const by = {};
+    (data || []).filter(row => !LOCATION_SHARING_EXCLUDED_EMAILS.includes(row.email)).forEach(row => {
+        (by[row.email] = by[row.email] || []).push(row);
+    });
+    const out = [];
+    Object.keys(by).sort().forEach(email => {
+        locTlCleanRows(by[email]).rows.forEach(r => out.push(r));
+    });
+    return out;
 }
 
 function sessionizeLocationHistoryRows(rows) {
@@ -73104,6 +73701,170 @@ function attBarEl(segs, lo, hi, nowMs, label) {
     return bar;
 }
 
+function attScrubMarkerDrop() {
+    const v = attView;
+    if (!v) return;
+    [ v.smk, v.scc ].forEach(function(l) {
+        if (l && v.map) {
+            try {
+                v.map.removeLayer(l);
+            } catch (e) {}
+        }
+    });
+    v.smk = null;
+    v.scc = null;
+}
+
+function attScrubReset(quiet) {
+    const v = attView;
+    if (!v) return;
+    const had = !!v.scrub || !!v.smk || !!v.scrubOn;
+    if (v.scrub && v.scrub.ctl) v.scrub.ctl.destroy();
+    v.scrub = null;
+    v.scrubOn = null;
+    attScrubMarkerDrop();
+    if (had && !quiet) attRepaint("live");
+}
+
+function attScrubDraw(st) {
+    const v = attView;
+    if (!v || v.scrub !== st) return;
+    const ms = st.ctl ? st.ctl.getMs() : st.maxMs, tz = attTz();
+    const pos = typeof locTlPosAt === "function" ? locTlPosAt(st.track, ms) : {
+        kind: "none",
+        next: null
+    };
+    const live = st.isToday && ms >= st.maxMs - 1e3 && pos.kind !== "none";
+    const rd = typeof locTlReadout === "function" ? locTlReadout(pos, ms, {
+        live: live,
+        fmtTime: function(x) {
+            return attTimeText(x, tz);
+        },
+        fmtDate: function(x) {
+            return attDayLong(attDayKey(x, tz));
+        }
+    }) : {
+        cls: "none",
+        main: "",
+        sub: ""
+    };
+    attSetText(st.mainEl, rd.main);
+    attSetText(st.subEl, rd.sub);
+    st.readEl.className = "att-scrub-read att-scrub-" + rd.cls;
+    st.backBtn.className = "btn btn-ghost btn-sm" + (live || !st.isToday ? " att-hide" : "");
+    st.ms = live ? null : ms;
+    const was = v.scrubOn;
+    v.scrubOn = live || pos.kind === "none" ? null : st.empId;
+    const map = v.map;
+    if (map && typeof L !== "undefined") {
+        if (!v.scrubOn) attScrubMarkerDrop(); else {
+            const ll = [ pos.lat, pos.lng ], emp = attEmpOf(st.empId), radius = Math.min(Number(pos.acc) || 0, 1e3);
+            const icon = L.divIcon({
+                className: "att-mk-root",
+                iconSize: [ 0, 0 ],
+                iconAnchor: [ 0, 0 ],
+                html: attEl("div", {
+                    class: "att-mk att-mk-scrub" + (pos.kind === "gap" || pos.kind === "last" ? " att-mk-dim" : "")
+                }, attEl("span", {}, "🕐"), attEl("span", {}, emp ? emp.name : ""))
+            });
+            if (v.smk) {
+                v.smk.setLatLng(ll);
+                v.smk.setIcon(icon);
+            } else {
+                v.smk = L.marker(ll, {
+                    icon: icon,
+                    keyboard: false,
+                    interactive: false
+                });
+                v.smk.addTo(map);
+            }
+            if (radius > 0) {
+                if (v.scc) {
+                    v.scc.setLatLng(ll);
+                    v.scc.setRadius(radius);
+                } else {
+                    v.scc = L.circle(ll, {
+                        radius: radius,
+                        color: "#4DA3FF",
+                        weight: 1,
+                        fillOpacity: .12,
+                        interactive: false
+                    });
+                    v.scc.addTo(map);
+                }
+            } else if (v.scc) {
+                try {
+                    map.removeLayer(v.scc);
+                } catch (e) {}
+                v.scc = null;
+            }
+            try {
+                if (!map.getBounds().pad(-.15).contains(ll)) map.panTo(ll, {
+                    animate: false
+                });
+            } catch (e) {}
+        }
+    }
+    if (was !== v.scrubOn) attRepaint("live");
+}
+
+function attScrubWire(wrap, host, emp, rows, lo, hi, isToday) {
+    const v = attView;
+    if (!v || !wrap || !host || !emp) return;
+    const track = typeof locTlCleanRows === "function" ? locTlCleanRows(rows).track : [];
+    if (!track.length || !(typeof locTlAttach === "function")) return;
+    const prev = v.scrub && v.scrub.empId === emp.id && v.scrub.ymd === v.dayYmd ? v.scrub : null;
+    if (v.scrub && v.scrub.ctl) v.scrub.ctl.destroy();
+    const maxMs = isToday ? Math.max(lo, Math.min(hi, attNow())) : hi;
+    const keep = prev && prev.ms !== null && prev.ms !== undefined ? prev.ms : null;
+    const st = {
+        empId: emp.id,
+        ymd: v.dayYmd,
+        ms: keep,
+        track: track,
+        isToday: isToday,
+        maxMs: maxMs,
+        ctl: null,
+        mainEl: attEl("span", {
+            class: "att-scrub-main"
+        }),
+        subEl: attEl("span", {
+            class: "att-scrub-sub"
+        }),
+        readEl: null,
+        backBtn: null
+    };
+    st.backBtn = attEl("button", {
+        type: "button",
+        class: "btn btn-ghost btn-sm att-hide",
+        onclick: function() {
+            if (st.ctl) st.ctl.setMs(st.maxMs);
+        }
+    }, "العودة إلى الآن");
+    st.readEl = attEl("div", {
+        class: "att-scrub-read",
+        "aria-live": "polite"
+    }, attEl("span", {
+        class: "att-scrub-text"
+    }, st.mainEl, st.subEl), st.backBtn);
+    host.appendChild(st.readEl);
+    v.scrub = st;
+    const start = keep !== null ? keep : isToday ? maxMs : Math.max(lo, Math.min(hi, track[0].ms));
+    st.ctl = typeof locTlAttach === "function" ? locTlAttach(wrap, {
+        lo: lo,
+        hi: hi,
+        maxMs: maxMs,
+        ms: start,
+        label: "وقت الموقع",
+        onChange: function() {
+            attSafe(function() {
+                attScrubDraw(st);
+            });
+        }
+    }) : null;
+    attScrubDraw(st);
+}
+
 async function attDayPanel(host, emp, ymd, quiet, force) {
     const v = attView;
     if (!v || !host || !emp) return;
@@ -73112,6 +73873,8 @@ async function attDayPanel(host, emp, ymd, quiet, force) {
         return attView === v && rid === v.rid && tok === v.dayTok;
     };
     const today = attDayKey(attNow(), tz), isToday = ymd === today;
+    if (quiet && v.scrub && v.scrub.ctl && v.scrub.ctl.isDragging()) return;
+    if (!quiet && v.scrub && (v.scrub.empId !== emp.id || v.scrub.ymd !== ymd)) attScrubReset(false);
     v.dayYmd = ymd;
     const maxAcc = Number(cfg.settings && cfg.settings.max_accuracy_m) || 150;
     const go = function(d) {
@@ -73238,12 +74001,19 @@ async function attDayPanel(host, emp, ymd, quiet, force) {
     kids.push(attEl("div", {
         class: "att-day-sentence"
     }, sentence));
-    kids.push(attBarEl(segs, rg[0], rg[1], isToday ? attNow() : 0, sentence));
+    const scrubWrap = attEl("div", {
+        class: "att-scrub-wrap"
+    }, attBarEl(segs, rg[0], rg[1], isToday ? attNow() : 0, sentence));
+    const scrubHost = attEl("div", {
+        class: "att-scrub-host"
+    });
+    kids.push(scrubWrap);
     kids.push(attEl("div", {
         class: "att-bar-labels"
     }, [ rg[0], (rg[0] + rg[1]) / 2, rg[1] ].map(function(ms) {
         return attEl("span", {}, attTimeText(ms, tz));
     })));
+    kids.push(scrubHost);
     kids.push(attEl("div", {
         class: "att-legend"
     }, attEl("span", {
@@ -73281,6 +74051,7 @@ async function attDayPanel(host, emp, ymd, quiet, force) {
         class: "att-hint"
     }, "بيانات اليوم كبيرة وقد تكون ناقصة"));
     show(kids);
+    attScrubWire(scrubWrap, scrubHost, emp, ld.rows, rg[0], rg[1], isToday);
 }
 
 function attTabMap(panel) {
@@ -73401,7 +74172,7 @@ function attTabMap(panel) {
     function markerEl(e, p) {
         const age = attNow() - Date.parse(p.row.recorded_at), stale = !(age <= ATT_MON_FRESH_MS), lf = lfOf(e);
         return attEl("div", {
-            class: "att-mk"
+            class: "att-mk" + (v.scrubOn === e.id ? " att-mk-dim" : "")
         }, attEl("span", {
             class: "att-live-dot att-pk-" + (stale || !lf ? "gap" : lf.dot)
         }), attEl("span", {}, stale ? e.name + " · " + attAgeText(age) : e.name));
@@ -73486,10 +74257,13 @@ function attTabMap(panel) {
             });
             v.map = map;
             v.disposers.push(function() {
+                attScrubReset(true);
                 if (v.map) {
                     attMapDrop(v.map);
                     v.map = null;
                     v.mk = {};
+                    v.smk = null;
+                    v.scc = null;
                 }
             });
             map.setView(zs.length ? [ zs[0].lat, zs[0].lng ] : [ 24.7136, 46.6753 ], 12);
@@ -73555,6 +74329,7 @@ function attTabMap(panel) {
         if (!alive()) return;
         sel = id;
         v.sel = id;
+        attScrubReset(true);
         drawChips();
         drawHead();
         attSafe(function() {
@@ -75983,12 +76758,12 @@ function pdfimgPreview(sh, done) {
 
 function pdfimgOpenBtnHtml(doc, sh) {
     if (!doc || !sh || doc.mime !== "application/pdf" || sh.blobState !== "ready" || !sh.blobUrl) return "";
-    return '<button type="button" class="acct2-chip" data-acct2-act="file-open">📄 فتح PDF' + (sh.pdfPages > 1 ? " (" + sh.pdfPages + " صفحات)" : "") + "</button>";
+    return '<button type="button" class="acct2-chip" data-acct2-act="file-open">📄 فتح PDF' + (sh.pdfPages > 1 ? sh.pdfPages === 2 ? " (صفحتان)" : " (" + sh.pdfPages + " صفحات)" : "") + "</button>";
 }
 
 const PDFSCAN_CAM = 'button[data-acct2-act="cam"], button[data-acct2-act="exp-cam"]';
 
-let pdfscanSess = null, pdfscanInput = null, pdfscanObs = null, pdfscanSeq = 0, pdfscanCssOn = false, pdfscanAuto = true;
+let pdfscanSess = null, pdfscanInput = null, pdfscanObs = null, pdfscanSeq = 0, pdfscanCssOn = false, pdfscanAuto = false;
 
 function pdfscanIo() {
     try {
@@ -76034,6 +76809,18 @@ const PDFSCAN_MIN_AREA = .08;
 const PDFSCAN_SKIP_AREA = .9;
 
 const PDFSCAN_CROP_SIDE = 2400;
+
+const PDFSCAN_K_MID = .35;
+
+const PDFSCAN_K_LOW = .18;
+
+const PDFSCAN_STAB = 1.08;
+
+const PDFSCAN_RAW_MAX = 62914560;
+
+const PDFSCAN_PDF_MS = 6e4;
+
+const PDFSCAN_ATTACH_MS = 9e4;
 
 function pdfscanBlur(g, w, h, r) {
     const t = new Uint8Array(w * h), o = new Uint8Array(w * h), d = 2 * r + 1;
@@ -76211,12 +76998,8 @@ function pdfscanMinRect(hull) {
     };
 }
 
-function pdfscanPaperFind(g, w, h) {
-    const n = w * h;
-    if (!g || g.length !== n || w < 16 || h < 16) return null;
-    const b = pdfscanBlur(g, w, h, 2), o = pdfscanOtsu(b);
-    if (!o || o.m1 - o.m0 < 35) return null;
-    const thr = o.m0 + PDFSCAN_THR_BIAS * (o.t - o.m0), mask = new Uint8Array(n);
+function pdfscanRectAt(b, w, h, thr) {
+    const n = w * h, mask = new Uint8Array(n);
     let on = 0;
     for (let i = 0; i < n; i++) {
         if (b[i] > thr) {
@@ -76251,7 +77034,21 @@ function pdfscanPaperFind(g, w, h) {
     if (!(ha > 0) || best / ha < .7) return null;
     const r = pdfscanMinRect(hull);
     if (!r || !(r.rw > 0) || !(r.rh > 0) || ha / (r.rw * r.rh) < .8) return null;
-    const m = .012 * Math.max(r.rw, r.rh) + 2.5;
+    return r;
+}
+
+function pdfscanPaperFind(g, w, h) {
+    const n = w * h;
+    if (!g || g.length !== n || w < 16 || h < 16) return null;
+    const b = pdfscanBlur(g, w, h, 2), o = pdfscanOtsu(b);
+    if (!o || o.m1 - o.m0 < 35) return null;
+    const at = function(k) {
+        return pdfscanRectAt(b, w, h, o.m0 + k * (o.t - o.m0));
+    };
+    const hi = at(PDFSCAN_THR_BIAS), mid = at(PDFSCAN_K_MID), low = at(PDFSCAN_K_LOW);
+    if (!hi || !mid || !low) return null;
+    if (low.rw * low.rh / (mid.rw * mid.rh) > PDFSCAN_STAB) return null;
+    const r = mid, m = .012 * Math.max(r.rw, r.rh) + 2.5;
     const rw = r.rw + 2 * m, rh = r.rh + 2 * m, frac = rw * rh / n;
     if (frac > 1) return null;
     if (frac >= PDFSCAN_SKIP_AREA && Math.abs(r.ang) < .026) return null;
@@ -76260,7 +77057,8 @@ function pdfscanPaperFind(g, w, h) {
         cy: r.cy,
         rw: rw,
         rh: rh,
-        ang: r.ang
+        ang: r.ang,
+        tone: Math.round(o.m1)
     };
 }
 
@@ -76298,7 +77096,7 @@ function pdfscanLoad(file) {
 }
 
 async function pdfscanCrop(file) {
-    let url = "";
+    let url = "", src = null, an = null, out = null;
     try {
         const ld = await pdfscanLoad(file);
         if (!ld) return null;
@@ -76306,10 +77104,11 @@ async function pdfscanCrop(file) {
         const iw = ld.img.naturalWidth, ih = ld.img.naturalHeight;
         if (!(iw > 0 && ih > 0)) return null;
         const k = Math.min(1, PDFSCAN_CROP_SIDE / Math.max(iw, ih)), sw = Math.max(1, Math.round(iw * k)), sh = Math.max(1, Math.round(ih * k));
-        const src = pdfscanCanvas(sw, sh);
+        src = pdfscanCanvas(sw, sh);
         src.getContext("2d").drawImage(ld.img, 0, 0, sw, sh);
         const ka = Math.min(1, PDFSCAN_AN_SIDE / Math.max(sw, sh)), aw = Math.max(16, Math.round(sw * ka)), ah = Math.max(16, Math.round(sh * ka));
-        const an = pdfscanCanvas(aw, ah), actx = an.getContext("2d");
+        an = pdfscanCanvas(aw, ah);
+        const actx = an.getContext("2d");
         actx.drawImage(src, 0, 0, aw, ah);
         const px = actx.getImageData(0, 0, aw, ah).data, g = new Uint8Array(aw * ah);
         for (let i = 0, p = 0; i < g.length; i++, p += 4) g[i] = px[p] * 77 + px[p + 1] * 151 + px[p + 2] * 28 >> 8;
@@ -76317,8 +77116,9 @@ async function pdfscanCrop(file) {
         if (!r) return null;
         const f = sw / aw, ow = Math.round(r.rw * f), oh = Math.round(r.rh * f);
         if (ow < 200 || oh < 200 || ow > 4e3 || oh > 4e3) return null;
-        const out = pdfscanCanvas(ow, oh), c2 = out.getContext("2d");
-        c2.fillStyle = "#fff";
+        out = pdfscanCanvas(ow, oh);
+        const c2 = out.getContext("2d"), tn = Math.max(170, Math.min(255, Math.round(r.tone || 255)));
+        c2.fillStyle = "rgb(" + tn + "," + tn + "," + tn + ")";
         c2.fillRect(0, 0, ow, oh);
         c2.imageSmoothingEnabled = true;
         c2.imageSmoothingQuality = "high";
@@ -76338,6 +77138,45 @@ async function pdfscanCrop(file) {
         try {
             if (url) URL.revokeObjectURL(url);
         } catch (e) {}
+        [ src, an, out ].forEach(function(c) {
+            if (c) {
+                try {
+                    c.width = 0;
+                    c.height = 0;
+                } catch (e) {}
+            }
+        });
+    }
+}
+
+function pdfscanOn() {
+    return typeof PDFIMG_ENABLED !== "undefined" && PDFIMG_ENABLED === true && typeof pdfimgFromJpegs === "function";
+}
+
+function pdfscanPagesAr(n) {
+    return n === 1 ? "صفحة واحدة" : n === 2 ? "صفحتان" : n + " صفحات";
+}
+
+function pdfscanHostOk(s) {
+    try {
+        return !s.acct || typeof acct2St !== "undefined" && acct2St === s.acct;
+    } catch (e) {
+        return false;
+    }
+}
+
+function pdfscanGuard(s) {
+    if (pdfscanHostOk(s)) return true;
+    if (pdfscanSess === s) pdfscanClose();
+    pdfscanToast("انتهت الجلسة — أعد المسح", "error");
+    return false;
+}
+
+function pdfscanLimit(p, ms) {
+    try {
+        return typeof withTimeout === "function" ? withTimeout(p, ms, "scan") : Promise.resolve(p);
+    } catch (e) {
+        return Promise.resolve(p);
     }
 }
 
@@ -76347,7 +77186,7 @@ function pdfscanStyle() {
     try {
         const st = document.createElement("style");
         st.setAttribute("data-pdfimg-scan", "1");
-        st.textContent = "#pdfimg-scan-root{position:fixed;inset:0;z-index:96;display:flex;align-items:flex-end;justify-content:center;background:rgba(4,6,5,.72);overflow-y:auto;}" + ".pdfimg-scan-sheet{width:100%;max-width:560px;max-height:92vh;overflow-y:auto;overscroll-behavior:contain;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0;padding:14px 16px calc(16px + env(safe-area-inset-bottom));}" + ".pdfimg-scan-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;}" + '.pdfimg-scan-title{font-family:"Cairo",sans-serif;font-weight:800;font-size:16px;}' + ".pdfimg-scan-close{min-width:44px;min-height:44px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:16px;cursor:pointer;}" + ".pdfimg-scan-sub{margin:0 0 10px;color:var(--text-dim);font-size:13px;line-height:1.7;}" + ".pdfimg-scan-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px;}" + ".pdfimg-scan-pg{position:relative;aspect-ratio:3/4;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);}" + ".pdfimg-scan-pg img{display:block;width:100%;height:100%;object-fit:cover;}" + ".pdfimg-scan-wait{display:flex;align-items:center;justify-content:center;padding:6px;text-align:center;color:var(--text-dim);font-size:13px;}" + '.pdfimg-scan-n{position:absolute;top:4px;inset-inline-start:4px;min-width:24px;padding:1px 6px;border-radius:999px;background:var(--surface);border:1px solid var(--border);font-family:"Cairo",sans-serif;font-weight:800;font-size:13px;text-align:center;}' + ".pdfimg-scan-x{position:absolute;top:2px;inset-inline-end:2px;min-width:40px;min-height:40px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:14px;cursor:pointer;}" + ".pdfimg-scan-acts{display:flex;gap:8px;flex-wrap:wrap;}" + '.pdfimg-scan-c{position:absolute;bottom:4px;inset-inline-start:4px;min-height:34px;padding:0 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:"Cairo",sans-serif;font-weight:700;font-size:13px;cursor:pointer;}' + ".pdfimg-scan-opt{margin:0 0 10px;}" + ".pdfimg-scan-acts .btn{flex:1 1 150px;min-height:48px;font-size:14px;}";
+        st.textContent = "#pdfimg-scan-root{position:fixed;inset:0;z-index:96;display:flex;align-items:flex-end;justify-content:center;background:rgba(4,6,5,.72);overflow-y:auto;}" + ".pdfimg-scan-sheet{width:100%;max-width:560px;max-height:92vh;overflow-y:auto;overscroll-behavior:contain;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0;padding:14px 16px 0;}" + ".pdfimg-scan-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;}" + '.pdfimg-scan-title{font-family:"Cairo",sans-serif;font-weight:800;font-size:16px;}' + ".pdfimg-scan-close{min-width:44px;min-height:44px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:16px;cursor:pointer;}" + ".pdfimg-scan-sub{margin:0 0 10px;color:var(--text-dim);font-size:13px;line-height:1.7;}" + ".pdfimg-scan-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:12px;}" + ".pdfimg-scan-pg{position:relative;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);}" + ".pdfimg-scan-i{position:relative;display:block;overflow:hidden;padding:0;border:0;aspect-ratio:3/4;background:var(--surface-2);cursor:zoom-in;}" + ".pdfimg-scan-i img{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;}" + ".pdfimg-scan-wait{align-items:center;justify-content:center;min-height:120px;padding:6px;text-align:center;color:var(--text-dim);font-size:13px;}" + '.pdfimg-scan-n{position:absolute;top:4px;inset-inline-start:4px;min-width:24px;padding:1px 6px;border-radius:999px;background:var(--surface);border:1px solid var(--border);font-family:"Cairo",sans-serif;font-weight:800;font-size:13px;text-align:center;}' + ".pdfimg-scan-bar{display:flex;gap:6px;padding:6px;border-top:1px solid var(--border);}" + '.pdfimg-scan-bar button{flex:1 1 0;min-width:44px;min-height:44px;padding:0 2px;line-height:1.25;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:"Cairo",sans-serif;font-weight:700;font-size:13px;cursor:pointer;}' + ".pdfimg-scan-bar button:disabled,.pdfimg-scan-close:disabled,.pdfimg-scan-acts .btn:disabled{opacity:.5;cursor:not-allowed;}" + ".pdfimg-scan-opt{margin:0 0 10px;}" + ".pdfimg-scan-tag{position:absolute;top:4px;inset-inline-end:4px;padding:1px 8px;border-radius:999px;background:var(--surface);border:1px solid var(--border);color:var(--text-dim);font-size:13px;}" + ".pdfimg-scan-acts{display:flex;gap:8px;flex-wrap:wrap;position:sticky;bottom:0;padding:8px 0 calc(16px + env(safe-area-inset-bottom));background:var(--surface);}" + ".pdfimg-scan-acts .btn{flex:1 1 150px;min-height:48px;font-size:14px;}" + "#pdfimg-scan-view{position:fixed;inset:0;z-index:97;display:flex;align-items:center;justify-content:center;padding:12px;background:rgba(0,0,0,.92);cursor:zoom-out;}" + "#pdfimg-scan-view img{max-width:100%;max-height:100%;object-fit:contain;}" + "body:has(#pdfimg-scan-root) .toast-root{bottom:auto;top:calc(12px + env(safe-area-inset-top,0px));}" + "body:has(#pdfimg-scan-root) .toast{pointer-events:none;}";
         (document.head || document.body).appendChild(st);
     } catch (e) {}
 }
@@ -76359,6 +77198,8 @@ function pdfscanRender() {
         let root = document.getElementById("pdfimg-scan-root");
         if (!s) {
             if (root && root.parentNode) root.parentNode.removeChild(root);
+            const vw = document.getElementById("pdfimg-scan-view");
+            if (vw && vw.parentNode) vw.parentNode.removeChild(vw);
             return;
         }
         pdfscanStyle();
@@ -76367,13 +77208,32 @@ function pdfscanRender() {
             root.id = "pdfimg-scan-root";
             document.body.appendChild(root);
         }
-        const n = s.pages.length, full = n >= PDFIMG_MAX_PAGES, busy = !!(s.busy || s.sending);
+        const old = root.querySelector(".pdfimg-scan-sheet"), top = old ? old.scrollTop : 0;
+        const n = s.pages.length, full = n >= PDFIMG_MAX_PAGES, busy = !!(s.busy || s.sending), redo = typeof s.at === "number" && s.at >= 0 && s.at < n;
         let grid = "";
         for (let i = 0; i < n; i++) {
-            grid += '<div class="pdfimg-scan-pg"><img src="' + s.pages[i].url + '" alt="صفحة ' + (i + 1) + '"><span class="pdfimg-scan-n">' + (i + 1) + "</span>" + '<button type="button" class="pdfimg-scan-x" data-pdfimg-act="del" data-pdfimg-id="' + s.pages[i].id + '" aria-label="حذف الصفحة ' + (i + 1) + '"' + (busy ? " disabled" : "") + ">✕</button>" + '<button type="button" class="pdfimg-scan-c" data-pdfimg-act="crop" data-pdfimg-id="' + s.pages[i].id + '"' + (busy ? " disabled" : "") + ">" + (s.pages[i].cropped ? "الأصل" : "قص") + "</button></div>";
+            const p = s.pages[i];
+            grid += '<div class="pdfimg-scan-pg"><button type="button" class="pdfimg-scan-i" data-pdfimg-act="view" data-pdfimg-id="' + p.id + '" aria-label="عرض الصفحة ' + (i + 1) + ' كاملة"><img src="' + p.url + '" alt="صفحة ' + (i + 1) + '"></button><span class="pdfimg-scan-n">' + (i + 1) + "</span>" + (p.miss ? '<span class="pdfimg-scan-tag">لم يُقصّ</span>' : "") + '<div class="pdfimg-scan-bar"><button type="button" data-pdfimg-act="del" data-pdfimg-id="' + p.id + '"' + (busy ? " disabled" : "") + ">حذف</button>" + '<button type="button" data-pdfimg-act="crop" data-pdfimg-id="' + p.id + '"' + (busy ? " disabled" : "") + ">" + (p.cropped ? "إلغاء القص" : "قص الورقة") + "</button></div></div>";
         }
         if (s.busy) grid += '<div class="pdfimg-scan-pg pdfimg-scan-wait" role="status">جارٍ تجهيز الصفحة…</div>';
-        root.innerHTML = '<div class="pdfimg-scan-sheet" role="dialog" aria-modal="true" aria-label="مسح ورقة">' + '<div class="pdfimg-scan-head"><span class="pdfimg-scan-title">📄 مسح ورقة</span>' + '<button type="button" class="pdfimg-scan-close" data-pdfimg-act="cancel" aria-label="إغلاق"' + (s.sending ? " disabled" : "") + ">✕</button></div>" + '<p class="pdfimg-scan-sub">' + (n ? (n === 1 ? "صفحة واحدة" : n + " صفحات") + " — تُرفع كلها ملف PDF واحدًا" : "صوّر الصفحة الأولى، ثم أضف ما تشاء من الصفحات، وتُرفع كلها ملف PDF واحدًا") + "</p>" + '<label class="acct2-opt pdfimg-scan-opt"><input type="checkbox" data-pdfimg-opt="auto"' + (pdfscanAuto ? " checked" : "") + (busy ? " disabled" : "") + "><span>قص تلقائي للورقة</span></label>" + (grid ? '<div class="pdfimg-scan-grid">' + grid + "</div>" : "") + (full ? '<p class="pdfimg-scan-sub">بلغت الحد الأقصى (' + PDFIMG_MAX_PAGES + " صفحات)</p>" : "") + '<div class="pdfimg-scan-acts">' + (full ? "" : '<button type="button" class="btn" data-pdfimg-act="add"' + (busy ? " disabled" : "") + ">" + (n ? "➕ صفحة أخرى" : "📷 صوّر الصفحة الأولى") + "</button>") + '<button type="button" class="btn btn-primary" data-pdfimg-act="done"' + (busy || !n ? " disabled" : "") + ">" + (s.sending ? "جارٍ التجهيز…" : "✔ إنهاء ورفع") + "</button>" + "</div></div>";
+        root.innerHTML = '<div class="pdfimg-scan-sheet" role="dialog" aria-modal="true" aria-label="مسح ورقة">' + '<div class="pdfimg-scan-head"><span class="pdfimg-scan-title">مسح ورقة</span>' + '<button type="button" class="pdfimg-scan-close" data-pdfimg-act="cancel" aria-label="إغلاق">✕</button></div>' + '<p class="pdfimg-scan-sub">' + (n ? pdfscanPagesAr(n) + " — تُرفع كلها ملف PDF واحدًا" : "صوّر الصفحات واحدة تلو الأخرى — تُرفع كلها ملف PDF واحدًا") + "</p>" + '<label class="acct2-opt pdfimg-scan-opt"><input type="checkbox" data-pdfimg-opt="auto"' + (pdfscanAuto ? " checked" : "") + (busy ? " disabled" : "") + "><span>قص تلقائي للورقة</span></label>" + (grid ? '<div class="pdfimg-scan-grid">' + grid + "</div>" : "") + (full ? '<p class="pdfimg-scan-sub">بلغت الحد الأقصى (' + PDFIMG_MAX_PAGES + " صفحات)</p>" : "") + '<div class="pdfimg-scan-acts">' + (full ? "" : '<button type="button" class="btn" data-pdfimg-act="add"' + (busy ? " disabled" : "") + ">" + (redo ? "تصوير بديل للصفحة " + (s.at + 1) : n ? "صفحة أخرى" : "صوّر الصفحة الأولى") + "</button>") + '<button type="button" class="btn btn-primary" data-pdfimg-act="done"' + (busy || !n ? " disabled" : "") + ">" + (s.sending ? "جارٍ التجهيز…" : "إنهاء ورفع") + "</button>" + "</div></div>";
+        const vp = s.view ? s.pages.filter(function(p) {
+            return p.id === s.view;
+        })[0] : null;
+        let vw = document.getElementById("pdfimg-scan-view");
+        if (vp && vp.url) {
+            if (!vw) {
+                vw = document.createElement("div");
+                vw.id = "pdfimg-scan-view";
+                vw.setAttribute("data-pdfimg-act", "unview");
+                vw.setAttribute("role", "dialog");
+                vw.setAttribute("aria-label", "عرض الصفحة كاملة");
+                document.body.appendChild(vw);
+            }
+            vw.innerHTML = '<img src="' + vp.url + '" alt="الصفحة كاملة">';
+        } else if (vw && vw.parentNode) vw.parentNode.removeChild(vw);
+        const ns = root.querySelector(".pdfimg-scan-sheet");
+        if (ns && top) ns.scrollTop = top;
     } catch (e) {}
 }
 
@@ -76427,17 +77287,22 @@ function pdfscanColor() {
 
 function pdfscanFail(comp) {
     const r = comp && comp.reason;
-    pdfscanToast(r === "too_big" ? pdfscanTxt("tooBig", "الصورة كبيرة جدًا") : r === "decode" ? pdfscanTxt("decode", "تعذّرت قراءة الصورة") : pdfscanTxt("failed", "تعذّر تجهيز الصفحة"), "error");
+    pdfscanToast(r === "too_big" ? pdfscanTxt("tooBig", "الصورة كبيرة جدًا") : r === "decode" ? pdfscanTxt("decode", "تعذّرت قراءة الصورة") : "تعذّر تجهيز الصفحة — أعد التصوير", "error");
 }
 
-async function pdfscanPrep(io, file, wantCrop) {
+async function pdfscanPrep(io, file, wantCrop, cropOnly) {
     let src = file, cropped = false;
     if (wantCrop) {
         const c = await pdfscanCrop(file);
         if (c) {
             src = c;
             cropped = true;
-        }
+        } else if (cropOnly) return {
+            comp: null,
+            cropped: false,
+            tried: true,
+            nocrop: true
+        };
     }
     let comp = await io.compress(src, {
         color: pdfscanColor()
@@ -76450,18 +77315,30 @@ async function pdfscanPrep(io, file, wantCrop) {
     }
     return {
         comp: comp,
-        cropped: cropped
+        cropped: cropped,
+        tried: !!wantCrop
     };
 }
 
 async function pdfscanOnFile(file) {
     const s = pdfscanSess;
     if (!s || s.busy || s.sending) return;
+    if (!pdfscanGuard(s)) return;
+    if (s.pages.length >= PDFIMG_MAX_PAGES) {
+        pdfscanToast("بلغت الحد الأقصى (" + PDFIMG_MAX_PAGES + " صفحات)", "error");
+        return;
+    }
     s.busy = true;
     pdfscanRender();
     try {
         const io = pdfscanIo();
         if (!io || typeof io.compress !== "function" || !file || !(file.size > 0)) throw new Error("scan_input");
+        if (file.size > PDFSCAN_RAW_MAX) {
+            pdfscanFail({
+                reason: "too_big"
+            });
+            return;
+        }
         const pr = await pdfscanPrep(io, file, pdfscanAuto);
         if (pdfscanSess !== s) return;
         const comp = pr.comp;
@@ -76472,17 +77349,21 @@ async function pdfscanOnFile(file) {
             } catch (e) {
                 url = "";
             }
-            s.pages.push({
+            const pg = {
                 id: "pg" + ++pdfscanSeq,
                 blob: comp.blob,
                 bytes: Number(comp.bytes) || 0,
                 url: url,
                 orig: file,
-                cropped: pr.cropped
-            });
+                cropped: pr.cropped,
+                miss: !!(pr.tried && !pr.cropped)
+            };
+            const at = typeof s.at === "number" && s.at >= 0 && s.at <= s.pages.length ? s.at : s.pages.length;
+            s.pages.splice(at, 0, pg);
+            s.at = null;
         }
     } catch (e) {
-        pdfscanToast(pdfscanTxt("failed", "تعذّر تجهيز الصفحة"), "error");
+        pdfscanToast("تعذّر تجهيز الصفحة — أعد التصوير", "error");
     } finally {
         if (pdfscanSess === s) {
             s.busy = false;
@@ -76494,6 +77375,7 @@ async function pdfscanOnFile(file) {
 async function pdfscanRework(id) {
     const s = pdfscanSess;
     if (!s || s.busy || s.sending) return;
+    if (!pdfscanGuard(s)) return;
     let pg = null;
     for (let i = 0; i < s.pages.length; i++) {
         if (s.pages[i].id === id) pg = s.pages[i];
@@ -76504,9 +77386,9 @@ async function pdfscanRework(id) {
     s.busy = true;
     pdfscanRender();
     try {
-        const pr = await pdfscanPrep(io, pg.orig, wantCrop);
+        const pr = await pdfscanPrep(io, pg.orig, wantCrop, true);
         if (pdfscanSess !== s) return;
-        if (!pr.comp || !pr.comp.ok) pdfscanFail(pr.comp); else if (wantCrop && !pr.cropped) pdfscanToast("لم أجد حدود الورقة بوضوح — بقيت الصفحة كما هي", "error"); else if (pdfscanBytes(s) - pg.bytes + (Number(pr.comp.bytes) || 0) > PDFIMG_MAX_BYTES) pdfscanToast("حجم الصفحات كبير — ارفع ما صوّرته ثم ابدأ مستندًا آخر", "error"); else {
+        if (pr.nocrop || wantCrop && !pr.cropped && pr.comp && pr.comp.ok) pdfscanToast("تعذّر تحديد حدود الورقة — بقيت الصفحة كما هي", "error"); else if (!pr.comp || !pr.comp.ok) pdfscanFail(pr.comp); else if (pdfscanBytes(s) - pg.bytes + (Number(pr.comp.bytes) || 0) > PDFIMG_MAX_BYTES) pdfscanToast("حجم الصفحات كبير — ارفع ما صوّرته ثم ابدأ مستندًا آخر", "error"); else {
             let url = "";
             try {
                 url = URL.createObjectURL(pr.comp.blob);
@@ -76520,9 +77402,10 @@ async function pdfscanRework(id) {
             pg.bytes = Number(pr.comp.bytes) || 0;
             pg.url = url;
             pg.cropped = pr.cropped;
+            pg.miss = false;
         }
     } catch (e) {
-        pdfscanToast(pdfscanTxt("failed", "تعذّر تجهيز الصفحة"), "error");
+        pdfscanToast("تعذّر تجهيز الصفحة — أعد التصوير", "error");
     } finally {
         if (pdfscanSess === s) {
             s.busy = false;
@@ -76540,98 +77423,113 @@ function pdfscanDel(id) {
                 if (s.pages[i].url) URL.revokeObjectURL(s.pages[i].url);
             } catch (e) {}
             s.pages.splice(i, 1);
+            s.at = i < s.pages.length ? i : null;
             break;
         }
     }
     pdfscanRender();
 }
 
+function pdfscanView(id) {
+    const s = pdfscanSess;
+    if (!s) return;
+    let ok = false;
+    for (let i = 0; i < s.pages.length; i++) {
+        if (s.pages[i].id === id) ok = true;
+    }
+    s.view = ok ? id : "";
+    pdfscanRender();
+}
+
 async function pdfscanFinish() {
     const s = pdfscanSess;
     if (!s || s.busy || s.sending || !s.pages.length) return;
+    if (!pdfscanGuard(s)) return;
     const io = pdfscanIo();
     if (!io || typeof io.attach !== "function" || typeof pdfimgFromJpegs !== "function") {
         pdfscanToast(pdfscanTxt("failed", "تعذّر الرفع"), "error");
         return;
     }
     s.sending = true;
+    s.view = "";
     pdfscanRender();
-    let pdf = null;
     try {
-        pdf = typeof pdfimgFromJpegs === "function" ? await pdfimgFromJpegs(s.pages.map(function(p) {
-            return p.blob;
-        })) : null;
-    } catch (e) {
-        pdf = null;
-    }
-    if (pdfscanSess !== s) return;
-    if (!pdf) {
-        s.sending = false;
-        pdfscanRender();
-        pdfscanToast("تعذّر تجهيز ملف PDF — جرّب مرة أخرى", "error");
-        return;
-    }
-    const ctx = s.ctx, key = s.key;
-    let file = null;
-    try {
-        file = new File([ pdf ], "scan.pdf", {
-            type: "application/pdf"
+        let pdf = null;
+        try {
+            pdf = typeof pdfimgFromJpegs === "function" ? await pdfscanLimit(pdfimgFromJpegs(s.pages.map(function(p) {
+                return p.blob;
+            })), PDFSCAN_PDF_MS) : null;
+        } catch (e) {
+            pdf = null;
+        }
+        if (pdfscanSess !== s) return;
+        if (!pdf) {
+            pdfscanToast("تعذّر تجهيز ملف PDF — جرّب مرة أخرى", "error");
+            return;
+        }
+        if (!pdfscanGuard(s)) return;
+        const ctx = s.ctx, key = s.key;
+        let file = null;
+        try {
+            file = new File([ pdf ], "scan.pdf", {
+                type: "application/pdf"
+            });
+        } catch (e) {
+            file = null;
+        }
+        if (!file) {
+            pdfscanToast(pdfscanTxt("failed", "تعذّر الرفع"), "error");
+            return;
+        }
+        pdfscanEvent({
+            type: "queue",
+            preparing: true,
+            slotKey: key,
+            linkLater: !!ctx.linkLater
         });
-    } catch (e) {
-        file = null;
-    }
-    if (!file) {
-        s.sending = false;
-        pdfscanRender();
-        pdfscanToast(pdfscanTxt("failed", "تعذّر الرفع"), "error");
-        return;
-    }
-    pdfscanEvent({
-        type: "queue",
-        preparing: true,
-        slotKey: key,
-        linkLater: !!ctx.linkLater
-    });
-    let res = null;
-    try {
-        res = await io.attach(ctx, file, {
-            source: "camera"
+        let res = null;
+        try {
+            res = await pdfscanLimit(io.attach(ctx, file, {
+                source: "camera"
+            }), PDFSCAN_ATTACH_MS);
+        } catch (e) {
+            res = null;
+        }
+        if (!res) res = {
+            ok: false,
+            id: "",
+            state: "refused",
+            reason: "error"
+        };
+        pdfscanEvent({
+            type: "queue",
+            id: res.id,
+            slotKey: key,
+            picked: true,
+            ok: res.ok,
+            state: res.state,
+            reason: res.reason || "",
+            linkLater: !!ctx.linkLater,
+            offline: !!res.offline,
+            duplicate: !!res.duplicate,
+            warn: res.warn === "pdf_large" ? "" : res.warn || "",
+            bytes: res.bytes || 0
         });
-    } catch (e) {
-        res = null;
-    }
-    if (!res) res = {
-        ok: false,
-        id: "",
-        state: "refused",
-        reason: "error"
-    };
-    pdfscanEvent({
-        type: "queue",
-        id: res.id,
-        slotKey: key,
-        picked: true,
-        ok: res.ok,
-        state: res.state,
-        reason: res.reason || "",
-        linkLater: !!ctx.linkLater,
-        offline: !!res.offline,
-        duplicate: !!res.duplicate,
-        warn: res.warn === "pdf_large" ? "" : res.warn || "",
-        bytes: res.bytes || 0
-    });
-    if (pdfscanSess !== s) return;
-    if (res.ok) pdfscanClose(); else {
-        s.sending = false;
-        pdfscanRender();
+        if (pdfscanSess !== s) return;
+        if (res.ok) pdfscanClose();
+    } finally {
+        if (pdfscanSess === s) {
+            s.sending = false;
+            pdfscanRender();
+        }
     }
 }
 
 function pdfscanStart(btn) {
     try {
-        if (pdfscanSess) return;
+        if (pdfscanSess || !pdfscanOn()) return;
         const io = pdfscanIo();
-        if (!io || typeof io.compress !== "function" || typeof io.attach !== "function" || typeof pdfimgFromJpegs !== "function") return;
+        if (!io || typeof io.compress !== "function" || typeof io.attach !== "function") return;
         if (typeof acct2WritesOn === "function" && !acct2WritesOn()) {
             pdfscanToast(pdfscanTxt("paused", "الرفع متوقف مؤقتًا"), "error");
             return;
@@ -76679,7 +77577,10 @@ function pdfscanStart(btn) {
             kind: kind,
             pages: [],
             busy: false,
-            sending: false
+            sending: false,
+            at: null,
+            view: "",
+            acct: typeof acct2St !== "undefined" ? acct2St : null
         };
         try {
             if (typeof acct2St !== "undefined" && acct2St && acct2St.sheet && acct2St.sheet.type === "chooser" && typeof acct2CloseSheet === "function") acct2CloseSheet();
@@ -76693,7 +77594,7 @@ function pdfscanStart(btn) {
 
 function pdfscanEnsureBtn(cam) {
     try {
-        if (!cam || !cam.parentNode) return;
+        if (!cam || !cam.parentNode || !pdfscanOn()) return;
         const nx = cam.nextElementSibling;
         if (nx && nx.hasAttribute && nx.hasAttribute("data-pdfimg-scan")) return;
         const exp = cam.getAttribute("data-acct2-act") === "exp-cam";
@@ -76702,7 +77603,8 @@ function pdfscanEnsureBtn(cam) {
         b.className = cam.className;
         b.setAttribute("data-pdfimg-scan", exp ? "exp" : "slot");
         if (!exp) b.setAttribute("data-pdfimg-key", cam.getAttribute("data-acct2-key") || "");
-        b.setAttribute("aria-label", "مسح ورقة");
+        b.setAttribute("aria-label", "مسح");
+        b.setAttribute("title", "مسح ورقة — عدة صفحات في ملف PDF واحد");
         b.textContent = "📄";
         cam.parentNode.insertBefore(b, cam.nextSibling);
     } catch (e) {}
@@ -76728,10 +77630,7 @@ function pdfscanOnClick(ev) {
             return;
         }
         const act = t.getAttribute("data-pdfimg-act");
-        if (act === "add") pdfscanAdd(); else if (act === "del") pdfscanDel(t.getAttribute("data-pdfimg-id") || ""); else if (act === "done") pdfscanFinish(); else if (act === "crop") pdfscanRework(t.getAttribute("data-pdfimg-id") || ""); else if (act === "cancel") {
-            const s = pdfscanSess;
-            if (s && !s.sending) pdfscanClose();
-        }
+        if (act === "add") pdfscanAdd(); else if (act === "del") pdfscanDel(t.getAttribute("data-pdfimg-id") || ""); else if (act === "done") pdfscanFinish(); else if (act === "crop") pdfscanRework(t.getAttribute("data-pdfimg-id") || ""); else if (act === "view") pdfscanView(t.getAttribute("data-pdfimg-id") || ""); else if (act === "unview") pdfscanView(""); else if (act === "cancel") pdfscanClose();
     } catch (e) {}
 }
 
