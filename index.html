@@ -6962,7 +6962,7 @@ const TAMARA_PLAN_TEXT = {
     splitMonths: "أقساط شهرية بدءًا من",
     splitApply: "تعبئة",
     addRow: "+ إضافة قسط",
-    flexHint: "عند تعديل مبلغ قسط تُوزَّع بقية الإجمالي تلقائيًا بالتساوي على الأقساط التي بعده (ما عدّلته يدويًا يبقى كما هو).",
+    flexHint: "تعديل مبلغ قسط يوزّع بقية الإجمالي بالتساوي على الأقساط التي بعده، وحذف قسط أو إضافة قسط يوزّع الإجمالي بالتساوي على الأقساط التي لم تعدّلها يدويًا. وما عدّلته يدويًا يبقى كما هو.",
     sumRows: "مجموع الأقساط",
     sumTotal: "الإجمالي",
     sumDiff: "الفرق عن الإجمالي",
@@ -8587,7 +8587,7 @@ function tamaraPlanRebalance(rows, editedIdx, principalH) {
     const list = Array.isArray(rows) ? rows : [];
     const P = Number(principalH), e = Number(editedIdx);
     if (!isFinite(P) || Math.floor(P) !== P || P <= 0) return null;
-    if (!isFinite(e) || Math.floor(e) !== e || e < 0 || e >= list.length) return null;
+    if (!isFinite(e) || Math.floor(e) !== e || e < -1 || e >= list.length) return null;
     let fixedH = 0;
     const flex = [];
     for (let k = 0; k < list.length; k++) {
@@ -57484,12 +57484,16 @@ function tamaraPlanOnClick(e) {
                 dueOn: tamaraPlanIsoOk(last) ? tamaraPlanAddMonthsIso(last, 1) : d.purchaseDate,
                 amount: ""
             });
+            tamaraPlanRebalanceRows(d, -1);
             tamaraPlanRedrawRows();
             return;
         }
         if (act === "rm") {
             const i = parseInt(t.getAttribute("data-tp-i"), 10);
-            if (i >= 0 && i < d.rows.length) d.rows.splice(i, 1);
+            if (i >= 0 && i < d.rows.length) {
+                d.rows.splice(i, 1);
+                tamaraPlanRebalanceRows(d, -1);
+            }
             tamaraPlanRedrawRows();
             return;
         }
