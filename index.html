@@ -53411,6 +53411,24 @@ function openAddExpenseModal() {
         const category = addExpenseSelectedType;
         const saveBtn = root.querySelector("#expense-add-save-btn");
         if (saveBtn) saveBtn.disabled = true;
+        if (typeof acnDupGuard === "function") {
+            let dupOk = true;
+            try {
+                dupOk = await acnDupGuard({
+                    src: "box",
+                    category: category,
+                    entry: newEntry,
+                    isNew: true
+                });
+            } catch (e) {
+                dupOk = true;
+            }
+            if (!dupOk) {
+                if (saveBtn) saveBtn.disabled = false;
+                return;
+            }
+            if (!Array.isArray(appData.treasury[category])) appData.treasury[category] = [];
+        }
         const saved = await persistTreasuryEntry(newEntry, category);
         if (saveBtn) saveBtn.disabled = false;
         if (!saved) return;
@@ -53453,6 +53471,28 @@ function bindExpenseEntryEvents(key) {
                 if (!parseDMY(entry.date)) {
                     showToast("أدخل تاريخًا صحيحًا للقيد", "error");
                     return;
+                }
+                if (typeof acnDupGuard === "function") {
+                    let dupOk = true;
+                    saveBtn.disabled = true;
+                    try {
+                        dupOk = await acnDupGuard({
+                            src: "box",
+                            category: key,
+                            entry: {
+                                id: entryId,
+                                amount: amt,
+                                date: entry.date,
+                                note: entry.note
+                            },
+                            isNew: unsavedDraftEntryIds.has(entryId),
+                            orig: expenseEditOriginals[entryId] || null
+                        });
+                    } catch (e) {
+                        dupOk = true;
+                    }
+                    saveBtn.disabled = false;
+                    if (!dupOk) return;
                 }
                 const liveEntry = (appData.treasury[key] || []).find(e => e.id === entryId);
                 if (!liveEntry) {
@@ -88585,7 +88625,7 @@ function acnEntryOpenForm(kind, id, member) {
         } finally {
             saveBtn.disabled = false;
         }
-        if (errEl && res && !res.ok && !res.busy) errEl.textContent = res.error || "تعذر حفظ القيد";
+        if (errEl && res && !res.ok && !res.busy && !res.cancelled) errEl.textContent = res.error || "تعذر حفظ القيد";
     });
     return true;
 }
@@ -88607,10 +88647,19 @@ async function acnEntrySubmit(form, editingId) {
     acnState.busy = true;
     let res;
     try {
-        res = await acnEntrySave(form, editingId);
+        const proceed = typeof acnDupGuard === "function" ? await acnDupGuard({
+            src: "acn",
+            row: pre.row,
+            editingId: editingId
+        }) : true;
+        res = proceed ? await acnEntrySave(form, editingId) : {
+            ok: false,
+            cancelled: true
+        };
     } finally {
         if (acnState) acnState.busy = false;
     }
+    if (res.cancelled) return res;
     if (res.ok) {
         acnPopupClose();
         if (typeof showToast === "function") showToast("تم حفظ القيد", "ok");
@@ -88670,6 +88719,223 @@ function acnEntriesAct(act, el) {
         return true;
     }
     return false;
+}
+
+let ACN_DUP_FETCH_MS = 4e3;
+
+const ACN_DUP_DAYS = 1;
+
+const ACN_DUP_BOX_OUT = [ "delivery", "transport", "unexpectedLosses", "salaries", "hr", "other" ];
+
+function acnDupDayNum(ymd) {
+    const p = String(ymd).split("-");
+    return Math.round(Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2])) / 864e5);
+}
+
+function acnDupYmdPlus(ymd, n) {
+    return new Date((acnDupDayNum(ymd) + n) * 864e5).toISOString().slice(0, 10);
+}
+
+function acnDupPerson(text) {
+    const t = String(text == null ? "" : text);
+    for (let i = 0; i < ACN_PERSON_KEYS.length; i++) {
+        if (ACN_PERSON_KEYS[i].some(function(k) {
+            return t.indexOf(k) >= 0;
+        })) return i;
+    }
+    return -1;
+}
+
+function acnDupCandidate(c) {
+    if (!c) return null;
+    if (c.src === "box") {
+        const cat = c.category, e = c.entry || {};
+        const cls = cat === "support" ? "in" : ACN_DUP_BOX_OUT.indexOf(cat) >= 0 ? "out" : "";
+        if (!cls) return null;
+        const amount = round2(Number(e.amount)), dt = acnParseDmy(e.date);
+        if (!(amount > 0) || !dt) return null;
+        if (c.orig && !c.isNew) {
+            const oa = round2(Number(c.orig.amount)), od = acnParseDmy(c.orig.date);
+            if (oa === amount && od && od.ymd === dt.ymd) return null;
+        }
+        return {
+            cls: cls,
+            amount: amount,
+            ymd: dt.ymd,
+            id: String(e.id || ""),
+            person: acnDupPerson(e.note)
+        };
+    }
+    if (c.src === "acn") {
+        const row = c.row || {}, raw = Number(row.amount);
+        let cls = "";
+        if (row.kind === "expense" || row.kind === "salary") cls = "out"; else if (row.kind === "member" && raw > 0) cls = "in";
+        if (!cls) return null;
+        const amount = round2(Math.abs(raw)), ymd = String(row.entry_date || "").slice(0, 10);
+        if (!(amount > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+        if (c.editingId) {
+            const cur = acnFindEntry(c.editingId);
+            if (cur && round2(Math.abs(cur.amount)) === amount && cur.ymd === ymd) return null;
+        }
+        return {
+            cls: cls,
+            amount: amount,
+            ymd: ymd,
+            id: String(c.editingId || ""),
+            person: acnDupPerson(row.person || row.description)
+        };
+    }
+    return null;
+}
+
+function acnDupBoxPool(treasury) {
+    const out = [], t = treasury || {};
+    ACN_DUP_BOX_OUT.concat([ "support" ]).forEach(function(cat) {
+        (t[cat] || []).forEach(function(e) {
+            const amount = round2(Number(e && e.amount)), dt = e ? acnParseDmy(e.date) : null;
+            if (!(amount > 0) || !dt) return;
+            out.push({
+                origin: "box",
+                cls: cat === "support" ? "in" : "out",
+                amount: amount,
+                ymd: dt.ymd,
+                id: String(e.id || ""),
+                cat: cat,
+                text: String(e.note || ""),
+                who: "",
+                person: acnDupPerson(e.note)
+            });
+        });
+    });
+    return out;
+}
+
+function acnDupAcnPool(entries) {
+    const out = [];
+    (entries || []).forEach(function(e) {
+        if (!e) return;
+        const cls = e.kind === "expense" || e.kind === "salary" ? "out" : e.kind === "member" && e.amount > 0 ? "in" : "";
+        const amount = round2(Math.abs(Number(e.amount) || 0));
+        if (!cls || !(amount > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(String(e.ymd || ""))) return;
+        out.push({
+            origin: "acn",
+            cls: cls,
+            amount: amount,
+            ymd: e.ymd,
+            id: String(e.id || ""),
+            cat: e.kind,
+            text: String(e.description || ""),
+            who: String(e.paidBy || ""),
+            person: acnDupPerson(e.person || e.description)
+        });
+    });
+    return out;
+}
+
+function acnDupMatches(cand, pool) {
+    if (!cand) return [];
+    const dn = acnDupDayNum(cand.ymd);
+    return (pool || []).filter(function(p) {
+        if (p.cls !== cand.cls || p.amount !== cand.amount) return false;
+        if (cand.id && p.id === cand.id) return false;
+        if (Math.abs(acnDupDayNum(p.ymd) - dn) > ACN_DUP_DAYS) return false;
+        if (cand.person >= 0 && p.person >= 0 && cand.person !== p.person) return false;
+        return true;
+    }).sort(function(a, b) {
+        return Math.abs(acnDupDayNum(a.ymd) - dn) - Math.abs(acnDupDayNum(b.ymd) - dn);
+    });
+}
+
+function acnDupRace(p, ms) {
+    return Promise.race([ Promise.resolve(p), new Promise(function(res) {
+        setTimeout(function() {
+            res(null);
+        }, ms);
+    }) ]);
+}
+
+async function acnDupFetchAcn(cand) {
+    try {
+        if (typeof sb === "undefined" || !sb) return [];
+        const from = acnDupYmdPlus(cand.ymd, -ACN_DUP_DAYS), to = acnDupYmdPlus(cand.ymd, ACN_DUP_DAYS);
+        const q = sb.from("acn_entries").select("id,kind,section,description,reference,entry_date,amount,paid_by,person,for_month,created_by,updated_by,updated_at").eq("amount", cand.amount).gte("entry_date", from).lte("entry_date", to);
+        const r = await acnDupRace(q, ACN_DUP_FETCH_MS);
+        if (!r || r.error || !Array.isArray(r.data)) return [];
+        return acnDupAcnPool(r.data.map(acnEntryFromRow).filter(Boolean));
+    } catch (e) {
+        return [];
+    }
+}
+
+async function acnDupFind(c) {
+    const cand = acnDupCandidate(c);
+    if (!cand) return [];
+    let pool = acnDupBoxPool(typeof appData !== "undefined" && appData ? appData.treasury : null);
+    if (c.src === "acn") pool = pool.concat(acnDupAcnPool(acnState && acnState.entries)); else pool = pool.concat(await acnDupFetchAcn(cand));
+    return acnDupMatches(cand, pool).slice(0, 3);
+}
+
+function acnDupItemText(m) {
+    const dmy = m.ymd.slice(8, 10) + "/" + m.ymd.slice(5, 7) + "/" + m.ymd.slice(0, 4);
+    let label;
+    if (m.origin === "box") {
+        const ec = (typeof EXPENSE_CATEGORIES !== "undefined" ? EXPENSE_CATEGORIES : []).find(function(x) {
+            return x.key === m.cat;
+        });
+        label = (m.cat === "support" ? "دعم الصندوق" : ec ? ec.label : m.cat) + " بالصندوق";
+    } else {
+        label = (m.cat === "salary" ? "راتب" : m.cat === "member" ? "حركة عضو" : "نفقة") + " بالمحاسب" + (ACN_MEMBERS[m.who] ? " (" + ACN_MEMBERS[m.who] + ")" : "");
+    }
+    const text = acnClean(m.text);
+    return label + " " + acnNum(m.amount) + " ر.س بتاريخ " + dmy + (text ? " «" + (text.length > 40 ? text.slice(0, 40) + "…" : text) + "»" : "");
+}
+
+function acnDupAsk(matches) {
+    return new Promise(function(resolve) {
+        let done = false, timer = 0;
+        const finish = function(v) {
+            if (done) return;
+            done = true;
+            if (timer) clearInterval(timer);
+            resolve(v);
+        };
+        try {
+            confirmAction({
+                title: "قيد مشابه موجود",
+                message: (matches.length === 2 ? "يوجد قيدان" : matches.length > 2 ? "يوجد " + matches.length + " قيود" : "يوجد قيد") + " بنفس المبلغ وتاريخ قريب: " + matches.map(acnDupItemText).join(" — ") + ". هل هذا القيد هو نفسه؟ احفظ فقط إن كان مبلغًا مدفوعًا فعلًا مرة أخرى.",
+                confirmLabel: "ليس تكرارًا — احفظ",
+                cancelLabel: "إلغاء",
+                onConfirm: function() {
+                    finish(true);
+                },
+                onCancel: function() {
+                    finish(false);
+                }
+            });
+            const cr = document.getElementById("confirm-root");
+            const card = cr && typeof cr.querySelector === "function" ? cr.querySelector(".modal-card") : null;
+            if (card) {
+                const token = "dup" + Date.now() + "-" + Math.random();
+                card.setAttribute("data-acn-dup", token);
+                timer = setInterval(function() {
+                    const r = document.getElementById("confirm-root");
+                    if (!r || typeof r.querySelector !== "function" || !r.querySelector('[data-acn-dup="' + token + '"]')) finish(false);
+                }, 400);
+            }
+        } catch (e) {
+            finish(true);
+        }
+    });
+}
+
+async function acnDupGuard(c) {
+    try {
+        const found = await acnDupFind(c);
+        if (!found.length) return true;
+        return await acnDupAsk(found);
+    } catch (e) {
+        return true;
+    }
 }
 
 function acnHistFromRow(r) {
