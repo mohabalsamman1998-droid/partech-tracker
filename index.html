@@ -2615,6 +2615,8 @@
   .taxinv-table th.taxinv-name{text-align:right;}
   .taxinv-table td.taxinv-num,.taxinv-table th.taxinv-num{text-align:center;font-variant-numeric:tabular-nums;white-space:nowrap;}
   .taxinv-table td.taxinv-name{text-align:right;overflow-wrap:break-word;min-width:120px;}
+  /* عرض السعر بترتيب الفاتورة (2026-11-03): عناوين الأعمدة تلتفّ على الشاشة فلا يُقصّ العمود الأخير على عرض الورقة (الفاتورة نفسها لم تُلمس) */
+  .taxinv-quote .taxinv-table thead th{white-space:normal;line-height:1.4;}
   /* الإجماليات (.doc-totals القديم بموضعه) + رمز QR بجانبه في بداية التذييل */
   .taxinv-foot{display:flex;flex-direction:row-reverse;align-items:flex-start;justify-content:space-between;gap:16px;}
   .taxinv-foot-main{flex:1 1 auto;min-width:0;display:flex;}
@@ -22649,6 +22651,8 @@ function footerNoteLinesHtml(text) {
 function docSheetHtml(order, type, data) {
     const isInvoice = type === "invoice";
     const titleAr = isInvoice ? "فاتورة نقدية" : typeof taxinvQuoteTitleAr === "function" ? taxinvQuoteTitleAr() : "عرض أسعار";
+    const taxinvQuoteSheet = !isInvoice && typeof taxinvQuoteSheetHtml === "function" ? taxinvQuoteSheetHtml(order, data) : "";
+    if (taxinvQuoteSheet) return taxinvQuoteSheet;
     const titleEn = isInvoice ? "CASH INVOICE" : typeof taxinvQuoteTitleEn === "function" ? taxinvQuoteTitleEn() : "PRICE QUOTATION";
     const feeLabel = isInvoice ? "رسوم خدمات وتوصيل" : "رسوم خدمات شامل التوصيل";
     const t = data.totalsSnapshot || orderTotals(order);
@@ -22999,6 +23003,8 @@ function buildDocWhatsAppText(order, type, data) {
     }));
     const lines = [];
     lines.push("*PARTECH*");
+    const taxinvQuoteText = !isInvoice && typeof taxinvQuoteWhatsAppText === "function" ? taxinvQuoteWhatsAppText(order, data) : "";
+    if (taxinvQuoteText) return taxinvQuoteText;
     lines.push((isInvoice ? "فاتورة نقدية" : typeof taxinvQuoteShareTitle === "function" ? taxinvQuoteShareTitle() : "عرض أسعار") + " رقم " + data.number);
     lines.push("التاريخ: " + data.date);
     if (data.customerName) lines.push("العميل: " + data.customerName);
@@ -27457,6 +27463,181 @@ function taxinvPdfName(inv) {
     const safe = s => String(s || "").replace(/[^A-Za-z0-9\-]/g, "");
     const stamp = safe(m.issuedDate).replace(/-/g, "") + "T" + safe(m.issuedTime.replace(/:/g, ""));
     return [ safe(m.seller.vat) || "PARTECH", stamp, safe(m.docNumber) || "DOC" ].join("_") + ".pdf";
+}
+
+const TAXINV_QUOTE_LOAD_GAP_MS = 5e3;
+
+let taxinvQuoteBusy = false;
+
+let taxinvQuoteLoading = false;
+
+let taxinvQuoteWaiting = false;
+
+let taxinvQuoteLoadAt = 0;
+
+function taxinvQuoteLine(L) {
+    return {
+        n: L.n,
+        name: L.name,
+        qty: L.qty,
+        unit_inc: L.unit_inc,
+        line_inc: L.line_inc,
+        net: L.net,
+        vat_rate: L.vat_rate,
+        vat: L.vat
+    };
+}
+
+function taxinvQuoteProfile() {
+    const p = taxinvSeller && taxinvSeller.profile && typeof taxinvSeller.profile === "object" ? taxinvSeller.profile : null;
+    if (!p) taxinvQuoteWaiting = true;
+    const stale = !taxinvSeller || Date.now() - taxinvSeller.at > TAXINV_SELLER_CACHE_MS;
+    if (stale && sb && !taxinvQuoteLoading && Date.now() - taxinvQuoteLoadAt >= TAXINV_QUOTE_LOAD_GAP_MS) {
+        taxinvQuoteLoading = true;
+        taxinvQuoteLoadAt = Date.now();
+        const gen = taxinvGen;
+        taxinvLoadSeller(true).then(prof => {
+            taxinvQuoteLoading = false;
+            if (gen !== taxinvGen || !prof || !taxinvQuoteWaiting) return;
+            taxinvQuoteWaiting = false;
+            if (docState && docState.type === "quote") refreshDocSheet();
+        }, () => {
+            taxinvQuoteLoading = false;
+        });
+    }
+    return p;
+}
+
+function taxinvQuoteModel(order, data) {
+    if (!order || !data || taxinvDb !== "ready") return null;
+    const snap = Array.isArray(data.partsSnapshot);
+    const fz = data.taxQuote;
+    const frozen = !!(fz && Array.isArray(fz.lines) && fz.lines.length && fz.totals);
+    if (snap && !frozen) return null;
+    if (data.taxQuoteV !== 1) {
+        data.taxQuoteV = 1;
+        data.showVat = true;
+    }
+    if (data.showVat === false) return null;
+    const prof = taxinvQuoteProfile();
+    if (!prof) return null;
+    if (snap) return {
+        lines: fz.lines,
+        totals: fz.totals,
+        profile: prof
+    };
+    const draft = taxinvBuildDraft(order);
+    if (!draft.ok || !draft.lines.length) return null;
+    data.taxQuote = {
+        lines: draft.lines.map(taxinvQuoteLine),
+        totals: {
+            currency: "SAR",
+            taxable: draft.totals.taxable,
+            vat: draft.totals.vat,
+            total_inc: draft.totals.total_inc
+        }
+    };
+    return {
+        lines: data.taxQuote.lines,
+        totals: data.taxQuote.totals,
+        profile: prof
+    };
+}
+
+function taxinvQuoteSheetModel(mdl) {
+    return PTX_TAXINV.sheetModel({
+        doc_kind: "simplified",
+        doc_number: "",
+        issued_at: "",
+        seller: Object.assign({}, mdl.profile),
+        buyer: {},
+        lines: mdl.lines,
+        totals: mdl.totals,
+        payments: {
+            methods: [],
+            note: null
+        },
+        note: ""
+    }, {
+        printItemCode: false
+    });
+}
+
+function taxinvQuoteSheetBody(order, data, mdl) {
+    const L = PTX_TAXINV.labels, C = L.columns, e = escapeHtml;
+    const m = taxinvQuoteSheetModel(mdl);
+    const ltr = s => s ? '<span class="taxinv-ltr">' + e(s) + "</span>" : "";
+    const coRows = [ '<div class="taxinv-co-name">' + e(m.seller.nameAr) + "</div>", m.seller.nameEn ? '<div class="taxinv-co-en">' + e(m.seller.nameEn) + "</div>" : "", m.seller.vat ? "<div>" + L.seller.vat + ": " + ltr(m.seller.vat) + "</div>" : "", m.seller.cr ? "<div>" + e(m.seller.idLabel || L.seller.cr) + ": " + ltr(m.seller.cr) + "</div>" : "", m.seller.address ? '<div class="taxinv-co-wide">' + L.seller.address + ": " + e(m.seller.address) + "</div>" : "", m.seller.phone ? "<div>" + L.seller.phone + ": " + ltr(m.seller.phone) + "</div>" : "", m.seller.email ? "<div>" + ltr(m.seller.email) + "</div>" : "" ].join("");
+    const titleAr = typeof taxinvQuoteTitleAr === "function" ? taxinvQuoteTitleAr() : "عرض أسعار";
+    const titleEn = typeof taxinvQuoteTitleEn === "function" ? taxinvQuoteTitleEn() : "PRICE QUOTATION";
+    const head = "<tr><th>" + C.n + '</th><th class="taxinv-name">' + C.name + "</th>" + '<th class="taxinv-num">' + C.qty + '</th><th class="taxinv-num">' + C.unitNet + '</th><th class="taxinv-num">' + C.net + '</th><th class="taxinv-num">' + C.vatRate + '</th><th class="taxinv-num">' + C.vat + '</th><th class="taxinv-num">' + C.lineInc + "</th></tr>";
+    const body = m.rows.map(r => "<tr>" + '<td data-l="' + C.n + '" class="taxinv-num">' + e(r.n) + "</td>" + '<td class="taxinv-name">' + e(r.name) + "</td>" + '<td data-l="' + C.qty + '" class="taxinv-num">' + e(r.qty) + "</td>" + '<td data-l="' + C.unitNet + '" class="taxinv-num">' + e(r.unitNet) + "</td>" + '<td data-l="' + C.net + '" class="taxinv-num">' + e(r.net) + "</td>" + '<td data-l="' + C.vatRate + '" class="taxinv-num">' + e(r.vatRate) + "</td>" + '<td data-l="' + C.vat + '" class="taxinv-num">' + e(r.vat) + "</td>" + '<td data-l="' + C.lineInc + '" class="taxinv-num">' + e(r.lineInc) + "</td></tr>").join("");
+    const totals = '<div class="doc-totals taxinv-totals">' + '<div class="doc-totals-row"><span>' + L.totals.taxable + '</span><span class="num">' + e(m.totals.taxable) + " ر.س</span></div>" + '<div class="doc-totals-row"><span>' + L.totals.vat + '</span><span class="num">' + e(m.totals.vat) + " ر.س</span></div>" + '<div class="doc-totals-row grand"><span>' + L.totals.totalInc + '</span><span class="num" id="doc-grand-total">' + e(m.totals.totalInc) + " ر.س</span></div>" + '<div class="taxinv-totals-note">' + L.vatInclusive + "</div></div>";
+    return '<div class="doc-sheet taxinv-sheet taxinv-quote" id="doc-sheet">' + '<div class="doc-header-band">' + '<div class="doc-brand-col"><img class="doc-logo-img" src="' + e(PARTECH_LOGO_DATA_URI) + '" alt="PARTECH">' + '<div class="doc-co-info taxinv-co">' + coRows + "</div></div>" + '<div class="doc-identity-col">' + '<div class="doc-type-badge">' + e(titleAr) + "</div>" + '<div class="doc-type-badge-en">' + e(titleEn) + "</div>" + '<div class="doc-identity-row"><span class="doc-identity-label">رقم المستند</span><input type="text" id="doc-number-input" class="doc-identity-input" value="' + e(data.number) + '" readonly></div>' + '<div class="doc-identity-row"><span class="doc-identity-label">التاريخ</span><input type="text" id="doc-date-input" class="doc-identity-input" value="' + e(data.date) + '"></div>' + "</div>" + "</div>" + '<div class="doc-billto">' + '<span class="doc-billto-label">' + L.buyer.title + "</span>" + '<div id="doc-customer-input" class="doc-customer-name-input taxinv-buyer-name" contenteditable="true">' + e(data.customerName) + "</div>" + '<div class="doc-meta-field field-cr doc-cr-line"><span>ر.ض العميل</span><input type="text" id="doc-cr-input" value="' + e(data.customerCR) + '"></div>' + '<div class="doc-billto-extra">' + '<div class="doc-meta-field field-car"><span>السيارة</span><input type="text" id="doc-car-input" value="' + e(data.carModel) + '" placeholder="موديل السيارة"></div>' + '<div class="doc-meta-field field-vin"><span>رقم الهيكل VIN</span><input type="text" id="doc-vin-input" value="' + e(data.vin) + '" placeholder="رقم الهيكل"></div>' + "</div>" + (docVinMismatch(order, data) ? '<div class="doc-vat-toggle no-print" style="cursor:default;flex-wrap:wrap;color:#9C6A00;font-weight:700;">' + '<span>رقم الهيكل بالطلبية: <span dir="ltr" style="overflow-wrap:anywhere;">' + e(order.vin) + "</span> —</span>" + '<button type="button" class="icon-btn" id="doc-vin-replace-btn" style="color:#171717;border-color:#BDBDBD;">استبدال؟</button>' + "</div>" : "") + "</div>" + '<div class="taxinv-table-wrap"><table class="doc-table taxinv-table"><thead>' + head + "</thead><tbody>" + body + "</tbody></table></div>" + '<label class="doc-vat-toggle no-print"><input type="checkbox" id="doc-vat-toggle-input" checked><span>إظهار تفاصيل الضريبة المضافة</span></label>' + '<div class="taxinv-foot"><div class="taxinv-foot-main">' + totals + "</div></div>" + '<div id="doc-footer-input" class="doc-footer-note-input taxinv-foot-text" contenteditable="true">' + footerNoteLinesHtml(data.footerNote) + "</div>" + "</div>";
+}
+
+function taxinvQuoteSheetHtml(order, data) {
+    if (taxinvQuoteBusy) return "";
+    let mdl = null;
+    try {
+        mdl = taxinvQuoteModel(order, data);
+    } catch (e) {
+        mdl = null;
+    }
+    if (!mdl) return "";
+    let legacy = "";
+    taxinvQuoteBusy = true;
+    try {
+        legacy = docSheetHtml(order, "quote", data);
+    } catch (e) {
+        legacy = "";
+    } finally {
+        taxinvQuoteBusy = false;
+    }
+    const cut = legacy.indexOf('<div class="doc-sheet" id="doc-sheet">');
+    if (cut < 0) return "";
+    try {
+        return legacy.slice(0, cut) + taxinvQuoteSheetBody(order, data, mdl) + "</div>";
+    } catch (e) {
+        return "";
+    }
+}
+
+function taxinvQuoteWhatsAppText(order, data) {
+    if (taxinvQuoteBusy) return "";
+    let mdl = null;
+    try {
+        mdl = taxinvQuoteModel(order, data);
+    } catch (e) {
+        mdl = null;
+    }
+    if (!mdl) return "";
+    const L = PTX_TAXINV.labels;
+    const m = taxinvQuoteSheetModel(mdl);
+    const lines = [];
+    lines.push("*PARTECH*");
+    lines.push((typeof taxinvQuoteShareTitle === "function" ? taxinvQuoteShareTitle() : "عرض أسعار") + " رقم " + data.number);
+    lines.push("التاريخ: " + data.date);
+    lines.push("البائع: " + m.seller.nameAr);
+    if (m.seller.vat) lines.push("الرقم الضريبي: " + m.seller.vat);
+    if (data.customerName) lines.push("العميل: " + data.customerName);
+    if (data.customerCR) lines.push("ر.ض: " + data.customerCR);
+    if (data.carModel) lines.push("السيارة: " + data.carModel);
+    if (data.vin) lines.push("VIN: " + data.vin);
+    lines.push("");
+    lines.push("القطع:");
+    m.rows.forEach(r => {
+        lines.push(r.n + ") " + r.name + " × " + r.qty + " — " + L.columns.net + " " + r.net + " + " + L.columns.vat + " (" + r.vatRate + ") " + r.vat + " = " + r.lineInc + " ر.س");
+    });
+    lines.push("");
+    lines.push(L.totals.taxable + ": " + m.totals.taxable + " ر.س");
+    lines.push(L.totals.vat + ": " + m.totals.vat + " ر.س");
+    lines.push(L.totals.totalInc + ": " + m.totals.totalInc + " ر.س");
+    lines.push(L.vatInclusive);
+    lines.push("");
+    const footerNote = data.footerNote === undefined || data.footerNote === null ? defaultFooterNoteFor("quote") : String(data.footerNote).trim();
+    if (footerNote) lines.push(footerNote);
+    return lines.join("\n");
 }
 
 function taxinvCurrentDoc() {
@@ -75807,7 +75988,7 @@ function pdfimgOpenBtnHtml(doc, sh) {
 
 const PDFSCAN_CAM = 'button[data-acct2-act="cam"], button[data-acct2-act="exp-cam"]';
 
-let pdfscanSess = null, pdfscanInput = null, pdfscanObs = null, pdfscanSeq = 0, pdfscanCssOn = false;
+let pdfscanSess = null, pdfscanInput = null, pdfscanObs = null, pdfscanSeq = 0, pdfscanCssOn = false, pdfscanAuto = true;
 
 function pdfscanIo() {
     try {
@@ -75844,13 +76025,329 @@ function pdfscanEvent(ev) {
     } catch (e) {}
 }
 
+const PDFSCAN_AN_SIDE = 320;
+
+const PDFSCAN_THR_BIAS = .6;
+
+const PDFSCAN_MIN_AREA = .08;
+
+const PDFSCAN_SKIP_AREA = .9;
+
+const PDFSCAN_CROP_SIDE = 2400;
+
+function pdfscanBlur(g, w, h, r) {
+    const t = new Uint8Array(w * h), o = new Uint8Array(w * h), d = 2 * r + 1;
+    for (let y = 0; y < h; y++) {
+        const row = y * w;
+        let s = 0;
+        for (let x = -r; x <= r; x++) s += g[row + Math.min(w - 1, Math.max(0, x))];
+        for (let x = 0; x < w; x++) {
+            t[row + x] = Math.round(s / d);
+            s += g[row + Math.min(w - 1, x + r + 1)] - g[row + Math.max(0, x - r)];
+        }
+    }
+    for (let x = 0; x < w; x++) {
+        let s = 0;
+        for (let y = -r; y <= r; y++) s += t[Math.min(h - 1, Math.max(0, y)) * w + x];
+        for (let y = 0; y < h; y++) {
+            o[y * w + x] = Math.round(s / d);
+            s += t[Math.min(h - 1, y + r + 1) * w + x] - t[Math.max(0, y - r) * w + x];
+        }
+    }
+    return o;
+}
+
+function pdfscanOtsu(g) {
+    const n = g.length, hist = [];
+    for (let i = 0; i < 256; i++) hist.push(0);
+    for (let i = 0; i < n; i++) hist[g[i]]++;
+    let sum = 0;
+    for (let i = 0; i < 256; i++) sum += i * hist[i];
+    let wB = 0, sB = 0, bestV = -1, bestT = 0;
+    for (let t = 0; t < 256; t++) {
+        wB += hist[t];
+        if (!wB) continue;
+        const wF = n - wB;
+        if (!wF) break;
+        sB += t * hist[t];
+        const mB = sB / wB, mF = (sum - sB) / wF, v = wB * wF * (mB - mF) * (mB - mF);
+        if (v > bestV) {
+            bestV = v;
+            bestT = t;
+        }
+    }
+    let n0 = 0, s0 = 0;
+    for (let i = 0; i <= bestT; i++) {
+        n0 += hist[i];
+        s0 += i * hist[i];
+    }
+    if (!n0 || n0 >= n) return null;
+    return {
+        t: bestT,
+        m0: s0 / n0,
+        m1: (sum - s0) / (n - n0)
+    };
+}
+
+function pdfscanBlobs(mask, w, h) {
+    const lab = new Int32Array(w * h), stack = new Int32Array(w * h), areas = [ 0 ];
+    let n = 0;
+    for (let i = 0; i < w * h; i++) {
+        if (!mask[i] || lab[i]) continue;
+        n++;
+        let sp = 0, a = 0;
+        stack[sp++] = i;
+        lab[i] = n;
+        while (sp) {
+            const p = stack[--sp], x = p % w, y = (p - x) / w;
+            a++;
+            if (x > 0 && mask[p - 1] && !lab[p - 1]) {
+                lab[p - 1] = n;
+                stack[sp++] = p - 1;
+            }
+            if (x < w - 1 && mask[p + 1] && !lab[p + 1]) {
+                lab[p + 1] = n;
+                stack[sp++] = p + 1;
+            }
+            if (y > 0 && mask[p - w] && !lab[p - w]) {
+                lab[p - w] = n;
+                stack[sp++] = p - w;
+            }
+            if (y < h - 1 && mask[p + w] && !lab[p + w]) {
+                lab[p + w] = n;
+                stack[sp++] = p + w;
+            }
+        }
+        areas[n] = a;
+    }
+    return {
+        lab: lab,
+        n: n,
+        areas: areas
+    };
+}
+
+function pdfscanHull(pts) {
+    const p = pts.slice().sort(function(a, b) {
+        return a[0] - b[0] || a[1] - b[1];
+    });
+    if (p.length < 3) return p;
+    const cr = function(o, a, b) {
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    };
+    const lo = [], up = [];
+    for (let i = 0; i < p.length; i++) {
+        while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p[i]) <= 0) lo.pop();
+        lo.push(p[i]);
+    }
+    for (let i = p.length - 1; i >= 0; i--) {
+        while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p[i]) <= 0) up.pop();
+        up.push(p[i]);
+    }
+    lo.pop();
+    up.pop();
+    return lo.concat(up);
+}
+
+function pdfscanPolyArea(poly) {
+    let s = 0;
+    for (let i = 0; i < poly.length; i++) {
+        const a = poly[i], b = poly[(i + 1) % poly.length];
+        s += a[0] * b[1] - b[0] * a[1];
+    }
+    return Math.abs(s) / 2;
+}
+
+function pdfscanMinRect(hull) {
+    let best = null;
+    const n = hull.length;
+    for (let i = 0; i < n; i++) {
+        const a = hull[i], b = hull[(i + 1) % n], ang = Math.atan2(b[1] - a[1], b[0] - a[0]), c = Math.cos(ang), s = Math.sin(ang);
+        let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+        for (let k = 0; k < n; k++) {
+            const dx = hull[k][0] - a[0], dy = hull[k][1] - a[1], u = dx * c + dy * s, v = -dx * s + dy * c;
+            if (u < x0) x0 = u;
+            if (u > x1) x1 = u;
+            if (v < y0) y0 = v;
+            if (v > y1) y1 = v;
+        }
+        const area = (x1 - x0) * (y1 - y0);
+        if (!best || area < best.area) best = {
+            area: area,
+            ang: ang,
+            c: c,
+            s: s,
+            ox: a[0],
+            oy: a[1],
+            x0: x0,
+            x1: x1,
+            y0: y0,
+            y1: y1
+        };
+    }
+    if (!best) return null;
+    const cu = (best.x0 + best.x1) / 2, cv = (best.y0 + best.y1) / 2;
+    let rw = best.x1 - best.x0, rh = best.y1 - best.y0, ang = best.ang;
+    const cx = best.ox + cu * best.c - cv * best.s, cy = best.oy + cu * best.s + cv * best.c;
+    while (ang > Math.PI / 4) {
+        ang -= Math.PI / 2;
+        const t = rw;
+        rw = rh;
+        rh = t;
+    }
+    while (ang <= -Math.PI / 4) {
+        ang += Math.PI / 2;
+        const t = rw;
+        rw = rh;
+        rh = t;
+    }
+    return {
+        cx: cx,
+        cy: cy,
+        rw: rw,
+        rh: rh,
+        ang: ang,
+        area: best.area
+    };
+}
+
+function pdfscanPaperFind(g, w, h) {
+    const n = w * h;
+    if (!g || g.length !== n || w < 16 || h < 16) return null;
+    const b = pdfscanBlur(g, w, h, 2), o = pdfscanOtsu(b);
+    if (!o || o.m1 - o.m0 < 35) return null;
+    const thr = o.m0 + PDFSCAN_THR_BIAS * (o.t - o.m0), mask = new Uint8Array(n);
+    let on = 0;
+    for (let i = 0; i < n; i++) {
+        if (b[i] > thr) {
+            mask[i] = 1;
+            on++;
+        }
+    }
+    if (on < PDFSCAN_MIN_AREA * n || on > .985 * n) return null;
+    const bl = pdfscanBlobs(mask, w, h);
+    let best = 0, second = 0, bi = 0;
+    for (let k = 1; k <= bl.n; k++) {
+        const a = bl.areas[k];
+        if (a > best) {
+            second = best;
+            best = a;
+            bi = k;
+        } else if (a > second) second = a;
+    }
+    if (best < PDFSCAN_MIN_AREA * n || best > .985 * n) return null;
+    if (second > .25 * best) return null;
+    const pts = [];
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const p = y * w + x;
+            if (bl.lab[p] !== bi) continue;
+            if (x === 0 || y === 0 || x === w - 1 || y === h - 1 || bl.lab[p - 1] !== bi || bl.lab[p + 1] !== bi || bl.lab[p - w] !== bi || bl.lab[p + w] !== bi) pts.push([ x, y ]);
+        }
+    }
+    const hull = pdfscanHull(pts);
+    if (hull.length < 3) return null;
+    const ha = pdfscanPolyArea(hull);
+    if (!(ha > 0) || best / ha < .7) return null;
+    const r = pdfscanMinRect(hull);
+    if (!r || !(r.rw > 0) || !(r.rh > 0) || ha / (r.rw * r.rh) < .8) return null;
+    const m = .012 * Math.max(r.rw, r.rh) + 2.5;
+    const rw = r.rw + 2 * m, rh = r.rh + 2 * m, frac = rw * rh / n;
+    if (frac > 1) return null;
+    if (frac >= PDFSCAN_SKIP_AREA && Math.abs(r.ang) < .026) return null;
+    return {
+        cx: r.cx,
+        cy: r.cy,
+        rw: rw,
+        rh: rh,
+        ang: r.ang
+    };
+}
+
+function pdfscanCanvas(w, h) {
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    return c;
+}
+
+function pdfscanLoad(file) {
+    return new Promise(function(resolve) {
+        let url = "";
+        try {
+            url = URL.createObjectURL(file);
+        } catch (e) {
+            resolve(null);
+            return;
+        }
+        const img = new Image;
+        img.onload = function() {
+            resolve({
+                img: img,
+                url: url
+            });
+        };
+        img.onerror = function() {
+            try {
+                URL.revokeObjectURL(url);
+            } catch (e) {}
+            resolve(null);
+        };
+        img.src = url;
+    });
+}
+
+async function pdfscanCrop(file) {
+    let url = "";
+    try {
+        const ld = await pdfscanLoad(file);
+        if (!ld) return null;
+        url = ld.url;
+        const iw = ld.img.naturalWidth, ih = ld.img.naturalHeight;
+        if (!(iw > 0 && ih > 0)) return null;
+        const k = Math.min(1, PDFSCAN_CROP_SIDE / Math.max(iw, ih)), sw = Math.max(1, Math.round(iw * k)), sh = Math.max(1, Math.round(ih * k));
+        const src = pdfscanCanvas(sw, sh);
+        src.getContext("2d").drawImage(ld.img, 0, 0, sw, sh);
+        const ka = Math.min(1, PDFSCAN_AN_SIDE / Math.max(sw, sh)), aw = Math.max(16, Math.round(sw * ka)), ah = Math.max(16, Math.round(sh * ka));
+        const an = pdfscanCanvas(aw, ah), actx = an.getContext("2d");
+        actx.drawImage(src, 0, 0, aw, ah);
+        const px = actx.getImageData(0, 0, aw, ah).data, g = new Uint8Array(aw * ah);
+        for (let i = 0, p = 0; i < g.length; i++, p += 4) g[i] = px[p] * 77 + px[p + 1] * 151 + px[p + 2] * 28 >> 8;
+        const r = pdfscanPaperFind(g, aw, ah);
+        if (!r) return null;
+        const f = sw / aw, ow = Math.round(r.rw * f), oh = Math.round(r.rh * f);
+        if (ow < 200 || oh < 200 || ow > 4e3 || oh > 4e3) return null;
+        const out = pdfscanCanvas(ow, oh), c2 = out.getContext("2d");
+        c2.fillStyle = "#fff";
+        c2.fillRect(0, 0, ow, oh);
+        c2.imageSmoothingEnabled = true;
+        c2.imageSmoothingQuality = "high";
+        c2.translate(ow / 2, oh / 2);
+        c2.rotate(-r.ang);
+        c2.drawImage(src, -r.cx * f, -r.cy * f);
+        const blob = await new Promise(function(res) {
+            out.toBlob(res, "image/jpeg", .92);
+        });
+        if (!blob || !(blob.size > 0)) return null;
+        return new File([ blob ], "page.jpg", {
+            type: "image/jpeg"
+        });
+    } catch (e) {
+        return null;
+    } finally {
+        try {
+            if (url) URL.revokeObjectURL(url);
+        } catch (e) {}
+    }
+}
+
 function pdfscanStyle() {
     if (pdfscanCssOn || typeof document === "undefined") return;
     pdfscanCssOn = true;
     try {
         const st = document.createElement("style");
         st.setAttribute("data-pdfimg-scan", "1");
-        st.textContent = "#pdfimg-scan-root{position:fixed;inset:0;z-index:96;display:flex;align-items:flex-end;justify-content:center;background:rgba(4,6,5,.72);overflow-y:auto;}" + ".pdfimg-scan-sheet{width:100%;max-width:560px;max-height:92vh;overflow-y:auto;overscroll-behavior:contain;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0;padding:14px 16px calc(16px + env(safe-area-inset-bottom));}" + ".pdfimg-scan-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;}" + '.pdfimg-scan-title{font-family:"Cairo",sans-serif;font-weight:800;font-size:16px;}' + ".pdfimg-scan-close{min-width:44px;min-height:44px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:16px;cursor:pointer;}" + ".pdfimg-scan-sub{margin:0 0 10px;color:var(--text-dim);font-size:13px;line-height:1.7;}" + ".pdfimg-scan-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px;}" + ".pdfimg-scan-pg{position:relative;aspect-ratio:3/4;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);}" + ".pdfimg-scan-pg img{display:block;width:100%;height:100%;object-fit:cover;}" + ".pdfimg-scan-wait{display:flex;align-items:center;justify-content:center;padding:6px;text-align:center;color:var(--text-dim);font-size:13px;}" + '.pdfimg-scan-n{position:absolute;top:4px;inset-inline-start:4px;min-width:24px;padding:1px 6px;border-radius:999px;background:var(--surface);border:1px solid var(--border);font-family:"Cairo",sans-serif;font-weight:800;font-size:13px;text-align:center;}' + ".pdfimg-scan-x{position:absolute;top:2px;inset-inline-end:2px;min-width:40px;min-height:40px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:14px;cursor:pointer;}" + ".pdfimg-scan-acts{display:flex;gap:8px;flex-wrap:wrap;}" + ".pdfimg-scan-acts .btn{flex:1 1 150px;min-height:48px;font-size:14px;}";
+        st.textContent = "#pdfimg-scan-root{position:fixed;inset:0;z-index:96;display:flex;align-items:flex-end;justify-content:center;background:rgba(4,6,5,.72);overflow-y:auto;}" + ".pdfimg-scan-sheet{width:100%;max-width:560px;max-height:92vh;overflow-y:auto;overscroll-behavior:contain;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0;padding:14px 16px calc(16px + env(safe-area-inset-bottom));}" + ".pdfimg-scan-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;}" + '.pdfimg-scan-title{font-family:"Cairo",sans-serif;font-weight:800;font-size:16px;}' + ".pdfimg-scan-close{min-width:44px;min-height:44px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:16px;cursor:pointer;}" + ".pdfimg-scan-sub{margin:0 0 10px;color:var(--text-dim);font-size:13px;line-height:1.7;}" + ".pdfimg-scan-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px;}" + ".pdfimg-scan-pg{position:relative;aspect-ratio:3/4;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);}" + ".pdfimg-scan-pg img{display:block;width:100%;height:100%;object-fit:cover;}" + ".pdfimg-scan-wait{display:flex;align-items:center;justify-content:center;padding:6px;text-align:center;color:var(--text-dim);font-size:13px;}" + '.pdfimg-scan-n{position:absolute;top:4px;inset-inline-start:4px;min-width:24px;padding:1px 6px;border-radius:999px;background:var(--surface);border:1px solid var(--border);font-family:"Cairo",sans-serif;font-weight:800;font-size:13px;text-align:center;}' + ".pdfimg-scan-x{position:absolute;top:2px;inset-inline-end:2px;min-width:40px;min-height:40px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:14px;cursor:pointer;}" + ".pdfimg-scan-acts{display:flex;gap:8px;flex-wrap:wrap;}" + '.pdfimg-scan-c{position:absolute;bottom:4px;inset-inline-start:4px;min-height:34px;padding:0 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:"Cairo",sans-serif;font-weight:700;font-size:13px;cursor:pointer;}' + ".pdfimg-scan-opt{margin:0 0 10px;}" + ".pdfimg-scan-acts .btn{flex:1 1 150px;min-height:48px;font-size:14px;}";
         (document.head || document.body).appendChild(st);
     } catch (e) {}
 }
@@ -75873,10 +76370,10 @@ function pdfscanRender() {
         const n = s.pages.length, full = n >= PDFIMG_MAX_PAGES, busy = !!(s.busy || s.sending);
         let grid = "";
         for (let i = 0; i < n; i++) {
-            grid += '<div class="pdfimg-scan-pg"><img src="' + s.pages[i].url + '" alt="صفحة ' + (i + 1) + '"><span class="pdfimg-scan-n">' + (i + 1) + "</span>" + '<button type="button" class="pdfimg-scan-x" data-pdfimg-act="del" data-pdfimg-id="' + s.pages[i].id + '" aria-label="حذف الصفحة ' + (i + 1) + '"' + (busy ? " disabled" : "") + ">✕</button></div>";
+            grid += '<div class="pdfimg-scan-pg"><img src="' + s.pages[i].url + '" alt="صفحة ' + (i + 1) + '"><span class="pdfimg-scan-n">' + (i + 1) + "</span>" + '<button type="button" class="pdfimg-scan-x" data-pdfimg-act="del" data-pdfimg-id="' + s.pages[i].id + '" aria-label="حذف الصفحة ' + (i + 1) + '"' + (busy ? " disabled" : "") + ">✕</button>" + '<button type="button" class="pdfimg-scan-c" data-pdfimg-act="crop" data-pdfimg-id="' + s.pages[i].id + '"' + (busy ? " disabled" : "") + ">" + (s.pages[i].cropped ? "الأصل" : "قص") + "</button></div>";
         }
         if (s.busy) grid += '<div class="pdfimg-scan-pg pdfimg-scan-wait" role="status">جارٍ تجهيز الصفحة…</div>';
-        root.innerHTML = '<div class="pdfimg-scan-sheet" role="dialog" aria-modal="true" aria-label="مسح ورقة">' + '<div class="pdfimg-scan-head"><span class="pdfimg-scan-title">📄 مسح ورقة</span>' + '<button type="button" class="pdfimg-scan-close" data-pdfimg-act="cancel" aria-label="إغلاق"' + (s.sending ? " disabled" : "") + ">✕</button></div>" + '<p class="pdfimg-scan-sub">' + (n ? (n === 1 ? "صفحة واحدة" : n + " صفحات") + " — تُرفع كلها ملف PDF واحدًا" : "صوّر الصفحة الأولى، ثم أضف ما تشاء من الصفحات، وتُرفع كلها ملف PDF واحدًا") + "</p>" + (grid ? '<div class="pdfimg-scan-grid">' + grid + "</div>" : "") + (full ? '<p class="pdfimg-scan-sub">بلغت الحد الأقصى (' + PDFIMG_MAX_PAGES + " صفحات)</p>" : "") + '<div class="pdfimg-scan-acts">' + (full ? "" : '<button type="button" class="btn" data-pdfimg-act="add"' + (busy ? " disabled" : "") + ">" + (n ? "➕ صفحة أخرى" : "📷 صوّر الصفحة الأولى") + "</button>") + '<button type="button" class="btn btn-primary" data-pdfimg-act="done"' + (busy || !n ? " disabled" : "") + ">" + (s.sending ? "جارٍ التجهيز…" : "✔ إنهاء ورفع") + "</button>" + "</div></div>";
+        root.innerHTML = '<div class="pdfimg-scan-sheet" role="dialog" aria-modal="true" aria-label="مسح ورقة">' + '<div class="pdfimg-scan-head"><span class="pdfimg-scan-title">📄 مسح ورقة</span>' + '<button type="button" class="pdfimg-scan-close" data-pdfimg-act="cancel" aria-label="إغلاق"' + (s.sending ? " disabled" : "") + ">✕</button></div>" + '<p class="pdfimg-scan-sub">' + (n ? (n === 1 ? "صفحة واحدة" : n + " صفحات") + " — تُرفع كلها ملف PDF واحدًا" : "صوّر الصفحة الأولى، ثم أضف ما تشاء من الصفحات، وتُرفع كلها ملف PDF واحدًا") + "</p>" + '<label class="acct2-opt pdfimg-scan-opt"><input type="checkbox" data-pdfimg-opt="auto"' + (pdfscanAuto ? " checked" : "") + (busy ? " disabled" : "") + "><span>قص تلقائي للورقة</span></label>" + (grid ? '<div class="pdfimg-scan-grid">' + grid + "</div>" : "") + (full ? '<p class="pdfimg-scan-sub">بلغت الحد الأقصى (' + PDFIMG_MAX_PAGES + " صفحات)</p>" : "") + '<div class="pdfimg-scan-acts">' + (full ? "" : '<button type="button" class="btn" data-pdfimg-act="add"' + (busy ? " disabled" : "") + ">" + (n ? "➕ صفحة أخرى" : "📷 صوّر الصفحة الأولى") + "</button>") + '<button type="button" class="btn btn-primary" data-pdfimg-act="done"' + (busy || !n ? " disabled" : "") + ">" + (s.sending ? "جارٍ التجهيز…" : "✔ إنهاء ورفع") + "</button>" + "</div></div>";
     } catch (e) {}
 }
 
@@ -75924,6 +76421,39 @@ function pdfscanAdd() {
     if (el && typeof el.click === "function") el.click();
 }
 
+function pdfscanColor() {
+    return !!(typeof acct2ColorOn === "function" && acct2ColorOn());
+}
+
+function pdfscanFail(comp) {
+    const r = comp && comp.reason;
+    pdfscanToast(r === "too_big" ? pdfscanTxt("tooBig", "الصورة كبيرة جدًا") : r === "decode" ? pdfscanTxt("decode", "تعذّرت قراءة الصورة") : pdfscanTxt("failed", "تعذّر تجهيز الصفحة"), "error");
+}
+
+async function pdfscanPrep(io, file, wantCrop) {
+    let src = file, cropped = false;
+    if (wantCrop) {
+        const c = await pdfscanCrop(file);
+        if (c) {
+            src = c;
+            cropped = true;
+        }
+    }
+    let comp = await io.compress(src, {
+        color: pdfscanColor()
+    });
+    if ((!comp || !comp.ok) && cropped) {
+        cropped = false;
+        comp = await io.compress(file, {
+            color: pdfscanColor()
+        });
+    }
+    return {
+        comp: comp,
+        cropped: cropped
+    };
+}
+
 async function pdfscanOnFile(file) {
     const s = pdfscanSess;
     if (!s || s.busy || s.sending) return;
@@ -75932,16 +76462,10 @@ async function pdfscanOnFile(file) {
     try {
         const io = pdfscanIo();
         if (!io || typeof io.compress !== "function" || !file || !(file.size > 0)) throw new Error("scan_input");
-        const comp = await io.compress(file, {
-            color: !!(typeof acct2ColorOn === "function" && acct2ColorOn())
-        });
+        const pr = await pdfscanPrep(io, file, pdfscanAuto);
         if (pdfscanSess !== s) return;
-        if (!comp || !comp.ok) {
-            const r = comp && comp.reason;
-            pdfscanToast(r === "too_big" ? pdfscanTxt("tooBig", "الصورة كبيرة جدًا") : r === "decode" ? pdfscanTxt("decode", "تعذّرت قراءة الصورة") : pdfscanTxt("failed", "تعذّر تجهيز الصفحة"), "error");
-        } else if (pdfscanBytes(s) + (Number(comp.bytes) || 0) > PDFIMG_MAX_BYTES) {
-            pdfscanToast("حجم الصفحات كبير — ارفع ما صوّرته ثم ابدأ مستندًا آخر", "error");
-        } else {
+        const comp = pr.comp;
+        if (!comp || !comp.ok) pdfscanFail(comp); else if (pdfscanBytes(s) + (Number(comp.bytes) || 0) > PDFIMG_MAX_BYTES) pdfscanToast("حجم الصفحات كبير — ارفع ما صوّرته ثم ابدأ مستندًا آخر", "error"); else {
             let url = "";
             try {
                 url = URL.createObjectURL(comp.blob);
@@ -75952,8 +76476,50 @@ async function pdfscanOnFile(file) {
                 id: "pg" + ++pdfscanSeq,
                 blob: comp.blob,
                 bytes: Number(comp.bytes) || 0,
-                url: url
+                url: url,
+                orig: file,
+                cropped: pr.cropped
             });
+        }
+    } catch (e) {
+        pdfscanToast(pdfscanTxt("failed", "تعذّر تجهيز الصفحة"), "error");
+    } finally {
+        if (pdfscanSess === s) {
+            s.busy = false;
+            pdfscanRender();
+        }
+    }
+}
+
+async function pdfscanRework(id) {
+    const s = pdfscanSess;
+    if (!s || s.busy || s.sending) return;
+    let pg = null;
+    for (let i = 0; i < s.pages.length; i++) {
+        if (s.pages[i].id === id) pg = s.pages[i];
+    }
+    const io = pdfscanIo();
+    if (!pg || !pg.orig || !io || typeof io.compress !== "function") return;
+    const wantCrop = !pg.cropped;
+    s.busy = true;
+    pdfscanRender();
+    try {
+        const pr = await pdfscanPrep(io, pg.orig, wantCrop);
+        if (pdfscanSess !== s) return;
+        if (!pr.comp || !pr.comp.ok) pdfscanFail(pr.comp); else if (wantCrop && !pr.cropped) pdfscanToast("لم أجد حدود الورقة بوضوح — بقيت الصفحة كما هي", "error"); else if (pdfscanBytes(s) - pg.bytes + (Number(pr.comp.bytes) || 0) > PDFIMG_MAX_BYTES) pdfscanToast("حجم الصفحات كبير — ارفع ما صوّرته ثم ابدأ مستندًا آخر", "error"); else {
+            let url = "";
+            try {
+                url = URL.createObjectURL(pr.comp.blob);
+            } catch (e) {
+                url = "";
+            }
+            try {
+                if (pg.url) URL.revokeObjectURL(pg.url);
+            } catch (e) {}
+            pg.blob = pr.comp.blob;
+            pg.bytes = Number(pr.comp.bytes) || 0;
+            pg.url = url;
+            pg.cropped = pr.cropped;
         }
     } catch (e) {
         pdfscanToast(pdfscanTxt("failed", "تعذّر تجهيز الصفحة"), "error");
@@ -76162,10 +76728,17 @@ function pdfscanOnClick(ev) {
             return;
         }
         const act = t.getAttribute("data-pdfimg-act");
-        if (act === "add") pdfscanAdd(); else if (act === "del") pdfscanDel(t.getAttribute("data-pdfimg-id") || ""); else if (act === "done") pdfscanFinish(); else if (act === "cancel") {
+        if (act === "add") pdfscanAdd(); else if (act === "del") pdfscanDel(t.getAttribute("data-pdfimg-id") || ""); else if (act === "done") pdfscanFinish(); else if (act === "crop") pdfscanRework(t.getAttribute("data-pdfimg-id") || ""); else if (act === "cancel") {
             const s = pdfscanSess;
             if (s && !s.sending) pdfscanClose();
         }
+    } catch (e) {}
+}
+
+function pdfscanOnChange(ev) {
+    try {
+        const t = ev.target;
+        if (t && t.getAttribute && t.getAttribute("data-pdfimg-opt") === "auto") pdfscanAuto = !!t.checked;
     } catch (e) {}
 }
 
@@ -76186,6 +76759,7 @@ function pdfscanInstall() {
             });
         } else pdfscanObs = true;
         document.addEventListener("click", pdfscanOnClick, true);
+        document.addEventListener("change", pdfscanOnChange, true);
     } catch (e) {}
 }
 
