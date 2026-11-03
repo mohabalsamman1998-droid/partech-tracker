@@ -1331,14 +1331,18 @@
   :root[data-theme="light"] .tamara-stamp.stamp-amber{color:#7A5200;}
   :root[data-theme="light"] .tamara-stamp.stamp-green{color:#0A6B3C;}
   .tamara-card{background:var(--surface);border:1px solid var(--amber-line);border-inline-start:6px solid var(--amber);border-radius:var(--radius);padding:14px 16px;margin-bottom:14px;display:flex;flex-direction:column;gap:10px;min-width:0;max-width:100%;}
-  body.trk-base #treasury-view > .tamara-card{margin:0;}
+  .tamara-warn-bar{display:flex;flex-direction:column;gap:8px;margin-bottom:10px;min-width:0;max-width:100%;}
+  body.trk-base #treasury-view > .tamara-warn-bar{margin:0;}
   .tamara-card-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 10px;min-width:0;}
   .tamara-card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;min-width:0;}
   .tamara-card-cell{display:flex;flex-direction:column;gap:2px;min-width:0;}
   .tamara-card-cell-label{font-size:11.5px;color:var(--text-faint);font-weight:700;overflow-wrap:anywhere;}
   .tamara-card-cell-value{font-family:'Cairo',sans-serif;font-size:16px;font-weight:800;color:var(--text);overflow-wrap:anywhere;font-variant-numeric:tabular-nums;}
   .tamara-card-cell-value.text-rust{color:var(--rust);}
-  .tamara-card-btn{width:100%;min-height:46px;}
+  .chip.tamara-chip-pending{border-color:var(--amber-line);background:var(--amber-dim);color:var(--amber);}
+  .chip.tamara-chip-late{border-color:var(--rust-line);background:var(--rust-dim);color:var(--rust);}
+  .chip.tamara-chip-pending .inline-count-badge{background:var(--amber);color:var(--bg);}
+  :root[data-theme="light"] .chip.tamara-chip-pending{color:#7A5200;}
   .modal-card.tamara-pop{max-width:560px;}
   .tamara-pop .modal-sub{margin:0 0 10px;}
   .tamara-row{display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:8px;padding:10px 12px;min-width:0;min-height:48px;margin-bottom:6px;cursor:pointer;}
@@ -1351,7 +1355,6 @@
   .tamara-row-gross{font-size:14px;font-weight:800;white-space:nowrap;}
   .tamara-row-net{font-size:11.5px;color:var(--text-dim);white-space:nowrap;}
   .tamara-selectall{margin:0 0 8px;min-height:44px;}
-  @media (min-width:761px){.tamara-card-btn{width:auto;min-width:280px;align-self:flex-start;}}
   .tamara-summary{background:var(--surface-2);border:1px solid var(--border-soft);border-radius:8px;padding:8px 12px;margin:4px 0 16px;min-width:0;}
   .tamara-sum-empty{font-size:12.5px;color:var(--text-faint);padding:4px 0;}
   .tamara-sum-row{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:5px 0;border-bottom:1px dashed var(--border-soft);font-size:13px;color:var(--text-dim);min-width:0;}
@@ -52864,7 +52867,7 @@ function bindAccountsActivityModalEvents() {
 function renderTreasuryView() {
     const el = document.getElementById("treasury-view");
     const t = treasuryTotals();
-    el.innerHTML = '<div class="treasury-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders">→ رجوع للطلبيات</button>' + '<div class="treasury-title">📦 الصندوق</div>' + "</div>" + tamaraCardHtml(t) + '<div class="treasury-chip-row" style="margin-bottom:10px;">' + '<button type="button" id="btn-toggle-extra-indicators" class="chip" aria-expanded="' + (extraIndicatorsOpen ? "true" : "false") + '">📊 مؤشرات إضافية</button>' + '<button type="button" id="btn-toggle-expenses-block" class="chip" aria-expanded="' + (expensesBlockOpen ? "true" : "false") + '">💰 المصاريف</button>' + '<button type="button" id="btn-toggle-suppliers-settlement" class="chip" aria-expanded="' + (suppliersSettlementMenuOpen ? "true" : "false") + '">🧾 سداد الموردين' + (scrapyardMgmtState.proposals.length ? '<span class="inline-count-badge">' + scrapyardMgmtState.proposals.length + "</span>" : "") + "</button>" + '<button type="button" id="btn-open-accounts-activity" class="chip">📜 حركة الحسابات</button>' + '<button type="button" id="btn-open-edit-proposals" class="chip btn-with-badge">📋 طلبات التعديل<span id="edit-proposals-badge" class="tasks-badge" style="' + (editProposals.length ? "display:flex;" : "display:none;") + '">' + (editProposals.length || "") + "</span></button>" + "</div>" + '<div id="suppliers-settlement-wrap" class="treasury-chip-row" style="' + (suppliersSettlementMenuOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + scrapyardEntryBlockHtml("used") + scrapyardEntryBlockHtml("new") + "</div>" + '<div id="extra-indicators-wrap" style="' + (extraIndicatorsOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + '<button type="button" id="btn-toggle-extra-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر' + (extraIndicatorsPeriod === "customMonth" ? " (" + arabicMonthLabel(extraIndicatorsCustomMonth) + ")" : extraIndicatorsPeriod === "customRange" ? " (" + formatDateDMY(extraIndicatorsRangeFrom) + " → " + formatDateDMY(extraIndicatorsRangeTo) + ")" : extraIndicatorsPeriod !== "all" ? " (" + (TREASURY_PERIODS.find(p => p.key === extraIndicatorsPeriod) || {}).label + ")" : "") + "</button>" + '<div class="treasury-period-filter" id="extra-indicators-period-filter" style="' + (extraIndicatorsFilterOpen ? "" : "display:none;") + ' margin-bottom:14px;">' + TREASURY_PERIODS.map(p => '<button type="button" class="chip ' + (extraIndicatorsPeriod === p.key ? "chip-active" : "") + '" data-extra-period="' + escapeHtml(p.key) + '">' + p.label + "</button>").join("") + '<input type="month" id="extra-indicators-month-input" class="extra-indicators-month-input" value="' + (extraIndicatorsPeriod === "customMonth" ? extraIndicatorsCustomMonth : "") + '">' + '<label class="mini-label" style="margin:0;">من<input type="date" id="extra-indicators-range-from" class="extra-indicators-month-input" value="' + escapeHtml(extraIndicatorsRangeFrom || "") + '"></label>' + '<label class="mini-label" style="margin:0;">إلى<input type="date" id="extra-indicators-range-to" class="extra-indicators-month-input" value="' + escapeHtml(extraIndicatorsRangeTo || "") + '"></label>' + "</div>" + '<div class="extra-indicators-row" id="extra-indicators-row">' + treasuryCardHtml("purchaseVolume", "حجم الشراء", '<span class="treasury-profit-value">' + fmtMoney(t.purchaseVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم سداد منه: <span class="num">' + fmtMoney(t.purchaseVolumePaid) + "</span></div>", t.breakdowns.purchaseVolume) + treasuryCardHtml("salesVolume", "حجم عمليات البيع", '<span class="treasury-profit-value">' + fmtMoney(t.salesVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل: <span class="num">' + fmtMoney(t.salesVolumePaid) + "</span></div>", t.breakdowns.salesVolume) + treasuryCardHtml("profitVolume", "حجم صافي العمليات", '<span class="treasury-profit-value">' + fmtMoney(t.profitVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل: <span class="num">' + fmtMoney(t.profitVolumePaid) + "</span></div>", t.breakdowns.profitVolume) + treasuryCardHtml("expensesVolume", "حجم المصاريف", '<span class="treasury-profit-value text-rust">' + fmtMoney(t.expensesVolume) + "</span>", null, t.breakdowns.expensesVolume) + treasuryCardHtml("netProfitVolumeAfterSettlement", "صافي الأرباح", '<span class="treasury-profit-value ' + (t.netProfitVolumeAfterSettlement < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(t.netProfitVolumeAfterSettlement) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل منه: <span class="num">' + fmtMoney(t.netProfitVolume) + "</span></div>", t.breakdowns.netProfitVolumeAfterSettlement) + "</div>" + "</div>" + '<div id="expenses-block-wrap" style="' + (expensesBlockOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + '<div class="treasury-block">' + '<div class="treasury-block-head">' + '<div class="treasury-block-title">المصاريف — كل مبلغ بتاريخه على حدة</div>' + (tamaraPlanButtonHtml() ? '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0;max-width:100%;"><button type="button" id="btn-open-add-expense" class="btn btn-primary btn-sm">➕ إضافة مصاريف</button>' + tamaraPlanButtonHtml() + "</div>" : '<button type="button" id="btn-open-add-expense" class="btn btn-primary btn-sm">➕ إضافة مصاريف</button>') + "</div>" + '<button type="button" id="btn-toggle-treasury-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر' + (treasuryPeriodFilter !== "all" ? " (" + (TREASURY_PERIODS.find(p => p.key === treasuryPeriodFilter) || {}).label + ")" : "") + "</button>" + '<div class="treasury-period-filter" id="treasury-period-filter" style="' + (treasuryFilterOpen ? "" : "display:none;") + '">' + TREASURY_PERIODS.map(p => '<button type="button" class="chip ' + (treasuryPeriodFilter === p.key ? "chip-active" : "") + '" data-period="' + escapeHtml(p.key) + '">' + p.label + "</button>").join("") + "</div>" + '<div class="expense-categories">' + EXPENSE_CATEGORIES.filter(c => !c.system || (appData.treasury[c.key] || []).length > 0).map(expenseCategoryRowHtml).join("") + treasurySupportRowHtml() + "</div>" + tamaraPlansBlockHtml() + '<div class="treasury-summary">' + '<div class="treasury-summary-row"><span>إجمالي المصاريف</span><span class="num text-rust" id="treasury-total-expenses">' + fmtMoney(t.totalExpenses) + "</span></div>" + '<div class="treasury-summary-row"><span>إجمالي الدعم الخارجي</span><span class="num text-green" id="treasury-total-support">+' + fmtMoney(t.totalSupport) + "</span></div>" + "</div>" + "</div>" + "</div>" + treasuryCardHtml("net", "الصندوق حاليًا", '<span class="treasury-profit-value ' + (t.net < 0 ? "text-rust" : "") + '" id="treasury-net">' + fmtMoney(t.net) + "</span>", null, t.breakdowns.net, "treasury-profit-card-primary") + treasuryCardHtml("netAfterSettlement", "الصندوق بافتراض انتهاء التحصيل والسداد", '<span class="treasury-profit-value ' + (t.netAfterSettlement < 0 ? "text-rust" : "") + '">' + fmtMoney(t.netAfterSettlement) + "</span>", null, t.breakdowns.netAfterSettlement) + treasuryCardHtml("uncollectedProfit", "الربح غير المحصّل", '<span class="treasury-profit-value">' + fmtMoney(t.uncollectedProfit) + "</span>", null, t.breakdowns.uncollectedProfit) + treasuryCardHtml("debtsToSuppliers", "الديون للموردين", '<span class="treasury-profit-value text-rust">' + fmtMoney(t.debtsToSuppliers) + "</span>", null, t.breakdowns.debtsToSuppliers) + treasuryCardHtml("purchasingCustodyBalance", "رصيد المشتريات", '<span class="treasury-profit-value ' + (t.purchasingCustodyBalance < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(t.purchasingCustodyBalance) + "</span>", t.purchasingCustodyDeficit > 0 ? '<div class="kpi-sub" style="color:var(--rust);">عليك سداد ' + fmtMoney(t.purchasingCustodyDeficit) + " لعهدة المشتريات (عامر وعمر)</div>" : null, t.breakdowns.purchasingCustodyBalance) + treasuryCardHtml("dueFromCustomers", "مستحق من الزبائن", '<span class="treasury-profit-value">' + fmtMoney(t.dueFromCustomers) + "</span>", null, t.breakdowns.dueFromCustomers) + '<div class="data-mgmt-row">' + '<span class="data-mgmt-label">إدارة البيانات</span>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-export-excel">⬇️ تصدير Excel</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-excel">⬆️ استيراد Excel</button>' + '<input type="file" id="excel-import-input" accept=".xlsx" style="display:none;">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-oem-alts">📥 كتالوج الأرقام</button>' + '<input type="file" id="oem-alt-import-input" accept=".gz,.tsv,.txt" style="display:none;">' + '<span id="oem-alt-import-status" class="kpi-sub"></span>' + "</div>";
+    el.innerHTML = '<div class="treasury-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders">→ رجوع للطلبيات</button>' + '<div class="treasury-title">📦 الصندوق</div>' + "</div>" + tamaraWarnBarHtml(t) + '<div class="treasury-chip-row" style="margin-bottom:10px;">' + '<button type="button" id="btn-toggle-extra-indicators" class="chip" aria-expanded="' + (extraIndicatorsOpen ? "true" : "false") + '">📊 مؤشرات إضافية</button>' + '<button type="button" id="btn-toggle-expenses-block" class="chip" aria-expanded="' + (expensesBlockOpen ? "true" : "false") + '">💰 المصاريف</button>' + '<button type="button" id="btn-toggle-suppliers-settlement" class="chip" aria-expanded="' + (suppliersSettlementMenuOpen ? "true" : "false") + '">🧾 سداد الموردين' + (scrapyardMgmtState.proposals.length ? '<span class="inline-count-badge">' + scrapyardMgmtState.proposals.length + "</span>" : "") + "</button>" + '<button type="button" id="btn-open-accounts-activity" class="chip">📜 حركة الحسابات</button>' + '<button type="button" id="btn-open-edit-proposals" class="chip btn-with-badge">📋 طلبات التعديل<span id="edit-proposals-badge" class="tasks-badge" style="' + (editProposals.length ? "display:flex;" : "display:none;") + '">' + (editProposals.length || "") + "</span></button>" + tamaraChipHtml(t) + "</div>" + '<div id="suppliers-settlement-wrap" class="treasury-chip-row" style="' + (suppliersSettlementMenuOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + scrapyardEntryBlockHtml("used") + scrapyardEntryBlockHtml("new") + "</div>" + '<div id="extra-indicators-wrap" style="' + (extraIndicatorsOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + '<button type="button" id="btn-toggle-extra-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر' + (extraIndicatorsPeriod === "customMonth" ? " (" + arabicMonthLabel(extraIndicatorsCustomMonth) + ")" : extraIndicatorsPeriod === "customRange" ? " (" + formatDateDMY(extraIndicatorsRangeFrom) + " → " + formatDateDMY(extraIndicatorsRangeTo) + ")" : extraIndicatorsPeriod !== "all" ? " (" + (TREASURY_PERIODS.find(p => p.key === extraIndicatorsPeriod) || {}).label + ")" : "") + "</button>" + '<div class="treasury-period-filter" id="extra-indicators-period-filter" style="' + (extraIndicatorsFilterOpen ? "" : "display:none;") + ' margin-bottom:14px;">' + TREASURY_PERIODS.map(p => '<button type="button" class="chip ' + (extraIndicatorsPeriod === p.key ? "chip-active" : "") + '" data-extra-period="' + escapeHtml(p.key) + '">' + p.label + "</button>").join("") + '<input type="month" id="extra-indicators-month-input" class="extra-indicators-month-input" value="' + (extraIndicatorsPeriod === "customMonth" ? extraIndicatorsCustomMonth : "") + '">' + '<label class="mini-label" style="margin:0;">من<input type="date" id="extra-indicators-range-from" class="extra-indicators-month-input" value="' + escapeHtml(extraIndicatorsRangeFrom || "") + '"></label>' + '<label class="mini-label" style="margin:0;">إلى<input type="date" id="extra-indicators-range-to" class="extra-indicators-month-input" value="' + escapeHtml(extraIndicatorsRangeTo || "") + '"></label>' + "</div>" + '<div class="extra-indicators-row" id="extra-indicators-row">' + treasuryCardHtml("purchaseVolume", "حجم الشراء", '<span class="treasury-profit-value">' + fmtMoney(t.purchaseVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم سداد منه: <span class="num">' + fmtMoney(t.purchaseVolumePaid) + "</span></div>", t.breakdowns.purchaseVolume) + treasuryCardHtml("salesVolume", "حجم عمليات البيع", '<span class="treasury-profit-value">' + fmtMoney(t.salesVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل: <span class="num">' + fmtMoney(t.salesVolumePaid) + "</span></div>", t.breakdowns.salesVolume) + treasuryCardHtml("profitVolume", "حجم صافي العمليات", '<span class="treasury-profit-value">' + fmtMoney(t.profitVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل: <span class="num">' + fmtMoney(t.profitVolumePaid) + "</span></div>", t.breakdowns.profitVolume) + treasuryCardHtml("expensesVolume", "حجم المصاريف", '<span class="treasury-profit-value text-rust">' + fmtMoney(t.expensesVolume) + "</span>", null, t.breakdowns.expensesVolume) + treasuryCardHtml("netProfitVolumeAfterSettlement", "صافي الأرباح", '<span class="treasury-profit-value ' + (t.netProfitVolumeAfterSettlement < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(t.netProfitVolumeAfterSettlement) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل منه: <span class="num">' + fmtMoney(t.netProfitVolume) + "</span></div>", t.breakdowns.netProfitVolumeAfterSettlement) + "</div>" + "</div>" + '<div id="expenses-block-wrap" style="' + (expensesBlockOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + '<div class="treasury-block">' + '<div class="treasury-block-head">' + '<div class="treasury-block-title">المصاريف — كل مبلغ بتاريخه على حدة</div>' + (tamaraPlanButtonHtml() ? '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0;max-width:100%;"><button type="button" id="btn-open-add-expense" class="btn btn-primary btn-sm">➕ إضافة مصاريف</button>' + tamaraPlanButtonHtml() + "</div>" : '<button type="button" id="btn-open-add-expense" class="btn btn-primary btn-sm">➕ إضافة مصاريف</button>') + "</div>" + '<button type="button" id="btn-toggle-treasury-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر' + (treasuryPeriodFilter !== "all" ? " (" + (TREASURY_PERIODS.find(p => p.key === treasuryPeriodFilter) || {}).label + ")" : "") + "</button>" + '<div class="treasury-period-filter" id="treasury-period-filter" style="' + (treasuryFilterOpen ? "" : "display:none;") + '">' + TREASURY_PERIODS.map(p => '<button type="button" class="chip ' + (treasuryPeriodFilter === p.key ? "chip-active" : "") + '" data-period="' + escapeHtml(p.key) + '">' + p.label + "</button>").join("") + "</div>" + '<div class="expense-categories">' + EXPENSE_CATEGORIES.filter(c => !c.system || (appData.treasury[c.key] || []).length > 0).map(expenseCategoryRowHtml).join("") + treasurySupportRowHtml() + "</div>" + tamaraPlansBlockHtml() + '<div class="treasury-summary">' + '<div class="treasury-summary-row"><span>إجمالي المصاريف</span><span class="num text-rust" id="treasury-total-expenses">' + fmtMoney(t.totalExpenses) + "</span></div>" + '<div class="treasury-summary-row"><span>إجمالي الدعم الخارجي</span><span class="num text-green" id="treasury-total-support">+' + fmtMoney(t.totalSupport) + "</span></div>" + "</div>" + "</div>" + "</div>" + treasuryCardHtml("net", "الصندوق حاليًا", '<span class="treasury-profit-value ' + (t.net < 0 ? "text-rust" : "") + '" id="treasury-net">' + fmtMoney(t.net) + "</span>", null, t.breakdowns.net, "treasury-profit-card-primary") + treasuryCardHtml("netAfterSettlement", "الصندوق بافتراض انتهاء التحصيل والسداد", '<span class="treasury-profit-value ' + (t.netAfterSettlement < 0 ? "text-rust" : "") + '">' + fmtMoney(t.netAfterSettlement) + "</span>", null, t.breakdowns.netAfterSettlement) + treasuryCardHtml("uncollectedProfit", "الربح غير المحصّل", '<span class="treasury-profit-value">' + fmtMoney(t.uncollectedProfit) + "</span>", null, t.breakdowns.uncollectedProfit) + treasuryCardHtml("debtsToSuppliers", "الديون للموردين", '<span class="treasury-profit-value text-rust">' + fmtMoney(t.debtsToSuppliers) + "</span>", null, t.breakdowns.debtsToSuppliers) + treasuryCardHtml("purchasingCustodyBalance", "رصيد المشتريات", '<span class="treasury-profit-value ' + (t.purchasingCustodyBalance < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(t.purchasingCustodyBalance) + "</span>", t.purchasingCustodyDeficit > 0 ? '<div class="kpi-sub" style="color:var(--rust);">عليك سداد ' + fmtMoney(t.purchasingCustodyDeficit) + " لعهدة المشتريات (عامر وعمر)</div>" : null, t.breakdowns.purchasingCustodyBalance) + treasuryCardHtml("dueFromCustomers", "مستحق من الزبائن", '<span class="treasury-profit-value">' + fmtMoney(t.dueFromCustomers) + "</span>", null, t.breakdowns.dueFromCustomers) + '<div class="data-mgmt-row">' + '<span class="data-mgmt-label">إدارة البيانات</span>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-export-excel">⬇️ تصدير Excel</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-excel">⬆️ استيراد Excel</button>' + '<input type="file" id="excel-import-input" accept=".xlsx" style="display:none;">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-oem-alts">📥 كتالوج الأرقام</button>' + '<input type="file" id="oem-alt-import-input" accept=".gz,.tsv,.txt" style="display:none;">' + '<span id="oem-alt-import-status" class="kpi-sub"></span>' + "</div>";
     document.getElementById("btn-back-to-orders").addEventListener("click", closeTreasuryView);
     bindBusyButton(document.getElementById("btn-export-excel"), async () => {
         const btn = document.getElementById("btn-export-excel");
@@ -55859,22 +55862,50 @@ function tamaraCardCellHtml(label, valueText, cls, note, valueIsHtml) {
     return '<div class="tamara-card-cell"><span class="tamara-card-cell-label">' + escapeHtml(label) + '</span><span class="tamara-card-cell-value num' + (cls ? " " + cls : "") + '">' + (valueIsHtml ? valueText : escapeHtml(valueText)) + "</span>" + (note ? '<span class="tamara-card-cell-note">' + escapeHtml(note) + "</span>" : "") + "</div>";
 }
 
-function tamaraCardHtml(t) {
-    if (!tamaraElevated()) return "";
+function tamaraStatus(t) {
     const count = Number(t && t.tamaraPendingCount) || 0;
     const overdue = Number(t && t.tamaraOverdueCount) || 0;
     const refundCount = Number(t && t.tamaraRefundPendingCount) || 0;
     const refundOverdue = Number(t && t.tamaraRefundOverdueCount) || 0;
     const settled = tamaraSettlementsList().length;
     const incomplete = !tamaraDataComplete() && tamaraAnyData();
-    const legacy = !!(count || settled || incomplete || refundCount);
+    return {
+        count: count,
+        overdue: overdue,
+        refundCount: refundCount,
+        refundOverdue: refundOverdue,
+        settled: settled,
+        incomplete: incomplete,
+        legacy: !!(count || settled || incomplete || refundCount),
+        plansIncomplete: !tamaraPlansDataComplete()
+    };
+}
+
+function tamaraCardHtml(t) {
+    if (!tamaraElevated()) return "";
+    const st = tamaraStatus(t);
     const planCell = tamaraPlanCardCellHtml();
-    const plansIncomplete = !tamaraPlansDataComplete();
-    if (!legacy && !planCell && !plansIncomplete) return "";
+    if (!st.legacy && !planCell) return "";
     const refundH = Math.round((Number(t && t.tamaraRefundPendingAmount) || 0) * 100);
     const grossText = tamaraMoneyText(Math.round((Number(t && t.tamaraPendingGross) || 0) * 100));
     const netHtml = tamaraMoneyHtml(Math.round((Number(t && t.tamaraPendingNet) || 0) * 100) - refundH);
-    return '<div class="tamara-card" id="tamara-card">' + '<div class="tamara-card-head"><span class="treasury-profit-label">' + (legacy ? "تمارا — بانتظار التحويل" : escapeHtml(TAMARA_PLAN_TEXT.cardTitle)) + "</span>" + (overdue > 0 ? '<span class="stamp stamp-rust tamara-stamp">' + overdue + " متأخرة</span>" : "") + "</div>" + '<div class="tamara-card-grid">' + (legacy ? tamaraCardCellHtml("عدد الدفعات", String(count), "") + tamaraCardCellHtml("إجمالي الدفعات", grossText, "") + tamaraCardCellHtml("الصافي المتوقع", netHtml, "", "", true) + tamaraCardCellHtml("متأخرة (أكثر من " + TAMARA_OVERDUE_DAYS + " يومًا)", String(overdue), overdue > 0 ? "text-rust" : "") + (refundCount > 0 ? tamaraCardCellHtml(TAMARA_TEXT.uiCardRefundCell, refundCount + " — " + tamaraMoneyText(refundH), refundOverdue > 0 ? "text-rust" : "", refundOverdue > 0 ? tamaraRefundLateText(refundOverdue) : "") : "") : "") + planCell + "</div>" + (incomplete ? '<div class="tamara-card-warn text-rust" role="alert"><span>' + escapeHtml(TAMARA_TEXT.dataIncomplete) + '</span><button type="button" class="btn btn-ghost btn-sm" id="btn-tamara-retry">إعادة المحاولة</button></div>' : "") + (plansIncomplete ? '<div class="tamara-card-warn text-rust" role="alert"><span>' + escapeHtml(TAMARA_PLAN_TEXT.dataIncomplete) + '</span><button type="button" class="btn btn-ghost btn-sm" id="btn-tamara-plans-retry-card">' + escapeHtml(TAMARA_PLAN_TEXT.retry) + "</button></div>" : "") + (legacy ? '<button type="button" class="btn ' + (count ? "btn-primary" : "btn-ghost") + ' tamara-card-btn" id="btn-open-tamara-pop">' + (count ? "استلام تحويل من تمارا" : "تحويلات تمارا السابقة") + "</button>" : "") + "</div>";
+    return '<div class="tamara-card" id="tamara-card">' + '<div class="tamara-card-head"><span class="treasury-profit-label">' + (st.legacy ? "تمارا — بانتظار التحويل" : escapeHtml(TAMARA_PLAN_TEXT.cardTitle)) + "</span>" + (st.overdue > 0 ? '<span class="stamp stamp-rust tamara-stamp">' + st.overdue + " متأخرة</span>" : "") + "</div>" + '<div class="tamara-card-grid">' + (st.legacy ? tamaraCardCellHtml("عدد الدفعات", String(st.count), "") + tamaraCardCellHtml("إجمالي الدفعات", grossText, "") + tamaraCardCellHtml("الصافي المتوقع", netHtml, "", "", true) + tamaraCardCellHtml("متأخرة (أكثر من " + TAMARA_OVERDUE_DAYS + " يومًا)", String(st.overdue), st.overdue > 0 ? "text-rust" : "") + (st.refundCount > 0 ? tamaraCardCellHtml(TAMARA_TEXT.uiCardRefundCell, st.refundCount + " — " + tamaraMoneyText(refundH), st.refundOverdue > 0 ? "text-rust" : "", st.refundOverdue > 0 ? tamaraRefundLateText(st.refundOverdue) : "") : "") : "") + planCell + "</div>" + "</div>";
+}
+
+function tamaraWarnBarHtml(t) {
+    if (!tamaraElevated()) return "";
+    const st = tamaraStatus(t);
+    if (!st.incomplete && !st.plansIncomplete) return "";
+    return '<div class="tamara-warn-bar" id="tamara-warn-bar">' + (st.incomplete ? '<div class="tamara-card-warn text-rust" role="alert"><span>' + escapeHtml(TAMARA_TEXT.dataIncomplete) + '</span><button type="button" class="btn btn-ghost btn-sm" id="btn-tamara-retry">إعادة المحاولة</button></div>' : "") + (st.plansIncomplete ? '<div class="tamara-card-warn text-rust" role="alert"><span>' + escapeHtml(TAMARA_PLAN_TEXT.dataIncomplete) + '</span><button type="button" class="btn btn-ghost btn-sm" id="btn-tamara-plans-retry-card">' + escapeHtml(TAMARA_PLAN_TEXT.retry) + "</button></div>" : "") + "</div>";
+}
+
+function tamaraChipHtml(t) {
+    if (!tamaraElevated()) return "";
+    const st = tamaraStatus(t);
+    if (!st.legacy) return "";
+    const n = st.count + st.refundCount;
+    const late = st.overdue + st.refundOverdue > 0;
+    return '<button type="button" id="btn-open-tamara-pop" class="chip tamara-chip' + (late ? " tamara-chip-late" : n ? " tamara-chip-pending" : "") + '">🏦 تحويلات تمارا' + (n ? '<span class="inline-count-badge tamara-chip-badge">' + n + "</span>" : "") + "</button>";
 }
 
 function tamaraPopKey(r) {
@@ -56075,7 +56106,7 @@ function tamaraPopHistoryHtml() {
 
 function tamaraPopShellHtml() {
     const today = tamaraTodayRiyadhIso();
-    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card tamara-pop" role="dialog" aria-modal="true" aria-labelledby="tamara-pop-title">' + '<div class="modal-header"><div class="modal-title" id="tamara-pop-title">استلام تحويل من تمارا</div>' + '<button type="button" class="icon-btn" data-tamara-act="close" aria-label="إغلاق">✕</button></div>' + '<div class="modal-body">' + '<p class="modal-sub">حدّد الدفعات التي شملها تحويل تمارا، ثم أدخل المبلغ الذي وصل فعلًا إلى البنك. الفرق عن إجمالي الدفعات يُقيَّد تلقائيًا ضمن رسوم تمارا.</p>' + '<div class="purchase-history-section" id="tamara-pop-pending"></div>' + '<div class="purchase-history-section">' + '<label class="field"><span class="field-label">المبلغ الواصل إلى البنك (ر.س) *</span><input type="number" min="0" step="0.01" inputmode="decimal" autocomplete="off" id="tamara-pop-bank" placeholder="المبلغ الواصل" value="' + escapeHtml(tamaraPop.bank) + '"></label>' + '<label class="field"><span class="field-label">مرجع التحويل (اختياري)</span><input type="text" dir="auto" maxlength="80" autocomplete="off" id="tamara-pop-ref" placeholder="مثلًا: رقم الحوالة" value="' + escapeHtml(tamaraPop.ref) + '"></label>' + '<label class="field"><span class="field-label">تاريخ الاستلام (كما يظهر في كشف البنك)</span><input type="date" id="tamara-pop-date" max="' + escapeHtml(today) + '" value="' + escapeHtml(tamaraPop.date || today) + '"></label>' + "</div>" + '<div class="tamara-summary" id="tamara-pop-summary" aria-live="polite"></div>' + '<div class="purchase-history-section" id="tamara-pop-history"></div>' + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" data-tamara-act="close">إغلاق</button>' + '<button type="button" class="btn btn-primary" id="tamara-pop-submit" data-tamara-act="submit" disabled>تأكيد الاستلام</button>' + "</div>" + "</div>" + "</div>";
+    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card tamara-pop" role="dialog" aria-modal="true" aria-labelledby="tamara-pop-title">' + '<div class="modal-header"><div class="modal-title" id="tamara-pop-title">استلام تحويل من تمارا</div>' + '<button type="button" class="icon-btn" data-tamara-act="close" aria-label="إغلاق">✕</button></div>' + '<div class="modal-body">' + '<p class="modal-sub">حدّد الدفعات التي شملها تحويل تمارا، ثم أدخل المبلغ الذي وصل فعلًا إلى البنك. الفرق عن إجمالي الدفعات يُقيَّد تلقائيًا ضمن رسوم تمارا.</p>' + '<div id="tamara-pop-overview"></div>' + '<div class="purchase-history-section" id="tamara-pop-pending"></div>' + '<div class="purchase-history-section">' + '<label class="field"><span class="field-label">المبلغ الواصل إلى البنك (ر.س) *</span><input type="number" min="0" step="0.01" inputmode="decimal" autocomplete="off" id="tamara-pop-bank" placeholder="المبلغ الواصل" value="' + escapeHtml(tamaraPop.bank) + '"></label>' + '<label class="field"><span class="field-label">مرجع التحويل (اختياري)</span><input type="text" dir="auto" maxlength="80" autocomplete="off" id="tamara-pop-ref" placeholder="مثلًا: رقم الحوالة" value="' + escapeHtml(tamaraPop.ref) + '"></label>' + '<label class="field"><span class="field-label">تاريخ الاستلام (كما يظهر في كشف البنك)</span><input type="date" id="tamara-pop-date" max="' + escapeHtml(today) + '" value="' + escapeHtml(tamaraPop.date || today) + '"></label>' + "</div>" + '<div class="tamara-summary" id="tamara-pop-summary" aria-live="polite"></div>' + '<div class="purchase-history-section" id="tamara-pop-history"></div>' + "</div>" + '<div class="modal-footer-actions" style="margin-top:16px;justify-content:flex-end;">' + '<button type="button" class="btn btn-ghost" data-tamara-act="close">إغلاق</button>' + '<button type="button" class="btn btn-primary" id="tamara-pop-submit" data-tamara-act="submit" disabled>تأكيد الاستلام</button>' + "</div>" + "</div>" + "</div>";
 }
 
 function tamaraPopSyncBusy() {
@@ -56108,6 +56139,8 @@ function tamaraPopRenderParts() {
     const rows = tamaraPendingList();
     const refundRows = tamaraPendingRefundList();
     tamaraPopPrune(rows, refundRows);
+    const ov = card.querySelector("#tamara-pop-overview");
+    if (ov) ov.innerHTML = tamaraCardHtml(treasuryTotals());
     const pend = card.querySelector("#tamara-pop-pending");
     if (pend) pend.innerHTML = tamaraPopPendingHtml(rows) + tamaraPopRefundsHtml(refundRows);
     const sum = card.querySelector("#tamara-pop-summary");
@@ -76818,6 +76851,8 @@ const PDFSCAN_CROP_MIN = .1;
 
 const PDFSCAN_HIT_PX = 30;
 
+const PDFSCAN_SHIELD_MS = 600;
+
 const PDFSCAN_STAGE_PAD = 34;
 
 function pdfscanClamp(v, lo, hi) {
@@ -76826,8 +76861,11 @@ function pdfscanClamp(v, lo, hi) {
 
 function pdfscanCropHit(r, x, y, T) {
     if (x < r.x0 - T || x > r.x1 + T || y < r.y0 - T || y > r.y1 + T) return "";
-    const dl = Math.abs(x - r.x0), dr = Math.abs(x - r.x1), dt = Math.abs(y - r.y0), db = Math.abs(y - r.y1);
-    const h = dl <= T || dr <= T ? dl <= dr ? "l" : "r" : "", v = dt <= T || db <= T ? dt <= db ? "t" : "b" : "";
+    const tx = Math.min(T, Math.max(0, (r.x1 - r.x0) / 3)), ty = Math.min(T, Math.max(0, (r.y1 - r.y0) / 3));
+    const dl = x - r.x0, dr = r.x1 - x, dt = y - r.y0, db = r.y1 - y;
+    const nl = dl >= -T && dl <= tx, nr = dr >= -T && dr <= tx, nt = dt >= -T && dt <= ty, nb = db >= -T && db <= ty;
+    const h = nl || nr ? nl && nr ? Math.abs(dl) <= Math.abs(dr) ? "l" : "r" : nl ? "l" : "r" : "";
+    const v = nt || nb ? nt && nb ? Math.abs(dt) <= Math.abs(db) ? "t" : "b" : nt ? "t" : "b" : "";
     if (h && v) return v + h;
     if (h || v) return h || v;
     return x > r.x0 && x < r.x1 && y > r.y0 && y < r.y1 ? "move" : "";
@@ -76903,7 +76941,7 @@ function pdfscanCanvas(w, h) {
     return c;
 }
 
-function pdfscanLoad(file) {
+function pdfscanLoad(file, sink) {
     return new Promise(function(resolve) {
         let url = "";
         try {
@@ -76912,6 +76950,7 @@ function pdfscanLoad(file) {
             resolve(null);
             return;
         }
+        if (sink) sink.url = url;
         const img = new Image;
         img.onload = function() {
             resolve({
@@ -76966,7 +77005,7 @@ function pdfscanStyle() {
     try {
         const st = document.createElement("style");
         st.setAttribute("data-pdfimg-scan", "1");
-        st.textContent = "#pdfimg-scan-root{position:fixed;inset:0;z-index:96;display:flex;align-items:flex-end;justify-content:center;background:rgba(4,6,5,.72);overflow-y:auto;}" + ".pdfimg-scan-sheet{width:100%;max-width:560px;max-height:92vh;overflow-y:auto;overscroll-behavior:contain;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0;padding:14px 16px 0;}" + ".pdfimg-scan-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;}" + '.pdfimg-scan-title{font-family:"Cairo",sans-serif;font-weight:800;font-size:16px;}' + ".pdfimg-scan-close{min-width:44px;min-height:44px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:16px;cursor:pointer;}" + ".pdfimg-scan-sub{margin:0 0 10px;color:var(--text-dim);font-size:13px;line-height:1.7;}" + ".pdfimg-scan-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:12px;}" + ".pdfimg-scan-pg{position:relative;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);}" + ".pdfimg-scan-i{position:relative;display:block;overflow:hidden;padding:0;border:0;aspect-ratio:3/4;background:var(--surface-2);cursor:zoom-in;}" + ".pdfimg-scan-i img{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;}" + ".pdfimg-scan-wait{align-items:center;justify-content:center;min-height:120px;padding:6px;text-align:center;color:var(--text-dim);font-size:13px;}" + '.pdfimg-scan-n{position:absolute;top:4px;inset-inline-start:4px;min-width:24px;padding:1px 6px;border-radius:999px;background:var(--surface);border:1px solid var(--border);font-family:"Cairo",sans-serif;font-weight:800;font-size:13px;text-align:center;}' + ".pdfimg-scan-bar{display:flex;gap:6px;padding:6px;border-top:1px solid var(--border);}" + '.pdfimg-scan-bar button{flex:1 1 0;min-width:44px;min-height:44px;padding:0 2px;line-height:1.25;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:"Cairo",sans-serif;font-weight:700;font-size:13px;cursor:pointer;}' + ".pdfimg-scan-bar button:disabled,.pdfimg-scan-close:disabled,.pdfimg-scan-acts .btn:disabled{opacity:.5;cursor:not-allowed;}" + ".pdfimg-scan-acts{display:flex;gap:8px;flex-wrap:wrap;position:sticky;bottom:0;padding:8px 0 calc(16px + env(safe-area-inset-bottom));background:var(--surface);}" + ".pdfimg-scan-acts .btn{flex:1 1 150px;min-height:48px;font-size:14px;}" + "#pdfimg-scan-view{position:fixed;inset:0;z-index:97;display:flex;align-items:center;justify-content:center;padding:12px;background:rgba(0,0,0,.92);cursor:zoom-out;}" + "#pdfimg-scan-view img{max-width:100%;max-height:100%;object-fit:contain;}" + "#pdfimg-scan-crop{position:fixed;inset:0;z-index:98;display:flex;flex-direction:column;overscroll-behavior:none;background:rgba(0,0,0,.96);color:rgba(255,255,255,.92);}" + ".pdfimg-crop-top{display:flex;flex-direction:column;gap:2px;padding:calc(12px + env(safe-area-inset-top,0px)) 16px 4px;}" + ".pdfimg-crop-top .pdfimg-scan-sub{margin:0;color:rgba(255,255,255,.72);}" + ".pdfimg-crop-stage{position:relative;flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;padding:34px;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}" + ".pdfimg-crop-box{position:relative;flex:none;}" + ".pdfimg-crop-cv{position:absolute;inset:0;display:block;width:100%;height:100%;}" + ".pdfimg-crop-mask{position:absolute;background:rgba(0,0,0,.6);pointer-events:none;}" + ".pdfimg-crop-rect{position:absolute;box-sizing:border-box;border:2px solid var(--green);pointer-events:none;}" + ".pdfimg-crop-dot{position:absolute;width:20px;height:20px;margin:-10px 0 0 -10px;box-sizing:border-box;border-radius:50%;background:rgba(255,255,255,.95);border:2px solid var(--green);pointer-events:none;}" + ".pdfimg-crop-load{position:absolute;color:rgba(255,255,255,.8);font-size:14px;}" + ".pdfimg-crop-bar{display:flex;gap:8px;padding:10px 16px calc(14px + env(safe-area-inset-bottom,0px));}" + '.pdfimg-crop-bar button{flex:1 1 0;min-width:0;min-height:48px;padding:0 4px;touch-action:manipulation;font-family:"Cairo",sans-serif;font-weight:700;font-size:14px;line-height:1.25;border-radius:var(--radius-sm);cursor:pointer;}' + ".pdfimg-crop-b{background:var(--surface);color:var(--text);border:1px solid var(--border);}" + ".pdfimg-crop-bar button:disabled{opacity:.5;cursor:not-allowed;}" + "body:has(#pdfimg-scan-root) .toast-root{bottom:auto;top:calc(12px + env(safe-area-inset-top,0px));}" + "body:has(#pdfimg-scan-root) .toast{pointer-events:none;}";
+        st.textContent = "#pdfimg-scan-root{position:fixed;inset:0;z-index:96;display:flex;align-items:flex-end;justify-content:center;background:rgba(4,6,5,.72);overflow-y:auto;}" + ".pdfimg-scan-sheet{width:100%;max-width:560px;max-height:92vh;overflow-y:auto;overscroll-behavior:contain;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0;padding:14px 16px 0;}" + ".pdfimg-scan-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;}" + '.pdfimg-scan-title{font-family:"Cairo",sans-serif;font-weight:800;font-size:16px;}' + ".pdfimg-scan-close{min-width:44px;min-height:44px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:16px;cursor:pointer;}" + ".pdfimg-scan-sub{margin:0 0 10px;color:var(--text-dim);font-size:13px;line-height:1.7;}" + ".pdfimg-scan-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:12px;}" + ".pdfimg-scan-pg{position:relative;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);}" + ".pdfimg-scan-i{position:relative;display:block;overflow:hidden;padding:0;border:0;aspect-ratio:3/4;background:var(--surface-2);cursor:zoom-in;}" + ".pdfimg-scan-i img{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;}" + ".pdfimg-scan-wait{align-items:center;justify-content:center;min-height:120px;padding:6px;text-align:center;color:var(--text-dim);font-size:13px;}" + '.pdfimg-scan-n{position:absolute;top:4px;inset-inline-start:4px;min-width:24px;padding:1px 6px;border-radius:999px;background:var(--surface);border:1px solid var(--border);font-family:"Cairo",sans-serif;font-weight:800;font-size:13px;text-align:center;}' + ".pdfimg-scan-bar{display:flex;gap:6px;padding:6px;border-top:1px solid var(--border);}" + '.pdfimg-scan-bar button{flex:1 1 0;min-width:44px;min-height:44px;padding:0 2px;line-height:1.25;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:"Cairo",sans-serif;font-weight:700;font-size:13px;cursor:pointer;}' + ".pdfimg-scan-bar button:disabled,.pdfimg-scan-close:disabled,.pdfimg-scan-acts .btn:disabled{opacity:.5;cursor:not-allowed;}" + ".pdfimg-scan-acts{display:flex;gap:8px;flex-wrap:wrap;position:sticky;bottom:0;padding:8px 0 calc(16px + env(safe-area-inset-bottom));background:var(--surface);}" + ".pdfimg-scan-acts .btn{flex:1 1 150px;min-height:48px;font-size:14px;}" + "#pdfimg-scan-view{position:fixed;inset:0;z-index:97;display:flex;align-items:center;justify-content:center;padding:12px;background:rgba(0,0,0,.92);cursor:zoom-out;}" + "#pdfimg-scan-view img{max-width:100%;max-height:100%;object-fit:contain;}" + "#pdfimg-scan-crop{position:fixed;inset:0;z-index:98;display:flex;flex-direction:column;touch-action:none;background:rgba(0,0,0,.96);color:rgba(255,255,255,.92);}" + ".pdfimg-crop-top{display:flex;flex-direction:column;gap:2px;padding:calc(12px + env(safe-area-inset-top,0px)) 16px 4px;}" + ".pdfimg-crop-top .pdfimg-scan-sub{margin:0;color:rgba(255,255,255,.72);}" + ".pdfimg-crop-stage{position:relative;flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;padding:34px;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}" + ".pdfimg-crop-box{position:relative;flex:none;}" + ".pdfimg-crop-cv{position:absolute;inset:0;display:block;width:100%;height:100%;}" + ".pdfimg-crop-mask{position:absolute;background:rgba(0,0,0,.6);pointer-events:none;}" + ".pdfimg-crop-rect{position:absolute;box-sizing:border-box;border:2px solid var(--green);pointer-events:none;}" + ".pdfimg-crop-dot{position:absolute;width:20px;height:20px;margin:-10px 0 0 -10px;box-sizing:border-box;border-radius:50%;background:rgba(255,255,255,.95);border:2px solid var(--green);pointer-events:none;}" + ".pdfimg-crop-load{position:absolute;color:rgba(255,255,255,.8);font-size:14px;}" + ".pdfimg-crop-bar{display:flex;gap:8px;padding:10px 16px calc(14px + env(safe-area-inset-bottom,0px));}" + '.pdfimg-crop-bar button{flex:1 1 0;min-width:0;min-height:48px;padding:0 4px;touch-action:manipulation;font-family:"Cairo",sans-serif;font-weight:700;font-size:14px;line-height:1.25;border-radius:var(--radius-sm);cursor:pointer;}' + ".pdfimg-crop-b{background:var(--surface);color:var(--text);border:1px solid var(--border);}" + ".pdfimg-crop-bar button:disabled{opacity:.5;cursor:not-allowed;}" + "body:has(#pdfimg-scan-root) .toast-root{bottom:auto;top:calc(12px + env(safe-area-inset-top,0px));}" + "body:has(#pdfimg-scan-root) .toast{pointer-events:none;}";
         (document.head || document.body).appendChild(st);
     } catch (e) {}
 }
@@ -77305,6 +77344,8 @@ function pdfscanCropPaintTo(cv, img, plan) {
     const c2 = cv.getContext("2d");
     c2.imageSmoothingEnabled = true;
     c2.imageSmoothingQuality = "high";
+    c2.fillStyle = "#fff";
+    c2.fillRect(0, 0, cv.width, cv.height);
     c2.scale(plan.k, plan.k);
     c2.translate(-plan.cx, -plan.cy);
     c2.translate(plan.tx, plan.ty);
@@ -77332,6 +77373,7 @@ function pdfscanCropPaint(ed) {
 
 function pdfscanCropLayout(ed) {
     try {
+        ed.drag = null;
         const st = ed.els.stage.getBoundingClientRect();
         const f = pdfscanFit(st.width - 2 * PDFSCAN_STAGE_PAD, st.height - 2 * PDFSCAN_STAGE_PAD, ed.pw, ed.ph);
         ed.els.box.style.width = f.w + "px";
@@ -77367,7 +77409,10 @@ function pdfscanCropDraw(ed) {
 function pdfscanOnPointerDown(ev) {
     try {
         const s = pdfscanSess, ed = s && s.editor;
-        if (!ed || !ed.ready || ed.busy || ed.drag) return;
+        if (!ed || !ed.ready || ed.busy) return;
+        if (ed.drag) {
+            if (ev.isPrimary !== false) ed.drag = null; else return;
+        }
         const st = ev.target && ev.target.closest ? ev.target.closest("[data-pdfimg-stage]") : null;
         if (!st) return;
         const br = ed.els.box.getBoundingClientRect();
@@ -77464,10 +77509,16 @@ async function pdfscanCropOpen(id) {
         return;
     }
     let ld = null;
+    const sink = {};
     try {
-        ld = await pdfscanLimit(pdfscanLoad(pg.orig), PDFSCAN_PREP_MS);
+        ld = await pdfscanLimit(pdfscanLoad(pg.orig, sink), PDFSCAN_PREP_MS);
     } catch (e) {
         ld = null;
+        if (sink.url) {
+            try {
+                URL.revokeObjectURL(sink.url);
+            } catch (e2) {}
+        }
     }
     if (pdfscanSess !== s || s.editor !== ed) {
         if (ld && ld.url) {
@@ -77630,7 +77681,10 @@ async function pdfscanCropApply() {
 
 function pdfscanCropClose(s) {
     const ed = s && s.editor;
-    if (s) s.editor = null;
+    if (s) {
+        s.editor = null;
+        if (ed) s.shield = Date.now();
+    }
     if (ed) {
         ed.drag = null;
         try {
@@ -77814,6 +77868,7 @@ function pdfscanStart(btn) {
             delAt: 0,
             inflight: null,
             editor: null,
+            shield: 0,
             acct: typeof acct2St !== "undefined" ? acct2St : null
         };
         pdfscanWatchGate(true);
@@ -77865,6 +77920,8 @@ function pdfscanOnClick(ev) {
             return;
         }
         const act = t.getAttribute("data-pdfimg-act");
+        const sh = pdfscanSess && pdfscanSess.shield;
+        if (sh && Date.now() - sh < PDFSCAN_SHIELD_MS && (act === "add" || act === "del" || act === "done" || act === "crop" || act === "view")) return;
         if (act === "add") pdfscanAdd(); else if (act === "del") pdfscanDel(t.getAttribute("data-pdfimg-id") || ""); else if (act === "done") pdfscanFinish(); else if (act === "crop") pdfscanCropOpen(t.getAttribute("data-pdfimg-id") || ""); else if (act === "crop-rot") pdfscanCropRotate(); else if (act === "crop-reset") pdfscanCropReset(); else if (act === "crop-cancel") pdfscanCropCancel(); else if (act === "crop-apply") pdfscanCropApply(); else if (act === "view") pdfscanView(t.getAttribute("data-pdfimg-id") || ""); else if (act === "unview") pdfscanView(""); else if (act === "cancel") pdfscanClose();
     } catch (e) {}
 }
