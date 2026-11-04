@@ -9842,6 +9842,7 @@ function groupSupplierOrCustomerRows(rows) {
         handlesUsed: r.handles_used !== false,
         carMakes: Array.isArray(r.car_makes) ? r.car_makes : [],
         ...typeof taxinvCustomerCols === "function" ? taxinvCustomerCols(r) : {},
+        ...typeof acnSupCols === "function" ? acnSupCols(r) : {},
         createdAt: r.created_at || ""
     }));
 }
@@ -58945,6 +58946,7 @@ function applyRemoteSupplierChange(payload) {
             carMakes: Array.isArray(row.car_makes) ? row.car_makes : [],
             createdAt: row.created_at || ""
         };
+        if (typeof acnSupCopyCols === "function") acnSupCopyCols(supplier, row);
         const idx = appData.suppliers.findIndex(s => s.id === supplier.id);
         if (idx >= 0) appData.suppliers[idx] = supplier; else appData.suppliers.push(supplier);
     }
@@ -58975,6 +58977,7 @@ async function persistSupplier(supplier) {
             extra_phones: Array.isArray(supplier.extraPhones) ? supplier.extraPhones : [],
             handles_new: supplier.handlesNew !== false,
             handles_used: supplier.handlesUsed !== false,
+            ...typeof acnSupSaveCols === "function" ? acnSupSaveCols(supplier) : {},
             car_makes: Array.isArray(supplier.carMakes) ? supplier.carMakes : []
         }).select("id");
         if (error) throw error;
@@ -59184,6 +59187,7 @@ async function replaceAllSuppliers(suppliersArray) {
         extra_phones: Array.isArray(s.extraPhones) ? s.extraPhones : [],
         handles_new: s.handlesNew !== false,
         handles_used: s.handlesUsed !== false,
+        ...typeof acnSupSaveAllCols === "function" ? acnSupSaveAllCols(s) : {},
         car_makes: Array.isArray(s.carMakes) ? s.carMakes : []
     }));
     await replaceAllRowsSafely("suppliers", rows);
@@ -59819,12 +59823,12 @@ function supplierRowHtml(s, receivablesIdx, owedIdx, sortIdx, rank) {
         const returnTotal = receivablesIdx ? receivablesIdx[s.id] || 0 : supplierReturnReceivableTotal(s.id);
         const owedAmount = owedIdx ? owedIdx[s.id] || 0 : supplierOwedAmount(s.id);
         const sortBadge = sortIdx ? suppliersSortBy === "purchases" ? '<span class="stamp stamp-green">#' + rank + " — ⭐ اعتمادية: " + (sortIdx[s.id] || 0) + " عملية شراء</span>" : '<span class="stamp stamp-green">#' + rank + " — 🤝 تعاون: " + fmtMoney(sortIdx[s.id] || 0) + "</span>" : "";
-        return '<div class="task-item-row supplier-item-row" data-supplier-id="' + escapeHtml(s.id) + '">' + '<div class="supplier-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(s.name || "بدون اسم") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(phones || "—") + "</span>" + '<span class="num ' + (owedAmount > 0 ? "text-rust" : "text-green") + '">' + fmtMoney(owedAmount) + "</span>" + ((s.phone || "").trim() ? '<button type="button" class="icon-btn supplier-contact-btn" title="اتصال" aria-label="اتصال">📞</button>' : "") + '<button type="button" class="icon-btn supplier-history-btn" title="سجل المشتريات" aria-label="سجل المشتريات">📋</button>' + '<button type="button" class="icon-btn supplier-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' + "</div>" + '<div class="purchase-history-row-sub"><span>' + escapeHtml(kindsLabel) + "</span>" + "<span>" + escapeHtml(Array.isArray(s.carMakes) && s.carMakes.length ? s.carMakes.join("، ") : "بلا سيارات محددة") + "</span>" + sortBadge + (returnTotal > 0 ? '<span class="text-green">مسترجع بانتظار التحصيل: ' + fmtMoney(returnTotal) + "</span>" : "") + "</div>" + "</div>";
+        return '<div class="task-item-row supplier-item-row" data-supplier-id="' + escapeHtml(s.id) + '">' + '<div class="supplier-row-main">' + '<span class="purchase-history-desc">' + escapeHtml(s.name || "بدون اسم") + "</span>" + '<span class="expense-entry-view-date">' + escapeHtml(phones || "—") + "</span>" + '<span class="num ' + (owedAmount > 0 ? "text-rust" : "text-green") + '">' + fmtMoney(owedAmount) + "</span>" + ((s.phone || "").trim() ? '<button type="button" class="icon-btn supplier-contact-btn" title="اتصال" aria-label="اتصال">📞</button>' : "") + '<button type="button" class="icon-btn supplier-history-btn" title="سجل المشتريات" aria-label="سجل المشتريات">📋</button>' + '<button type="button" class="icon-btn supplier-edit-btn" title="تعديل" aria-label="تعديل">✏️ تعديل</button>' + "</div>" + '<div class="purchase-history-row-sub"><span>' + escapeHtml(kindsLabel) + "</span>" + "<span>" + escapeHtml(Array.isArray(s.carMakes) && s.carMakes.length ? s.carMakes.join("، ") : "بلا سيارات محددة") + "</span>" + sortBadge + (typeof acnSupChipHtml === "function" ? acnSupChipHtml(s) : "") + (returnTotal > 0 ? '<span class="text-green">مسترجع بانتظار التحصيل: ' + fmtMoney(returnTotal) + "</span>" : "") + "</div>" + "</div>";
     }
     return '<div class="task-item-row supplier-item-row" data-supplier-id="' + escapeHtml(s.id) + '">' + '<div class="supplier-row-main">' + '<input type="text" class="supplier-name-input" placeholder="اسم المورد" value="' + escapeHtml(s.name || "") + '">' + '<input type="tel" class="supplier-phone-input" placeholder="رقم الجوال" value="' + escapeHtml(s.phone || "") + '">' + (() => {
         const owedAmount = owedIdx ? owedIdx[s.id] || 0 : supplierOwedAmount(s.id);
         return '<span class="num ' + (owedAmount > 0 ? "text-rust" : "text-green") + '">' + fmtMoney(owedAmount) + "</span>";
-    })() + '<button type="button" class="icon-btn supplier-add-phone-btn" title="إضافة رقم آخر" aria-label="إضافة رقم">➕</button>' + '<button type="button" class="btn btn-sm expense-add-entry-btn supplier-save-btn">💾 حفظ</button>' + (currentUserRole === "full" ? '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' : "") + "</div>" + '<div class="supplier-kinds-row">' + '<label class="supplier-kind-toggle"><input type="checkbox" class="supplier-handles-new-check"' + (s.handlesNew ? " checked" : "") + "><span>قطع جديدة</span></label>" + '<label class="supplier-kind-toggle"><input type="checkbox" class="supplier-handles-used-check"' + (s.handlesUsed ? " checked" : "") + "><span>قطع مستعملة (تشليح)</span></label>" + "</div>" + '<div class="mini-label">السيارات' + carMakesPickerHtml(s.carMakes) + "</div>" + (extraPhones.length ? '<div class="supplier-extra-phones">' + extraPhones.map((ph, i) => '<div class="supplier-extra-phone-row">' + '<input type="tel" class="supplier-extra-phone-input" data-phone-index="' + escapeHtml(i) + '" placeholder="رقم إضافي" value="' + escapeHtml(ph || "") + '">' + '<button type="button" class="icon-btn supplier-remove-phone-btn" data-phone-index="' + escapeHtml(i) + '" aria-label="حذف الرقم">✕</button>' + "</div>").join("") + "</div>" : "") + "</div>";
+    })() + '<button type="button" class="icon-btn supplier-add-phone-btn" title="إضافة رقم آخر" aria-label="إضافة رقم">➕</button>' + '<button type="button" class="btn btn-sm expense-add-entry-btn supplier-save-btn">💾 حفظ</button>' + (currentUserRole === "full" ? '<button type="button" class="task-item-remove-btn" aria-label="حذف">✕</button>' : "") + "</div>" + '<div class="supplier-kinds-row">' + '<label class="supplier-kind-toggle"><input type="checkbox" class="supplier-handles-new-check"' + (s.handlesNew ? " checked" : "") + "><span>قطع جديدة</span></label>" + '<label class="supplier-kind-toggle"><input type="checkbox" class="supplier-handles-used-check"' + (s.handlesUsed ? " checked" : "") + "><span>قطع مستعملة (تشليح)</span></label>" + "</div>" + '<div class="mini-label">السيارات' + carMakesPickerHtml(s.carMakes) + "</div>" + (typeof acnSupEditHtml === "function" ? acnSupEditHtml(s) : "") + (extraPhones.length ? '<div class="supplier-extra-phones">' + extraPhones.map((ph, i) => '<div class="supplier-extra-phone-row">' + '<input type="tel" class="supplier-extra-phone-input" data-phone-index="' + escapeHtml(i) + '" placeholder="رقم إضافي" value="' + escapeHtml(ph || "") + '">' + '<button type="button" class="icon-btn supplier-remove-phone-btn" data-phone-index="' + escapeHtml(i) + '" aria-label="حذف الرقم">✕</button>' + "</div>").join("") + "</div>" : "") + "</div>";
 }
 
 let suppliersSearchQuery = "";
@@ -60121,6 +60125,7 @@ function bindSupplierRowEvents() {
                 await persistFieldOrRevert(s, prev, persistSupplier, refreshSuppliersList);
             });
         }
+        if (typeof acnSupBindRow === "function") acnSupBindRow(row, freshSupplier);
         row.querySelectorAll(".supplier-extra-phone-input").forEach(inp => {
             inp.addEventListener("change", async e => {
                 const idx = Number(inp.getAttribute("data-phone-index"));
@@ -89165,6 +89170,133 @@ async function acnHistoryLoad() {
 
 function acnHistWarnHtml(st) {
     return st && st.historyOk === false ? '<div class="acn-warn" role="alert">تعذّر تحميل السجل القديم (مارس–يوليو) — الأرقام هنا (العمليات والتقرير الشهري والنفقات والرواتب والصندوق) ناقصة. اضغط «تحديث» لإعادة المحاولة.</div>' : "";
+}
+
+function acnSupDigits(v) {
+    let out = "";
+    String(v == null ? "" : v).split("").forEach(function(ch) {
+        const c = ch.charCodeAt(0);
+        if (c >= 48 && c <= 57) out += ch; else if (c >= 1632 && c <= 1641) out += String(c - 1632); else if (c >= 1776 && c <= 1785) out += String(c - 1776);
+    });
+    return out;
+}
+
+function acnSupVatOk(d) {
+    return /^3[0-9]{13}3$/.test(String(d || ""));
+}
+
+function acnSupInvoice(v) {
+    return v === "yes" || v === "no" ? v : "";
+}
+
+function acnSupVatInput(raw) {
+    const text = String(raw == null ? "" : raw).trim();
+    if (text === "") return {
+        ok: true,
+        value: ""
+    };
+    const d = acnSupDigits(text);
+    if (!acnSupVatOk(d)) return {
+        ok: false,
+        value: d,
+        error: "الرقم الضريبي غير صحيح — 15 رقمًا يبدأ وينتهي بالرقم 3"
+    };
+    return {
+        ok: true,
+        value: d
+    };
+}
+
+function acnSupCols(r) {
+    if (!r || typeof r !== "object" || !("tax_invoice" in r)) return {};
+    return {
+        vatNumber: acnSupDigits(r.vat_number),
+        taxInvoice: acnSupInvoice(r.tax_invoice)
+    };
+}
+
+function acnSupCopyCols(target, row) {
+    const c = acnSupCols(row);
+    if (target && "taxInvoice" in c) {
+        target.vatNumber = c.vatNumber;
+        target.taxInvoice = c.taxInvoice;
+    }
+    return target;
+}
+
+function acnSupSaveCols(s) {
+    const out = {};
+    if (!s) return out;
+    if (s.vatNumber !== undefined) {
+        const d = acnSupDigits(s.vatNumber);
+        out.vat_number = acnSupVatOk(d) ? d : "";
+    }
+    if (s.taxInvoice !== undefined) out.tax_invoice = acnSupInvoice(s.taxInvoice);
+    return out;
+}
+
+function acnSupSaveAllCols(s) {
+    const d = acnSupDigits(s && s.vatNumber);
+    return {
+        vat_number: acnSupVatOk(d) ? d : "",
+        tax_invoice: acnSupInvoice(s && s.taxInvoice)
+    };
+}
+
+function acnSupChipHtml(s) {
+    const v = acnSupInvoice(s && s.taxInvoice), vat = acnSupDigits(s && s.vatNumber);
+    const tip = vat ? ' title="' + escapeHtml("الرقم الضريبي: " + vat) + '"' : "";
+    if (v === "yes") return '<span class="stamp stamp-green"' + tip + ">🧾 فاتورة نظامية</span>";
+    if (v === "no") return '<span class="stamp stamp-rust"' + tip + ">بلا فاتورة نظامية</span>";
+    return '<span class="expense-entry-view-date"' + tip + ">الفاتورة غير محددة</span>";
+}
+
+function acnSupEditHtml(s) {
+    const v = acnSupInvoice(s && s.taxInvoice);
+    const chip = function(val, label) {
+        return '<button type="button" class="chip' + (v === val ? " chip-active" : "") + '" data-acn-sup-inv="' + val + '">' + label + "</button>";
+    };
+    return '<label class="mini-label">الرقم الضريبي للمورّد' + '<input type="text" class="search-input acn-sup-vat" inputmode="numeric" dir="ltr" placeholder="15 رقمًا يبدأ وينتهي بالرقم 3" value="' + escapeHtml(acnSupDigits(s && s.vatNumber)) + '">' + "</label>" + '<div class="mini-label">يصدر فاتورة ضريبية نظامية للشركة؟' + '<div class="filter-chips acn-sup-inv">' + chip("yes", "نعم") + chip("no", "لا") + chip("", "غير محدد") + "</div>" + "</div>";
+}
+
+function acnSupBindRow(row, getSupplier) {
+    if (!row || typeof getSupplier !== "function") return;
+    const vatInp = row.querySelector(".acn-sup-vat");
+    if (vatInp) {
+        vatInp.addEventListener("change", async function(e) {
+            const s = getSupplier();
+            const res = acnSupVatInput(e.target.value);
+            if (!res.ok) {
+                showToast(res.error, "error");
+                refreshSuppliersList();
+                return;
+            }
+            if (res.value === acnSupDigits(s.vatNumber)) {
+                e.target.value = res.value;
+                return;
+            }
+            const prev = {
+                vatNumber: s.vatNumber
+            };
+            s.vatNumber = res.value;
+            await persistFieldOrRevert(s, prev, persistSupplier, refreshSuppliersList);
+        });
+    }
+    row.querySelectorAll("[data-acn-sup-inv]").forEach(function(btn) {
+        btn.addEventListener("click", async function() {
+            const s = getSupplier();
+            const val = acnSupInvoice(btn.getAttribute("data-acn-sup-inv"));
+            if (val === acnSupInvoice(s.taxInvoice)) return;
+            const prev = {
+                taxInvoice: s.taxInvoice
+            };
+            s.taxInvoice = val;
+            btn.parentNode.querySelectorAll("[data-acn-sup-inv]").forEach(function(b) {
+                b.classList.toggle("chip-active", b === btn);
+            });
+            await persistFieldOrRevert(s, prev, persistSupplier, refreshSuppliersList);
+        });
+    });
 }
 
 const TRACK_STAGES = [ {
