@@ -675,6 +675,10 @@
   .netp-sup-tag:empty{display:none;}
   .netp-sup-tag[data-tax="yes"]{color:var(--green);background:var(--green-dim);border-color:var(--green-line);}
   .netp-sup-tag[data-tax="no"]{color:var(--rust);background:var(--rust-dim);border-color:var(--rust-line);}
+  /* العلامة القابلة للنقر (استثناء «بلا فاتورة هذه المرة»): مساحة نقر أوسع غير مرئية (≈ 28px ارتفاعًا)، وحدّ متقطّع للاستثناء */
+  .netp-sup-tag[data-netp-toggle="1"]{pointer-events:auto;cursor:pointer;}
+  .netp-sup-tag[data-netp-toggle="1"]::before{content:'';position:absolute;inset:-9px -6px -4px;}
+  .netp-sup-tag[data-over="1"]{border-style:dashed;}
   /* جوال (≤600px، نافذة الطلبية): حين توجد خلية الربح يصير صف الأسعار أربع خلايا متساوية بصف واحد (العدد، الشراء، البيع، الربح) بدل ثلاث، والمورد سطرًا كاملًا تحتها، والأزرار بنفس القسمة (اثنا عشر عمودًا بدل ستة) — بلا خلية ربح تبقى شبكة TRACK كما هي */
   @media (max-width:600px){
     .trk-pr:not(.trk-prq) .part-row:not(.part-row-returned) > .part-price-group:has(> .netp-slot > .netp-cell){grid-template-columns:repeat(12,minmax(0,1fr)) !important;}
@@ -5973,7 +5977,15 @@ function netpElevated() {
     }
 }
 
+function netpOver(p) {
+    return !!(p && p.supplierId && p.noTaxInvoiceFor && p.noTaxInvoiceFor === p.supplierId);
+}
+
 function netpMode(p) {
+    return netpOver(p) ? "no" : netpBaseMode(p);
+}
+
+function netpBaseMode(p) {
     try {
         if (!p || !p.supplierId) return "";
         const list = typeof appData !== "undefined" && appData && Array.isArray(appData.suppliers) ? appData.suppliers : [];
@@ -6060,13 +6072,16 @@ function netpSupMark(row, p) {
             lab.classList.add("netp-sup-host");
             lab.appendChild(tag);
         }
-        const has = !!(p && p.supplierId), mode = has ? netpMode(p) : "";
-        const text = !has ? "" : mode === "yes" ? "🧾 نظامي" : mode === "no" ? "بلا فاتورة" : "غير محدد";
+        const has = !!(p && p.supplierId), over = netpOver(p), base = has ? netpBaseMode(p) : "", mode = over ? "no" : base;
+        const canToggle = has && (over || base !== "no");
+        const text = !has ? "" : over ? "بلا فاتورة ✱" : mode === "yes" ? "🧾 نظامي" : mode === "no" ? "بلا فاتورة" : "غير محدد";
         if (tag.textContent !== text) {
             tag.textContent = text;
-            tag.title = !has ? "" : mode === "yes" ? "المورد يصدر فاتورة ضريبية نظامية — ضريبة الشراء تُسترد" : mode === "no" ? "المورد لا يصدر فاتورة ضريبية — ضريبة الشراء لا تُسترد" : "علامة فاتورة المورد غير محددة — حساب الضريبة التلقائي متوقف (حدّدها من بطاقة المورد)";
+            tag.title = !has ? "" : over ? "استثناء لهذا الشراء فقط: لا فاتورة ضريبية — اضغط لإلغاء الاستثناء" : mode === "yes" ? "المورد نظامي — ضريبة الشراء تُسترد. اضغط إن لم يسلّمك فاتورة هذه المرة" : mode === "no" ? "المورد لا يصدر فاتورة ضريبية — ضريبة الشراء لا تُسترد" : "علامة فاتورة المورد غير محددة — حساب الضريبة التلقائي متوقف. اضغط لتسجيل هذا الشراء «بلا فاتورة»، أو حدّد علامة المورد من بطاقته";
         }
         tag.setAttribute("data-tax", has ? mode : "");
+        tag.setAttribute("data-over", over ? "1" : "");
+        tag.setAttribute("data-netp-toggle", canToggle ? "1" : "");
     } catch (e) {
         console.warn("netpSupMark:", e);
     }
@@ -6237,6 +6252,23 @@ function netpOnFeeInput(e) {
     }
 }
 
+function netpOnTagClick(e) {
+    try {
+        const t = e && e.target;
+        const tag = t && t.closest ? t.closest('[data-netp-toggle="1"]') : null;
+        if (!tag) return;
+        if (typeof e.preventDefault === "function") e.preventDefault();
+        const row = tag.closest ? tag.closest(".part-row") : null;
+        const pid = row ? row.getAttribute("data-part-id") : null;
+        const p = typeof draft !== "undefined" && draft && Array.isArray(draft.parts) ? draft.parts.find(x => x && x.id === pid) : null;
+        if (!p || !p.supplierId) return;
+        if (netpOver(p)) delete p.noTaxInvoiceFor; else p.noTaxInvoiceFor = p.supplierId;
+        if (typeof updateModalTotals === "function") updateModalTotals(); else netpRefresh();
+    } catch (err) {
+        console.warn("netpOnTagClick:", err);
+    }
+}
+
 function netpOnInput(e) {
     try {
         const t = e && e.target;
@@ -6308,6 +6340,7 @@ function netpEnsureDelegate() {
         root._netpBound = true;
         root.addEventListener("input", netpOnInput);
         root.addEventListener("input", netpOnFeeInput);
+        root.addEventListener("click", netpOnTagClick);
         root.addEventListener("click", netpOnAddClick);
         const later = () => {
             try {
