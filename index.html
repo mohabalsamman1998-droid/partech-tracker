@@ -672,6 +672,12 @@
   .netp-out{display:flex;flex-direction:column;gap:2px;font-size:12px;font-weight:700;color:var(--text-dim);}
   .netp-out b{color:var(--green);}
   .netp-hint{font-size:11.5px;font-weight:700;color:var(--text-faint);}
+  /* وقت التوريد مصغَّر بنهاية (يسار) خانة اسم القطعة بدل خانة كبيرة بسطر مستقل */
+  .netp-lead-host{position:relative;}
+  .netp-lead-host > .part-desc-input,.netp-lead-host > .field-readonly-desc{padding-inline-end:84px !important;}
+  .netp-lead{position:absolute !important;inset-inline-end:6px;top:50%;transform:translateY(-50%);margin:0 !important;gap:0 !important;width:auto !important;flex:none !important;z-index:1;}
+  .netp-lead .part-lead-input{width:70px !important;min-width:0 !important;min-height:0 !important;height:30px !important;padding:2px 6px !important;font-size:12px !important;box-sizing:border-box;}
+  .netp-lead .part-lead-badge{min-height:0 !important;width:auto !important;padding:2px 8px !important;font-size:11.5px !important;}
   .netp-net-line{margin-top:8px;font-size:12.5px;font-weight:800;color:var(--text-dim);}
   .netp-net-line:empty{display:none;}
   .netp-net-line b:not(.text-rust){color:var(--green);}
@@ -6052,6 +6058,27 @@ function netpNetLineHtml() {
     return '<div class="netp-net-line" id="netp-net-line"></div>';
 }
 
+function netpLeadCompact(row) {
+    try {
+        const lead = row && row.querySelector ? row.querySelector(".part-price-group > .mini-label-lead") : null;
+        const host = row && row.querySelector ? row.querySelector(".part-desc-row") : null;
+        if (!lead || !host) return;
+        Array.from(lead.childNodes).forEach(n => {
+            if (n.nodeType === 3) {
+                lead.title = (lead.title || n.textContent || "").trim();
+                n.textContent = "";
+            }
+        });
+        const inp = lead.querySelector ? lead.querySelector(".part-lead-input") : null;
+        if (inp && !inp.title) inp.title = "وقت التوريد (أيام)";
+        lead.classList.add("netp-lead");
+        host.classList.add("netp-lead-host");
+        host.appendChild(lead);
+    } catch (e) {
+        console.warn("netpLeadCompact:", e);
+    }
+}
+
 function netpRefresh() {
     try {
         if (typeof draft === "undefined" || !draft || !Array.isArray(draft.parts)) return;
@@ -6060,6 +6087,7 @@ function netpRefresh() {
         Array.from(root.querySelectorAll("[data-netp-slot]")).forEach(slot => {
             const p = draft.parts.find(x => x && x.id === slot.getAttribute("data-netp-slot"));
             const row = slot.closest ? slot.closest(".part-row") : null;
+            netpLeadCompact(row);
             const s = p && row && row.querySelector(".part-sell-input") ? netpState(p) : null;
             const sig = s ? s.hint ? "hint" : s.mode : "";
             if (slot.getAttribute("data-netp-sig") !== sig) {
