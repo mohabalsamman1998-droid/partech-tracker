@@ -663,6 +663,20 @@
   .cpy-hint{margin:0;font-size:12.5px;color:var(--amber);}
   .cpy-parts.cpy-hidden,.cpy-hint.cpy-hidden{display:none;}
 /* CPY END css */
+/* NETP BEGIN css */
+  /* خانة «سعر الشراء + ربحك» وسطر «الربح الصافي بعد الضريبة» بنافذة الطلبية (NETP، 2026-11-05): الخانة بعرض الصف كاملًا بالتخطيط العادي وبشبكة TRACK، بنفس مظهر خانات الأسعار */
+  .netp-slot{flex:1 1 100%;grid-column:1 / -1;display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px;}
+  .netp-slot:empty{display:none;}
+  .netp-t{width:104px;background:var(--bg);border:1px solid var(--green-line);color:var(--green);padding:8px 8px;border-radius:6px;font-size:13px;font-weight:700;}
+  .netp-t:focus{outline:none;border-color:var(--green);}
+  .netp-out{display:flex;flex-direction:column;gap:2px;font-size:12px;font-weight:700;color:var(--text-dim);}
+  .netp-out b{color:var(--green);}
+  .netp-hint{font-size:11.5px;font-weight:700;color:var(--text-faint);}
+  .netp-net-line{margin-top:8px;font-size:12.5px;font-weight:800;color:var(--text-dim);}
+  .netp-net-line:empty{display:none;}
+  .netp-net-line b:not(.text-rust){color:var(--green);}
+  .modal-card.trk-payo .section-sales > .netp-net-line{order:1;}
+/* NETP END css */
   .quote-priority-controls{display:flex;flex-direction:column;gap:2px;flex-shrink:0;}
   .quote-priority-btn{
     background:transparent;border:1px solid var(--border);color:var(--text-faint);
@@ -5912,6 +5926,172 @@ function qdupRun() {
         showToast("تعذّر تدبيل الطلبية — حاول مرة أخرى", "error");
     } finally {
         if (swapped) modalCloseCallback = cb;
+    }
+}
+
+function netpR2(x) {
+    return Math.round(Number(x) * 100 + 1e-7) / 100;
+}
+
+function netpElevated() {
+    try {
+        return typeof hasElevatedAccess === "function" && !!hasElevatedAccess();
+    } catch (e) {
+        return false;
+    }
+}
+
+function netpMode(p) {
+    try {
+        const list = typeof appData !== "undefined" && appData && Array.isArray(appData.suppliers) ? appData.suppliers : [];
+        const s = p && p.supplierId ? list.find(x => x && x.id === p.supplierId) : null;
+        return s && (s.taxInvoice === "yes" || s.taxInvoice === "no") ? s.taxInvoice : "";
+    } catch (e) {
+        return "";
+    }
+}
+
+function netpSell(c, T, mode) {
+    return netpR2(mode === "yes" ? c + (T - c) * 1.15 : T * 1.15);
+}
+
+function netpTotal(c, F, mode) {
+    return netpR2(mode === "yes" ? c + (F - c) / 1.15 : F / 1.15);
+}
+
+function netpNet(c, F, mode) {
+    return netpR2(mode === "yes" ? (F - c) / 1.15 : F / 1.15 - c);
+}
+
+function netpState(p) {
+    if (!p || p.returned) return null;
+    const c = Number(p.costPrice) || 0, mode = netpMode(p);
+    if (!mode) return p.supplierId && c > 0 && netpElevated() ? {
+        hint: true
+    } : null;
+    if (!(c > 0)) return null;
+    const has = p.sellPrice !== null && p.sellPrice !== undefined && p.sellPrice !== "", F = has ? Number(p.sellPrice) || 0 : null;
+    return {
+        mode: mode,
+        c: c,
+        F: F,
+        T: has ? netpTotal(c, F, mode) : null,
+        net: has ? netpNet(c, F, mode) : null
+    };
+}
+
+function netpOutHtml(s) {
+    if (s.F === null) return "<span>اكتب الرقم فيظهر هنا ما يدفعه الزبون</span>";
+    return '<span>يدفع الزبون <b class="num">' + escapeHtml(modalMoney(s.F)) + "</b></span>" + '<span>ربحك الصافي <b class="num">' + escapeHtml(modalMoney(s.net)) + "</b>" + (netpElevated() ? " · " + (s.mode === "yes" ? "بفاتورة ضريبية" : "بدون فاتورة ضريبية") : "") + "</span>";
+}
+
+function netpInnerHtml(p) {
+    const s = netpState(p);
+    if (!s) return "";
+    if (s.hint) return '<span class="netp-hint">⚠️ علامة فاتورة المورد غير محددة — حساب الضريبة التلقائي متوقف</span>';
+    return '<label class="mini-label mini-label-sell">سعر الشراء + ربحك<input type="number" min="0" step="0.01" inputmode="decimal" class="netp-t num" data-netp-t="' + escapeHtml(p.id) + '" placeholder="—" value="' + (s.T === null ? "" : escapeHtml(String(s.T))) + '"></label>' + '<div class="netp-out">' + netpOutHtml(s) + "</div>";
+}
+
+function netpOrderNet(d) {
+    const t = orderTotals(d);
+    if (!(t.profitCounted && t.hasChargeable)) return null;
+    const vatOut = computeVatAmount(t.sellTotal);
+    let vatIn = 0;
+    orderActiveParts(d).forEach(p => {
+        if (p && !p.returned && netpMode(p) === "yes") vatIn += computeVatAmount((Number(p.qty) || 1) * (Number(p.costPrice) || 0));
+    });
+    return {
+        net: netpR2(t.profit - (vatOut - vatIn)),
+        vatOut: vatOut,
+        vatIn: netpR2(vatIn)
+    };
+}
+
+function netpSlotHtml(p) {
+    netpEnsureDelegate();
+    return '<div class="netp-slot" data-netp-slot="' + escapeHtml(p.id) + '"></div>';
+}
+
+function netpNetLineHtml() {
+    netpEnsureDelegate();
+    return '<div class="netp-net-line" id="netp-net-line"></div>';
+}
+
+function netpRefresh() {
+    try {
+        if (typeof draft === "undefined" || !draft || !Array.isArray(draft.parts)) return;
+        const root = document.getElementById("modal-root");
+        if (!root || !root.querySelectorAll) return;
+        Array.from(root.querySelectorAll("[data-netp-slot]")).forEach(slot => {
+            const p = draft.parts.find(x => x && x.id === slot.getAttribute("data-netp-slot"));
+            const row = slot.closest ? slot.closest(".part-row") : null;
+            const s = p && row && row.querySelector(".part-sell-input") ? netpState(p) : null;
+            const sig = s ? s.hint ? "hint" : s.mode : "";
+            if (slot.getAttribute("data-netp-sig") !== sig) {
+                slot.innerHTML = s ? netpInnerHtml(p) : "";
+                slot.setAttribute("data-netp-sig", sig);
+                return;
+            }
+            if (!s || s.hint) return;
+            const out = slot.querySelector(".netp-out");
+            if (out) out.innerHTML = netpOutHtml(s);
+            const ti = slot.querySelector(".netp-t");
+            if (ti) {
+                const typed = String(ti.value).trim();
+                const same = s.F === null ? typed === "" : typed !== "" && netpSell(s.c, Math.max(0, Number(typed) || 0), s.mode) === s.F;
+                if (!same && ti !== document.activeElement) ti.value = s.T === null ? "" : String(s.T);
+            }
+        });
+        const el = document.getElementById("netp-net-line");
+        if (el) {
+            const r = netpOrderNet(draft);
+            el.innerHTML = r ? 'الربح الصافي بعد الضريبة (تقديري): <b class="num' + (r.net < 0 ? " text-rust" : "") + '">' + escapeHtml(modalMoney(r.net)) + "</b>" : "";
+            el.title = r ? "الضريبة المستخرجة من إجمالي الزبون ناقص ضريبة الشراء المستردّة (لموردين علامتهم «فاتورة نظامية: نعم» فقط)" : "";
+        }
+    } catch (e) {
+        console.warn("netpRefresh:", e);
+    }
+}
+
+function netpOnInput(e) {
+    try {
+        const t = e && e.target;
+        if (!t || !t.classList || !t.classList.contains("netp-t")) return;
+        if (typeof draft === "undefined" || !draft) return;
+        const part = (draft.parts || []).find(x => x && x.id === t.getAttribute("data-netp-t"));
+        const row = t.closest ? t.closest(".part-row") : null;
+        const sellInput = row ? row.querySelector(".part-sell-input") : null;
+        const mode = netpMode(part), c = part ? Number(part.costPrice) || 0 : 0;
+        if (!part || !sellInput || !mode || !(c > 0)) return;
+        const raw = String(t.value).trim();
+        const F = raw === "" ? "" : netpSell(c, Math.max(0, Number(raw) || 0), mode);
+        sellInput.value = F === "" ? "" : String(F);
+        if (typeof sellInput.dispatchEvent === "function" && typeof Event === "function") sellInput.dispatchEvent(new Event("input", {
+            bubbles: true
+        })); else {
+            part.sellPrice = F === "" ? null : F;
+            updateModalTotals();
+        }
+    } catch (err) {
+        console.warn("netpOnInput:", err);
+    }
+}
+
+function netpEnsureDelegate() {
+    try {
+        const root = document.getElementById("modal-root");
+        if (!root || root._netpBound) return;
+        root._netpBound = true;
+        root.addEventListener("input", netpOnInput);
+        const later = () => {
+            try {
+                setTimeout(netpRefresh, 0);
+            } catch (e) {}
+        };
+        root.addEventListener("click", later);
+        root.addEventListener("change", later);
+    } catch (e) {
+        console.warn("netpEnsureDelegate:", e);
     }
 }
 
@@ -11965,7 +12145,7 @@ function partRowHtml(p, i) {
     })), p.supplierId, p.used ? "— بدون تشليح —" : "— بدون مورد —");
     const excludeProposal = pendingPartActionProposal("part_exclude", p.id);
     const includeCheckHtml = !selectionOn ? "" : excludeProposal ? editProposalPendingHtml(excludeProposal) : '<input type="checkbox" class="part-include-check" ' + (included ? "checked" : "") + ' title="مشمولة بالطلبية">';
-    return '<div class="part-row' + (selectionOn && !included ? " part-row-excluded" : "") + '" data-part-id="' + escapeHtml(p.id) + '">' + includeCheckHtml + '<div class="part-desc-wrap">' + '<div class="part-desc-row">' + '<span class="part-index-badge">' + ((i != null ? i : 0) + 1) + "</span>" + descHtml + "</div>" + (typeof partNumberRowHtml === "function" ? partNumberRowHtml(p, draft) : "") + usedBadgeHtml + partConditionBadgeHtml(p) + (typeof acnSupWarnHtml === "function" ? acnSupWarnHtml(p, hasElevatedAccess()) : "") + (draft ? partSupplyStampHtml(draft, p) : "") + (draft && hasElevatedAccess() ? partPayStampHtml(p) : "") + (draft ? mediaStripHtml(draft.id, p.id, "edit") : "") + "</div>" + '<div class="part-price-group">' + '<label class="mini-label">العدد' + qtyHtml + "</label>" + '<label class="mini-label mini-label-cost">سعر الشراء' + costHtml + "</label>" + '<label class="mini-label mini-label-sell">سعر البيع' + sellHtml + "</label>" + (hasElevatedAccess() ? '<label class="mini-label mini-label-supplier">' + (p.used ? "التشليح" : "المورد") + supplierFieldHtml + "</label>" : "") + partLeadFieldHtml(p, draft, hasElevatedAccess()) + "</div>" + '<button type="button" class="part-remove-btn" data-part-actions="' + escapeHtml(p.id) + '" aria-label="خيارات القطعة (حذف أو إرجاع)">⋯</button>' + "</div>";
+    return '<div class="part-row' + (selectionOn && !included ? " part-row-excluded" : "") + '" data-part-id="' + escapeHtml(p.id) + '">' + includeCheckHtml + '<div class="part-desc-wrap">' + '<div class="part-desc-row">' + '<span class="part-index-badge">' + ((i != null ? i : 0) + 1) + "</span>" + descHtml + "</div>" + (typeof partNumberRowHtml === "function" ? partNumberRowHtml(p, draft) : "") + usedBadgeHtml + partConditionBadgeHtml(p) + (typeof acnSupWarnHtml === "function" ? acnSupWarnHtml(p, hasElevatedAccess()) : "") + (draft ? partSupplyStampHtml(draft, p) : "") + (draft && hasElevatedAccess() ? partPayStampHtml(p) : "") + (draft ? mediaStripHtml(draft.id, p.id, "edit") : "") + "</div>" + '<div class="part-price-group">' + '<label class="mini-label">العدد' + qtyHtml + "</label>" + '<label class="mini-label mini-label-cost">سعر الشراء' + costHtml + "</label>" + '<label class="mini-label mini-label-sell">سعر البيع' + sellHtml + "</label>" + (hasElevatedAccess() ? '<label class="mini-label mini-label-supplier">' + (p.used ? "التشليح" : "المورد") + supplierFieldHtml + "</label>" : "") + partLeadFieldHtml(p, draft, hasElevatedAccess()) + (typeof netpSlotHtml === "function" ? netpSlotHtml(p) : "") + "</div>" + '<button type="button" class="part-remove-btn" data-part-actions="' + escapeHtml(p.id) + '" aria-label="خيارات القطعة (حذف أو إرجاع)">⋯</button>' + "</div>";
 }
 
 function costSplitLockAttr(d, settled, supplyReason) {
@@ -15051,7 +15231,7 @@ function syncDraftCarFromOrder(order) {
 }
 
 function modalHtml(d) {
-    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلبية جديدة" : "تعديل الطلبية") + '</div><div class="modal-sub">البيانات تُحفظ تلقائيًا عند الضغط على حفظ</div></div>' + '<div style="display:flex;gap:8px;align-items:flex-start;">' + '<span id="modal-edit-toggle-wrap">' + editModeToggleButtonHtml(d) + "</span>" + '<button class="icon-btn" id="modal-close-btn" aria-label="إغلاق">✕</button>' + "</div></div>" + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + (typeof taxinvModalBannerHtml === "function" ? taxinvModalBannerHtml(d) : "") + '<label class="field"><span class="field-label">رقم الطلب (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + '<div class="field">' + '<span class="field-label">العميل (اختياري)</span>' + '<div class="phone-field-row">' + '<div id="order-customer-select" style="flex:1;">' + orderCustomerFieldHtml(d) + "</div>" + '<button type="button" class="icon-btn" id="order-add-customer-btn" aria-label="عميل جديد">➕</button>' + "</div>" + "</div>" + carFieldHtml(d, "edit", "order") + '<div class="field">' + '<div class="field-label-row">' + '<span class="field-label">الطلبية</span>' + '<button type="button" id="btn-toggle-part-selection" class="chip' + (d.partsSelectionEnabled ? " chip-active" : "") + '">🎯 تحديد القطع' + (d.partsSelectionEnabled ? " (مفعّل)" : "") + "</button>" + '<button type="button" id="order-add-supplier-btn" class="chip">➕ مورد جديد</button>' + "</div>" + '<input type="text" id="order-label-input" placeholder="مثال: اسم الزبون / أي وصف مختصر" value="' + escapeHtml(d.orderLabel || "") + '">' + "</div>" + vinFieldHtml(d, "edit", "order") + mediaOrderBlockHtml(d.id, "order", currentUserRole === "full") + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span>' + orderMultiSourceHintHtml(d) + '<span id="supply-progress-wrap">' + supplyProgressHintHtml(d) + "</span></div>" + '<div id="parts-list" class="parts-list">' + d.parts.map(partRowHtml).join("") + "</div>" + '<div id="part-type-gate-wrap">' + partAddControlsHtml() + "</div>" + feeFieldRowHtml(d) + "</div>" + (typeof acct2ModalDocsHtml === "function" ? acct2ModalDocsHtml(d) : "") + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">قسم المبيعات — التسعير والتحصيل</span></div>' + '<div class="totals-row">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="total-cost-display">0 ر.س</span></div>' + '<div class="total-box"><span>مستحق من الزبون</span><span class="num text-green" id="total-sell-display">0 ر.س</span></div>' + '<div class="total-box"><span>الربح</span><span class="num" id="total-profit-display">0 ر.س</span><span class="total-box-sub" id="total-profit-sub"></span></div>' + "</div>" + (hasElevatedAccess() ? '<div id="cost-split-row-wrap">' + costSplitButtonsHtml(d, orderTotals(d)) + "</div>" : "") + '<div class="payments-block customer-pay-block">' + '<div class="pay-block-head"><span class="pay-block-titles"><span class="section-title">دفعات الزبون</span><span class="pay-block-tag pay-tag-in">واردة</span></span></div>' + '<div id="payments-list" class="payments-list">' + paymentsListInnerHtml() + "</div>" + '<button type="button" id="add-payment-btn" class="btn btn-ghost btn-sm">+ إضافة دفعة</button>' + '<div class="payment-summary-row">' + '<span>إجمالي المدفوع<span class="num" id="total-paid-display">0 ر.س</span></span>' + '<span><span id="customer-remaining-label">المتبقي عليه</span><span class="num payment-remaining-display" id="customer-remaining-display">0 ر.س</span></span>' + "</div>" + '<div id="customer-refund-status-wrap">' + orderCustomerRefundStatusHtml(d) + "</div>" + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + '<div id="order-action-buttons-wrap">' + orderActionButtonsHtml(d) + "</div>" + '<div class="parts-clipboard-mini">' + '<button type="button" class="btn-clip-mini" id="copy-parts-btn">📋 نسخ</button>' + '<button type="button" class="btn-clip-mini" id="paste-parts-btn">📥 لصق</button>' + "</div>" + "</div>" + (!d.isNew ? '<div class="modal-footer-docs"><button type="button" class="btn btn-ghost btn-sm" id="modal-quote-btn">🧾 عرض سعر</button><button type="button" class="btn btn-ghost btn-sm" id="modal-invoice-btn">' + (typeof taxinvInvoiceBtnLabel === "function" ? taxinvInvoiceBtnLabel(d) : "🧾 فاتورة") + "</button></div>" : "<span></span>") + '<div class="modal-footer-actions">' + '<button type="button" class="btn btn-ghost" id="modal-cancel-btn">إلغاء</button>' + (!d.isNew ? '<button type="button" class="btn btn-ghost" id="modal-return-to-quote-btn">إرجاع للتسعير</button>' : "") + (typeof cpyModalBtnHtml === "function" ? cpyModalBtnHtml(d) : "") + '<span id="supply-request-btn-wrap" class="supply-request-btn-wrap">' + supplyRequestButtonHtml(d) + "</span>" + suppliedButtonHtml(d) + '<button type="button" class="btn btn-primary" id="modal-save-btn">حفظ الطلبية</button>' + "</div>" + "</div>" + "</div>" + "</div>";
+    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلبية جديدة" : "تعديل الطلبية") + '</div><div class="modal-sub">البيانات تُحفظ تلقائيًا عند الضغط على حفظ</div></div>' + '<div style="display:flex;gap:8px;align-items:flex-start;">' + '<span id="modal-edit-toggle-wrap">' + editModeToggleButtonHtml(d) + "</span>" + '<button class="icon-btn" id="modal-close-btn" aria-label="إغلاق">✕</button>' + "</div></div>" + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + (typeof taxinvModalBannerHtml === "function" ? taxinvModalBannerHtml(d) : "") + '<label class="field"><span class="field-label">رقم الطلب (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + '<div class="field">' + '<span class="field-label">العميل (اختياري)</span>' + '<div class="phone-field-row">' + '<div id="order-customer-select" style="flex:1;">' + orderCustomerFieldHtml(d) + "</div>" + '<button type="button" class="icon-btn" id="order-add-customer-btn" aria-label="عميل جديد">➕</button>' + "</div>" + "</div>" + carFieldHtml(d, "edit", "order") + '<div class="field">' + '<div class="field-label-row">' + '<span class="field-label">الطلبية</span>' + '<button type="button" id="btn-toggle-part-selection" class="chip' + (d.partsSelectionEnabled ? " chip-active" : "") + '">🎯 تحديد القطع' + (d.partsSelectionEnabled ? " (مفعّل)" : "") + "</button>" + '<button type="button" id="order-add-supplier-btn" class="chip">➕ مورد جديد</button>' + "</div>" + '<input type="text" id="order-label-input" placeholder="مثال: اسم الزبون / أي وصف مختصر" value="' + escapeHtml(d.orderLabel || "") + '">' + "</div>" + vinFieldHtml(d, "edit", "order") + mediaOrderBlockHtml(d.id, "order", currentUserRole === "full") + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span>' + orderMultiSourceHintHtml(d) + '<span id="supply-progress-wrap">' + supplyProgressHintHtml(d) + "</span></div>" + '<div id="parts-list" class="parts-list">' + d.parts.map(partRowHtml).join("") + "</div>" + '<div id="part-type-gate-wrap">' + partAddControlsHtml() + "</div>" + feeFieldRowHtml(d) + "</div>" + (typeof acct2ModalDocsHtml === "function" ? acct2ModalDocsHtml(d) : "") + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">قسم المبيعات — التسعير والتحصيل</span></div>' + '<div class="totals-row">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="total-cost-display">0 ر.س</span></div>' + '<div class="total-box"><span>مستحق من الزبون</span><span class="num text-green" id="total-sell-display">0 ر.س</span></div>' + '<div class="total-box"><span>الربح</span><span class="num" id="total-profit-display">0 ر.س</span><span class="total-box-sub" id="total-profit-sub"></span></div>' + "</div>" + (typeof netpNetLineHtml === "function" ? netpNetLineHtml() : "") + (hasElevatedAccess() ? '<div id="cost-split-row-wrap">' + costSplitButtonsHtml(d, orderTotals(d)) + "</div>" : "") + '<div class="payments-block customer-pay-block">' + '<div class="pay-block-head"><span class="pay-block-titles"><span class="section-title">دفعات الزبون</span><span class="pay-block-tag pay-tag-in">واردة</span></span></div>' + '<div id="payments-list" class="payments-list">' + paymentsListInnerHtml() + "</div>" + '<button type="button" id="add-payment-btn" class="btn btn-ghost btn-sm">+ إضافة دفعة</button>' + '<div class="payment-summary-row">' + '<span>إجمالي المدفوع<span class="num" id="total-paid-display">0 ر.س</span></span>' + '<span><span id="customer-remaining-label">المتبقي عليه</span><span class="num payment-remaining-display" id="customer-remaining-display">0 ر.س</span></span>' + "</div>" + '<div id="customer-refund-status-wrap">' + orderCustomerRefundStatusHtml(d) + "</div>" + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + '<div id="order-action-buttons-wrap">' + orderActionButtonsHtml(d) + "</div>" + '<div class="parts-clipboard-mini">' + '<button type="button" class="btn-clip-mini" id="copy-parts-btn">📋 نسخ</button>' + '<button type="button" class="btn-clip-mini" id="paste-parts-btn">📥 لصق</button>' + "</div>" + "</div>" + (!d.isNew ? '<div class="modal-footer-docs"><button type="button" class="btn btn-ghost btn-sm" id="modal-quote-btn">🧾 عرض سعر</button><button type="button" class="btn btn-ghost btn-sm" id="modal-invoice-btn">' + (typeof taxinvInvoiceBtnLabel === "function" ? taxinvInvoiceBtnLabel(d) : "🧾 فاتورة") + "</button></div>" : "<span></span>") + '<div class="modal-footer-actions">' + '<button type="button" class="btn btn-ghost" id="modal-cancel-btn">إلغاء</button>' + (!d.isNew ? '<button type="button" class="btn btn-ghost" id="modal-return-to-quote-btn">إرجاع للتسعير</button>' : "") + (typeof cpyModalBtnHtml === "function" ? cpyModalBtnHtml(d) : "") + '<span id="supply-request-btn-wrap" class="supply-request-btn-wrap">' + supplyRequestButtonHtml(d) + "</span>" + suppliedButtonHtml(d) + '<button type="button" class="btn btn-primary" id="modal-save-btn">حفظ الطلبية</button>' + "</div>" + "</div>" + "</div>" + "</div>";
 }
 
 function openModal(mode, orderId, opts) {
@@ -17774,6 +17954,7 @@ function updateModalTotals() {
         refundStatusWrap.innerHTML = orderCustomerRefundStatusHtml(draft);
         bindOrderRefundConfirmButton();
     }
+    if (typeof netpRefresh === "function") netpRefresh();
 }
 
 function bindOrderRefundConfirmButton() {
