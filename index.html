@@ -5836,6 +5836,85 @@ function cpyDoCopy(snap, ids) {
     }
 }
 
+function qdupBtnHtml(d, isPurchasing) {
+    if (!d || d.isNew || isPurchasing || currentUserRole !== "full") return "";
+    qdupEnsureDelegate();
+    return '<button type="button" class="btn btn-ghost" id="quote-dup-btn" title="فتح طلب تسعير جديد بنفس السيارة والعميل والقطع (بدون أسعار)">📑 تدبيل الطلبية</button>';
+}
+
+function qdupEnsureDelegate() {
+    try {
+        const root = document.getElementById("modal-root");
+        if (!root || root._qdupBound) return;
+        root._qdupBound = true;
+        root.addEventListener("click", e => {
+            const t = e && e.target;
+            if (t && t.closest && t.closest("#quote-dup-btn")) qdupRun();
+        });
+    } catch (e) {
+        console.warn("qdupEnsureDelegate:", e);
+    }
+}
+
+function qdupSnapshot(d) {
+    const snap = {
+        sourceNumber: d.orderNumber || "",
+        parts: []
+    };
+    [ "orderLabel", "customerPhone", "customerId", "car", "vin" ].forEach(k => {
+        if (d[k] !== undefined) snap[k] = JSON.parse(JSON.stringify(d[k]));
+    });
+    (typeof orderActiveParts === "function" ? orderActiveParts(d) : d.parts || []).forEach(p => {
+        if (!p || p.returned || !String(p.description || "").trim()) return;
+        const c = {};
+        [ "description", "qty", "used", "notes", "partNumber" ].forEach(k => {
+            if (p[k] !== undefined) c[k] = p[k];
+        });
+        snap.parts.push(c);
+    });
+    return snap;
+}
+
+function qdupRun() {
+    let cb = null, swapped = false;
+    try {
+        if (typeof quoteDraft === "undefined" || !quoteDraft || quoteDraft.isNew || quoteModalRole === "purchasing") return;
+        const cr = document.getElementById("confirm-root");
+        if (cr && cr.classList.contains("modal-open") && cr.firstElementChild) return;
+        const snap = qdupSnapshot(quoteDraft);
+        cb = modalCloseCallback;
+        modalCloseCallback = null;
+        swapped = true;
+        closeQuoteModal();
+        openQuoteModal("create", null, undefined, {
+            car: snap.car,
+            vin: snap.vin
+        });
+        if (!quoteDraft) return;
+        [ "orderLabel", "customerPhone", "customerId" ].forEach(k => {
+            if (snap[k] !== undefined) quoteDraft[k] = snap[k];
+        });
+        quoteDraft.parts = snap.parts.map(p => Object.assign({
+            id: uid("p"),
+            qty: 1,
+            costPrice: "",
+            sellPrice: null,
+            used: false,
+            supplierId: null
+        }, p));
+        const root = document.getElementById("modal-root");
+        root.innerHTML = quoteModalHtml(quoteDraft);
+        attachQuoteModalHandlers();
+        updateQuoteModalTotals();
+        showToast("فُتح طلب تسعير جديد " + quoteDraft.orderNumber + " بنسخة من " + (snap.sourceNumber || "الطلب") + " — راجعه ثم احفظه", "ok");
+    } catch (e) {
+        console.warn("qdupRun:", e);
+        showToast("تعذّر تدبيل الطلبية — حاول مرة أخرى", "error");
+    } finally {
+        if (swapped) modalCloseCallback = cb;
+    }
+}
+
 function supplyFirstAtIso(o) {
     const a = supplyCountedParts(o).filter(p => partSupplied(o, p)).map(p => partSuppliedAt(o, p)).filter(Boolean).sort();
     return a[0] || "";
@@ -21422,7 +21501,7 @@ function quoteModalHtml(d) {
     const partsControlsHtml = '<div id="quote-part-type-gate-wrap">' + quotePartAddControlsHtml() + "</div>" + (isPurchasing ? '<button type="button" class="btn btn-accent-ghost btn-sm" id="quote-supplier-search-btn" style="width:100%;margin-top:10px;">🔍 بحث عن مورد</button>' : "") + '<button type="button" class="btn btn-ghost btn-sm" id="quote-parts-catalog-btn" style="width:100%;margin-top:10px;">📚 كتالوج القطع</button>';
     const footerUtilityHtml = !isPurchasing && !d.isNew ? '<button type="button" class="btn btn-sm btn-danger-ghost" id="quote-delete-btn">🗑️ حذف طلب التسعير</button>' : "";
     const footerActionsHtml = isPurchasing ? '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-ghost" id="quote-save-btn">حفظ</button>' + '<button type="button" class="btn btn-primary" id="quote-save-send-btn">حفظ و إرسال</button>' : '<button type="button" class="btn btn-ghost" id="quote-cancel-btn">إلغاء</button>' + '<button type="button" class="btn btn-ghost" id="quote-save-btn">💾 حفظ</button>' + '<button type="button" class="btn btn-ghost" id="quote-send-btn">حفظ و اعادة طلب</button>' + '<button type="button" class="btn btn-primary" id="quote-approve-btn">✅ اعتماد</button>';
-    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلب تسعير جديد" : "تعديل طلب التسعير") + '</div><div class="modal-sub">البيانات تُحفظ عند الضغط على حفظ</div></div>' + '<button class="icon-btn" id="quote-modal-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + '<label class="field"><span class="field-label">رقم التسعيرة (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + customerFieldHtml + carFieldHtml(d, isPurchasing ? "readonly" : "edit", "quote") + labelFieldHtml + vinFieldHtml(d, isPurchasing ? "readonly" : "edit", "quote") + (typeof qrouteModalFieldHtml === "function" ? qrouteModalFieldHtml(d, isPurchasing) : "") + mediaOrderBlockHtml(d.id, "quote", !isPurchasing) + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span>' + (isPurchasing ? '<button type="button" class="btn btn-ghost btn-sm" id="quote-add-supplier-btn">➕ مورد جديد</button>' : orderMultiSourceHintHtml(d)) + "</div>" + '<div id="quote-parts-list" class="parts-list">' + quotePartsListHtml(d.parts) + "</div>" + partsControlsHtml + "</div>" + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">ملخص التكلفة</span></div>' + '<div class="totals-row" style="grid-template-columns:1fr;">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="quote-total-cost-display">0 ر.س</span></div>' + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + footerUtilityHtml + "</div>" + "<span></span>" + '<div class="modal-footer-actions">' + footerActionsHtml + "</div>" + "</div>" + "</div>" + "</div>";
+    return '<div class="modal-backdrop" data-close-backdrop>' + '<div class="modal-card" role="dialog" aria-modal="true">' + '<div class="modal-header"><div><div class="modal-title">' + (d.isNew ? "طلب تسعير جديد" : "تعديل طلب التسعير") + '</div><div class="modal-sub">البيانات تُحفظ عند الضغط على حفظ</div></div>' + '<button class="icon-btn" id="quote-modal-close-btn" aria-label="إغلاق">✕</button></div>' + '<div class="modal-body">' + (d.createdAt ? '<div class="order-date-caption">' + escapeHtml(fmtDateShort(d.createdAt)) + "</div>" : "") + '<label class="field"><span class="field-label">رقم التسعيرة (تلقائي)</span><input type="text" class="order-number-input" value="' + escapeHtml(d.orderNumber) + '" readonly></label>' + customerFieldHtml + carFieldHtml(d, isPurchasing ? "readonly" : "edit", "quote") + labelFieldHtml + vinFieldHtml(d, isPurchasing ? "readonly" : "edit", "quote") + (typeof qrouteModalFieldHtml === "function" ? qrouteModalFieldHtml(d, isPurchasing) : "") + mediaOrderBlockHtml(d.id, "quote", !isPurchasing) + '<div class="section-block">' + '<div class="section-head"><span class="section-title">تفاصيل الطلبية</span>' + (isPurchasing ? '<button type="button" class="btn btn-ghost btn-sm" id="quote-add-supplier-btn">➕ مورد جديد</button>' : orderMultiSourceHintHtml(d)) + "</div>" + '<div id="quote-parts-list" class="parts-list">' + quotePartsListHtml(d.parts) + "</div>" + partsControlsHtml + "</div>" + '<div class="section-block section-sales">' + '<div class="section-head"><span class="section-title">ملخص التكلفة</span></div>' + '<div class="totals-row" style="grid-template-columns:1fr;">' + '<div class="total-box"><span>مجموع الشراء</span><span class="num text-rust" id="quote-total-cost-display">0 ر.س</span></div>' + "</div>" + "</div>" + "</div>" + '<div class="modal-footer">' + '<div class="modal-footer-utility">' + footerUtilityHtml + "</div>" + (typeof qdupBtnHtml === "function" ? qdupBtnHtml(d, isPurchasing) : "") + "<span></span>" + '<div class="modal-footer-actions">' + footerActionsHtml + "</div>" + "</div>" + "</div>" + "</div>";
 }
 
 function quoteContentSnapshot(d) {
