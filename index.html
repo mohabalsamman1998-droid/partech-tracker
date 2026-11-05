@@ -6012,15 +6012,15 @@ function netpState(p) {
 }
 
 function netpOutHtml(s) {
-    if (s.F === null) return "<span>اكتب ربحك فيظهر هنا ما يدفعه الزبون</span>";
-    return '<span>يدفع الزبون <b class="num">' + escapeHtml(modalMoney(s.F)) + "</b>" + (netpElevated() ? " · " + (s.mode === "yes" ? "بفاتورة ضريبية" : "بدون فاتورة ضريبية") : "") + "</span>";
+    if (s.F === null) return "<span>اكتب الرقم فيظهر هنا ما يدفعه الزبون</span>";
+    return '<span>يدفع الزبون <b class="num">' + escapeHtml(modalMoney(s.F)) + "</b></span>" + '<span>ربحك الصافي <b class="num">' + escapeHtml(modalMoney(s.net)) + "</b>" + (netpElevated() ? " · " + (s.mode === "yes" ? "بفاتورة ضريبية" : "بدون فاتورة ضريبية") : "") + "</span>";
 }
 
 function netpInnerHtml(p) {
     const s = netpState(p);
     if (!s) return "";
     if (s.hint) return '<span class="netp-hint">⚠️ علامة فاتورة المورد غير محددة — حساب الضريبة التلقائي متوقف</span>';
-    return '<label class="mini-label mini-label-sell">ربحك الصافي<input type="number" min="0" step="0.01" inputmode="decimal" class="netp-t num" data-netp-t="' + escapeHtml(p.id) + '" placeholder="—" value="' + (s.net === null ? "" : escapeHtml(String(s.net))) + '"></label>' + '<div class="netp-out">' + netpOutHtml(s) + "</div>";
+    return '<label class="mini-label mini-label-sell">سعر الشراء + ربحك<input type="number" min="0" step="0.01" inputmode="decimal" class="netp-t num" data-netp-t="' + escapeHtml(p.id) + '" placeholder="—" value="' + (s.T === null ? "" : escapeHtml(String(s.T))) + '"></label>' + '<div class="netp-out">' + netpOutHtml(s) + "</div>";
 }
 
 function netpOrderNet(d) {
@@ -6073,8 +6073,8 @@ function netpRefresh() {
             const ti = slot.querySelector(".netp-t");
             if (ti) {
                 const typed = String(ti.value).trim();
-                const same = s.F === null ? typed === "" : typed !== "" && netpSell(s.c, s.c + Math.max(0, Number(typed) || 0), s.mode) === s.F;
-                if (!same && ti !== document.activeElement) ti.value = s.net === null ? "" : String(s.net);
+                const same = s.F === null ? typed === "" : typed !== "" && netpSell(s.c, Math.max(0, Number(typed) || 0), s.mode) === s.F;
+                if (!same && ti !== document.activeElement) ti.value = s.T === null ? "" : String(s.T);
             }
         });
         const el = document.getElementById("netp-net-line");
@@ -6099,7 +6099,7 @@ function netpOnInput(e) {
         const mode = netpMode(part), c = part ? Number(part.costPrice) || 0 : 0;
         if (!part || !sellInput || !mode || !(c > 0)) return;
         const raw = String(t.value).trim();
-        const F = raw === "" ? "" : netpSell(c, c + Math.max(0, Number(raw) || 0), mode);
+        const F = raw === "" ? "" : netpSell(c, Math.max(0, Number(raw) || 0), mode);
         sellInput.value = F === "" ? "" : String(F);
         if (typeof sellInput.dispatchEvent === "function" && typeof Event === "function") sellInput.dispatchEvent(new Event("input", {
             bubbles: true
