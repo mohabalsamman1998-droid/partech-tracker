@@ -6163,8 +6163,77 @@ function netpRefresh() {
             el.innerHTML = r ? 'الربح الصافي بعد الضريبة (تقديري): <b class="num' + (r.net < 0 ? " text-rust" : "") + '">' + escapeHtml(modalMoney(r.net)) + "</b>" + (netpUnknownCount(draft) > 0 ? ' <span class="muted">⚠️ بعض القطع لم يُحدَّد لها استرداد ضريبة الشراء — حُسبت بلا استرداد</span>' : "") : "";
             el.title = r ? "الضريبة المستخرجة من إجمالي الزبون ناقص ضريبة الشراء المستردّة (لموردين علامتهم «فاتورة نظامية: نعم» فقط)" : "";
         }
+        netpFeeSync();
     } catch (e) {
         console.warn("netpRefresh:", e);
+    }
+}
+
+function netpFeeKinds() {
+    return [ {
+        key: "delivery",
+        rowId: "order-delivery-fee-row",
+        inputId: "order-delivery-fee-input"
+    }, {
+        key: "service",
+        rowId: "order-service-fee-amount-row",
+        inputId: "order-service-fee-amount-input"
+    }, {
+        key: "fee",
+        rowId: "order-fee-amount-row",
+        inputId: "order-fee-amount-input"
+    } ];
+}
+
+function netpFeeGross(key, t) {
+    if (key === "delivery") return Math.max(0, Number(draft.deliveryFeeAmount) || 0);
+    return Math.max(0, Number(key === "service" ? t.serviceFeeAmount : t.feeAmount) || 0);
+}
+
+function netpFeeSync() {
+    try {
+        if (typeof draft === "undefined" || !draft) return;
+        let t = null;
+        netpFeeKinds().forEach(k => {
+            const amountRow = document.getElementById(k.rowId), input = document.getElementById(k.inputId);
+            if (!amountRow || !input || !amountRow.parentNode) return;
+            const id = "netp-fee-row-" + k.key;
+            let row = document.getElementById(id);
+            if (!row) {
+                row = document.createElement("div");
+                row.id = id;
+                row.className = "fee-percent-row netp-fee-row";
+                row.innerHTML = '<span>الصافي بعد الضريبة</span><input type="number" min="0" step="0.01" inputmode="decimal" class="netp-fn num" data-netp-fee="' + k.key + '" placeholder="0" title="ما يبقى لك من هذا الرسم بعد ضريبة القيمة المضافة 15% — اكتبه فيُحسب المبلغ على الزبون"><span>ر.س</span>';
+                amountRow.parentNode.insertBefore(row, amountRow.nextSibling);
+            }
+            row.style.display = amountRow.style && amountRow.style.display === "none" ? "none" : "";
+            const ni = row.querySelector(".netp-fn");
+            if (!ni || ni === document.activeElement) return;
+            if (t === null) t = orderTotals(draft);
+            const gross = netpFeeGross(k.key, t);
+            const typed = String(ni.value).trim();
+            const same = gross > 0 ? typed !== "" && netpR2((Number(typed) || 0) * 1.15) === netpR2(gross) : typed === "";
+            if (!same) ni.value = gross > 0 ? String(netpR2(gross / 1.15)) : "";
+        });
+    } catch (e) {
+        console.warn("netpFeeSync:", e);
+    }
+}
+
+function netpOnFeeInput(e) {
+    try {
+        const t = e && e.target;
+        if (!t || !t.classList || !t.classList.contains("netp-fn")) return;
+        const k = netpFeeKinds().find(x => x.key === t.getAttribute("data-netp-fee"));
+        const input = k ? document.getElementById(k.inputId) : null;
+        if (!input) return;
+        const raw = String(t.value).trim();
+        input.value = raw === "" ? "" : String(netpR2(Math.max(0, Number(raw) || 0) * 1.15));
+        if (typeof input.dispatchEvent === "function" && typeof Event === "function") input.dispatchEvent(new Event("input", {
+            bubbles: true
+        }));
+    } catch (err) {
+        console.warn("netpOnFeeInput:", err);
     }
 }
 
@@ -6238,6 +6307,7 @@ function netpEnsureDelegate() {
         if (!root || root._netpBound) return;
         root._netpBound = true;
         root.addEventListener("input", netpOnInput);
+        root.addEventListener("input", netpOnFeeInput);
         root.addEventListener("click", netpOnAddClick);
         const later = () => {
             try {
