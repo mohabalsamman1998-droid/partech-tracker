@@ -672,6 +672,8 @@
   .netp-out{display:flex;flex-direction:column;gap:2px;font-size:12px;font-weight:700;color:var(--text-dim);}
   .netp-out b{color:var(--green);}
   .netp-hint{font-size:11.5px;font-weight:700;color:var(--text-faint);}
+  .netp-locked{background:var(--surface-2) !important;color:var(--text-dim) !important;cursor:not-allowed;}
+  .netp-btn{align-self:flex-end;}
   .netp-net-line{margin-top:8px;font-size:12.5px;font-weight:800;color:var(--text-dim);}
   .netp-net-line:empty{display:none;}
   .netp-net-line b:not(.text-rust){color:var(--green);}
@@ -6011,8 +6013,23 @@ function netpState(p) {
     };
 }
 
-function netpOutHtml(s) {
-    if (s.F === null) return "<span>اكتب الرقم فيظهر هنا ما يدفعه الزبون</span>";
+function netpManualIs(id) {
+    const M = netpManualIs;
+    return !!(typeof draft !== "undefined" && draft && M.draftId === draft.id && M.ids && M.ids[id]);
+}
+
+function netpManualSet(id, on) {
+    const M = netpManualIs;
+    if (typeof draft === "undefined" || !draft) return;
+    if (M.draftId !== draft.id) {
+        M.draftId = draft.id;
+        M.ids = {};
+    }
+    if (on) M.ids[id] = true; else delete M.ids[id];
+}
+
+function netpOutHtml(s, manual) {
+    if (s.F === null) return "<span>" + (manual ? "اكتب السعر النهائي بخانة «سعر البيع»" : "اكتب الرقم فيظهر هنا ما يدفعه الزبون") + "</span>";
     return '<span>يدفع الزبون <b class="num">' + escapeHtml(modalMoney(s.F)) + "</b></span>" + '<span>ربحك الصافي <b class="num">' + escapeHtml(modalMoney(s.net)) + "</b>" + (netpElevated() ? " · " + (s.mode === "yes" ? "بفاتورة ضريبية" : "بدون فاتورة ضريبية") : "") + "</span>";
 }
 
@@ -6020,7 +6037,8 @@ function netpInnerHtml(p) {
     const s = netpState(p);
     if (!s) return "";
     if (s.hint) return '<span class="netp-hint">⚠️ علامة فاتورة المورد غير محددة — حساب الضريبة التلقائي متوقف</span>';
-    return '<label class="mini-label mini-label-sell">سعر الشراء + ربحك<input type="number" min="0" step="0.01" inputmode="decimal" class="netp-t num" data-netp-t="' + escapeHtml(p.id) + '" placeholder="—" value="' + (s.T === null ? "" : escapeHtml(String(s.T))) + '"></label>' + '<div class="netp-out">' + netpOutHtml(s) + "</div>";
+    if (netpManualIs(p.id)) return '<div class="netp-out">' + netpOutHtml(s, true) + '</div><button type="button" class="btn btn-ghost btn-sm netp-btn" data-netp-auto="' + escapeHtml(p.id) + '">حساب تلقائي</button>';
+    return '<label class="mini-label mini-label-sell">سعر الشراء + ربحك<input type="number" min="0" step="0.01" inputmode="decimal" class="netp-t num" data-netp-t="' + escapeHtml(p.id) + '" placeholder="—" value="' + (s.T === null ? "" : escapeHtml(String(s.T))) + '"></label>' + '<div class="netp-out">' + netpOutHtml(s) + "</div>" + '<button type="button" class="btn btn-ghost btn-sm netp-btn" data-netp-manual="' + escapeHtml(p.id) + '">تعديل يدوي</button>';
 }
 
 function netpOrderNet(d) {
@@ -6060,8 +6078,16 @@ function netpRefresh() {
         Array.from(root.querySelectorAll("[data-netp-slot]")).forEach(slot => {
             const p = draft.parts.find(x => x && x.id === slot.getAttribute("data-netp-slot"));
             const row = slot.closest ? slot.closest(".part-row") : null;
-            const s = p && row && row.querySelector(".part-sell-input") ? netpState(p) : null;
-            const sig = s ? s.hint ? "hint" : s.mode : "";
+            const sellInput = row ? row.querySelector(".part-sell-input") : null;
+            const s = p && sellInput ? netpState(p) : null;
+            const manual = !!(p && netpManualIs(p.id));
+            if (sellInput) {
+                const locked = !!(s && !s.hint && !manual);
+                sellInput.readOnly = locked;
+                if (sellInput.classList) sellInput.classList.toggle("netp-locked", locked);
+                sellInput.title = locked ? "يُحسب من خانة «سعر الشراء + ربحك» — لتعديل السعر مباشرة اضغط «تعديل يدوي»" : "";
+            }
+            const sig = s ? s.hint ? "hint" : s.mode + (manual ? "-m" : "") : "";
             if (slot.getAttribute("data-netp-sig") !== sig) {
                 slot.innerHTML = s ? netpInnerHtml(p) : "";
                 slot.setAttribute("data-netp-sig", sig);
@@ -6069,7 +6095,7 @@ function netpRefresh() {
             }
             if (!s || s.hint) return;
             const out = slot.querySelector(".netp-out");
-            if (out) out.innerHTML = netpOutHtml(s);
+            if (out) out.innerHTML = netpOutHtml(s, manual);
             const ti = slot.querySelector(".netp-t");
             if (ti) {
                 const typed = String(ti.value).trim();
@@ -6085,6 +6111,23 @@ function netpRefresh() {
         }
     } catch (e) {
         console.warn("netpRefresh:", e);
+    }
+}
+
+function netpOnClick(e) {
+    try {
+        const t = e && e.target;
+        const b = t && t.closest ? t.closest("[data-netp-manual],[data-netp-auto]") : null;
+        if (!b || typeof draft === "undefined" || !draft) return;
+        const toManual = b.hasAttribute("data-netp-manual");
+        const id = b.getAttribute(toManual ? "data-netp-manual" : "data-netp-auto");
+        const row = b.closest ? b.closest(".part-row") : null;
+        netpManualSet(id, toManual);
+        netpRefresh();
+        const si = toManual && row ? row.querySelector(".part-sell-input") : null;
+        if (si && si.focus) si.focus();
+    } catch (err) {
+        console.warn("netpOnClick:", err);
     }
 }
 
@@ -6118,6 +6161,7 @@ function netpEnsureDelegate() {
         if (!root || root._netpBound) return;
         root._netpBound = true;
         root.addEventListener("input", netpOnInput);
+        root.addEventListener("click", netpOnClick);
         const later = () => {
             try {
                 setTimeout(netpRefresh, 0);
