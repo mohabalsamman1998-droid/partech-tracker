@@ -3371,6 +3371,10 @@
   .taxx-mode .acct2-opt small{display:block;font-size:12px;font-weight:400;color:var(--text-dim);line-height:1.7;margin-top:2px;}
   .taxx-mode{margin-bottom:12px;}
   .acct-dialog:has(.taxx-mode[data-taxx-mode="cit"]) .acct-filing:not(.taxx-year-l),.acct-dialog:has(.taxx-mode[data-taxx-mode="cit"]) .acct-hint:not(.taxx-year-h){display:none;}
+  /* «ملف المحاسب» (الافتراضي): بلا «تاريخ تقديم إقرار الفترة السابقة» وتلميحه (يخصّان إقرار القيمة المضافة)؛ و«خيارات أخرى» قائمة مطويّة تحوي بقية التقارير */
+  .acct-dialog:has(.taxx-mode[data-taxx-mode="ops"]) .acct-filing,.acct-dialog:has(.taxx-mode[data-taxx-mode="ops"]) .acct-hint{display:none;}
+  .taxx-mode .taxx-more{margin-top:6px;}
+  .taxx-mode .taxx-more > summary{cursor:pointer;color:var(--text-dim);font-size:13px;font-weight:700;padding:6px 0;}
   /* TAXX END css */
   /* VCAT BEGIN css */
   /* كتالوج السيارة بالصور داخل «كتالوج القطع» (رقم الهيكل ← السيارة ← أقسام ← مجموعات ← لوحات ← قطع) */
@@ -52730,7 +52734,7 @@ function taxxAvailable() {
 
 function taxxReportMode(x) {
     const m = x && x.taxx && x.taxx.mode;
-    return m === "cit" || m === "full" ? m : "vat";
+    return m === "vat" || m === "cit" || m === "full" ? m : "ops";
 }
 
 function taxxCurrentYear() {
@@ -52767,7 +52771,7 @@ function taxxModeHtml(st) {
         const opt = function(val, title, sub) {
             return '<label class="acct2-opt"><input type="radio" name="taxx-mode" value="' + val + '" data-taxx-field="mode"' + (mode === val ? " checked" : "") + "><span>" + e(title) + "<small>" + e(sub) + "</small></span></label>";
         };
-        let h = '<div class="acct2-exp-opts taxx-mode" data-taxx-mode="' + mode + '" role="radiogroup" aria-label="نوع التقرير">' + opt("vat", "🧾 إقرار ضريبة القيمة المضافة", "ضريبة المبيعات − ضريبة المشتريات للفترة · إكسل واحد مرتّب وروابط الفواتير") + opt("cit", "🏛️ ضريبة الدخل السنوية", "20% من صافي الدخل المعدّل لسنة كاملة · إكسل واحد مرتّب وروابط الفواتير") + opt("full", "📦 الحزمة الكاملة", "13 ورقة + المستندات (ملف ZIP) للأرشيف") + "</div>";
+        let h = '<div class="acct2-exp-opts taxx-mode" data-taxx-mode="' + mode + '" role="radiogroup" aria-label="نوع التقرير">' + opt("ops", "🗂️ ملف المحاسب", "كل عملية: فاتورة البيع وفواتير الشراء بصورها داخل الملف · والمصاريف بفواتيرها · إكسل واحد") + '<details class="taxx-more"' + (mode !== "ops" ? " open" : "") + "><summary>" + e("خيارات أخرى") + "</summary>" + opt("vat", "🧾 إقرار ضريبة القيمة المضافة", "ضريبة المبيعات − ضريبة المشتريات للفترة · إكسل واحد مرتّب وروابط الفواتير") + opt("cit", "🏛️ ضريبة الدخل السنوية", "20% من صافي الدخل المعدّل لسنة كاملة · إكسل واحد مرتّب وروابط الفواتير") + opt("full", "📦 الحزمة الكاملة", "13 ورقة + المستندات (ملف ZIP) للأرشيف") + "</details></div>";
         if (mode === "cit") h += taxxYearHtml(x);
         return h;
     } catch (err) {
@@ -52785,7 +52789,7 @@ function taxxApplyYear(x) {
 }
 
 function taxxSetMode(x, mode) {
-    const m = mode === "cit" || mode === "full" ? mode : "vat";
+    const m = mode === "vat" || mode === "cit" || mode === "full" ? mode : "ops";
     const t = x.taxx = x.taxx || {};
     const was = taxxReportMode(x);
     if (m === was) return;
@@ -52872,6 +52876,7 @@ function taxxLinkBase() {
 
 async function taxxFinish(c) {
     const x = c.x, mode = taxxReportMode(x);
+    if (mode === "ops") return await taxxOpsFinish(c);
     c.progress(mode === "cit" ? "بناء ملف ضريبة الدخل…" : "بناء ملف إقرار القيمة المضافة…", 76);
     const info = taxxCollect();
     const idBySerial = {};
@@ -52941,6 +52946,1205 @@ async function taxxFinish(c) {
             if (g !== acctGen) return;
         }, function() {});
     }
+    return true;
+}
+
+function taxxJpegInfo(b) {
+    if (!b || b.length < 4 || b[0] !== 255 || b[1] !== 216) return null;
+    let i = 2;
+    while (i + 9 < b.length) {
+        if (b[i] !== 255) {
+            i++;
+            continue;
+        }
+        let m = b[i + 1];
+        while (m === 255 && i + 2 < b.length) {
+            i++;
+            m = b[i + 1];
+        }
+        if (m === 216 || m === 1 || m >= 208 && m <= 215) {
+            i += 2;
+            continue;
+        }
+        if (m === 217) break;
+        const len = b[i + 2] << 8 | b[i + 3];
+        if (m >= 192 && m <= 207 && m !== 196 && m !== 200 && m !== 204) {
+            const h = b[i + 5] << 8 | b[i + 6], w = b[i + 7] << 8 | b[i + 8];
+            return w > 0 && h > 0 ? {
+                type: "jpeg",
+                ext: "jpeg",
+                w: w,
+                h: h
+            } : null;
+        }
+        if (len < 2) return null;
+        i += 2 + len;
+    }
+    return null;
+}
+
+function taxxPngInfo(b) {
+    if (!b || b.length < 24) return null;
+    const sig = [ 137, 80, 78, 71, 13, 10, 26, 10 ];
+    for (let k = 0; k < 8; k++) if (b[k] !== sig[k]) return null;
+    const w = (b[16] << 24 | b[17] << 16 | b[18] << 8 | b[19]) >>> 0, h = (b[20] << 24 | b[21] << 16 | b[22] << 8 | b[23]) >>> 0;
+    return w > 0 && h > 0 ? {
+        type: "png",
+        ext: "png",
+        w: w,
+        h: h
+    } : null;
+}
+
+function taxxImgInfo(b) {
+    return taxxJpegInfo(b) || taxxPngInfo(b);
+}
+
+function taxxPdfJpegs(b) {
+    const out = [];
+    try {
+        const n = b ? b.length : 0;
+        if (n < 20) return out;
+        let s = "";
+        for (let i = 0; i < n; i += 16384) s += String.fromCharCode.apply(null, Array.prototype.slice.call(b, i, Math.min(n, i + 16384)));
+        if (s.slice(0, 5) !== "%PDF-") return out;
+        const re = /stream(\r\n|\n|\r)/g;
+        let m;
+        while ((m = re.exec(s)) !== null) {
+            const start = m.index + m[0].length;
+            if (b[start] !== 255 || b[start + 1] !== 216 || b[start + 2] !== 255) continue;
+            const dictStart = s.lastIndexOf(" obj", m.index);
+            const dict = s.slice(dictStart < 0 ? Math.max(0, m.index - 600) : dictStart, m.index);
+            if (!/\/DCTDecode/.test(dict) || !/\/Subtype\s*\/Image/.test(dict)) continue;
+            const lm = /\/Length\s+(\d+)(?!\s+\d+\s+R)/.exec(dict);
+            let end = -1;
+            if (lm) {
+                const L = Number(lm[1]);
+                if (L > 4 && start + L <= n && /^(\r\n|\n|\r)?endstream/.test(s.slice(start + L, start + L + 12))) end = start + L;
+            }
+            if (end < 0) {
+                const e = s.indexOf("endstream", start);
+                if (e < 0) continue;
+                end = e;
+                if (b[end - 1] === 10) end--;
+                if (b[end - 1] === 13) end--;
+            }
+            if (end - start < 16) continue;
+            out.push(Uint8Array.from(Array.prototype.slice.call(b, start, end)));
+            re.lastIndex = end;
+        }
+    } catch (e) {}
+    return out;
+}
+
+function taxxXmlEsc(s) {
+    return String(s === null || s === undefined ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function taxxSheetPaths(wbXml, relsXml) {
+    const targets = {};
+    String(relsXml || "").replace(/<Relationship\b[^>]*>/g, function(tag) {
+        const id = /\bId="([^"]*)"/.exec(tag), tg = /\bTarget="([^"]*)"/.exec(tag);
+        if (id && tg) targets[id[1]] = tg[1];
+        return tag;
+    });
+    const out = [];
+    String(wbXml || "").replace(/<sheet\b[^>]*>/g, function(tag) {
+        const rid = /\br:id="([^"]*)"/.exec(tag);
+        let t = rid ? targets[rid[1]] : "";
+        if (t) {
+            t = t.replace(/^\//, "");
+            if (t.indexOf("xl/") !== 0) t = "xl/" + t;
+        }
+        out.push(t || "");
+        return tag;
+    });
+    return out;
+}
+
+function taxxDrawingXml(pics, relIds) {
+    const E = 9525;
+    let x = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">';
+    pics.forEach(function(p, i) {
+        const cx = Math.max(1, Math.round(p.wpx * E)), cy = Math.max(1, Math.round(p.hpx * E));
+        x += "<xdr:oneCellAnchor><xdr:from><xdr:col>" + p.c + "</xdr:col><xdr:colOff>" + Math.round((p.dx || 0) * E) + "</xdr:colOff><xdr:row>" + p.r + "</xdr:row><xdr:rowOff>" + Math.round((p.dy || 0) * E) + "</xdr:rowOff></xdr:from>" + '<xdr:ext cx="' + cx + '" cy="' + cy + '"/>' + '<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="' + (i + 2) + '" name="Picture ' + (i + 1) + '" descr="' + taxxXmlEsc(p.descr || "") + '"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>' + '<xdr:blipFill><a:blip r:embed="' + relIds[i] + '"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>' + '<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="' + cx + '" cy="' + cy + '"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>';
+    });
+    return x + "</xdr:wsDr>";
+}
+
+async function taxxXlsxInject(JSZip, xbytes, sheets) {
+    const zip = await JSZip.loadAsync(xbytes);
+    const text = async function(p) {
+        const f = zip.file(p);
+        return f ? await f.async("string") : null;
+    };
+    let ct = await text("[Content_Types].xml");
+    const wbXml = await text("xl/workbook.xml"), wbRels = await text("xl/_rels/workbook.xml.rels");
+    if (ct === null || wbXml === null) throw new Error("XLSX_PARTS");
+    const paths = taxxSheetPaths(wbXml, wbRels);
+    let mediaN = 0, drawN = 0;
+    const exts = {}, overrides = [];
+    for (let s = 0; s < sheets.length; s++) {
+        const sh = sheets[s];
+        if (!sh || !sh.pics || !sh.pics.length) continue;
+        const sp = paths[sh.index];
+        if (!sp) throw new Error("XLSX_SHEET");
+        let sx = await text(sp);
+        if (sx === null || sx.indexOf("</worksheet>") < 0) throw new Error("XLSX_SHEET");
+        const slash = sp.lastIndexOf("/"), dir = sp.slice(0, slash + 1), file = sp.slice(slash + 1);
+        const relsPath = dir + "_rels/" + file + ".rels";
+        let rels = await text(relsPath);
+        if (rels === null) rels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
+        let maxId = 0;
+        rels.replace(/\bId="rId(\d+)"/g, function(m, n) {
+            if (Number(n) > maxId) maxId = Number(n);
+            return m;
+        });
+        const sheetRid = "rId" + (maxId + 1);
+        const dn = ++drawN, drawPath = "xl/drawings/drawing" + dn + ".xml";
+        const picRels = [], relIds = [];
+        sh.pics.forEach(function(p, i) {
+            const ext = p.ext === "png" ? "png" : "jpeg";
+            exts[ext] = true;
+            const mp = "xl/media/image" + ++mediaN + "." + ext;
+            zip.file(mp, p.bytes, {
+                binary: true,
+                compression: "STORE",
+                createFolders: false
+            });
+            relIds.push("rId" + (i + 1));
+            picRels.push('<Relationship Id="rId' + (i + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image' + mediaN + "." + ext + '"/>');
+        });
+        zip.file(drawPath, taxxDrawingXml(sh.pics, relIds), {
+            createFolders: false
+        });
+        zip.file("xl/drawings/_rels/drawing" + dn + ".xml.rels", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + picRels.join("") + "</Relationships>", {
+            createFolders: false
+        });
+        rels = rels.replace("</Relationships>", '<Relationship Id="' + sheetRid + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing' + dn + '.xml"/></Relationships>');
+        zip.file(relsPath, rels, {
+            createFolders: false
+        });
+        if (!/<worksheet\b[^>]*\bxmlns:r=/.test(sx)) sx = sx.replace(/<worksheet\b/, '<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"');
+        const tail = /<(legacyDrawing|legacyDrawingHF|picture|oleObjects|controls|webPublishItems|tableParts|extLst)\b/.exec(sx);
+        const at = tail ? tail.index : sx.lastIndexOf("</worksheet>");
+        sx = sx.slice(0, at) + '<drawing r:id="' + sheetRid + '"/>' + sx.slice(at);
+        zip.file(sp, sx, {
+            createFolders: false
+        });
+        overrides.push('<Override PartName="/' + drawPath + '" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>');
+    }
+    if (!mediaN) return xbytes;
+    let add = "";
+    if (exts.jpeg && !/Extension="jpe?g"/i.test(ct)) add += '<Default Extension="jpeg" ContentType="image/jpeg"/>';
+    if (exts.png && !/Extension="png"/i.test(ct)) add += '<Default Extension="png" ContentType="image/png"/>';
+    ct = ct.replace("</Types>", add + overrides.join("") + "</Types>");
+    zip.file("[Content_Types].xml", ct, {
+        createFolders: false
+    });
+    return await zip.generateAsync({
+        type: "uint8array",
+        compression: "DEFLATE",
+        compressionOptions: {
+            level: 6
+        }
+    });
+}
+
+function taxxOpsDocRef(d) {
+    const g = function(k) {
+        return d && d[k] !== undefined && d[k] !== null ? d[k] : "";
+    };
+    const H = function(k) {
+        const n = Number(g(k));
+        return isFinite(n) && n !== 0 ? n / 100 : 0;
+    };
+    return {
+        serial: taxxInt(g("serial")),
+        id: taxxStr(g("id")),
+        kind: taxxStr(g("kind")),
+        mime: taxxStr(g("mime")),
+        no: taxxStr(g("number")),
+        date: taxxStr(g("date")) || taxxStr(g("createdDate")),
+        party: taxxStr(g("partyName")),
+        net: H("netH"),
+        vat: H("vatH"),
+        gross: H("grossH"),
+        review: taxxStr(g("reviewState"))
+    };
+}
+
+function taxxOpsLinkOf(d, type) {
+    const out = [];
+    taxxArr(d && d.links).forEach(function(l) {
+        if (l && taxxStr(l.type) === type) out.push(l);
+    });
+    return out;
+}
+
+function taxxOpsSupKey(l) {
+    const lid = taxxStr(l && l.linkId), i = lid.lastIndexOf(":");
+    return taxxRowKey(taxxStr(l && l.supplierId) || (i > 0 ? lid.slice(i + 1) : ""));
+}
+
+function taxxOpsModel(input) {
+    const inp = taxxObj(input), ctx = taxxCtx(inp), pkg = ctx.pkg;
+    const orders = taxxArr(ctx.facts.orders), byId = {}, byNum = {};
+    orders.forEach(function(o) {
+        if (o && o.id !== undefined) {
+            byId[taxxStr(o.id)] = o;
+            if (taxxStr(o.number) !== "") byNum[taxxStr(o.number)] = o;
+        }
+    });
+    const docs = taxxArr(inp.docs).filter(function(d) {
+        return d && !d.void && d.hasFile !== false;
+    });
+    const ops = {}, used = {};
+    const op = function(num) {
+        const k = taxxStr(num);
+        if (k === "") return null;
+        if (!ops[k]) {
+            const o = byNum[k] || null;
+            ops[k] = {
+                num: k,
+                orderId: o ? taxxStr(o.id) : "",
+                customer: o ? taxxStr(o.customerName) : "",
+                date: o ? taxxStr(o.supplyDate) : "",
+                sales: [],
+                purchases: [],
+                delivery: null,
+                others: []
+            };
+        }
+        return ops[k];
+    };
+    const dayOf = taxxDayOf;
+    const s02 = taxxSheetOf(pkg, "02"), c02 = taxxColsOf(s02), none = {};
+    taxxRowsOf(s02).forEach(function(r) {
+        const rid = taxxStr(r[0]), p = rid.slice(0, rid.indexOf(":")), rest = rid.slice(rid.indexOf(":") + 1);
+        if (p !== "INV" && p !== "NOTE" && p !== "UNS" && p !== "EST") return;
+        const o = op(taxxPick(r, c02, "الطلب"));
+        if (!o) return;
+        const row = {
+            id: rest,
+            no: taxxStr(taxxPick(r, c02, "الرقم")),
+            type: taxxStr(taxxPick(r, c02, "النوع")),
+            series: taxxStr(taxxPick(r, c02, "السلسلة")),
+            date: dayOf(taxxPick(r, c02, "تاريخ الإصدار")) || dayOf(taxxPick(r, c02, "تاريخ الاستحقاق الضريبي")),
+            customer: taxxStr(taxxPick(r, c02, "العميل")),
+            net: taxxPick(r, c02, "قبل الضريبة"),
+            vat: taxxPick(r, c02, "الضريبة"),
+            total: taxxPick(r, c02, "الإجمالي"),
+            original: taxxStr(taxxPick(r, c02, "الفاتورة الأصلية")),
+            note: taxxRename(taxxStr(taxxPick(r, c02, "ملاحظة"))),
+            taxDate: dayOf(taxxPick(r, c02, "تاريخ الاستحقاق الضريبي"))
+        };
+        if (!o.customer) o.customer = row.customer;
+        if (p === "INV" || p === "NOTE") {
+            row.kind = p === "NOTE" ? "note" : "inv";
+            o.sales.push(row);
+        } else if (p === "UNS" || !none[o.num]) {
+            row.kind = "none";
+            none[o.num] = row;
+        }
+        if (!o.date) o.date = row.taxDate || row.date;
+    });
+    Object.keys(none).forEach(function(k) {
+        const o = ops[k];
+        if (o && !o.sales.length) o.sales.push(none[k]);
+    });
+    const s06 = taxxSheetOf(pkg, "06"), c06 = taxxColsOf(s06);
+    const docsFor = function(orderId, supKey) {
+        const list = [];
+        docs.forEach(function(d) {
+            if (used[d.serial]) return;
+            const hit = taxxOpsLinkOf(d, "order_purchase").some(function(l) {
+                return taxxStr(l.orderId) === orderId && (supKey === null || taxxOpsSupKey(l) === supKey);
+            });
+            if (hit) {
+                used[d.serial] = true;
+                list.push(taxxOpsDocRef(d));
+            }
+        });
+        return list;
+    };
+    taxxRowsOf(s06).forEach(function(r) {
+        const rid = taxxStr(r[0]);
+        if (rid.indexOf("PUR:") !== 0) return;
+        const bits = rid.split(":"), orderId = bits[1] || "", supKey = bits[2] || "-";
+        const num = taxxStr(taxxPick(r, c06, "الطلب")), o = op(num);
+        if (!o) return;
+        if (!o.orderId) o.orderId = orderId;
+        if (!o.date) o.date = dayOf(taxxPick(r, c06, "تاريخ التوريد"));
+        o.purchases.push({
+            supplier: taxxStr(taxxPick(r, c06, "المورد")),
+            supKey: supKey,
+            cost: taxxPick(r, c06, "التكلفة"),
+            kind: taxxStr(taxxPick(r, c06, "مستعمل/جديد")),
+            docState: taxxStr(taxxPick(r, c06, "حالة المستند")),
+            supplierNo: taxxStr(taxxPick(r, c06, "رقم فاتورة المورد")),
+            ret: taxxStr(taxxPick(r, c06, "حالة المرتجع")),
+            docs: docsFor(taxxStr(o.orderId), supKey)
+        });
+    });
+    Object.keys(ops).forEach(function(k) {
+        const o = ops[k];
+        if (!o.orderId) return;
+        const rest = docsFor(o.orderId, null);
+        if (rest.length) o.purchases.push({
+            supplier: "",
+            supKey: "",
+            cost: "",
+            kind: "",
+            docState: "",
+            supplierNo: "",
+            ret: "",
+            docs: rest,
+            extra: true
+        });
+    });
+    const s07 = taxxSheetOf(pkg, "07"), c07 = taxxColsOf(s07);
+    taxxRowsOf(s07).forEach(function(r) {
+        const rid = taxxStr(r[0]);
+        if (rid.indexOf("DLV:") !== 0) return;
+        const note = taxxStr(taxxPick(r, c07, "البيان")), m = /^(.*?) — (.*) \((سُدّدت [^)]*|غير مسدّدة)\)\s*$/.exec(note);
+        const o = op(m ? m[1] : note);
+        if (!o) return;
+        if (!o.orderId) o.orderId = rid.slice(4);
+        o.delivery = {
+            amount: taxxPick(r, c07, "المبلغ"),
+            date: dayOf(taxxPick(r, c07, "التاريخ")),
+            agent: m ? m[2] : "",
+            pay: m ? m[3] : "",
+            docState: taxxStr(taxxPick(r, c07, "حالة المستند")),
+            docs: []
+        };
+    });
+    Object.keys(ops).forEach(function(k) {
+        const o = ops[k];
+        if (!o.orderId) return;
+        const mine = [];
+        docs.forEach(function(d) {
+            if (used[d.serial]) return;
+            if (taxxOpsLinkOf(d, "order_delivery").some(function(l) {
+                return taxxStr(l.orderId) === o.orderId || taxxStr(l.linkId) === o.orderId;
+            })) {
+                used[d.serial] = true;
+                mine.push(taxxOpsDocRef(d));
+            }
+        });
+        if (mine.length) {
+            if (!o.delivery) o.delivery = {
+                amount: "",
+                date: "",
+                agent: "",
+                pay: "",
+                docState: "",
+                docs: []
+            };
+            o.delivery.docs = mine;
+        }
+        docs.forEach(function(d) {
+            if (used[d.serial]) return;
+            const hit = taxxOpsLinkOf(d, "supplier_return").concat(taxxOpsLinkOf(d, "customer_refund")).some(function(l) {
+                return taxxStr(l.orderId) === o.orderId;
+            });
+            if (hit) {
+                used[d.serial] = true;
+                o.others.push(taxxOpsDocRef(d));
+            }
+        });
+    });
+    const expenses = [];
+    taxxRowsOf(s07).forEach(function(r) {
+        const rid = taxxStr(r[0]);
+        if (rid.indexOf("EXP:") !== 0) return;
+        const entry = rid.slice(4), mine = [];
+        docs.forEach(function(d) {
+            if (used[d.serial]) return;
+            if (taxxOpsLinkOf(d, "treasury").some(function(l) {
+                return taxxStr(l.linkId) === entry;
+            })) {
+                used[d.serial] = true;
+                mine.push(taxxOpsDocRef(d));
+            }
+        });
+        expenses.push({
+            id: entry,
+            cat: taxxStr(taxxPick(r, c07, "الفئة")),
+            date: dayOf(taxxPick(r, c07, "التاريخ")),
+            amount: taxxPick(r, c07, "المبلغ"),
+            note: taxxStr(taxxPick(r, c07, "البيان")),
+            docState: taxxStr(taxxPick(r, c07, "حالة المستند")),
+            docs: mine
+        });
+    });
+    expenses.sort(function(a, b) {
+        return a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
+    });
+    const s03 = taxxSheetOf(pkg, "03"), c03 = taxxColsOf(s03), other = [];
+    taxxRowsOf(s03).forEach(function(r) {
+        const rid = taxxStr(r[0]);
+        if (rid.indexOf("DOC:") !== 0) return;
+        const serial = taxxInt(rid.slice(4));
+        if (used[serial]) return;
+        const d = docs.filter(function(x) {
+            return taxxInt(x.serial) === serial;
+        })[0];
+        if (!d) return;
+        used[serial] = true;
+        const ref = taxxOpsDocRef(d);
+        ref.belongs = taxxStr(taxxPick(r, c03, "يخص"));
+        other.push(ref);
+    });
+    const list = Object.keys(ops).map(function(k) {
+        return ops[k];
+    });
+    list.sort(function(a, b) {
+        return a.date < b.date ? -1 : a.date > b.date ? 1 : a.num < b.num ? -1 : a.num > b.num ? 1 : 0;
+    });
+    let invN = 0, noteN = 0, noInvN = 0, purN = 0, purDocs = 0, purMissing = 0;
+    list.forEach(function(o) {
+        o.sales.forEach(function(s) {
+            if (s.kind === "inv") invN++; else if (s.kind === "note") noteN++; else noInvN++;
+        });
+        o.purchases.forEach(function(p) {
+            purN++;
+            if (p.docs.length) purDocs += p.docs.length; else if (!p.extra && /ناقص/.test(p.docState)) purMissing++;
+        });
+    });
+    let expDocs = 0, expMissing = 0, expH = 0;
+    expenses.forEach(function(e) {
+        expH += taxxH(e.amount);
+        if (e.docs.length) expDocs += e.docs.length; else if (/ناقص/.test(e.docState)) expMissing++;
+    });
+    return {
+        ok: true,
+        ops: list,
+        expenses: expenses,
+        other: other,
+        summary: {
+            ops: list.length,
+            inv: invN,
+            notes: noteN,
+            noInv: noInvN,
+            purchases: purN,
+            purDocs: purDocs,
+            purMissing: purMissing,
+            expenses: expenses.length,
+            expDocs: expDocs,
+            expMissing: expMissing,
+            expensesH: expH
+        },
+        ctx: {
+            periodText: ctx.periodText,
+            stamp: ctx.stamp,
+            preparedBy: ctx.preparedBy
+        }
+    };
+}
+
+function taxxOpsBox() {
+    return {
+        W: 360,
+        H: 500,
+        COLS: 4,
+        PAD: 6,
+        SAL: 9,
+        EXP: 6
+    };
+}
+
+function taxxOpsFit(info) {
+    const B = taxxOpsBox(), s = Math.min(B.W / info.w, B.H / info.h, 1);
+    return {
+        w: Math.max(8, Math.round(info.w * s)),
+        h: Math.max(8, Math.round(info.h * s))
+    };
+}
+
+function taxxOpsPad6(n) {
+    const s = String(Math.round(Number(n) || 0));
+    return "000000".slice(s.length) + s;
+}
+
+function taxxOpsReviewText(d) {
+    return d && d.review && d.review !== "unreviewed" ? " — " + (d.review === "accepted" ? "راجعها المحاسب" : "حالة المراجعة: " + d.review) : "";
+}
+
+function taxxOpsAmt(v) {
+    return typeof v === "number" && isFinite(v) && v !== 0 ? v : "";
+}
+
+function taxxOpsDocRows(cells, firstCol, width, pages, descr, contLabelCol, contText) {
+    const B = taxxOpsBox(), rows = [];
+    const list = pages && pages.length ? pages : [];
+    let at = 0;
+    do {
+        const chunk = list.slice(at, at + B.COLS), row = {
+            cells: cells.slice(),
+            h: 0,
+            pics: []
+        };
+        if (at > 0) {
+            row.cells = cells.map(function(c, i) {
+                return i === 0 ? c : i === contLabelCol ? contText : "";
+            });
+        }
+        chunk.forEach(function(pg, k) {
+            const f = taxxOpsFit(pg);
+            row.pics.push({
+                c: firstCol + k,
+                wpx: f.w,
+                hpx: f.h,
+                bytes: pg.bytes,
+                ext: pg.ext,
+                dx: B.PAD,
+                dy: B.PAD,
+                descr: descr
+            });
+            if (f.h + 2 * B.PAD > row.h) row.h = f.h + 2 * B.PAD;
+        });
+        rows.push(row);
+        at += B.COLS;
+    } while (at < list.length);
+    return rows;
+}
+
+function taxxOpsSheets(model, imgs) {
+    const B = taxxOpsBox(), im = taxxObj(imgs), docImgs = taxxObj(im.docs), invImgs = taxxObj(im.invs), S = taxxObj(model.summary), cx = taxxObj(model.ctx);
+    const COLS1 = B.SAL + B.COLS, COLS2 = B.EXP + B.COLS;
+    const aoa1 = [], merges1 = [], heights1 = {}, pics1 = [];
+    const top1 = [ [ "ملف المحاسب — العمليات" ], [ "الفترة: " + taxxStr(cx.periodText).replace(/^من /, "من ") + "    تاريخ التجهيز (الرياض): " + taxxStr(cx.stamp) + (cx.preparedBy ? "    المُجهِّز: " + cx.preparedBy : "") ], [ "عدد العمليات: " + S.ops + " · فواتير بيع: " + S.inv + " · إشعارات: " + S.notes + " · عمليات بلا فاتورة بيع: " + S.noInv + " · مشتريات: " + S.purchases + " (فواتير مرفقة " + S.purDocs + "، ناقصة " + S.purMissing + ")" ], [ "كل صف فاتورة بصورتها داخل هذا الملف نفسه (بلا روابط). «ناقصة» = لم تُرفع فاتورتها بالتطبيق. المبالغ شاملة الضريبة ما لم يُذكر غير ذلك." ], [] ];
+    top1.forEach(function(t) {
+        aoa1.push(taxxTextRow(t));
+    });
+    const head1 = [ "الطلب", "النوع", "الرقم", "التاريخ", "الجهة", "قبل الضريبة", "الضريبة", "الإجمالي", "الحالة", "الصورة", "", "", "" ];
+    const types1 = "TTTDTMMMTTTTT";
+    const hdrRow = aoa1.length;
+    const rows1 = [];
+    const addRow = function(rows, cells, firstCol, width, pages, descr, contCol, contText) {
+        taxxOpsDocRows(cells, firstCol, width, pages, descr, contCol, contText).forEach(function(r) {
+            rows.push(r);
+        });
+    };
+    model.ops.forEach(function(o) {
+        const titleCells = [ "■ " + o.num + " — " + (o.customer || "عميل غير مسجل") + (o.date ? " — توريد " + o.date : "") ];
+        while (titleCells.length < COLS1) titleCells.push("");
+        rows1.push({
+            cells: titleCells,
+            h: 0,
+            pics: [],
+            title: true
+        });
+        o.sales.forEach(function(s) {
+            const pages = s.kind === "none" ? [] : taxxArr(invImgs[s.id]);
+            const typeText = s.kind === "inv" ? "فاتورة بيع" : s.kind === "note" ? /مدين/.test(s.type) ? "إشعار مدين" : "إشعار دائن" : "بيع بلا فاتورة";
+            const state = s.kind === "inv" ? s.type.replace(/^فاتورة /, "") + (s.series ? " — " + s.series : "") : s.kind === "note" ? "على " + (s.original || "—") + (s.series ? " — " + s.series : "") + (s.note ? " — " + s.note : "") : "لا توجد فاتورة بيع" + (s.note ? " — " + s.note : "");
+            const cells = [ o.num, typeText, s.no, s.date ? {
+                d: s.date
+            } : "", s.customer, s.net, s.vat, s.total, state, "", "", "", "" ];
+            addRow(rows1, cells, B.SAL, B.W, pages, typeText + " " + s.no, 1, typeText + " (تابع)");
+            if (s.kind !== "none" && !pages.length) rows1[rows1.length - 1].cells[8] = state + " — تعذّر تضمين صورة الفاتورة";
+        });
+        o.purchases.forEach(function(p) {
+            if (!p.docs.length) {
+                const st = p.docState && !/ناقص/.test(p.docState) ? p.docState : "ناقصة — لم تُرفع فاتورة المورد";
+                rows1.push({
+                    cells: [ o.num, "فاتورة شراء", p.supplierNo, "", p.supplier, "", "", p.cost, st, "", "", "", "" ],
+                    h: 0,
+                    pics: []
+                });
+                return;
+            }
+            p.docs.forEach(function(d, i) {
+                const pages = taxxArr(docImgs[d.serial]);
+                const reviewed = d.gross !== 0;
+                const cells = [ o.num, "فاتورة شراء", d.no || p.supplierNo || "DOC-" + taxxOpsPad6(d.serial), d.date ? {
+                    d: d.date
+                } : "", p.supplier || d.party, reviewed ? taxxOpsAmt(d.net) : "", reviewed ? taxxOpsAmt(d.vat) : "", reviewed ? d.gross : i === 0 ? p.cost : "", "مرفقة" + taxxOpsReviewText(d), "", "", "", "" ];
+                addRow(rows1, cells, B.SAL, B.W, pages, "فاتورة شراء DOC-" + taxxOpsPad6(d.serial), 1, "فاتورة شراء (تابع)");
+                if (!pages.length) rows1[rows1.length - 1].cells[8] = "مرفقة — تعذّر تضمين صورتها (" + (d.mime || "ملف") + ")";
+            });
+        });
+        if (o.delivery) {
+            const dv = o.delivery;
+            if (!dv.docs.length) {
+                rows1.push({
+                    cells: [ o.num, "توصيل", "", dv.date ? {
+                        d: dv.date
+                    } : "", dv.agent, "", "", dv.amount, (dv.pay || "") + (dv.docState ? " — " + dv.docState : ""), "", "", "", "" ],
+                    h: 0,
+                    pics: []
+                });
+            } else {
+                dv.docs.forEach(function(d, i) {
+                    const pages = taxxArr(docImgs[d.serial]);
+                    const cells = [ o.num, "توصيل", d.no || "DOC-" + taxxOpsPad6(d.serial), d.date || dv.date ? {
+                        d: d.date || dv.date
+                    } : "", dv.agent || d.party, "", "", i === 0 ? dv.amount : "", (i === 0 && dv.pay ? dv.pay + " — " : "") + "مرفق", "", "", "", "" ];
+                    addRow(rows1, cells, B.SAL, B.W, pages, "توصيل DOC-" + taxxOpsPad6(d.serial), 1, "توصيل (تابع)");
+                    if (!pages.length) rows1[rows1.length - 1].cells[8] = "مرفق — تعذّر تضمين صورته (" + (d.mime || "ملف") + ")";
+                });
+            }
+        }
+        o.others.forEach(function(d) {
+            const pages = taxxArr(docImgs[d.serial]);
+            addRow(rows1, [ o.num, "مستند مرتبط", d.no || "DOC-" + taxxOpsPad6(d.serial), d.date ? {
+                d: d.date
+            } : "", d.party, "", "", d.gross !== 0 ? d.gross : "", "مرفق", "", "", "", "" ], B.SAL, B.W, pages, "مستند DOC-" + taxxOpsPad6(d.serial), 1, "مستند (تابع)");
+        });
+    });
+    if (model.other.length) {
+        const t = [ "■ مستندات أخرى بالفترة لا تخص عملية ضمنها" ];
+        while (t.length < COLS1) t.push("");
+        rows1.push({
+            cells: t,
+            h: 0,
+            pics: [],
+            title: true
+        });
+        model.other.forEach(function(d) {
+            const pages = taxxArr(docImgs[d.serial]);
+            addRow(rows1, [ "", "مستند", d.no || "DOC-" + taxxOpsPad6(d.serial), d.date ? {
+                d: d.date
+            } : "", d.party, d.net, d.vat, d.gross, "مرفق — يخص: " + (d.belongs || "—"), "", "", "", "" ], B.SAL, B.W, pages, "مستند DOC-" + taxxOpsPad6(d.serial), 1, "مستند (تابع)");
+        });
+    }
+    if (!model.ops.length && !model.other.length) rows1.push({
+        cells: [ "لا عمليات بهذه الفترة" ].concat(new Array(COLS1 - 1).fill("")),
+        h: 0,
+        pics: []
+    });
+    const part1 = taxxAoaOf({
+        headers: head1,
+        colTypes: types1,
+        rows: rows1.map(function(r) {
+            return r.cells;
+        })
+    });
+    part1.forEach(function(r) {
+        aoa1.push(r);
+    });
+    merges1.push({
+        s: {
+            r: hdrRow,
+            c: B.SAL
+        },
+        e: {
+            r: hdrRow,
+            c: COLS1 - 1
+        }
+    });
+    rows1.forEach(function(r, i) {
+        const R = hdrRow + 1 + i;
+        if (r.h > 0) heights1[R] = r.h;
+        if (r.title) merges1.push({
+            s: {
+                r: R,
+                c: 0
+            },
+            e: {
+                r: R,
+                c: B.SAL - 1
+            }
+        });
+        r.pics.forEach(function(p) {
+            pics1.push({
+                r: R,
+                c: p.c,
+                wpx: p.wpx,
+                hpx: p.hpx,
+                bytes: p.bytes,
+                ext: p.ext,
+                dx: p.dx,
+                dy: p.dy,
+                descr: p.descr
+            });
+        });
+    });
+    const cols1 = [ {
+        wch: 11
+    }, {
+        wch: 15
+    }, {
+        wch: 18
+    }, {
+        wch: 12
+    }, {
+        wch: 26
+    }, {
+        wch: 13
+    }, {
+        wch: 11
+    }, {
+        wch: 13
+    }, {
+        wch: 40
+    } ];
+    for (let k = 0; k < B.COLS; k++) cols1.push({
+        wpx: B.W + 2 * B.PAD
+    });
+    const aoa2 = [], merges2 = [], heights2 = {}, pics2 = [];
+    [ [ "ملف المحاسب — المصاريف" ], [ "مصاريف الصندوق بالفترة؛ كل صف مصروف بصورة إيصاله داخل الملف نفسه. «ناقصة» = لم يُرفع إيصاله بالتطبيق." ], [] ].forEach(function(t) {
+        aoa2.push(taxxTextRow(t));
+    });
+    const head2 = [ "التاريخ", "الفئة", "البيان", "المبلغ", "الحالة", "رقم المستند", "الصورة", "", "", "" ];
+    const hdr2 = aoa2.length;
+    const rows2 = [];
+    model.expenses.forEach(function(e) {
+        if (!e.docs.length) {
+            rows2.push({
+                cells: [ e.date ? {
+                    d: e.date
+                } : "", e.cat, e.note, e.amount, e.docState && !/ناقص/.test(e.docState) ? e.docState : "ناقصة — لم يُرفع إيصال", "", "", "", "", "" ],
+                h: 0,
+                pics: []
+            });
+            return;
+        }
+        e.docs.forEach(function(d, i) {
+            const pages = taxxArr(docImgs[d.serial]);
+            const cells = [ e.date ? {
+                d: e.date
+            } : "", e.cat, e.note, i === 0 ? e.amount : "", "مرفق" + taxxOpsReviewText(d), d.no || "DOC-" + taxxOpsPad6(d.serial), "", "", "", "" ];
+            addRow(rows2, cells, B.EXP, B.W, pages, "مصروف " + e.cat + " DOC-" + taxxOpsPad6(d.serial), 1, e.cat + " (تابع)");
+            if (!pages.length) rows2[rows2.length - 1].cells[4] = "مرفق — تعذّر تضمين صورته (" + (d.mime || "ملف") + ")";
+        });
+    });
+    if (!model.expenses.length) rows2.push({
+        cells: [ "لا مصاريف بهذه الفترة" ].concat(new Array(COLS2 - 1).fill("")),
+        h: 0,
+        pics: []
+    });
+    const part2 = taxxAoaOf({
+        headers: head2,
+        colTypes: "DTTMTTTTTT",
+        rows: rows2.map(function(r) {
+            return r.cells;
+        })
+    });
+    part2.forEach(function(r) {
+        aoa2.push(r);
+    });
+    merges2.push({
+        s: {
+            r: hdr2,
+            c: B.EXP
+        },
+        e: {
+            r: hdr2,
+            c: COLS2 - 1
+        }
+    });
+    rows2.forEach(function(r, i) {
+        const R = hdr2 + 1 + i;
+        if (r.h > 0) heights2[R] = r.h;
+        r.pics.forEach(function(p) {
+            pics2.push({
+                r: R,
+                c: p.c,
+                wpx: p.wpx,
+                hpx: p.hpx,
+                bytes: p.bytes,
+                ext: p.ext,
+                dx: p.dx,
+                dy: p.dy,
+                descr: p.descr
+            });
+        });
+    });
+    if (model.expenses.length) {
+        aoa2.push([]);
+        aoa2.push(taxxTextRow([ "إجمالي مصاريف الفترة", "", "" ]).slice(0, 3).concat([ {
+            t: "n",
+            v: taxxM(S.expensesH),
+            z: "#,##0.00"
+        } ]));
+    }
+    const cols2 = [ {
+        wch: 12
+    }, {
+        wch: 14
+    }, {
+        wch: 30
+    }, {
+        wch: 13
+    }, {
+        wch: 34
+    }, {
+        wch: 16
+    } ];
+    for (let k2 = 0; k2 < B.COLS; k2++) cols2.push({
+        wpx: B.W + 2 * B.PAD
+    });
+    return [ {
+        name: "العمليات",
+        aoa: aoa1,
+        merges: merges1,
+        heights: heights1,
+        cols: cols1,
+        pics: pics1
+    }, {
+        name: "المصاريف",
+        aoa: aoa2,
+        merges: merges2,
+        heights: heights2,
+        cols: cols2,
+        pics: pics2
+    } ];
+}
+
+function taxxOpsBook(XLSX, sheets) {
+    const wb = XLSX.utils.book_new(), inject = [];
+    sheets.forEach(function(sh, idx) {
+        const ws = XLSX.utils.aoa_to_sheet(sh.aoa);
+        ws["!cols"] = sh.cols;
+        ws["!merges"] = sh.merges;
+        const rows = [];
+        Object.keys(sh.heights).forEach(function(k) {
+            rows[Number(k)] = {
+                hpt: Math.round(sh.heights[k] * 75) / 100
+            };
+        });
+        if (rows.length) ws["!rows"] = rows;
+        XLSX.utils.book_append_sheet(wb, ws, sh.name);
+        inject.push({
+            index: idx,
+            pics: sh.pics
+        });
+    });
+    wb.Workbook = {
+        Views: [ {
+            RTL: true
+        } ]
+    };
+    return {
+        wb: wb,
+        inject: inject
+    };
+}
+
+function taxxJpegOrient(b) {
+    try {
+        if (!b || b.length < 14 || b[0] !== 255 || b[1] !== 216) return 1;
+        let i = 2;
+        while (i + 4 < b.length && b[i] === 255) {
+            const m = b[i + 1], len = b[i + 2] << 8 | b[i + 3];
+            if (m === 225 && b[i + 4] === 69 && b[i + 5] === 120 && b[i + 6] === 105 && b[i + 7] === 102) {
+                const t = i + 10, le = b[t] === 73;
+                const u16 = function(o) {
+                    return le ? b[o] | b[o + 1] << 8 : b[o] << 8 | b[o + 1];
+                };
+                const u32 = function(o) {
+                    return le ? (b[o] | b[o + 1] << 8 | b[o + 2] << 16 | b[o + 3] << 24) >>> 0 : (b[o] << 24 | b[o + 1] << 16 | b[o + 2] << 8 | b[o + 3]) >>> 0;
+                };
+                const ifd = t + u32(t + 4), n = u16(ifd);
+                for (let k = 0; k < n; k++) {
+                    const e = ifd + 2 + k * 12;
+                    if (u16(e) === 274) return u16(e + 8) || 1;
+                }
+                return 1;
+            }
+            if (m === 218) break;
+            i += 2 + len;
+        }
+    } catch (e) {}
+    return 1;
+}
+
+async function taxxOpsReencode(bytes, mime) {
+    try {
+        const bmp = await createImageBitmap(new Blob([ bytes ], {
+            type: mime || "image/jpeg"
+        }), {
+            imageOrientation: "from-image"
+        });
+        const s = Math.min(1, 2e3 / Math.max(bmp.width, bmp.height)), w = Math.max(1, Math.round(bmp.width * s)), h = Math.max(1, Math.round(bmp.height * s));
+        const cv = document.createElement("canvas");
+        cv.width = w;
+        cv.height = h;
+        const g = cv.getContext("2d");
+        g.fillStyle = "#ffffff";
+        g.fillRect(0, 0, w, h);
+        g.drawImage(bmp, 0, 0, w, h);
+        try {
+            bmp.close();
+        } catch (e) {}
+        const out = await new Promise(function(res) {
+            cv.toBlob(res, "image/jpeg", .82);
+        });
+        if (!out) return null;
+        return {
+            bytes: new Uint8Array(await out.arrayBuffer()),
+            ext: "jpeg",
+            w: w,
+            h: h
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
+async function taxxOpsPrepare(bytes, mime) {
+    const info = taxxImgInfo(bytes);
+    if (info && bytes.length <= 15e5 && Math.max(info.w, info.h) <= 4200 && (info.type === "png" || taxxJpegOrient(bytes) === 1)) return {
+        bytes: bytes,
+        ext: info.ext,
+        w: info.w,
+        h: info.h
+    };
+    return await taxxOpsReencode(bytes, info ? info.type === "png" ? "image/png" : "image/jpeg" : mime);
+}
+
+async function taxxOpsDocPages(io, d) {
+    const r = await io.fileBlob(d.id);
+    if (!r || !r.ok || !r.blob) return [];
+    const bytes = await acct2BlobBytes(r.blob);
+    if (!bytes || !bytes.length) return [];
+    const isPdf = d.mime === "application/pdf" || bytes[0] === 37 && bytes[1] === 80 && bytes[2] === 68 && bytes[3] === 70;
+    const list = isPdf ? taxxPdfJpegs(bytes) : [ bytes ];
+    const pages = [];
+    for (let i = 0; i < list.length && i < 12; i++) {
+        const p = await taxxOpsPrepare(list[i], d.mime);
+        if (p) pages.push(p);
+    }
+    return pages;
+}
+
+async function taxxOpsInvoicePages(invId) {
+    const doc = await taxinvCall("get_tax_invoice", {
+        p_id: invId
+    });
+    if (!doc || !doc.id) return [];
+    await ensureHtml2pdf();
+    if (typeof html2pdf === "undefined") return [];
+    const host = document.createElement("div");
+    host.setAttribute("aria-hidden", "true");
+    host.style.cssText = "position:fixed;left:-12000px;top:0;width:900px;background:#fff;pointer-events:none;";
+    host.innerHTML = taxinvSheetHtml(doc, {});
+    document.body.appendChild(host);
+    try {
+        const sheet = host.querySelector(".doc-sheet");
+        if (!sheet) return [];
+        try {
+            taxinvPaintQr(host);
+        } catch (e) {}
+        sheet.classList.add("pdf-export-mode");
+        if (document.fonts && document.fonts.ready) {
+            try {
+                await withTimeout(document.fonts.ready, 5e3, "document.fonts.ready");
+            } catch (e) {}
+        }
+        const opt = {
+            html2canvas: {
+                scale: 1.5,
+                useCORS: true,
+                backgroundColor: "#ffffff",
+                windowWidth: 900,
+                onclone: function(cd) {
+                    try {
+                        const c = cd.querySelector(".html2pdf__container");
+                        if (c && typeof pdfIsolateLtrRuns === "function") pdfIsolateLtrRuns(c);
+                    } catch (e) {}
+                }
+            }
+        };
+        const canvas = await withTimeout(html2pdf().set(opt).from(sheet).toCanvas().get("canvas"), 25e3, "invoice canvas");
+        const blob = await new Promise(function(res) {
+            canvas.toBlob(res, "image/jpeg", .85);
+        });
+        if (!blob) return [];
+        const bytes = new Uint8Array(await blob.arrayBuffer()), info = taxxJpegInfo(bytes);
+        return info ? [ {
+            bytes: bytes,
+            ext: "jpeg",
+            w: info.w,
+            h: info.h
+        } ] : [];
+    } finally {
+        if (host.parentNode) host.parentNode.removeChild(host);
+    }
+}
+
+async function taxxOpsCollect(c, model) {
+    const io = typeof acct2Io === "function" ? acct2Io() : null;
+    const out = {
+        docs: {},
+        invs: {},
+        failed: 0,
+        embedded: 0
+    };
+    const docList = [], invList = [], seen = {};
+    const addDoc = function(d) {
+        if (d && d.id && !seen[d.serial]) {
+            seen[d.serial] = true;
+            docList.push(d);
+        }
+    };
+    model.ops.forEach(function(o) {
+        o.purchases.forEach(function(p) {
+            p.docs.forEach(addDoc);
+        });
+        if (o.delivery) o.delivery.docs.forEach(addDoc);
+        o.others.forEach(addDoc);
+        o.sales.forEach(function(s) {
+            if ((s.kind === "inv" || s.kind === "note") && s.id) invList.push(s.id);
+        });
+    });
+    model.expenses.forEach(function(e) {
+        e.docs.forEach(addDoc);
+    });
+    model.other.forEach(addDoc);
+    const total = docList.length + invList.length;
+    let done = 0, next = 0, used = 0;
+    const LIMIT = 90 * 1048576, INV_MAX = 200;
+    const keep = function(pages) {
+        const ok = [];
+        pages.forEach(function(p) {
+            if (used + p.bytes.length <= LIMIT) {
+                used += p.bytes.length;
+                ok.push(p);
+            }
+        });
+        return ok;
+    };
+    const tick = function(txt) {
+        done += 1;
+        c.progress(txt + " — " + Math.min(done, total) + " من " + total, 78 + Math.round(17 * Math.min(done, total) / Math.max(1, total)));
+    };
+    const worker = async function() {
+        while (next < docList.length && c.alive()) {
+            const d = docList[next++];
+            let pages = [];
+            try {
+                pages = io ? keep(await taxxOpsDocPages(io, d)) : [];
+            } catch (e) {
+                pages = [];
+            }
+            if (!pages.length) out.failed += 1; else out.embedded += 1;
+            out.docs[d.serial] = pages;
+            tick("تضمين صور المستندات");
+        }
+    };
+    await Promise.all([ worker(), worker(), worker() ]);
+    for (let i = 0; i < invList.length && c.alive(); i++) {
+        let pages = [];
+        if (i < INV_MAX) {
+            try {
+                pages = keep(await taxxOpsInvoicePages(invList[i]));
+            } catch (e) {
+                pages = [];
+            }
+        }
+        if (!pages.length) out.failed += 1; else out.embedded += 1;
+        out.invs[invList[i]] = pages;
+        tick("رسم صور فواتير البيع");
+    }
+    return out;
+}
+
+async function taxxOpsLog(c, model, imgs, sha, name) {
+    try {
+        const io = typeof acct2Io === "function" ? acct2Io() : null;
+        if (!io || typeof io.exportsAdd !== "function") return;
+        let id = null;
+        try {
+            id = typeof newMediaId === "function" ? newMediaId() : null;
+        } catch (e) {
+            id = null;
+        }
+        if (!id) return;
+        const p = taxxObj(c.pkg.period), S = taxxObj(model.summary);
+        await io.exportsAdd({
+            id: id,
+            period_from: taxxStr(p.from) || null,
+            period_to: taxxStr(p.to) || null,
+            as_at: taxxStr(c.pkg.asAtDate) || taxxStr(c.pkg.today),
+            basis: "accrual",
+            prepared_by: c.preparedBy || null,
+            sheet_rows: {
+                ops: S.ops,
+                expenses: S.expenses
+            },
+            sheet_hashes: {},
+            doc_count: taxxInt(imgs.embedded),
+            file_count: 0,
+            missing_count: taxxInt(S.purMissing) + taxxInt(S.expMissing),
+            xlsx_name: name,
+            xlsx_sha256: sha,
+            zip_sha256: null,
+            xlsx_path: null,
+            app_note: "taxx-ops"
+        });
+    } catch (e) {}
+}
+
+async function taxxOpsFinish(c) {
+    const x = c.x;
+    c.progress("تجهيز عمليات الفترة…", 76);
+    const model = taxxOpsModel({
+        pkg: c.pkg,
+        facts: c.facts,
+        docs: taxxArr(c.dstate && c.dstate.docs),
+        linkBase: ""
+    });
+    if (!model || !model.ok) throw new Error("TAXX_BUILD");
+    const imgs = c.docsOn ? await taxxOpsCollect(c, model) : {
+        docs: {},
+        invs: {},
+        failed: 0,
+        embedded: 0
+    };
+    if (!c.alive()) return false;
+    c.progress("بناء ملف Excel…", 96);
+    try {
+        if (typeof ensureXLSX === "function") await ensureXLSX();
+    } catch (ex) {
+        throw new Error("XLSX_LIB");
+    }
+    if (typeof XLSX === "undefined" || !XLSX || !XLSX.utils) throw new Error("XLSX_LIB");
+    const io = typeof acct2Io === "function" ? acct2Io() : null;
+    let Z = null;
+    try {
+        Z = io ? await io.loadJsZip() : null;
+    } catch (ex) {
+        Z = null;
+    }
+    if (!Z) throw new Error("JSZIP_LIB");
+    if (!c.alive()) return false;
+    const book = taxxOpsBook(XLSX, taxxOpsSheets(model, imgs));
+    const raw = new Uint8Array(XLSX.write(book.wb, {
+        bookType: "xlsx",
+        type: "array"
+    }));
+    const bytes = await taxxXlsxInject(Z, raw, book.inject);
+    if (!c.alive()) return false;
+    const blob = new Blob([ bytes ], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    });
+    const sha = PTX_ACCT.util.sha256Hex(bytes), name = taxxFileName("Accountant", c.pkg), S = model.summary;
+    const rows = S.inv + S.notes + S.noInv + S.purchases + S.expenses;
+    x.result = {
+        name: name,
+        blob: blob,
+        bytes: bytes.length,
+        sha256: sha,
+        sheets: 2,
+        rows: rows,
+        warnings: 0,
+        pending: 0,
+        kind: "xlsx",
+        docs: imgs.embedded,
+        missing: taxxInt(S.purMissing) + taxxInt(S.expMissing),
+        skipped: 0
+    };
+    if (!(typeof acctIsIos === "function" && acctIsIos())) {
+        acctDownloadBlob(blob, name);
+        acctToast("تم تحميل الملف");
+    } else acctToast("تم تجهيز الملف — اضغط «مشاركة الملف»");
+    if (imgs.failed > 0) acctToast(imgs.failed + " صورة لم تُضمَّن بالملف — مذكورة بخلاياها", "error");
+    if (c.docsOn) taxxOpsLog(c, model, imgs, sha, name);
     return true;
 }
 
