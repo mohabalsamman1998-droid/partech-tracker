@@ -711,6 +711,16 @@
   .netp-net-line{margin-top:8px;font-size:12.5px;font-weight:800;color:var(--text-dim);}
   .netp-net-line:empty{display:none;}
   .netp-net-line b:not(.text-rust){color:var(--green);}
+  .netp-net-line > div + div{margin-top:4px;}
+  .netp-warn-row{font-size:11.5px;font-weight:700;}
+  .netp-pcap{display:block;}
+  /* ملخص القطعة المطويّ (TRACK): بجانب «بيع» المكتوب ما يدفعه الزبون بالضريبة بخط صغير (المتغيّر --netp-f يضعه netpRefresh على صف القطعة بوضع السعر قبل الضريبة) */
+  .netp-tm .trk-psell::after{content:'بالضريبة ' var(--netp-f);font-size:12px;font-weight:700;color:var(--text-dim);}
+  /* خلية «بالضريبة» (قراءة فقط) بجانب «سعر البيع»: بمقاس خانة الإدخال المجاورة وبخط صغير؛ بالجوال تملأ عرض خليتها وبارتفاع الحقول المجاورة (48px) */
+  .netp-fv{display:flex;align-items:center;justify-content:center;box-sizing:border-box;width:84px;min-height:42px;padding:6px 4px;border:1px dashed var(--green-line);border-radius:6px;background:var(--green-dim);color:var(--green);font-size:12px;font-weight:700;line-height:1.2;white-space:nowrap;}
+  @media (max-width:600px){
+    .trk-pr:not(.trk-prq) .part-row:not(.part-row-returned) > .part-price-group:has(> .netp-slot > .netp-cell) > .netp-slot > .netp-cell > .netp-fv{width:100%;min-width:0;height:48px;padding-left:3px;padding-right:3px;}
+  }
   .modal-card.trk-payo .section-sales > .netp-net-line{order:1;}
 /* NETP END css */
   .quote-priority-controls{display:flex;flex-direction:column;gap:2px;flex-shrink:0;}
@@ -6021,24 +6031,45 @@ function netpBaseMode(p) {
 function netpFlagsLoad() {
     try {
         const L = netpFlagsLoad;
-        if (L.busy || L.map && Date.now() - L.at < 3e5) return;
+        if (L.busy) return;
+        if (L.map && Date.now() - L.at < 3e5) return;
+        if (!L.map && L.failAt && Date.now() - L.failAt < 2e4) return;
         if (typeof sb === "undefined" || !sb || typeof sb.rpc !== "function") return;
         L.busy = true;
-        Promise.resolve(sb.rpc("supplier_tax_flags")).then(r => {
+        const gen = L.gen = (L.gen || 0) + 1;
+        let applied = false, failed = false, timer = null;
+        const fail = () => {
+            if (applied || failed || L.gen !== gen) return;
+            failed = true;
+            L.busy = false;
+            L.failAt = Date.now();
+            netpRefresh();
+        };
+        const ok = data => {
+            if (applied || L.gen !== gen) return;
+            applied = true;
             L.busy = false;
             L.at = Date.now();
-            const good = !!(r && !r.error && Array.isArray(r.data)), m = {};
-            if (good) r.data.forEach(x => {
+            L.failAt = 0;
+            if (timer && typeof clearTimeout === "function") clearTimeout(timer);
+            const m = {};
+            data.forEach(x => {
                 if (x && (x.tax_invoice === "yes" || x.tax_invoice === "no")) m[x.id] = x.tax_invoice;
             });
-            const next = good ? m : L.map || {};
-            const changed = JSON.stringify(next) !== JSON.stringify(L.map || {});
-            L.map = next;
+            const changed = JSON.stringify(m) !== JSON.stringify(L.map || {});
+            L.map = m;
+            netpRederive();
             if (changed) netpRefresh();
-        }).catch(() => {
-            L.busy = false;
-            L.at = Date.now();
-            L.map = L.map || {};
+        };
+        if (typeof setTimeout === "function") timer = setTimeout(fail, 8e3);
+        Promise.resolve(sb.rpc("supplier_tax_flags")).then(r => {
+            if (r && !r.error && Array.isArray(r.data)) ok(r.data); else {
+                if (timer && typeof clearTimeout === "function") clearTimeout(timer);
+                fail();
+            }
+        }, () => {
+            if (timer && typeof clearTimeout === "function") clearTimeout(timer);
+            fail();
         });
     } catch (e) {
         console.warn("netpFlagsLoad:", e);
@@ -6055,6 +6086,47 @@ function netpTotal(c, F, mode) {
 
 function netpNet(c, F, mode) {
     return netpR2(mode === "yes" ? (F - c) / 1.15 : F / 1.15 - c);
+}
+
+function netpTOn(p) {
+    try {
+        if (!p || p.returned) return false;
+        const T = p.sellTyped, F = p.sellTypedF, S = p.sellPrice;
+        if (typeof T !== "number" || typeof F !== "number" || !isFinite(T) || !isFinite(F) || T < 0 || F < 0) return false;
+        if (S === undefined || S === null || S === "") return false;
+        return Math.abs((Number(S) || 0) - F) < .005;
+    } catch (e) {
+        return false;
+    }
+}
+
+function netpModeEff(p) {
+    return netpMode(p) === "yes" ? "yes" : "no";
+}
+
+function netpNum(x) {
+    const v = netpR2(x);
+    return v.toLocaleString("en-US", {
+        minimumFractionDigits: Number.isInteger(v) ? 0 : 2,
+        maximumFractionDigits: 2
+    });
+}
+
+function netpFcellHtml(p) {
+    return '<label class="mini-label netp-cell netp-fcell" title="ما يدفعه الزبون عن هذه القطعة شاملًا ضريبة القيمة المضافة 15% — يُحسب تلقائيًا مما كتبته بخانة سعر البيع">بالضريبة<span class="netp-fv num">' + escapeHtml(netpNum(p.sellPrice)) + "</span></label>";
+}
+
+function netpSumInfo(d) {
+    try {
+        if (!orderActiveParts(d).some(p => netpTOn(p))) return null;
+        const t = orderTotals(d);
+        return {
+            total: t.partsSellTotal,
+            vat: computeVatAmount(t.partsSellTotal)
+        };
+    } catch (e) {
+        return null;
+    }
 }
 
 function netpState(p) {
@@ -6136,6 +6208,7 @@ function netpUnknownCount(d) {
 
 function netpSlotHtml(p) {
     netpEnsureDelegate();
+    if (!netpElevated()) netpFlagsLoad();
     return '<div class="netp-slot" data-netp-slot="' + escapeHtml(p.id) + '"></div>';
 }
 
@@ -6176,7 +6249,45 @@ function netpRefresh() {
             netpLeadCompact(row);
             netpSlotPlace(slot, row);
             netpSupMark(row, p);
-            const s = p && row && row.querySelector(".part-sell-input") ? netpState(p) : null;
+            const sellEl = p && row && row.querySelector ? row.querySelector(".part-sell-input") : null;
+            const tOn = !!(sellEl && netpTOn(p));
+            if (p && sellEl && !tOn && sellEl !== document.activeElement) {
+                if (p.sellTyped !== undefined || p.sellTypedF !== undefined) {
+                    delete p.sellTyped;
+                    delete p.sellTypedF;
+                }
+                if (p.sellPrice !== null && p.sellPrice !== undefined && p.sellPrice !== "") {
+                    netpOnSell.leg = netpOnSell.leg || Object.create(null);
+                    netpOnSell.leg[p.id] = draft;
+                }
+            }
+            if (row && row.classList) {
+                try {
+                    if (tOn) {
+                        row.classList.add("netp-tm");
+                        if (row.style && row.style.setProperty) row.style.setProperty("--netp-f", JSON.stringify(netpNum(p.sellPrice)));
+                    } else if (row.classList.contains && row.classList.contains("netp-tm")) {
+                        row.classList.remove("netp-tm");
+                        if (row.style && row.style.removeProperty) row.style.removeProperty("--netp-f");
+                    }
+                } catch (e) {}
+            }
+            if (tOn) {
+                if (slot.getAttribute("data-netp-sig") !== "T") {
+                    slot.innerHTML = netpFcellHtml(p);
+                    slot.setAttribute("data-netp-sig", "T");
+                } else {
+                    const fv = slot.querySelector ? slot.querySelector(".netp-fv") : null, txt = netpNum(p.sellPrice);
+                    if (fv && fv.textContent !== txt) fv.textContent = txt;
+                }
+                if (sellEl !== document.activeElement && String(sellEl.value) !== String(p.sellTyped)) sellEl.value = String(p.sellTyped);
+                return;
+            }
+            if (p && sellEl && slot.getAttribute("data-netp-sig") === "T" && sellEl !== document.activeElement) {
+                const sp = p.sellPrice !== null && p.sellPrice !== undefined && p.sellPrice !== "" ? String(p.sellPrice) : "";
+                if (String(sellEl.value) !== sp) sellEl.value = sp;
+            }
+            const s = sellEl ? netpState(p) : null;
             const sig = s ? s.hint ? "hint" : s.mode : "";
             if (slot.getAttribute("data-netp-sig") !== sig) {
                 slot.innerHTML = s ? netpInnerHtml(p) : "";
@@ -6192,10 +6303,18 @@ function netpRefresh() {
             }
         });
         const el = document.getElementById("netp-net-line");
+        const r = netpOrderNet(draft);
+        const sub = document.getElementById("total-profit-sub");
+        if (sub && sub.querySelector) {
+            const old = sub.querySelector(".netp-pcap");
+            if (old && old.parentNode) old.parentNode.removeChild(old);
+            if (r && sub.insertAdjacentHTML) sub.insertAdjacentHTML("beforeend", '<span class="netp-pcap">قبل الضريبة المستحقة</span>');
+        }
         if (el) {
-            const r = netpOrderNet(draft);
-            el.innerHTML = r ? 'الربح الصافي بعد الضريبة (تقديري): <b class="num' + (r.net < 0 ? " text-rust" : "") + '">' + escapeHtml(modalMoney(r.net)) + "</b>" + (netpUnknownCount(draft) > 0 ? ' <span class="muted">⚠️ بعض القطع لم يُحدَّد لها استرداد ضريبة الشراء — حُسبت بلا استرداد</span>' : "") : "";
-            el.title = r ? "الضريبة المستخرجة من إجمالي الزبون ناقص ضريبة الشراء المستردّة (لموردين علامتهم «فاتورة نظامية: نعم» فقط)" : "";
+            const sum = netpSumInfo(draft);
+            const before = r ? orderTotals(draft).profit : 0;
+            el.innerHTML = (sum ? '<div class="netp-sum-row">مجموع القطع بالضريبة: <b class="num">' + escapeHtml(modalMoney(sum.total)) + '</b> <span class="muted">(منها ضريبة ' + escapeHtml(modalMoney(sum.vat)) + ")</span></div>" : "") + (r ? '<div class="netp-net-row">الربح قبل الضريبة المستحقة <span class="num' + (before < 0 ? " text-rust" : "") + '">' + escapeHtml(modalMoney(before)) + '</span> · بعد خصمها <b class="num' + (r.net < 0 ? " text-rust" : "") + '">' + escapeHtml(modalMoney(r.net)) + '</b> <span class="muted">(تقديري)</span></div>' + (netpUnknownCount(draft) > 0 && netpElevated() ? '<div class="netp-warn-row muted">⚠️ بعض القطع لم يُحدَّد لها استرداد ضريبة الشراء — حُسبت بلا استرداد</div>' : "") : "") + (netpPendingCount() > 0 ? '<div class="netp-warn-row muted">' + (netpFlagsLoad.failAt ? "⚠️ تعذّر تحميل بيانات الموردين — قد يكون سعر بعض القطع أعلى من الصحيح؛ أعد فتح الطلبية قبل الحفظ" : "⚠️ بيانات الموردين لم تصل بعد — قد يتغيّر سعر بعض القطع عند وصولها، فلا تحفظ قبل ذلك") + "</div>" : "");
+            el.title = r ? "الضريبة المستحقة = الضريبة المستخرجة من إجمالي الزبون ناقص ضريبة الشراء المستردّة (لموردين علامتهم «فاتورة نظامية: نعم» فقط)" : "";
         }
         netpFeeSync();
     } catch (e) {
@@ -6301,14 +6420,123 @@ function netpOnInput(e) {
         const raw = String(t.value).trim();
         const F = raw === "" ? "" : Math.max(0, netpSell(c, c + (Number(raw) || 0), mode));
         sellInput.value = F === "" ? "" : String(F);
-        if (typeof sellInput.dispatchEvent === "function" && typeof Event === "function") sellInput.dispatchEvent(new Event("input", {
-            bubbles: true
-        })); else {
-            part.sellPrice = F === "" ? null : F;
-            updateModalTotals();
+        delete part.sellTyped;
+        delete part.sellTypedF;
+        netpOnInput.busy = true;
+        try {
+            if (typeof sellInput.dispatchEvent === "function" && typeof Event === "function") sellInput.dispatchEvent(new Event("input", {
+                bubbles: true
+            })); else {
+                part.sellPrice = F === "" ? null : F;
+                updateModalTotals();
+            }
+        } finally {
+            netpOnInput.busy = false;
         }
     } catch (err) {
         console.warn("netpOnInput:", err);
+    }
+}
+
+function netpOnSellPre(e) {
+    try {
+        netpOnSellPre.snap = null;
+        const t = e && e.target;
+        if (!t || !t.classList || !t.classList.contains("part-sell-input") || netpOnInput.busy) return;
+        if (typeof draft === "undefined" || !draft) return;
+        const row = t.closest ? t.closest(".part-row") : null;
+        const pid = row ? row.getAttribute("data-part-id") : null;
+        const part = (draft.parts || []).find(x => x && x.id === pid);
+        if (part) netpOnSellPre.snap = {
+            pid: pid,
+            was: netpTOn(part),
+            prev: part.sellPrice,
+            leg: !!(netpOnSell.leg && netpOnSell.leg[pid] === draft)
+        };
+    } catch (err) {
+        console.warn("netpOnSellPre:", err);
+    }
+}
+
+function netpOnSell(e) {
+    try {
+        const t = e && e.target;
+        if (!t || !t.classList || !t.classList.contains("part-sell-input")) return;
+        if (netpOnInput.busy) return;
+        if (typeof draft === "undefined" || !draft) return;
+        const row = t.closest ? t.closest(".part-row") : null;
+        const pid = row ? row.getAttribute("data-part-id") : null;
+        const part = (draft.parts || []).find(x => x && x.id === pid);
+        const snap = netpOnSellPre.snap;
+        netpOnSellPre.snap = null;
+        if (!part || part.returned) return;
+        const raw = String(t.value).trim();
+        if (raw === "") {
+            delete part.sellTyped;
+            delete part.sellTypedF;
+            return;
+        }
+        if (snap && snap.pid === part.id && !snap.was && (snap.leg || snap.prev !== null && snap.prev !== undefined && snap.prev !== "") && typeof showToast === "function") {
+            netpOnSell.told = netpOnSell.told || Object.create(null);
+            const key = part.id + "|" + (draft.id || "");
+            if (!netpOnSell.told[key]) {
+                netpOnSell.told[key] = true;
+                try {
+                    showToast("السعر المكتوب صار قبل الضريبة — تُضاف الضريبة فوقه تلقائيًا", "ok");
+                } catch (e) {}
+            }
+        }
+        const T = Math.max(0, Number(raw) || 0), c = Number(part.costPrice) || 0;
+        const waiting = !netpElevated() && !!part.supplierId && !netpFlagsLoad.map;
+        const F = Math.max(0, netpSell(c, T, netpModeEff(part)));
+        part.sellTyped = T;
+        part.sellTypedF = F;
+        part.sellPrice = F;
+        netpOnSell.pend = netpOnSell.pend || Object.create(null);
+        if (waiting) netpOnSell.pend[part.id] = {
+            d: draft,
+            T: T
+        }; else delete netpOnSell.pend[part.id];
+        updateModalTotals();
+    } catch (err) {
+        console.warn("netpOnSell:", err);
+    }
+}
+
+function netpPendingCount() {
+    try {
+        const pend = netpOnSell.pend;
+        if (!pend || typeof draft === "undefined" || !draft || !Array.isArray(draft.parts) || netpElevated()) return 0;
+        return Object.keys(pend).filter(id => {
+            const e = pend[id], p = draft.parts.find(x => x && x.id === id);
+            return !!(e && e.d === draft && p && netpTOn(p));
+        }).length;
+    } catch (e) {
+        return 0;
+    }
+}
+
+function netpRederive() {
+    try {
+        const pend = netpOnSell.pend;
+        if (!pend || typeof draft === "undefined" || !draft || !Array.isArray(draft.parts)) return;
+        let any = false;
+        Object.keys(pend).forEach(id => {
+            const e = pend[id];
+            delete pend[id];
+            if (!e || e.d !== draft) return;
+            const p = draft.parts.find(x => x && x.id === id);
+            if (!p || !netpTOn(p) || p.sellTyped !== e.T) return;
+            const F = Math.max(0, netpSell(Number(p.costPrice) || 0, e.T, netpModeEff(p)));
+            if (F !== Number(p.sellPrice)) {
+                p.sellTypedF = F;
+                p.sellPrice = F;
+                any = true;
+            }
+        });
+        if (any && typeof updateModalTotals === "function") updateModalTotals();
+    } catch (err) {
+        console.warn("netpRederive:", err);
     }
 }
 
@@ -6357,7 +6585,9 @@ function netpEnsureDelegate() {
         const root = document.getElementById("modal-root");
         if (!root || root._netpBound) return;
         root._netpBound = true;
+        root.addEventListener("input", netpOnSellPre, true);
         root.addEventListener("input", netpOnInput);
+        root.addEventListener("input", netpOnSell);
         root.addEventListener("input", netpOnFeeInput);
         root.addEventListener("click", netpOnTagClick);
         root.addEventListener("click", netpOnAddClick);
