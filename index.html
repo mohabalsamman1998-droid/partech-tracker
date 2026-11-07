@@ -3353,8 +3353,10 @@
   body.pinv-open{overflow:hidden;}
   .pinv-item.pinv-done{border-inline-start-color:var(--green);}
   .pinv-screen .acct2-tabs{overflow-y:hidden;}
-  .trk-drawer-list #btn-open-scrapyard-invoices::before{content:'🧾';}
-  @media print{ #pinv-root{display:none !important;} }
+  /* عرض الفاتورة المرفقة: غلاف فوق ورقة المستند (طبقة المستندات 95) وتحت التوستات (100)، وشكله من قواعد .acct2-sheet-* نفسها */
+  #pinv-view{position:fixed;inset:0;z-index:97;}
+  #pinv-view:not(.pinv-vopen){display:none !important;}
+  @media print{ #pinv-root,#pinv-view{display:none !important;} }
   /* PINV END css */
   /* TAXX BEGIN css */
   /* اختيار التقرير بنافذة التصدير: عند «إقرار القيمة المضافة» أو «ضريبة الدخل» تُخفى خيارات ZIP/المستندات (الملف إكسل واحد)، وعند «ضريبة الدخل» تُخفى قائمة الفترة (السنة المالية بدلها) */
@@ -49448,6 +49450,10 @@ function acct2YardSheetHtml(sh) {
     let body = '<div class="acct2-detail-state"><b>' + acct2Ltr(slot.orderNumber || "") + "</b> · " + acct2Esc(slot.supplierName || ACCT2_TXT.card.unknownSupplier) + " · " + acct2MoneyHtml(slot.amountH) + "</div>" + '<div class="acct2-detail-state">' + acct2SlotHtml(slot, {
         labelOnly: true
     }) + "</div>";
+    if (typeof pinvYardBody === "function") {
+        const px = pinvYardBody(slot, mine, body, sh);
+        if (typeof px === "string") return acct2SheetFrame("مستند", px, "acct2-sheet-waive");
+    }
     for (let i = 0; i < mine.length; i++) {
         const c = mine[i];
         const age = c.created_at ? Date.now() - (Date.parse(String(c.created_at)) || 0) : 1e12;
@@ -50746,7 +50752,9 @@ function pinvOnClick(e) {
         if (act === "open") {
             if (typeof e.preventDefault === "function") e.preventDefault();
             pinvOpen();
-        } else if (act === "close") pinvClose(); else if (act === "tab") pinvSetTab(t.getAttribute("data-pinv-id")); else if (act === "more") pinvMore(); else if (act === "reload") pinvLoad();
+        } else if (act === "close") pinvClose(); else if (act === "tab") pinvSetTab(t.getAttribute("data-pinv-id")); else if (act === "more") pinvMore(); else if (act === "reload") pinvLoad(); else if (act === "view") pinvViewOpen(t.getAttribute("data-pinv-id"), t.getAttribute("data-pinv-key")); else if (act === "view-close") pinvViewClose(); else if (act === "view-bd") {
+            if (t === e.target) pinvViewClose();
+        } else if (act === "view-zoom") pinvViewZoom(); else if (act === "view-file") pinvViewFile(); else if (act === "view-retry") pinvViewLoad(); else if (act === "page-cam") pinvPage("camera", t.getAttribute("data-pinv-key")); else if (act === "page-scan") pinvPageScan(t.getAttribute("data-pinv-key")); else if (act === "page-file") pinvPage("file", t.getAttribute("data-pinv-key")); else if (act === "del-ask") pinvDelAsk(true); else if (act === "del-no") pinvDelAsk(false); else if (act === "del-do") pinvDelRun(t.getAttribute("data-pinv-key"));
     } catch (err) {
         console.error("PINV:", err);
     }
@@ -51130,6 +51138,421 @@ function pinvRender() {
         } catch (e) {}
     } catch (err) {
         console.error("PINV render:", err);
+    }
+}
+
+function pinvV() {
+    const f = pinvV;
+    if (!f.st) f.st = {
+        open: false,
+        gen: 0,
+        st: null,
+        docId: "",
+        orderId: "",
+        serial: 0,
+        state: "",
+        blob: null,
+        blobUrl: "",
+        mime: "",
+        pdfPages: 0,
+        zoom: false
+    };
+    return f.st;
+}
+
+function pinvOwnDocs(key) {
+    try {
+        const slot = acct2SlotForKey(String(key || ""));
+        if (!slot) return [];
+        const st = acct2IoState();
+        const covers = st && Array.isArray(st.covers) ? st.covers : [];
+        return covers.filter(function(c) {
+            return c && c.mine && c.doc_id && String(c.order_id) === String(slot.orderId) && String(c.supplier_id || "") === String(slot.supplierId || "");
+        }).sort(function(a, b) {
+            return (Number(a.serial) || 0) - (Number(b.serial) || 0);
+        });
+    } catch (e) {
+        return [];
+    }
+}
+
+function pinvYardBody(slot, mine, head, sh) {
+    try {
+        if (!slot || slot.state !== "covered" || !Array.isArray(mine) || !mine.length) return null;
+        const rows = mine.filter(function(c) {
+            return c && c.has_file && c.doc_id;
+        });
+        if (rows.length !== mine.length) return null;
+        pinvBindOnce();
+        rows.sort(function(a, b) {
+            return (Number(a.serial) || 0) - (Number(b.serial) || 0);
+        });
+        const key = pinvEsc(slot.key);
+        const B = typeof ACCT2_TXT !== "undefined" && ACCT2_TXT && ACCT2_TXT.buttons ? ACCT2_TXT.buttons : {};
+        let h = String(head);
+        rows.forEach(function(c) {
+            h += '<div class="acct2-row"><span class="acct2-row-t">' + pinvLtr(acct2DocNo(c.serial)) + '</span><span class="acct2-row-w">' + '<button type="button" class="acct2-chip acct2-chip-on" data-pinv-act="view" data-pinv-id="' + pinvEsc(c.doc_id) + '" data-pinv-key="' + key + '">👁 عرض</button></span></div>';
+        });
+        if (rows.some(function(c) {
+            return String(c.review_state || "unreviewed") !== "unreviewed";
+        })) return h + '<div class="acct2-note acct2-note-dim">راجعها المحاسب — لا يمكن تعديلها.</div>';
+        if (sh && sh.pinvBusy) return h + '<div class="acct2-note" role="status">جارٍ الحذف…</div>';
+        const scanOk = typeof pdfscanOn === "function" && typeof pdfscanStart === "function" && pdfscanOn();
+        h += '<div class="acct2-label">أضف صفحة</div><div class="acct2-actions">' + '<button type="button" class="acct2-btn acct2-btn-lg" data-pinv-act="page-cam" data-pinv-key="' + key + '" aria-label="' + pinvEsc(B.camAria || "تصوير") + '">' + (B.cam || "📷") + "</button>" + (scanOk ? '<button type="button" class="acct2-btn acct2-btn-lg" data-pinv-act="page-scan" data-pinv-key="' + key + '" aria-label="مسح" title="مسح ورقة — عدة صفحات في ملف PDF واحد">📄</button>' : "") + '<button type="button" class="acct2-btn acct2-btn-lg" data-pinv-act="page-file" data-pinv-key="' + key + '" aria-label="' + pinvEsc(B.fileAria || "ملف") + '">' + (B.file || "📎") + "</button></div>";
+        if (sh && sh.pinvDel) {
+            return h + '<div class="acct2-note acct2-note-warn">تُحذف الفاتورة بكل صفحاتها وتعود «ناقصة» لتُرفق من جديد. متأكد؟</div>' + '<div class="acct2-actions"><button type="button" class="acct2-chip acct2-chip-danger" data-pinv-act="del-do" data-pinv-key="' + key + '">نعم، احذفها</button>' + '<button type="button" class="acct2-chip" data-pinv-act="del-no">إلغاء</button></div>';
+        }
+        return h + '<div class="acct2-actions"><button type="button" class="acct2-chip acct2-chip-danger" data-pinv-act="del-ask" data-pinv-key="' + key + '">🗑 حذف الفاتورة وإرفاقها من جديد</button></div>' + '<div class="acct2-note acct2-note-dim">يمكنك تغييرها ما لم يراجعها المحاسب.</div>';
+    } catch (e) {
+        return null;
+    }
+}
+
+function pinvDelAsk(on) {
+    try {
+        const st = pinvSession();
+        if (!st || !st.sheet || st.sheet.type !== "yard" || st.sheet.pinvBusy) return;
+        st.sheet.pinvDel = !!on;
+        if (typeof acct2SheetRender === "function") acct2SheetRender();
+    } catch (e) {}
+}
+
+function pinvDelRun(key) {
+    try {
+        const io = pinvIo(), st = pinvSession();
+        const sh = st ? st.sheet : null;
+        const ids = pinvOwnDocs(key).map(function(c) {
+            return String(c.doc_id);
+        });
+        if (!io || typeof io.voidDoc !== "function" || !st || !sh || sh.type !== "yard" || sh.pinvBusy || !ids.length) return;
+        sh.pinvDel = false;
+        sh.pinvBusy = true;
+        if (typeof acct2SheetRender === "function") acct2SheetRender();
+        let bad = "";
+        const step = function(i) {
+            if (i >= ids.length) return Promise.resolve();
+            let p = null;
+            try {
+                p = io.voidDoc(ids[i], "other", "");
+            } catch (e) {
+                p = null;
+            }
+            return Promise.resolve(p).then(function(r) {
+                if (!r || r.ok === false) bad = bad || String(r && r.reason || "error");
+            }, function() {
+                bad = bad || "error";
+            }).then(function() {
+                return step(i + 1);
+            });
+        };
+        step(0).then(function() {
+            sh.pinvBusy = false;
+            if (pinvSession() !== st) return;
+            if (bad) pinvToast(bad === "PT478" ? "تعذّر الحذف — راجعها المحاسب" : "تعذّر الحذف — حاول مرة أخرى", "error"); else pinvToast("حُذفت الفاتورة — يمكنك إرفاق غيرها");
+            if (st.sheet === sh && typeof acct2CloseSheet === "function") acct2CloseSheet();
+            if (typeof acct2ScheduleRefresh === "function") acct2ScheduleRefresh();
+            pinvSchedule();
+        });
+    } catch (e) {
+        console.error("PINV delete:", e);
+    }
+}
+
+function pinvPage(source, key) {
+    try {
+        const io = pinvIo(), st = pinvSession();
+        const own = pinvOwnDocs(key);
+        if (!io || typeof io.pick !== "function" || !st || !own.length) return;
+        const cy = typeof acct2SlotCtx === "function" ? acct2SlotCtx(String(key)) : null;
+        const ctx = {
+            pageOf: String(own[0].doc_id),
+            facts: {
+                kind: "supplier_invoice",
+                evidence: "unknown"
+            }
+        };
+        if (cy) {
+            ctx.slotKey = cy.slotKey;
+            ctx.slot = cy.slot;
+        }
+        acct2PickChecked(st, io, ctx, source === "file" ? "file" : "camera");
+    } catch (e) {
+        console.error("PINV page:", e);
+    }
+}
+
+function pinvPageScan(key) {
+    try {
+        const own = pinvOwnDocs(key);
+        if (!own.length || typeof pdfscanStart !== "function") return;
+        pdfscanStart({
+            getAttribute: function(k) {
+                return k === "data-pdfimg-scan" ? "slot" : k === "data-pdfimg-key" ? String(key) : null;
+            }
+        });
+        if (typeof pdfscanSess !== "undefined" && pdfscanSess && pdfscanSess.ctx) pdfscanSess.ctx.pageOf = String(own[0].doc_id);
+    } catch (e) {
+        console.error("PINV page scan:", e);
+    }
+}
+
+function pinvDocMeta(orderId, docId) {
+    let p = null;
+    try {
+        p = sb.rpc("acct_docs_for_links", {
+            p_type: "order_purchase",
+            p_ids: [ String(orderId) ]
+        });
+        if (typeof withTimeout === "function") p = withTimeout(p, 2e4, "acct_docs_for_links");
+    } catch (e) {
+        p = null;
+    }
+    if (!p || typeof p.then !== "function") return Promise.resolve(null);
+    return Promise.resolve(p).then(function(res) {
+        const rows = res && !res.error && res.data && Array.isArray(res.data.rows) ? res.data.rows : [];
+        for (let i = 0; i < rows.length; i++) {
+            const r = rows[i];
+            if (r && r.mine === true && String(r.doc_id) === String(docId) && typeof r.object_path === "string" && /^[0-9a-f-]{36}\/[0-9]{4}\/[0-9]{2}\/[0-9a-f-]{36}\.(pdf|jpg|png|xml)$/.test(r.object_path)) return {
+                path: r.object_path,
+                mime: String(r.mime || "")
+            };
+        }
+        return null;
+    }, function() {
+        return null;
+    });
+}
+
+function pinvDocBlob(path) {
+    let p = null;
+    try {
+        p = sb.storage.from("acct-docs").download(path);
+        if (typeof withTimeout === "function") p = withTimeout(p, 6e4, "acct-docs download");
+    } catch (e) {
+        p = null;
+    }
+    if (!p || typeof p.then !== "function") return Promise.resolve(null);
+    return Promise.resolve(p).then(function(r) {
+        return r && !r.error && r.data ? r.data : null;
+    }, function() {
+        return null;
+    });
+}
+
+function pinvViewRoot(create) {
+    let r = document.getElementById("pinv-view");
+    if (!r && create && document.body) {
+        r = document.createElement("div");
+        r.id = "pinv-view";
+        document.body.appendChild(r);
+    }
+    return r;
+}
+
+function pinvViewRelease() {
+    const V = pinvV();
+    try {
+        if (V.blobUrl && typeof URL !== "undefined" && URL.revokeObjectURL) URL.revokeObjectURL(V.blobUrl);
+    } catch (e) {}
+    V.blob = null;
+    V.blobUrl = "";
+    V.pdfPages = 0;
+    V.mime = "";
+}
+
+function pinvViewKey(e) {
+    try {
+        if (!e || e.key !== "Escape" || !pinvV().open) return;
+        if (typeof e.stopPropagation === "function") e.stopPropagation();
+        pinvViewClose();
+    } catch (err) {}
+}
+
+function pinvViewKeyOn() {
+    try {
+        if (typeof window !== "undefined" && window && typeof window.addEventListener === "function") window.addEventListener("keydown", pinvViewKey, true);
+    } catch (e) {}
+}
+
+function pinvViewKeyOff() {
+    try {
+        if (typeof window !== "undefined" && window && typeof window.removeEventListener === "function") window.removeEventListener("keydown", pinvViewKey, true);
+    } catch (e) {}
+}
+
+function pinvViewOpen(docId, key) {
+    try {
+        if (!pinvAvailable()) return;
+        const c = pinvOwnDocs(key).filter(function(x) {
+            return String(x.doc_id) === String(docId || "");
+        })[0];
+        if (!c) {
+            pinvToast("غير متاح", "error");
+            return;
+        }
+        const V = pinvV();
+        pinvViewRelease();
+        V.open = true;
+        V.gen++;
+        V.st = pinvSession();
+        V.docId = String(c.doc_id);
+        V.orderId = String(c.order_id);
+        V.serial = Number(c.serial) || 0;
+        V.zoom = false;
+        V.state = "loading";
+        pinvViewRoot(true);
+        pinvViewKeyOn();
+        pinvViewLoad();
+    } catch (err) {
+        console.error("PINV view:", err);
+    }
+}
+
+function pinvViewClose() {
+    try {
+        const V = pinvV();
+        V.open = false;
+        V.gen++;
+        V.state = "";
+        pinvViewRelease();
+        pinvViewKeyOff();
+        const r = pinvViewRoot(false);
+        if (r) {
+            r.innerHTML = "";
+            r.classList.remove("pinv-vopen");
+        }
+    } catch (err) {
+        console.error("PINV view close:", err);
+    }
+}
+
+function pinvViewZoom() {
+    const V = pinvV();
+    if (!V.open || !V.blobUrl) return;
+    V.zoom = !V.zoom;
+    pinvViewRender();
+}
+
+function pinvViewLoad() {
+    const V = pinvV(), gen = V.gen;
+    const live = function() {
+        return gen === V.gen && V.open;
+    };
+    const fail = function() {
+        if (!live()) return;
+        V.state = "error";
+        pinvViewRelease();
+        pinvViewRender();
+    };
+    pinvViewRelease();
+    V.state = "loading";
+    pinvViewRender();
+    pinvDocMeta(V.orderId, V.docId).then(function(meta) {
+        if (!live()) return null;
+        if (!meta) {
+            fail();
+            return null;
+        }
+        return pinvDocBlob(meta.path).then(function(blob) {
+            if (!live()) return;
+            if (!blob) {
+                fail();
+                return;
+            }
+            V.blob = blob;
+            V.mime = String(meta.mime || blob.type || "").toLowerCase();
+            if (V.mime.indexOf("image/") === 0) {
+                try {
+                    V.blobUrl = URL.createObjectURL(blob);
+                } catch (e) {
+                    V.blobUrl = "";
+                }
+            }
+            V.state = "ready";
+            pinvViewRender();
+            if (V.mime === "application/pdf" && typeof pdfimgPreview === "function") pdfimgPreview(V, function() {
+                if (live()) pinvViewRender();
+            });
+        });
+    }).then(null, fail);
+}
+
+function pinvViewFile() {
+    const V = pinvV();
+    if (!V.open || !V.blob) return;
+    const isPdf = String(V.mime || V.blob.type || "").toLowerCase() === "application/pdf";
+    const name = acct2DocNo(V.serial) + (isPdf ? ".pdf" : "");
+    try {
+        if (typeof acctIsIos === "function" && acctIsIos() && typeof navigator !== "undefined" && navigator.share && navigator.canShare) {
+            const file = new File([ V.blob ], name, {
+                type: isPdf ? "application/pdf" : "application/octet-stream"
+            });
+            if (navigator.canShare({
+                files: [ file ]
+            })) {
+                navigator.share({
+                    files: [ file ],
+                    title: name
+                }).then(function() {}, function() {});
+                return;
+            }
+        }
+    } catch (e) {}
+    if (!isPdf) {
+        try {
+            if (typeof acctDownloadBlob === "function") acctDownloadBlob(new Blob([ V.blob ], {
+                type: "application/octet-stream"
+            }), name);
+        } catch (e) {}
+        return;
+    }
+    try {
+        const u = URL.createObjectURL(new Blob([ V.blob ], {
+            type: "application/pdf"
+        }));
+        const w = window.open(u, "_blank");
+        if (!w && typeof acctDownloadBlob === "function") acctDownloadBlob(new Blob([ V.blob ], {
+            type: "application/octet-stream"
+        }), name);
+        setTimeout(function() {
+            try {
+                URL.revokeObjectURL(u);
+            } catch (x) {}
+        }, 6e4);
+    } catch (e) {}
+}
+
+function pinvViewHtml() {
+    const V = pinvV();
+    let body = "";
+    if (V.state === "loading") body = '<div class="acct2-preview acct2-preview-wait" role="status">جارٍ فتح الفاتورة…</div>'; else if (V.state === "error") body = '<div class="acct2-note acct2-note-warn" role="alert">تعذّر فتح الفاتورة</div><div class="acct2-actions"><button type="button" class="acct2-chip acct2-chip-on" data-pinv-act="view-retry">إعادة المحاولة</button></div>'; else {
+        let acts = "";
+        if (V.blobUrl) {
+            body += '<div class="acct2-viewer"><img class="acct2-viewer-img' + (V.zoom ? " acct2-zoom" : "") + '" src="' + pinvEsc(V.blobUrl) + '" alt=""></div>';
+            acts += '<button type="button" class="acct2-chip" data-pinv-act="view-zoom">' + (V.zoom ? "− تصغير" : "+ تكبير") + "</button>";
+        }
+        if (V.mime !== "image/jpeg" && V.mime !== "image/png") {
+            acts += '<button type="button" class="acct2-chip acct2-chip-on" data-pinv-act="view-file">📄 فتح ' + (V.mime === "application/pdf" ? "PDF" : "الملف") + (V.pdfPages > 1 ? V.pdfPages === 2 ? " (صفحتان)" : " (" + V.pdfPages + " صفحات)" : "") + "</button>";
+        }
+        body += '<div class="acct2-actions">' + acts + "</div>";
+    }
+    const title = pinvEsc(acct2DocNo(V.serial));
+    return '<div class="acct2-sheet-backdrop" data-pinv-act="view-bd"><div class="acct2-sheet acct2-sheet-viewer" role="dialog" aria-modal="true" aria-label="' + title + '">' + '<div class="acct2-sheet-head"><b class="acct2-sheet-title">' + title + '</b><button type="button" class="acct2-x" data-pinv-act="view-close" aria-label="إغلاق">✕</button></div>' + '<div class="acct2-sheet-body">' + body + "</div></div></div>";
+}
+
+function pinvViewRender() {
+    try {
+        const V = pinvV();
+        const r = pinvViewRoot(false);
+        if (!V.open || !r) return;
+        if (pinvSession() !== V.st) {
+            pinvViewClose();
+            return;
+        }
+        r.innerHTML = pinvViewHtml();
+        r.classList.add("pinv-vopen");
+    } catch (err) {
+        console.error("PINV view render:", err);
     }
 }
 
@@ -95761,6 +96184,18 @@ function trackYardKpi() {
     }
 }
 
+function trackYardInvHtml() {
+    try {
+        const b = document.getElementById("btn-open-scrapyard-invoices");
+        if (!b || typeof b.cloneNode !== "function") return "";
+        const c = b.cloneNode(true);
+        c.className = "trk-btn";
+        return c.outerHTML;
+    } catch (e) {
+        return "";
+    }
+}
+
 function trackYardTopHtml() {
     try {
         const list = opsKpiPeriodsFor(false), cur = trackYardPeriodId();
@@ -95770,7 +96205,7 @@ function trackYardTopHtml() {
         const pop = trackYardPeriodOpen ? '<div class="trk-pop" role="group" aria-label="الفترة">' + list.map(function(p) {
             return '<button type="button" class="trk-chip' + (p.id === cur ? " trk-chip-on" : "") + '" data-trk-ypick="' + escapeHtml(p.id) + '" aria-pressed="' + (p.id === cur ? "true" : "false") + '">' + escapeHtml(p.label) + "</button>";
         }).join("") + "</div>" : "";
-        return '<div class="trk-top"><button type="button" class="trk-btn" data-trk-yperiod aria-expanded="' + (trackYardPeriodOpen ? "true" : "false") + '">الفترة: ' + escapeHtml(label) + " ▾</button></div>" + pop;
+        return '<div class="trk-top"><button type="button" class="trk-btn" data-trk-yperiod aria-expanded="' + (trackYardPeriodOpen ? "true" : "false") + '">الفترة: ' + escapeHtml(label) + " ▾</button>" + trackYardInvHtml() + "</div>" + pop;
     } catch (e) {
         return "";
     }
@@ -95793,7 +96228,7 @@ function trackYardPick(n) {
     }
 }
 
-function trackYardNav(root) {
+function trackYardNav(root, invOut) {
     try {
         const acts = root.querySelector("header.topbar > div:last-child");
         if (!acts) return;
@@ -95804,6 +96239,8 @@ function trackYardNav(root) {
                 acts.insertBefore(b, acts.firstChild);
             }
         });
+        const inv = invOut ? acts.querySelector("#btn-open-scrapyard-invoices") : null;
+        if (inv) inv.remove();
         const np = trackNavParts, nbtns = [].slice.call(acts.querySelectorAll("button"));
         if (np && np.drawer && nbtns.length) {
             const dl = np.drawer.querySelector(".trk-drawer-list"), rsb = dl ? dl.querySelector(".trk-rsbox") : null;
@@ -95871,7 +96308,7 @@ function trackYardApply() {
         const kk = kp && (kp.n !== null || kp.avg) ? kp : trackYardMemo;
         const l3 = kk ? (kk.n !== null && kk.n !== undefined ? '<span class="trk-kind">جديد <bdi dir="ltr">' + kk.n + '</bdi></span><span class="trk-kind">مستخدم <bdi dir="ltr">' + kk.u + "</bdi></span>" : "") + (kk.avg ? '<span class="trk-l3">متوسط التسعير <bdi dir="ltr">' + escapeHtml(kk.avg) + "</bdi></span>" : "") : "";
         const html = trackDueBannerHtml() + trackYardTopHtml() + '<div class="trk-ygrid">' + card(1, "طلبات التسعير", d.pending, d.priced > 0 ? d.priced + " مسعّرة بانتظار الاعتماد" : "", d.late > 0 ? '<span class="trk-late">' + d.late + " متأخر</span>" : "", l3) + '<div class="trk-arrow"><span>›</span></div>' + card(2, "المسعّر", d.approved) + (showReqs ? '<div class="trk-arrow"><span>›</span></div>' + card(3, "طلبات التوريد", d.reqs, trackDueCardHtml(d.dueLate, d.dueToday), d.mine > 0 ? "موجّه لك " + d.mine : "") : "") + "</div>";
-        trackYardNav(root);
+        trackYardNav(root, html.indexOf('id="btn-open-scrapyard-invoices"') >= 0);
         let host = root.querySelector("#trk-yard");
         if (!host) {
             host = document.createElement("div");
