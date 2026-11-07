@@ -3346,6 +3346,15 @@
   .trk-drawer-list #btn-open-scrapyard-invoices::before{content:'🧾';}
   @media print{ #pinv-root{display:none !important;} }
   /* PINV END css */
+  /* TAXX BEGIN css */
+  /* اختيار التقرير بنافذة التصدير: عند «إقرار القيمة المضافة» أو «ضريبة الدخل» تُخفى خيارات ZIP/المستندات (الملف إكسل واحد)، وعند «ضريبة الدخل» تُخفى قائمة الفترة (السنة المالية بدلها) */
+  .acct-dialog:has(.taxx-mode:not([data-taxx-mode="full"])) .acct2-exp-opts:not(.taxx-mode){display:none;}
+  .acct-dialog:has(.taxx-mode[data-taxx-mode="cit"]) .acct-period{display:none;}
+  .taxx-mode .acct2-opt{align-items:flex-start;}
+  .taxx-mode .acct2-opt small{display:block;font-size:12px;font-weight:400;color:var(--text-dim);line-height:1.7;margin-top:2px;}
+  .taxx-mode{margin-bottom:12px;}
+  .acct-dialog:has(.taxx-mode[data-taxx-mode="cit"]) .acct-filing:not(.taxx-year-l),.acct-dialog:has(.taxx-mode[data-taxx-mode="cit"]) .acct-hint:not(.taxx-year-h){display:none;}
+  /* TAXX END css */
   /* VCAT BEGIN css */
   /* كتالوج السيارة بالصور داخل «كتالوج القطع» (رقم الهيكل ← السيارة ← أقسام ← مجموعات ← لوحات ← قطع) */
   .vcat-card{background:var(--surface-2);border:1px solid var(--green-line);border-radius:var(--radius);padding:12px;display:flex;flex-direction:column;gap:8px;min-width:0;}
@@ -36386,7 +36395,7 @@ function acctExportDialogHtml(st) {
     const pend = s.model ? Number(s.model.actionCount) || 0 : null;
     let ready = "";
     if (pend === 0) ready = '<div class="acct-ready acct-ready-ok">جاهز ✓</div>'; else if (pend > 0) ready = '<div class="acct-ready acct-ready-warn"><span>' + e(A.util.count(pend, "itemNeeds")) + " — أكمله أولًا</span> " + '<button type="button" class="acct-link" data-acct-act="exp-show-actions">عرض البنود</button></div>';
-    return open + acctPeriodHtml(s, true) + ready + '<label class="acct-filing"><span class="acct-filing-l">' + e(A.labels.export.filing) + "</span>" + '<input type="date" dir="ltr" class="acct-date" id="acct-exp-filing" data-acct-field="exp-filing" value="' + e(x.previousFiling || "") + '"></label>' + '<div class="acct-hint">' + e(A.labels.export.filingHint) + "</div>" + (typeof acct2ExportOptionsHtml === "function" ? acct2ExportOptionsHtml(s) : "") + (x.error ? '<div class="acct-dlg-error" role="alert">' + e(x.error) + "</div>" : "") + '<div class="acct-dialog-foot">' + '<button type="button" id="acct-exp-go" class="btn btn-primary" data-acct-act="exp-go">تجهيز الملف</button>' + '<button type="button" id="acct-exp-close" class="btn btn-ghost" data-acct-act="exp-close">إلغاء</button>' + "</div>" + close;
+    return open + (typeof taxxModeHtml === "function" ? taxxModeHtml(s) : "") + acctPeriodHtml(s, true) + ready + '<label class="acct-filing"><span class="acct-filing-l">' + e(A.labels.export.filing) + "</span>" + '<input type="date" dir="ltr" class="acct-date" id="acct-exp-filing" data-acct-field="exp-filing" value="' + e(x.previousFiling || "") + '"></label>' + '<div class="acct-hint">' + e(A.labels.export.filingHint) + "</div>" + (typeof acct2ExportOptionsHtml === "function" ? acct2ExportOptionsHtml(s) : "") + (x.error ? '<div class="acct-dlg-error" role="alert">' + e(x.error) + "</div>" : "") + '<div class="acct-dialog-foot">' + '<button type="button" id="acct-exp-go" class="btn btn-primary" data-acct-act="exp-go">تجهيز الملف</button>' + '<button type="button" id="acct-exp-close" class="btn btn-ghost" data-acct-act="exp-close">إلغاء</button>' + "</div>" + close;
 }
 
 function acctScreenHtml(st, model) {
@@ -50201,6 +50210,20 @@ async function acct2ExportRun() {
             cancelled = true;
             return;
         }
+        if (typeof taxxFinish === "function" && typeof taxxReportMode === "function" && taxxReportMode(x) !== "full" && taxxAvailable()) {
+            if (!await taxxFinish({
+                x: x,
+                gen: gen,
+                pkg: pkg,
+                facts: facts,
+                dstate: dstate,
+                docsOn: docsOn,
+                alive: alive,
+                progress: progress,
+                preparedBy: preparedBy
+            })) cancelled = true;
+            return;
+        }
         const files = Array.isArray(pkg.files) ? pkg.files : [];
         let est = 0;
         for (let f = 0; f < files.length; f++) est += Number(files[f].bytes) || 0;
@@ -50879,6 +50902,1316 @@ function pinvRender() {
         console.error("PINV render:", err);
     }
 }
+
+function taxxStr(v) {
+    return v === null || v === undefined ? "" : String(v);
+}
+
+function taxxArr(a) {
+    return Array.isArray(a) ? a : [];
+}
+
+function taxxObj(o) {
+    return o !== null && typeof o === "object" && !Array.isArray(o) ? o : {};
+}
+
+function taxxInt(v) {
+    const n = Math.round(Number(v));
+    return isFinite(n) ? n : 0;
+}
+
+function taxxH(cell) {
+    return typeof cell === "number" && isFinite(cell) ? Math.round(cell * 100) : 0;
+}
+
+function taxxM(h) {
+    const r = taxxInt(h);
+    return r === 0 ? 0 : r / 100;
+}
+
+function taxxDayOf(cell) {
+    return cell !== null && typeof cell === "object" && typeof cell.d === "string" ? cell.d : typeof cell === "string" ? cell : "";
+}
+
+function taxxRowKey(id) {
+    const s = taxxStr(id).replace(/:/g, "_");
+    return s === "" ? "-" : s;
+}
+
+function taxxVatOfIncl(h) {
+    return Math.floor((taxxInt(h) * 30 + 115) / 230);
+}
+
+function taxxSheetOf(pkg, id) {
+    const p = taxxObj(pkg), by = taxxObj(p.byId);
+    if (by[id]) return by[id];
+    return taxxArr(p.sheets).filter(function(s) {
+        return s && s.id === id;
+    })[0] || null;
+}
+
+function taxxColsOf(sheet) {
+    const m = {};
+    taxxArr(sheet && sheet.headers).forEach(function(h, i) {
+        if (m[h] === undefined) m[h] = i;
+    });
+    return m;
+}
+
+function taxxPick(row, cols, name) {
+    const i = cols[name];
+    const v = i === undefined || !Array.isArray(row) ? "" : row[i];
+    return v === undefined || v === null ? "" : v;
+}
+
+function taxxRowsOf(sheet) {
+    return taxxArr(sheet && sheet.rows).filter(function(r) {
+        return Array.isArray(r);
+    });
+}
+
+function taxxLinkUrl(base, kind, id) {
+    const b = taxxStr(base), i = taxxStr(id);
+    return b === "" || i === "" || i === "-" ? "" : b + "#vx=" + kind + ":" + i;
+}
+
+function taxxFirstSerial(text) {
+    const m = /DOC[-:](\d+)/.exec(taxxStr(text));
+    return m ? Number(m[1]) : 0;
+}
+
+function taxxDocCount(text) {
+    return (taxxStr(text).match(/DOC-\d+/g) || []).length;
+}
+
+function taxxSumH(rows, col) {
+    let s = 0;
+    rows.forEach(function(r) {
+        s += taxxH(r[col]);
+    });
+    return s;
+}
+
+function taxxPeriodText(pkg) {
+    const p = taxxObj(pkg.period);
+    return "من " + (taxxStr(p.from) || "بداية البيانات") + " إلى " + (taxxStr(p.to) || "اليوم " + taxxStr(pkg.today));
+}
+
+function taxxStampText(pkg) {
+    try {
+        const iso = taxxStr(pkg.nowIso);
+        if (iso !== "" && typeof PTX_ACCT !== "undefined" && PTX_ACCT.date) {
+            return PTX_ACCT.date.riyadhDate(iso) + " " + PTX_ACCT.date.riyadhTime(iso).slice(0, 5);
+        }
+    } catch (e) {}
+    return taxxStr(pkg.today);
+}
+
+function taxxCtx(inp) {
+    const pkg = taxxObj(inp.pkg);
+    return {
+        pkg: pkg,
+        base: taxxStr(inp.linkBase),
+        idBySerial: taxxObj(inp.docIdBySerial),
+        facts: taxxObj(inp.facts),
+        effective: taxxStr(pkg.effective),
+        periodText: taxxPeriodText(pkg),
+        stamp: taxxStampText(pkg),
+        preparedBy: taxxStr(pkg.preparedBy)
+    };
+}
+
+function taxxRename(s) {
+    return taxxStr(s).split("02 سجل المبيعات").join("المبيعات").split("03 سجل المشتريات").join("فواتير الشراء").split("06 جدول التكلفة").join("تكلفة الطلبات").split("07 جدول المصروفات").join("التوصيل والمصروفات").split("04 قائمة الدخل").join("قائمة الدخل").split("الورقة 01").join("ورقة الإقرار");
+}
+
+function taxxDocLink(ctx, serial) {
+    const id = serial > 0 ? taxxStr(ctx.idBySerial[serial]) : "";
+    return taxxLinkUrl(ctx.base, "doc", id);
+}
+
+function taxxReturnFormulas(pkg, H) {
+    const b = taxxObj(pkg.boxes);
+    const vat = function(n) {
+        return taxxInt(taxxObj(b[n]).vatH);
+    };
+    const rc = vat(7) + vat(9) - vat(12);
+    const out = [];
+    [ "C", "D", "E" ].forEach(function(c) {
+        out.push({
+            addr: c + (H + 6),
+            f: "SUM(" + c + (H + 1) + ":" + c + (H + 5) + ")"
+        });
+        out.push({
+            addr: c + (H + 12),
+            f: "SUM(" + c + (H + 7) + ":" + c + (H + 11) + ")" + (c === "E" && rc !== 0 ? "-" + String(taxxM(rc)) : "")
+        });
+    });
+    out.push({
+        addr: "E" + (H + 13),
+        f: "E" + (H + 6) + "+E" + (H + 9)
+    });
+    out.push({
+        addr: "E" + (H + 16),
+        f: "E" + (H + 13) + "-E" + (H + 12) + "+E" + (H + 14) + "-E" + (H + 15)
+    });
+    return out;
+}
+
+function taxxSheetReturn(ctx) {
+    const pkg = ctx.pkg, s = taxxSheetOf(pkg, "01");
+    const top = [ [ "", "إقرار ضريبة القيمة المضافة — ملف المحاسب" ], [ "", "الفترة: " + ctx.periodText ], [ "", "تاريخ التجهيز (الرياض): " + ctx.stamp + (ctx.preparedBy ? "   المُجهِّز: " + ctx.preparedBy : "") ], [ "", "تاريخ التسجيل الضريبي: " + ctx.effective + " — ما قبله لا يدخل الإقرار ويظهر للاطلاع فقط" ], [ "", "صافي الضريبة = ضريبة المبيعات (المخرجات) − ضريبة المشتريات القابلة للخصم (المدخلات)" ], [ "" ] ];
+    const PORTAL = {
+        2: "في بوابة الهيئة تُسمّى «المبيعات التي تتحمل الدولة ضريبتها»",
+        13: "هنا = ضريبة المبيعات (والاحتساب العكسي) فقط؛ وفي بوابة الهيئة الخانة 13 = ضريبة المبيعات − ضريبة المشتريات للفترة، والصافي (16) واحد في الحالتين",
+        14: "الحد ±15,000 ريال بحسب إرشادات الهيئة 2026 (وكان 5,000 سابقًا) — تحقّق منه بالنموذج الحي",
+        15: "يُدخل هنا موجبًا ويُطرح؛ وفي بوابة الهيئة يظهر الرصيد المرحّل بالسالب"
+    };
+    const rows = taxxRowsOf(s).map(function(r) {
+        const c = r.slice(0, 7);
+        c[5] = taxxRename(c[5]);
+        c[6] = taxxRename(c[6]);
+        const k = taxxStr(c[0]);
+        if (Object.prototype.hasOwnProperty.call(PORTAL, k)) c[6] = (taxxStr(c[6]) !== "" ? taxxStr(c[6]) + " — " : "") + PORTAL[k];
+        return c;
+    });
+    const H = top.length + 1;
+    return {
+        id: "V1",
+        name: "الإقرار",
+        top: top,
+        blocks: [ {
+            headers: [ "الخانة", "البند", "المبلغ (قبل الضريبة)", "التعديل", "الضريبة", "المصدر", "ملاحظة" ],
+            colTypes: "TTMMMTT",
+            rows: rows
+        } ],
+        formulas: taxxReturnFormulas(pkg, H)
+    };
+}
+
+function taxxSheetSales(ctx) {
+    const pkg = ctx.pkg, s = taxxSheetOf(pkg, "02"), cols = taxxColsOf(s);
+    const headers = [ "الرقم", "النوع", "السلسلة", "تاريخ الاستحقاق الضريبي", "تاريخ الإصدار", "العميل", "الرقم الضريبي للعميل", "قبل الضريبة", "الضريبة", "الإجمالي", "الفاتورة الأصلية", "يُدرج في", "الطلب", "ملاحظة", "الفاتورة" ];
+    const rows = [], links = [], totals = {}, counts = {};
+    taxxRowsOf(s).forEach(function(r) {
+        const rid = taxxStr(r[0]);
+        if (rid.indexOf("TOTAL:") === 0) {
+            totals[rid.slice(6)] = r;
+            return;
+        }
+        const series = taxxStr(taxxPick(r, cols, "السلسلة"));
+        counts[series] = (counts[series] || 0) + 1;
+        let url = "", text = "";
+        const i = rid.indexOf(":"), rest = i >= 0 ? rid.slice(i + 1) : "";
+        if (rid.indexOf("INV:") === 0 || rid.indexOf("NOTE:") === 0) {
+            url = taxxLinkUrl(ctx.base, "inv", rest);
+            text = url ? "فتح الفاتورة" : "";
+        } else if (rid.indexOf("UNS:") === 0 || rid.indexOf("EST:") === 0) {
+            url = taxxLinkUrl(ctx.base, "ord", rest);
+            text = url ? "فتح الطلب" : "";
+        }
+        rows.push([ taxxPick(r, cols, "الرقم"), taxxPick(r, cols, "النوع"), series, taxxPick(r, cols, "تاريخ الاستحقاق الضريبي"), taxxPick(r, cols, "تاريخ الإصدار"), taxxPick(r, cols, "العميل"), taxxPick(r, cols, "الرقم الضريبي للعميل"), taxxPick(r, cols, "قبل الضريبة"), taxxPick(r, cols, "الضريبة"), taxxPick(r, cols, "الإجمالي"), taxxPick(r, cols, "الفاتورة الأصلية"), taxxRename(taxxPick(r, cols, "يُدرج في")), taxxPick(r, cols, "الطلب"), taxxRename(taxxPick(r, cols, "ملاحظة")), text ]);
+        links.push(url ? {
+            col: 14,
+            url: url,
+            tip: text
+        } : null);
+    });
+    const SUM = [ [ "live", "رسمية", "الفواتير والإشعارات الرسمية (تدخل الإقرار بحسب عمود «يُدرج في»)" ], [ "prelaunch", "قبل التسجيل", "فواتير وإشعارات قبل التسجيل (لا تدخل الإقرار)" ], [ "uninv", "بلا فاتورة", "طلبات موردة بلا فاتورة ضريبية (تقدير — لا تدخل الإقرار)" ], [ "est", "تقدير", "تقدير الضريبة على مقبوضات وتوريدات بلا فاتورة (يطابق سطر التقدير بورقة الإقرار)" ] ];
+    const sumRows = [];
+    SUM.forEach(function(x) {
+        const t = totals[x[0]];
+        if (!t) return;
+        sumRows.push([ x[2], counts[x[1]] || 0, taxxPick(t, cols, "قبل الضريبة"), taxxPick(t, cols, "الضريبة"), taxxPick(t, cols, "الإجمالي") ]);
+    });
+    const blocks = [ {
+        headers: headers,
+        colTypes: "TTTDDTTMMMTTTTT",
+        rows: rows,
+        links: links
+    } ];
+    if (sumRows.length) blocks.push({
+        title: "ملخص المبيعات",
+        headers: [ "البند", "العدد", "قبل الضريبة", "الضريبة", "الإجمالي" ],
+        colTypes: "TIMMM",
+        rows: sumRows
+    });
+    return {
+        id: "V2",
+        name: "المبيعات",
+        top: [],
+        blocks: blocks,
+        count: rows.length
+    };
+}
+
+function taxxSheetPurchases(ctx) {
+    const pkg = ctx.pkg, s = taxxSheetOf(pkg, "03"), cols = taxxColsOf(s), s12 = taxxSheetOf(pkg, "12"), c12 = taxxColsOf(s12);
+    const kindBySerial = {};
+    taxxRowsOf(s12).forEach(function(r) {
+        const n = taxxFirstSerial(r[0]);
+        if (n > 0) kindBySerial[n] = taxxStr(taxxPick(r, c12, "النوع"));
+    });
+    const headers = [ "رقم المستند بالنظام", "النوع", "التاريخ", "نوع الإثبات", "رقم مستند المورد", "المورد / الجهة", "الرقم الضريبي للمورد", "قبل الضريبة", "الضريبة", "الإجمالي", "يخص", "في الإقرار", "حالة المراجعة", "المستند" ];
+    const rows = [], links = [], sumRows = [];
+    taxxRowsOf(s).forEach(function(r) {
+        const rid = taxxStr(r[0]);
+        if (rid.indexOf("TOTAL:") === 0) {
+            const label = taxxStr(taxxPick(r, cols, "المورد / الجهة")), n = Number((/^(\d+)/.exec(taxxStr(taxxPick(r, cols, "يخص"))) || [ 0, 0 ])[1]);
+            if (n > 0) sumRows.push([ label, n, taxxPick(r, cols, "قبل الضريبة"), taxxPick(r, cols, "الضريبة"), taxxPick(r, cols, "الإجمالي") ]);
+            return;
+        }
+        const serial = taxxFirstSerial(rid), url = taxxDocLink(ctx, serial);
+        rows.push([ taxxPick(r, cols, "رقم المستند بالنظام"), kindBySerial[serial] || "", taxxPick(r, cols, "التاريخ"), taxxPick(r, cols, "نوع الإثبات"), taxxPick(r, cols, "رقم مستند المورد"), taxxPick(r, cols, "المورد / الجهة"), taxxPick(r, cols, "الرقم الضريبي للمورد"), taxxPick(r, cols, "قبل الضريبة"), taxxPick(r, cols, "الضريبة"), taxxPick(r, cols, "الإجمالي"), taxxPick(r, cols, "يخص"), taxxRename(taxxPick(r, cols, "في الإقرار")), taxxPick(r, cols, "حالة المراجعة"), url ? "فتح المستند" : "" ]);
+        links.push(url ? {
+            col: 13,
+            url: url,
+            tip: "فتح المستند"
+        } : null);
+    });
+    const blocks = [ {
+        headers: headers,
+        colTypes: "TTDTTTTMMMTTTT",
+        rows: rows,
+        links: links
+    } ];
+    if (sumRows.length) blocks.push({
+        title: "ملخص مستندات الشراء",
+        headers: [ "البند", "العدد", "قبل الضريبة", "الضريبة", "الإجمالي" ],
+        colTypes: "TIMMM",
+        rows: sumRows
+    });
+    const bottom = rows.length ? [] : [ [ "لا مستندات شراء بهذه الفترة — ضريبة المشتريات (الخانة 7) لا تُحتسب إلا من مستند راجعه المحاسب وتاريخه من تاريخ التسجيل فما بعد" ] ];
+    return {
+        id: "V3",
+        name: "فواتير الشراء",
+        top: [],
+        blocks: blocks,
+        bottom: bottom,
+        count: rows.length
+    };
+}
+
+function taxxSupMode(v) {
+    return v === "yes" || v === "no" ? v : "";
+}
+
+function taxxSupplierMap(list) {
+    const m = {};
+    taxxArr(list).forEach(function(x) {
+        if (x && x.id !== undefined && x.id !== null) m[taxxRowKey(x.id)] = x;
+    });
+    return m;
+}
+
+function taxxSheetOrderCosts(ctx, inp) {
+    const pkg = ctx.pkg, s = taxxSheetOf(pkg, "06"), cols = taxxColsOf(s);
+    const sup = taxxSupplierMap(inp.suppliers), modes = taxxObj(inp.modes), orders = {};
+    taxxArr(ctx.facts.orders).forEach(function(o) {
+        if (o && o.id !== undefined) orders[taxxRowKey(o.id)] = o;
+    });
+    const rows = [], links = [];
+    let costH = 0, yesH = 0, vatH = 0, noteN = 0;
+    taxxRowsOf(s).forEach(function(r) {
+        const rid = taxxStr(r[0]);
+        if (rid.indexOf("PUR:") !== 0) return;
+        const bits = rid.split(":"), orderKey = bits[1] || "", supKey = bits[2] || "-";
+        const o = orders[orderKey] || null, si = supKey !== "-" ? sup[supKey] || null : null;
+        const rowCostH = taxxH(taxxPick(r, cols, "التكلفة"));
+        let y = 0, n = 0, u = 0, over = 0;
+        if (o) {
+            taxxArr(o.parts).forEach(function(p) {
+                if (!p || !p.included || p.returned || taxxRowKey(p.supplierId) !== supKey) return;
+                const h = taxxInt(p.costH);
+                if (h <= 0) return;
+                const key = taxxStr(o.id) + "|" + taxxStr(p.id);
+                const base = si ? taxxSupMode(si.tax) : "";
+                const m = Object.prototype.hasOwnProperty.call(modes, key) ? taxxSupMode(modes[key]) : base;
+                if (m === "yes") y += h; else if (m === "no") n += h; else u += h;
+                if (base === "yes" && m === "no") over += 1;
+            });
+        }
+        const tot = y + n + u;
+        let flag = "غير محدد";
+        if (tot > 0) {
+            flag = y > 0 && n === 0 && u === 0 ? "نظامي" : n > 0 && y === 0 && u === 0 ? "بلا فاتورة" : u > 0 && y === 0 && n === 0 ? "غير محدد" : "مختلط";
+        } else if (si) {
+            flag = si.tax === "yes" ? "نظامي" : si.tax === "no" ? "بلا فاتورة" : "غير محدد";
+        }
+        const v = taxxVatOfIncl(y);
+        const docState = taxxStr(taxxPick(r, cols, "حالة المستند")), docNos = taxxStr(taxxPick(r, cols, "رقم المستند بالنظام")), ret = taxxStr(taxxPick(r, cols, "حالة المرتجع"));
+        const notes = [];
+        if (flag === "مختلط") notes.push("نظامي " + (y / 100).toFixed(2) + " — بلا فاتورة " + (n / 100).toFixed(2) + " — غير محدد " + (u / 100).toFixed(2));
+        if (over > 0) notes.push("بلا فاتورة هذه المرة (" + over + " قطعة)");
+        if (y > 0 && docState.indexOf("ناقص") >= 0) notes.push("فاتورة المورد النظامية ناقصة — تُطلب منه");
+        if (y > 0 && si && taxxStr(si.vat) === "") notes.push("الرقم الضريبي للمورد غير مُدخل");
+        if (tot > 0 && flag === "غير محدد") notes.push("علامة المورد غير محددة");
+        if (!o) notes.push("تعذّر قراءة قطع الطلب");
+        if (taxxDocCount(docNos) > 1) notes.push("+ " + (taxxDocCount(docNos) - 1) + " مستند آخر بنفس الطلب");
+        if (ret !== "") notes.push(ret);
+        const serial = taxxFirstSerial(docNos), durl = taxxDocLink(ctx, serial), ourl = taxxLinkUrl(ctx.base, "ord", o ? taxxStr(o.id) : orderKey === "-" ? "" : orderKey);
+        costH += rowCostH;
+        yesH += y;
+        vatH += v;
+        rows.push([ taxxPick(r, cols, "الطلب"), taxxPick(r, cols, "تاريخ التوريد"), taxxPick(r, cols, "المورد"), si ? taxxStr(si.vat) : "", flag, taxxM(rowCostH), taxxM(y), taxxM(v), docState, docNos, taxxPick(r, cols, "رقم فاتورة المورد"), notes.join(" — "), durl ? "فتح المستند" : "", ourl ? "فتح الطلب" : "" ]);
+        links.push({
+            doc: durl ? {
+                col: 12,
+                url: durl,
+                tip: "فتح المستند"
+            } : null,
+            ord: ourl ? {
+                col: 13,
+                url: ourl,
+                tip: "فتح الطلب"
+            } : null
+        });
+        if (notes.length) noteN += 1;
+    });
+    const blocks = [ {
+        headers: [ "الطلب", "تاريخ التوريد", "المورد", "الرقم الضريبي للمورد", "علامة المورد", "التكلفة (كما دُفعت)", "منها بفاتورة نظامية", "ضريبة مشتريات تقديرية", "حالة المستند", "رقم المستند بالنظام", "رقم فاتورة المورد", "ملاحظة", "المستند", "الطلب" ],
+        colTypes: "TDTTTMMMTTTTTT",
+        rows: rows,
+        links: links
+    } ];
+    if (rows.length) blocks.push({
+        title: "الإجمالي",
+        headers: [ "البند", "التكلفة (كما دُفعت)", "منها بفاتورة نظامية", "ضريبة مشتريات تقديرية" ],
+        colTypes: "TMMM",
+        rows: [ [ "إجمالي تقدير مشتريات الطلبات الموردة بالفترة (لا يدخل الإقرار)", taxxM(costH), taxxM(yesH), taxxM(vatH) ] ]
+    });
+    const bottom = [ [ "تقدير من تكلفة الطلبات (السعر كما دُفع شاملًا الضريبة) وعلامة «يصدر فاتورة نظامية» لكل مورد؛ ضريبة المشتريات التقديرية = 15/115 من مشتريات الموردين «النظاميين» فقط." ], [ "لا يدخل الإقرار: تُخصم ضريبة المدخلات فقط بفاتورة ضريبية صحيحة برقم ضريبي صحيح للمورد يراجعها المحاسب (ورقة «فواتير الشراء» والخانة 7)." ], [ "الغرض: معرفة الفواتير النظامية الناقصة قبل التقديم، وحجم ما قد يُسترد إن اكتملت." ] ];
+    if (!rows.length) bottom.unshift([ "لا طلبات موردة بهذه الفترة" ]);
+    return {
+        id: "V4",
+        name: "تكلفة الطلبات (تقدير)",
+        top: [],
+        blocks: blocks,
+        bottom: bottom,
+        count: rows.length,
+        est: {
+            costH: costH,
+            yesH: yesH,
+            vatH: vatH
+        }
+    };
+}
+
+function taxxSheetDelivery(ctx) {
+    const pkg = ctx.pkg, s = taxxSheetOf(pkg, "07"), cols = taxxColsOf(s);
+    const rows = [], links = [];
+    let totalH = 0, unpaidN = 0;
+    taxxRowsOf(s).forEach(function(r) {
+        const rid = taxxStr(r[0]);
+        if (rid.indexOf("DLV:") !== 0) return;
+        const note = taxxStr(taxxPick(r, cols, "البيان"));
+        const m = /^(.*?) — (.*) \((سُدّدت [^)]*|غير مسدّدة)\)\s*$/.exec(note);
+        const order = m ? m[1] : note, agent = m ? m[2] : "", pay = m ? m[3] : "";
+        const docNos = taxxStr(taxxPick(r, cols, "رقم المستند بالنظام")), serial = taxxFirstSerial(docNos), durl = taxxDocLink(ctx, serial), ourl = taxxLinkUrl(ctx.base, "ord", rid.slice(4));
+        const amountH = taxxH(taxxPick(r, cols, "المبلغ"));
+        totalH += amountH;
+        if (pay === "غير مسدّدة") unpaidN += 1;
+        rows.push([ order, taxxPick(r, cols, "التاريخ"), agent, taxxM(amountH), pay, taxxPick(r, cols, "حالة المستند"), docNos, taxxPick(r, cols, "تنبيه"), durl ? "فتح المستند" : "", ourl ? "فتح الطلب" : "" ]);
+        links.push({
+            doc: durl ? {
+                col: 8,
+                url: durl,
+                tip: "فتح المستند"
+            } : null,
+            ord: ourl ? {
+                col: 9,
+                url: ourl,
+                tip: "فتح الطلب"
+            } : null
+        });
+    });
+    const blocks = [ {
+        headers: [ "الطلب", "تاريخ التوريد", "المندوب / الجهة", "تكلفة التوصيل", "السداد", "حالة المستند", "رقم المستند بالنظام", "تنبيه", "المستند", "الطلب" ],
+        colTypes: "TDTMTTTTTT",
+        rows: rows,
+        links: links
+    } ];
+    if (rows.length) blocks.push({
+        title: "الإجمالي",
+        headers: [ "البند", "العدد", "تكلفة التوصيل" ],
+        colTypes: "TIM",
+        rows: [ [ "إجمالي تكلفة توصيل الطلبات الموردة بالفترة", rows.length, taxxM(totalH) ] ]
+    });
+    const bottom = [ [ "تكلفة التوصيل مصروف على المنشأة؛ ضريبتها تُخصم فقط إن كان لها فاتورة ضريبية صحيحة من شركة أو مندوب مسجّل بالضريبة (ورقة «فواتير الشراء»)." ], [ "رسوم التوصيل التي تُحمَّل على الزبون جزء من فاتورة البيع نفسها (ورقة «المبيعات») وتأخذ حكمها." ] ];
+    if (!rows.length) bottom.unshift([ "لا تكلفة توصيل لطلبات موردة بهذه الفترة" ]);
+    return {
+        id: "V5",
+        name: "التوصيل",
+        top: [],
+        blocks: blocks,
+        bottom: bottom,
+        count: rows.length,
+        totalH: totalH,
+        unpaidN: unpaidN
+    };
+}
+
+function taxxMissingGroups(ctx, kind) {
+    const pkg = ctx.pkg, out = [];
+    const s2 = taxxSheetOf(pkg, "02"), c2 = taxxColsOf(s2), s3 = taxxSheetOf(pkg, "03"), c3 = taxxColsOf(s3), eff = ctx.effective;
+    const sales = taxxRowsOf(s2).filter(function(r) {
+        return taxxStr(r[0]).indexOf("TOTAL:") !== 0;
+    });
+    const purch = taxxRowsOf(s3).filter(function(r) {
+        return taxxStr(r[0]).indexOf("TOTAL:") !== 0;
+    });
+    if (kind === "cit") {
+        const allUns = sales.filter(function(r) {
+            return taxxStr(r[0]).indexOf("UNS:") === 0;
+        });
+        if (allUns.length) out.push([ "إيراد طلبات موردة بلا فاتورة ضريبية (قبل التسجيل وبعده)", allUns.length, taxxSumH(allUns, c2["الإجمالي"]), "يُحتسب إيرادًا للضريبة على الدخل بتاريخ التوريد؛ تُصدر لها فواتير أو يقرّر المحاسب معالجتها" ]);
+        return out;
+    }
+    const uns = sales.filter(function(r) {
+        return taxxStr(r[0]).indexOf("UNS:") === 0 && taxxDayOf(taxxPick(r, c2, "تاريخ الاستحقاق الضريبي")) >= eff;
+    });
+    if (uns.length) out.push([ "مبيعات طلبات موردة بلا فاتورة ضريبية (بعد التسجيل)", uns.length, taxxSumH(uns, c2["الإجمالي"]), "تُصدر لها فواتير ثم يُعاد التصدير، وإلا يقرّر المحاسب معالجتها (سطر التقدير بورقة الإقرار)" ]);
+    const needs = sales.filter(function(r) {
+        return taxxStr(taxxPick(r, c2, "يُدرج في")).indexOf("لا يدخل الآن") === 0;
+    });
+    if (needs.length) out.push([ "إشعارات دائنة تحتاج تاريخ تقديم الإقرار الأصلي", needs.length, taxxSumH(needs, c2["الإجمالي"]), "أدخل «تاريخ تقديم إقرار الفترة السابقة» في نافذة التصدير ثم أعد التصدير" ]);
+    const wait = purch.filter(function(r) {
+        return taxxStr(taxxPick(r, c3, "في الإقرار")) === "لا — بانتظار مراجعة المحاسب";
+    });
+    if (wait.length) out.push([ "مستندات شراء بانتظار مراجعة المحاسب", wait.length, taxxSumH(wait, c3["الإجمالي"]), "تُراجَع بشاشة المستندات بالتطبيق حتى تدخل ضريبتها بالخانة 7" ]);
+    const pre = purch.filter(function(r) {
+        return taxxStr(taxxPick(r, c3, "في الإقرار")).indexOf("قبل التسجيل") >= 0;
+    });
+    if (pre.length) out.push([ "مستندات شراء بتاريخ قبل التسجيل", pre.length, taxxSumH(pre, c3["الإجمالي"]), "لا تُحتسب آليًا؛ قرار المحاسب (قد تُخصم ضريبة ما اشتُري قبل التسجيل إن بقي أثره بعده)" ]);
+    return out;
+}
+
+function taxxSheetMissing(ctx, kind) {
+    const pkg = ctx.pkg, s11 = taxxSheetOf(pkg, "11"), c11 = taxxColsOf(s11), s00 = taxxSheetOf(pkg, "00");
+    const sumRows = [], detail = [], links = [];
+    const ready = taxxStr(taxxObj(pkg.readiness).text);
+    if (ready !== "") sumRows.push([ "جاهزية الملف", "", "", ready ]);
+    taxxMissingGroups(ctx, kind).forEach(function(g) {
+        sumRows.push([ g[0], g[1], taxxM(g[2]), g[3] ]);
+    });
+    const byType = {};
+    let outside = 0;
+    taxxRowsOf(s11).forEach(function(r) {
+        if (taxxStr(taxxPick(r, c11, "ضمن الفترة؟")) !== "نعم") {
+            outside += 1;
+            return;
+        }
+        const type = taxxStr(taxxPick(r, c11, "النوع"));
+        const g = byType[type] || (byType[type] = {
+            n: 0,
+            h: 0
+        });
+        g.n += 1;
+        g.h += taxxH(taxxPick(r, c11, "المبلغ"));
+        const rid = taxxStr(r[0]), bits = rid.split(":");
+        const url = bits[1] === "pur" || bits[1] === "dlv" ? taxxLinkUrl(ctx.base, "ord", bits[2]) : "";
+        detail.push([ type, taxxPick(r, c11, "المرجع"), taxxPick(r, c11, "الجهة"), taxxPick(r, c11, "المبلغ"), taxxPick(r, c11, "تاريخ الحدث"), taxxPick(r, c11, "الأيام"), taxxPick(r, c11, "الحالة"), taxxPick(r, c11, "الحامل / المسؤول"), taxxPick(r, c11, "ملاحظة"), url ? "فتح الطلب" : "" ]);
+        links.push(url ? {
+            col: 9,
+            url: url,
+            tip: "فتح الطلب"
+        } : null);
+    });
+    Object.keys(byType).forEach(function(t) {
+        sumRows.push([ "مستندات ناقصة ضمن الفترة — " + t, byType[t].n, taxxM(byType[t].h), "تُرفع من التطبيق (📎 المستندات)" ]);
+    });
+    taxxRowsOf(s00).forEach(function(r) {
+        if (taxxStr(r[0]) === "⚠ تنبيه") sumRows.push([ taxxRename(taxxStr(r[1])), "", "", "تنبيه جودة بيانات — يُراجَع قبل التقديم" ]);
+    });
+    const blocks = [ {
+        headers: [ "البند", "العدد", "الإجمالي", "ما المطلوب" ],
+        colTypes: "TIMT",
+        rows: sumRows
+    } ];
+    if (detail.length) blocks.push({
+        title: "تفصيل المستندات الناقصة ضمن الفترة",
+        headers: [ "النوع", "المرجع", "الجهة", "المبلغ", "تاريخ الحدث", "الأيام", "الحالة", "المسؤول", "ملاحظة", "الطلب" ],
+        colTypes: "TTTMDITTTT",
+        rows: detail,
+        links: links
+    });
+    const bottom = [];
+    if (outside > 0) bottom.push([ "+ " + outside + " مستندًا ناقصًا خارج الفترة (يظهر بالحزمة الكاملة)" ]);
+    if (!sumRows.length) bottom.push([ "لا شيء ناقص ظاهر لهذه الفترة" ]);
+    return {
+        id: kind === "cit" ? "C7" : "V6",
+        name: "ما ينقص",
+        top: [],
+        blocks: blocks,
+        bottom: bottom,
+        count: detail.length,
+        groups: sumRows.length
+    };
+}
+
+function taxxFileName(kind, pkg) {
+    const p = taxxObj(pkg), A = typeof PTX_ACCT !== "undefined" ? PTX_ACCT : null;
+    const lab = A && A.period && typeof A.period.fileLabels === "function" ? A.period.fileLabels(taxxObj(p.period), taxxStr(p.today)) : {
+        from: taxxStr(taxxObj(p.period).from) || "start",
+        to: taxxStr(taxxObj(p.period).to) || taxxStr(p.today)
+    };
+    const safe = function(x) {
+        return taxxStr(x).replace(/[^A-Za-z0-9._-]/g, "_");
+    };
+    return "PARTECH-" + kind + "_" + safe(lab.from) + "_" + safe(lab.to) + "_" + (safe(p.stamp) || "nostamp") + ".xlsx";
+}
+
+function taxxMeta(pkg, sheets) {
+    let rows = 0;
+    sheets.forEach(function(s) {
+        taxxArr(s.blocks).forEach(function(b) {
+            rows += taxxArr(b.rows).length;
+        });
+    });
+    return {
+        sheets: sheets.length,
+        rows: rows,
+        warnings: taxxInt(pkg.warnings),
+        pending: taxxInt(taxxObj(pkg.readiness).pending),
+        missing: taxxInt(taxxObj(pkg.summary).needAttention)
+    };
+}
+
+function taxxBuildVat(input) {
+    try {
+        const inp = taxxObj(input), ctx = taxxCtx(inp);
+        const sheets = [ taxxSheetReturn(ctx), taxxSheetSales(ctx), taxxSheetPurchases(ctx), taxxSheetOrderCosts(ctx, inp), taxxSheetDelivery(ctx), taxxSheetMissing(ctx) ];
+        return {
+            ok: true,
+            kind: "vat",
+            sheets: sheets,
+            fileName: taxxFileName("VAT-Return", ctx.pkg),
+            meta: taxxMeta(ctx.pkg, sheets)
+        };
+    } catch (e) {
+        return {
+            ok: false,
+            error: taxxStr(e && e.message ? e.message : e)
+        };
+    }
+}
+
+function taxxRenameCit(s) {
+    return taxxStr(s).split("02 سجل المبيعات").join("المبيعات").split("06 جدول التكلفة").join("تكلفة المبيعات").split("07 جدول المصروفات").join("المصروفات").split("03 سجل المشتريات").join("ملف إقرار القيمة المضافة (فواتير الشراء)").split("04 قائمة الدخل").join("قائمة الدخل").split("01 إقرار الضريبة").join("ملف إقرار القيمة المضافة").split("08 الصندوق والعهدة").join("الحزمة الكاملة (الصندوق والعهدة)").split("09 ذمم العملاء").join("الحزمة الكاملة (ذمم العملاء)").split("10 ذمم الموردين").join("الحزمة الكاملة (ذمم الموردين)").split("الورقة 01").join("ملف إقرار القيمة المضافة");
+}
+
+function taxxOrderKeyMap(ctx) {
+    const m = {};
+    taxxArr(ctx.facts.orders).forEach(function(o) {
+        if (o && o.id !== undefined) m[taxxRowKey(o.id)] = o;
+    });
+    return m;
+}
+
+function taxxSheetIncome(ctx) {
+    const s = taxxSheetOf(ctx.pkg, "04");
+    const rows = taxxRowsOf(s).map(function(r) {
+        return [ taxxRenameCit(r[0]), r[1] === undefined ? "" : r[1], taxxRenameCit(r[2]) ];
+    });
+    return {
+        id: "C2",
+        name: "قائمة الدخل",
+        top: [ [ "قائمة الدخل — مسودة من سجلات التطبيق" ], [ "الفترة: " + ctx.periodText ], [ "" ] ],
+        blocks: [ {
+            headers: [ "البند", "المبلغ", "المصدر" ],
+            colTypes: "TMT",
+            rows: rows
+        } ],
+        count: rows.length
+    };
+}
+
+function taxxSheetCitSales(ctx) {
+    const sh = taxxSheetSales(ctx);
+    sh.id = "C3";
+    sh.top = [ [ "سجل المبيعات — فواتير وإشعارات الفترة والطلبات الموردة بلا فاتورة" ], [ "الإيراد للضريبة على الدخل بتاريخ التوريد؛ وعمود «يُدرج في» خاص بإقرار القيمة المضافة" ], [ "" ] ];
+    return sh;
+}
+
+function taxxSheetCitCosts(ctx) {
+    const s = taxxSheetOf(ctx.pkg, "06"), cols = taxxColsOf(s), orders = taxxOrderKeyMap(ctx);
+    const rows = [], links = [];
+    let totalH = 0;
+    taxxRowsOf(s).forEach(function(r) {
+        const rid = taxxStr(r[0]);
+        if (rid.indexOf("PUR:") !== 0) return;
+        const orderKey = rid.split(":")[1] || "", o = orders[orderKey] || null;
+        const docNos = taxxStr(taxxPick(r, cols, "رقم المستند بالنظام")), durl = taxxDocLink(ctx, taxxFirstSerial(docNos));
+        const ourl = taxxLinkUrl(ctx.base, "ord", o ? taxxStr(o.id) : orderKey === "-" ? "" : orderKey);
+        totalH += taxxH(taxxPick(r, cols, "التكلفة"));
+        rows.push([ taxxPick(r, cols, "الطلب"), taxxPick(r, cols, "تاريخ التوريد"), taxxPick(r, cols, "المورد"), taxxPick(r, cols, "مستعمل/جديد"), taxxPick(r, cols, "التكلفة"), taxxPick(r, cols, "حالة السداد"), taxxPick(r, cols, "جهة السداد"), taxxPick(r, cols, "تاريخ السداد"), taxxPick(r, cols, "حالة المستند"), docNos, taxxPick(r, cols, "رقم فاتورة المورد"), taxxPick(r, cols, "حالة المرتجع"), durl ? "فتح المستند" : "", ourl ? "فتح الطلب" : "" ]);
+        links.push({
+            doc: durl ? {
+                col: 12,
+                url: durl,
+                tip: "فتح المستند"
+            } : null,
+            ord: ourl ? {
+                col: 13,
+                url: ourl,
+                tip: "فتح الطلب"
+            } : null
+        });
+    });
+    const blocks = [ {
+        headers: [ "الطلب", "تاريخ التوريد", "المورد", "مستعمل/جديد", "التكلفة", "حالة السداد", "جهة السداد", "تاريخ السداد", "حالة المستند", "رقم المستند بالنظام", "رقم فاتورة المورد", "حالة المرتجع", "المستند", "الطلب" ],
+        colTypes: "TDTTMTTDTTTTTT",
+        rows: rows,
+        links: links
+    } ];
+    if (rows.length) blocks.push({
+        title: "الإجمالي",
+        headers: [ "البند", "العدد", "التكلفة" ],
+        colTypes: "TIM",
+        rows: [ [ "إجمالي تكلفة مشتريات الطلبات الموردة بالفترة (كما دُفعت)", rows.length, taxxM(totalH) ] ]
+    });
+    const bottom = [ [ "تكلفة المبيعات = مشتريات الطلبات الموردة بتاريخ التوريد، كما دُفعت شاملة أي ضريبة مدخلات؛ وضريبة المدخلات المُطالَب بها تُستبعد من التكلفة بقائمة الدخل" ] ];
+    if (!rows.length) bottom.unshift([ "لا طلبات موردة بهذه الفترة" ]);
+    return {
+        id: "C4",
+        name: "تكلفة المبيعات",
+        top: [ [ "تكلفة المبيعات — مشتريات كل طلب ومورد وحالة مستندها" ], [ "" ] ],
+        blocks: blocks,
+        bottom: bottom,
+        count: rows.length,
+        totalH: totalH
+    };
+}
+
+function taxxSheetCitExpenses(ctx) {
+    const s = taxxSheetOf(ctx.pkg, "07"), cols = taxxColsOf(s);
+    const rows = [], links = [], sub = [];
+    let undatedN = 0, totalCell = null;
+    taxxRowsOf(s).forEach(function(r) {
+        const rid = taxxStr(r[0]);
+        if (rid.indexOf("SUB:") === 0) {
+            sub.push([ taxxStr(taxxPick(r, cols, "الفئة")), taxxPick(r, cols, "المبلغ") ]);
+            return;
+        }
+        if (rid === "TOTAL") {
+            totalCell = taxxPick(r, cols, "المبلغ");
+            return;
+        }
+        const docNos = taxxStr(taxxPick(r, cols, "رقم المستند بالنظام")), durl = taxxDocLink(ctx, taxxFirstSerial(docNos));
+        const ourl = rid.indexOf("DLV:") === 0 ? taxxLinkUrl(ctx.base, "ord", rid.slice(4)) : "";
+        if (taxxDayOf(taxxPick(r, cols, "التاريخ")) === "") undatedN += 1;
+        rows.push([ taxxPick(r, cols, "الفئة"), taxxPick(r, cols, "الحساب المقترح"), taxxPick(r, cols, "التاريخ"), taxxPick(r, cols, "المبلغ"), taxxPick(r, cols, "البيان"), taxxPick(r, cols, "حالة المستند"), docNos, taxxPick(r, cols, "تنبيه"), durl ? "فتح المستند" : "", ourl ? "فتح الطلب" : "" ]);
+        links.push({
+            doc: durl ? {
+                col: 8,
+                url: durl,
+                tip: "فتح المستند"
+            } : null,
+            ord: ourl ? {
+                col: 9,
+                url: ourl,
+                tip: "فتح الطلب"
+            } : null
+        });
+    });
+    const blocks = [ {
+        headers: [ "الفئة", "الحساب المقترح", "التاريخ", "المبلغ", "البيان", "حالة المستند", "رقم المستند بالنظام", "تنبيه", "المستند", "الطلب" ],
+        colTypes: "TTDMTTTTTT",
+        rows: rows,
+        links: links
+    } ];
+    if (sub.length) {
+        const sr = sub.slice();
+        if (totalCell !== null) sr.push([ "الإجمالي (المؤرّخ فقط)", totalCell ]);
+        blocks.push({
+            title: "ملخص المصروفات بحسب الفئة",
+            headers: [ "الفئة", "المبلغ" ],
+            colTypes: "TM",
+            rows: sr
+        });
+    }
+    const bottom = [ [ "المصروفات وتكلفة التوصيل المؤرَّخة فقط تدخل الإجمالي؛ وضريبة المدخلات المُطالَب بها تُستبعد من التكلفة بقائمة الدخل" ] ];
+    if (undatedN > 0) bottom.unshift([ undatedN + " مصروفًا بلا تاريخ غير محتسب بالإجمالي" ]);
+    if (!rows.length) bottom.unshift([ "لا مصروفات ولا تكلفة توصيل بهذه الفترة" ]);
+    return {
+        id: "C5",
+        name: "المصروفات",
+        top: [ [ "المصروفات وتكلفة التوصيل — بمستنداتها" ], [ "" ] ],
+        blocks: blocks,
+        bottom: bottom,
+        count: rows.length,
+        undatedN: undatedN
+    };
+}
+
+function taxxSheetBalance(ctx) {
+    const s = taxxSheetOf(ctx.pkg, "05");
+    const rows = taxxRowsOf(s).map(function(r) {
+        return [ taxxRenameCit(r[0]), r[1] === undefined ? "" : r[1], taxxRenameCit(r[2]) ];
+    });
+    return {
+        id: "C6",
+        name: "المركز المالي",
+        top: [ [ "المركز المالي بنهاية الفترة — مسودة من سجلات التطبيق" ], [ "بتاريخ: " + taxxStr(ctx.pkg.asAtDate || ctx.pkg.today) ], [ "" ] ],
+        blocks: [ {
+            headers: [ "البند", "المبلغ", "المصدر" ],
+            colTypes: "TMT",
+            rows: rows
+        } ],
+        count: rows.length
+    };
+}
+
+function taxxSheetCitSummary(ctx, inp) {
+    const pkg = ctx.pkg, p04 = taxxRowsOf(taxxSheetOf(pkg, "04"));
+    const find = function(re) {
+        for (let i = 0; i < p04.length; i++) {
+            if (re.test(taxxStr(p04[i][0]))) return p04[i];
+        }
+        return null;
+    };
+    const sumOf = function(re) {
+        let h = 0;
+        p04.forEach(function(r) {
+            if (re.test(taxxStr(r[0]))) h += taxxH(r[1]);
+        });
+        return h;
+    };
+    const netSalesH = sumOf(/^صافي المبيعات/), cogsH = sumOf(/^\(.\) تكلفة المبيعات/), delH = sumOf(/^\(.\) تكلفة توصيل/), expH = sumOf(/^\(.\) مصروفات/);
+    const vatH = sumOf(/^\(.\) ضريبة مدخلات/) + sumOf(/^\(.\) ضريبة احتساب عكسي/), resultH = sumOf(/^النتيجة \(قبل/), uninvH = sumOf(/^\(.\) مبيعات بلا فاتورة/);
+    const pct = function() {
+        const n = Number(taxxObj(inp.cit).foreignPct);
+        return isFinite(n) && n >= 0 && n <= 100 ? n : 100;
+    }();
+    const R2 = function(x) {
+        return Math.round(x * 100) / 100;
+    };
+    const dueDate = function() {
+        try {
+            const to = taxxStr(taxxObj(pkg.period).to);
+            return to !== "" && typeof PTX_ACCT !== "undefined" ? taxxStr(PTX_ACCT.date.addDays(to, 120)) : "";
+        } catch (e) {
+            return "";
+        }
+    }();
+    const top = [ [ "ضريبة الدخل السنوية — ملف عمل المحاسب (وليس إقرارًا)" ], [ "السنة المالية: " + ctx.periodText ], [ "تاريخ التجهيز (الرياض): " + ctx.stamp + (ctx.preparedBy ? "   المُجهِّز: " + ctx.preparedBy : "") ], [ "الأساس: ضريبة دخل 20% على حصة الشركاء غير السعوديين من الدخل الخاضع للضريبة (الربح المعدَّل بالتسوية الضريبية) وليس من الربح الدفتري؛ سنويًا" ], [ "قسم «أ» مسودة من سجلات التطبيق ولا تغني عن القوائم المالية المراجعة؛ والخلايا التي عليها «◀ أدخل» يُدخلها المحاسب وتتحدّث المعادلات معها" ], [ "" ] ];
+    const H = top.length + 1;
+    const rows = [], fm = [];
+    const addr = function(i) {
+        return "B" + (H + 1 + i);
+    };
+    const put = function(label, v, note) {
+        rows.push([ label, v, note || "" ]);
+        return rows.length - 1;
+    };
+    const calc = function(label, v, f, note) {
+        const i = put(label, R2(v), note);
+        fm.push({
+            addr: addr(i),
+            f: f
+        });
+        return i;
+    };
+    put("أ — نتيجة الأعمال من سجلات التطبيق (مسودة)", "", "");
+    const iSales = put("صافي المبيعات (فواتير رسمية وقبل التسجيل ± الإشعارات)", taxxM(netSalesH), "ورقة «قائمة الدخل»");
+    const iCogs = put("(−) تكلفة المبيعات", taxxM(cogsH), "مشتريات الطلبات الموردة بالفترة");
+    const iDel = put("(−) تكلفة التوصيل", taxxM(delH), "");
+    const iExp = put("(−) المصروفات بفئاتها", taxxM(expH), "ورقة «المصروفات»");
+    const iVat = put("(+) ضريبة مدخلات مُطالَب بها (تُستبعد من التكلفة) و(−) احتساب عكسي غير مخصوم", taxxM(vatH), "ورقة «قائمة الدخل»");
+    const iRes = put("صافي الربح المحاسبي قبل الضريبة (مسودة التطبيق)", taxxM(resultH), "يطابق «النتيجة» بورقة «قائمة الدخل»");
+    calc("مطابقة: مجموع البنود أعلاه − النتيجة (يجب أن تكون صفرًا)", taxxM(netSalesH + cogsH + delH + expH + vatH - resultH), addr(iSales) + "+" + addr(iCogs) + "+" + addr(iDel) + "+" + addr(iExp) + "+" + addr(iVat) + "-" + addr(iRes), "");
+    const iUn = put("(+) إيراد طلبات موردة بلا فاتورة ضريبية — تقدير (قبل الضريبة)", taxxM(uninvH), "إيراد حقيقي يُضاف هنا؛ صفّره إن قرّر المحاسب غير ذلك");
+    put("ب — التسوية الضريبية (يُدخلها المحاسب)", "", "");
+    const iOwn = put("(+) رواتب ومكافآت الشركاء والملاّك — لا تُحسم لشركة الأموال ◀ أدخل", 0, "اللائحة التنفيذية م10");
+    const iNd = put("(+) ضيافة وترفيه وغرامات ومخصصات وما لا يجوز حسمه ◀ أدخل", 0, "النظام م13 وم15");
+    const iNoDoc = put("(+) مصروفات بلا مستند ثبوتي أو بلا صلة بالنشاط ◀ أدخل", 0, "عبء الإثبات على المكلف");
+    const iDed = put("(−) فرق الإهلاك الضريبي عن الدفتري وإيرادات معفاة ◀ أدخل", 0, "النظام م10 وم17");
+    const adjH = resultH + uninvH;
+    const iAdj = calc("صافي الربح المعدَّل", taxxM(adjH), addr(iRes) + "+" + addr(iUn) + "+" + addr(iOwn) + "+" + addr(iNd) + "+" + addr(iNoDoc) + "-" + addr(iDed), "النتيجة + الإيراد بلا فاتورة + الإضافات − الخصومات");
+    const iCap = put("الحد الأقصى للخسائر المرحّلة (% من الربح المعدَّل)", 25, "النظام م21 — بقوائم مراجعة");
+    const iLoss = put("(−) خسائر مرحّلة من سنوات سابقة ◀ أدخل", 0, "لا تُرحَّل إلا بقوائم مالية مراجعة");
+    const taxableH = Math.max(0, adjH);
+    const iTaxable = calc("الدخل الخاضع للضريبة", taxxM(taxableH), "MAX(0," + addr(iAdj) + "-MIN(" + addr(iLoss) + "," + addr(iCap) + "/100*MAX(" + addr(iAdj) + ",0)))", "إن كان سالبًا فلا ضريبة");
+    put("ج — ضريبة الدخل على حصة الشركاء غير السعوديين", "", "");
+    const iPct = put("نسبة ملكية غير السعوديين % (مباشرة وغير مباشرة) ◀ أدخل", pct, "النظام م2 وم6");
+    const shareH = Math.round(taxableH * pct / 100);
+    const iShare = calc("حصة غير السعوديين من الدخل الخاضع", taxxM(shareH), addr(iTaxable) + "*" + addr(iPct) + "/100", "");
+    const iRate = put("معدل ضريبة الدخل %", 20, "النظام م7");
+    const taxH = Math.round(shareH * 20 / 100);
+    const iTax = calc("ضريبة الدخل المستحقة", taxxM(taxH), addr(iShare) + "*" + addr(iRate) + "/100", "");
+    const iAdv = put("(−) دفعات مقدمة مسددة ◀ أدخل", 0, "");
+    calc("المستحق للسداد (أو المسترد)", taxxM(taxH), addr(iTax) + "-" + addr(iAdv), "يُسدَّد مع الإقرار");
+    put("د — للاطلاع", "", "");
+    calc("نسبة السعوديين والخليجيين % (تخضع حصتهم للزكاة لا لهذه الضريبة)", 100 - pct, "100-" + addr(iPct), "الزكاة 2.5% من الوعاء الزكوي بإقرار زكاة منفصل");
+    const bottom = [ [ "طريقة التقديم: بوابة الهيئة (الإقرارات ← الزكاة وضريبة الدخل)، ويصدر بعد التقديم فاتورتا سداد منفصلتان، للزكاة ولضريبة الدخل؛ ويحدّد المحاسب نوع الإقرار بحسب ملكية المنشأة" ], [ "الموعد: خلال 120 يومًا من نهاية السنة المالية ويُسدَّد المستحق معه" + (dueDate !== "" ? " — لهذه الفترة آخر موعد " + dueDate : "") + " (ولا آلية رسمية للتمديد)" ], [ "خطوات شاشة البوابة وما يقابلها هنا: قائمة الدخل ← ورقة «قائمة الدخل»؛ التعديلات ← قسم «ب»؛ الوعاء الضريبي ← «الدخل الخاضع للضريبة»؛ المركز المالي ← ورقة «المركز المالي»؛ تسعير المعاملات ← نموذج الأطراف المرتبطة (خارج هذا الملف)" ], [ "تطلب البوابة نسبة غير السعوديين مرتين، حصة رأس المال وحصة الأرباح، وتُطابَق مع سجل التسجيل؛ ويستعمل الحساب هنا نسبة واحدة تُدخل في خليتها" ], [ "المرفقات: القوائم المالية بالعربية معتمدة من محاسب قانوني سعودي إن تجاوز الدخل الإجمالي قبل المصروفات مليون ريال، ونموذج الإفصاح عن الأطراف المرتبطة (DFCT) إن وُجدت معاملات، وجدول الملكية" ], [ "الدفعات المقدمة: ثلاث دفعات (نهاية الشهر 6 و9 و12) كل منها 25% من ضريبة السنة السابقة، ولا تُستحق إن قلّت الدفعة عن 500,000 ريال" ], [ "توزيعات الأرباح للمالكين غير المقيمين: استقطاع 5% إضافي بعد ضريبة الدخل" ], [ "معلومات عامة لمساعدة المحاسب وليست استشارة ضريبية؛ يُؤكَّد كل بند بالنظام ولائحته والنموذج الحي" ] ];
+    return {
+        id: "C1",
+        name: "ضريبة الدخل",
+        top: top,
+        blocks: [ {
+            headers: [ "البند", "المبلغ (ر.س)", "ملاحظة" ],
+            colTypes: "TMT",
+            rows: rows
+        } ],
+        formulas: fm,
+        bottom: bottom,
+        count: rows.length,
+        calc: {
+            resultH: resultH,
+            uninvH: uninvH,
+            adjH: adjH,
+            taxableH: taxableH,
+            shareH: shareH,
+            taxH: taxH,
+            pct: pct,
+            dueDate: dueDate
+        }
+    };
+}
+
+function taxxBuildCit(input) {
+    try {
+        const inp = taxxObj(input), ctx = taxxCtx(inp);
+        const sheets = [ taxxSheetCitSummary(ctx, inp), taxxSheetIncome(ctx), taxxSheetCitSales(ctx), taxxSheetCitCosts(ctx), taxxSheetCitExpenses(ctx), taxxSheetBalance(ctx), taxxSheetMissing(ctx, "cit") ];
+        return {
+            ok: true,
+            kind: "cit",
+            sheets: sheets,
+            fileName: taxxFileName("Income-Tax", ctx.pkg),
+            meta: taxxMeta(ctx.pkg, sheets)
+        };
+    } catch (e) {
+        return {
+            ok: false,
+            error: taxxStr(e && e.message ? e.message : e)
+        };
+    }
+}
+
+function taxxAoaOf(spec) {
+    const S = typeof PTX_ACCT_SHEETS !== "undefined" ? PTX_ACCT_SHEETS : null;
+    if (!S || typeof S.toAoa !== "function") throw new Error("NO_SHEETS_LIB");
+    return S.toAoa({
+        headers: taxxArr(spec.headers),
+        colTypes: spec.colTypes || "",
+        rows: taxxArr(spec.rows)
+    });
+}
+
+function taxxTextRow(cells) {
+    const a = taxxAoaOf({
+        headers: [],
+        colTypes: "",
+        rows: [ cells ]
+    });
+    return a[1] || [];
+}
+
+function taxxAssemble(sheet) {
+    const aoa = [], links = [], bodyRows = [];
+    taxxArr(sheet.top).forEach(function(t) {
+        aoa.push(taxxTextRow(t));
+    });
+    taxxArr(sheet.blocks).forEach(function(b, bi) {
+        if (bi > 0) {
+            aoa.push([]);
+            if (b.title) aoa.push(taxxTextRow([ b.title ]));
+        }
+        const part = taxxAoaOf(b), start = aoa.length;
+        part.forEach(function(r) {
+            aoa.push(r);
+            bodyRows.push(r);
+        });
+        taxxArr(b.links).forEach(function(l, i) {
+            const list = l && l.url !== undefined ? [ l ] : l ? [ l.doc, l.ord ] : [];
+            list.forEach(function(x) {
+                if (x && x.url) {
+                    links.push({
+                        r: start + 1 + i,
+                        c: x.col,
+                        url: x.url,
+                        tip: x.tip || ""
+                    });
+                }
+            });
+        });
+    });
+    const bottom = taxxArr(sheet.bottom);
+    if (bottom.length) {
+        aoa.push([]);
+        bottom.forEach(function(t) {
+            aoa.push(taxxTextRow(t));
+        });
+    }
+    return {
+        aoa: aoa,
+        links: links,
+        bodyRows: bodyRows
+    };
+}
+
+function taxxWidths(rows, heads) {
+    const w = [];
+    rows.forEach(function(row) {
+        taxxArr(row).forEach(function(c, j) {
+            let len = 0;
+            if (typeof c === "string") len = c.length; else if (c && typeof c === "object") len = typeof c.v === "string" ? c.v.length : c.z === "yyyy-mm-dd" ? 12 : 14;
+            if (len > (w[j] || 0)) w[j] = len;
+        });
+    });
+    return w.map(function(n) {
+        return {
+            wch: Math.max(10, Math.min(56, n + 2))
+        };
+    });
+}
+
+function taxxWorkbook(XLSX, built) {
+    const wb = XLSX.utils.book_new();
+    taxxArr(built.sheets).forEach(function(sheet) {
+        const asm = taxxAssemble(sheet), ws = XLSX.utils.aoa_to_sheet(asm.aoa);
+        ws["!cols"] = taxxWidths(asm.bodyRows);
+        asm.links.forEach(function(l) {
+            const addr = XLSX.utils.encode_cell({
+                r: l.r,
+                c: l.c
+            });
+            if (ws[addr]) ws[addr].l = {
+                Target: l.url,
+                Tooltip: l.tip
+            };
+        });
+        taxxArr(sheet.formulas).forEach(function(f) {
+            if (ws[f.addr] && typeof ws[f.addr].v === "number") ws[f.addr].f = f.f;
+        });
+        XLSX.utils.book_append_sheet(wb, ws, sheet.name);
+    });
+    wb.Workbook = {
+        Views: [ {
+            RTL: true
+        } ]
+    };
+    return wb;
+}
+
+function taxxSwitchOn() {
+    return false;
+}
+
+function taxxAvailable() {
+    try {
+        if (!taxxSwitchOn()) return false;
+        if (typeof ACCT2_ENABLED === "undefined" || !ACCT2_ENABLED) return false;
+        if (typeof acct2Elevated !== "function" || !acct2Elevated()) return false;
+        if (typeof PTX_ACCT_PACK === "undefined" || !PTX_ACCT_PACK || typeof PTX_ACCT_PACK.build !== "function") return false;
+        if (typeof PTX_ACCT_SHEETS === "undefined" || !PTX_ACCT_SHEETS || typeof PTX_ACCT_SHEETS.toAoa !== "function") return false;
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+function taxxReportMode(x) {
+    const m = x && x.taxx && x.taxx.mode;
+    return m === "cit" || m === "full" ? m : "vat";
+}
+
+function taxxCurrentYear() {
+    return new Date(Date.now() + 108e5).getUTCFullYear();
+}
+
+function taxxYearsList() {
+    const cur = taxxCurrentYear();
+    let first = cur;
+    try {
+        taxxArr(appData.orders).forEach(function(o) {
+            const y = Number(taxxStr(o && o.createdAt).slice(0, 4));
+            if (y >= 2020 && y < first) first = y;
+        });
+    } catch (e) {}
+    const out = [];
+    for (let y = cur; y >= first; y--) out.push(y);
+    return out;
+}
+
+function taxxYearHtml(x) {
+    const e = escapeHtml, cur = taxxCurrentYear(), sel = Number(x.taxx && x.taxx.year) || cur;
+    let opts = "";
+    taxxYearsList().forEach(function(y) {
+        opts += '<option value="' + y + '"' + (y === sel ? " selected" : "") + ">" + y + "</option>";
+    });
+    return '<label class="acct-filing taxx-year-l"><span class="acct-filing-l">' + e("السنة المالية (من 1 يناير إلى 31 ديسمبر)") + "</span>" + '<select id="taxx-year" class="acct-select" data-taxx-field="year" aria-label="السنة المالية">' + opts + "</select></label>" + (sel === cur ? '<div class="acct-hint taxx-year-h">' + e("السنة الحالية لم تنتهِ بعد — الأرقام حتى اليوم للمعاينة، وتُعاد عند انتهائها.") + "</div>" : "");
+}
+
+function taxxModeHtml(st) {
+    try {
+        if (!taxxAvailable()) return "";
+        const x = st && st.exp || {}, mode = taxxReportMode(x), e = escapeHtml;
+        const opt = function(val, title, sub) {
+            return '<label class="acct2-opt"><input type="radio" name="taxx-mode" value="' + val + '" data-taxx-field="mode"' + (mode === val ? " checked" : "") + "><span>" + e(title) + "<small>" + e(sub) + "</small></span></label>";
+        };
+        let h = '<div class="acct2-exp-opts taxx-mode" data-taxx-mode="' + mode + '" role="radiogroup" aria-label="نوع التقرير">' + opt("vat", "🧾 إقرار ضريبة القيمة المضافة", "ضريبة المبيعات − ضريبة المشتريات للفترة · إكسل واحد مرتّب وروابط الفواتير") + opt("cit", "🏛️ ضريبة الدخل السنوية", "20% من صافي الدخل المعدّل لسنة كاملة · إكسل واحد مرتّب وروابط الفواتير") + opt("full", "📦 الحزمة الكاملة", "13 ورقة + المستندات (ملف ZIP) للأرشيف") + "</div>";
+        if (mode === "cit") h += taxxYearHtml(x);
+        return h;
+    } catch (err) {
+        return "";
+    }
+}
+
+function taxxApplyYear(x) {
+    const y = Number(x.taxx && x.taxx.year) || taxxCurrentYear();
+    x.periodKey = "custom";
+    x.custom = {
+        from: y + "-01-01",
+        to: y + "-12-31"
+    };
+}
+
+function taxxSetMode(x, mode) {
+    const m = mode === "cit" || mode === "full" ? mode : "vat";
+    const t = x.taxx = x.taxx || {};
+    const was = taxxReportMode(x);
+    if (m === was) return;
+    if (m === "cit") {
+        t.saved = {
+            periodKey: x.periodKey,
+            custom: {
+                from: taxxStr(x.custom && x.custom.from),
+                to: taxxStr(x.custom && x.custom.to)
+            }
+        };
+        if (!t.year) t.year = taxxCurrentYear();
+        t.mode = "cit";
+        taxxApplyYear(x);
+    } else {
+        if (was === "cit" && t.saved) {
+            x.periodKey = t.saved.periodKey;
+            x.custom = t.saved.custom;
+            t.saved = null;
+        }
+        t.mode = m;
+    }
+    x.error = "";
+}
+
+function taxxOnChange(e) {
+    try {
+        const t = e && e.target;
+        if (!t || !t.getAttribute) return;
+        const field = t.getAttribute("data-taxx-field");
+        if (!field) return;
+        const st = typeof acctState !== "undefined" ? acctState : null;
+        if (!st || !st.exp || st.exp.busy) return;
+        const x = st.exp;
+        x.taxx = x.taxx || {};
+        if (field === "mode") taxxSetMode(x, String(t.value)); else if (field === "year") {
+            x.taxx.year = Number(t.value) || taxxCurrentYear();
+            if (taxxReportMode(x) === "cit") taxxApplyYear(x);
+        } else return;
+        if (typeof acctRender === "function") acctRender();
+    } catch (err) {}
+}
+
+function taxxCollect() {
+    const out = {
+        suppliers: [],
+        modes: {}
+    };
+    try {
+        const d = typeof appData !== "undefined" && appData ? appData : {};
+        taxxArr(d.suppliers).forEach(function(s) {
+            if (!s || s.id === undefined || s.id === null) return;
+            out.suppliers.push({
+                id: String(s.id),
+                name: taxxStr(s.name),
+                vat: taxxStr(s.vatNumber),
+                tax: s.taxInvoice === "yes" || s.taxInvoice === "no" ? s.taxInvoice : ""
+            });
+        });
+        taxxArr(d.orders).forEach(function(o) {
+            if (!o) return;
+            taxxArr(o.parts).forEach(function(p) {
+                if (!p || !p.supplierId) return;
+                let m = "";
+                try {
+                    m = typeof netpMode === "function" ? taxxStr(netpMode(p)) : "";
+                } catch (err) {
+                    m = "";
+                }
+                out.modes[taxxStr(o.id) + "|" + taxxStr(p.id)] = m;
+            });
+        });
+    } catch (e) {}
+    return out;
+}
+
+function taxxLinkBase() {
+    try {
+        return String(location.origin || "") + String(location.pathname || "");
+    } catch (e) {
+        return "";
+    }
+}
+
+async function taxxFinish(c) {
+    const x = c.x, mode = taxxReportMode(x);
+    c.progress(mode === "cit" ? "بناء ملف ضريبة الدخل…" : "بناء ملف إقرار القيمة المضافة…", 76);
+    const info = taxxCollect();
+    const idBySerial = {};
+    taxxArr(c.dstate && c.dstate.docs).forEach(function(d) {
+        if (d && d.serial && d.id) idBySerial[d.serial] = String(d.id);
+    });
+    const input = {
+        pkg: c.pkg,
+        facts: c.facts,
+        suppliers: info.suppliers,
+        modes: info.modes,
+        docIdBySerial: idBySerial,
+        linkBase: taxxLinkBase()
+    };
+    const built = mode === "cit" ? taxxBuildCit(input) : taxxBuildVat(input);
+    if (!built || !built.ok) throw new Error("TAXX_BUILD");
+    try {
+        if (typeof ensureXLSX === "function") await ensureXLSX();
+    } catch (ex) {
+        throw new Error("XLSX_LIB");
+    }
+    if (typeof XLSX === "undefined" || !XLSX || !XLSX.utils) throw new Error("XLSX_LIB");
+    if (!c.alive()) return false;
+    const wb = taxxWorkbook(XLSX, built);
+    const bytes = new Uint8Array(XLSX.write(wb, {
+        bookType: "xlsx",
+        type: "array"
+    }));
+    const blob = new Blob([ bytes ], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    });
+    const sha = PTX_ACCT.util.sha256Hex(bytes);
+    const m = built.meta;
+    x.result = {
+        name: built.fileName,
+        blob: blob,
+        bytes: bytes.length,
+        sha256: sha,
+        sheets: m.sheets,
+        rows: m.rows,
+        warnings: m.warnings,
+        pending: m.pending,
+        kind: "xlsx",
+        missing: m.missing,
+        skipped: 0
+    };
+    if (!(typeof acctIsIos === "function" && acctIsIos())) {
+        acctDownloadBlob(blob, built.fileName);
+        acctToast("تم تحميل الملف");
+    } else acctToast("تم تجهيز الملف — اضغط «مشاركة الملف»");
+    if (c.docsOn && typeof acct2ExportLog === "function") {
+        const logPkg = Object.assign({}, c.pkg, {
+            sheets: built.sheets.map(function(s) {
+                let n = 0;
+                taxxArr(s.blocks).forEach(function(b) {
+                    n += taxxArr(b.rows).length;
+                });
+                return {
+                    id: s.id,
+                    name: s.name,
+                    rowCount: n
+                };
+            })
+        });
+        const g = c.gen;
+        acct2ExportLog(logPkg, blob, built.fileName, sha, "", c.preparedBy, 0).then(function() {
+            if (g !== acctGen) return;
+        }, function() {});
+    }
+    return true;
+}
+
+function taxxDeepLinkParse() {
+    try {
+        const m = /^#vx=(inv|doc|ord):([A-Za-z0-9_-]{1,64})$/.exec(String(location.hash || ""));
+        return m ? {
+            kind: m[1],
+            id: m[2]
+        } : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function taxxDeepLinkClear() {
+    try {
+        if (history && typeof history.replaceState === "function") history.replaceState(history.state, "", String(location.pathname || "") + String(location.search || ""));
+    } catch (e) {}
+}
+
+function taxxDeepLinkStep(t) {
+    if (typeof appInitDone === "undefined" || !appInitDone || typeof currentUserIsElevated === "undefined" || !currentUserIsElevated) return false;
+    if (t.kind === "ord") {
+        const list = typeof appData !== "undefined" && appData ? taxxArr(appData.orders) : [];
+        if (!list.length) return false;
+        if (!list.some(function(o) {
+            return o && o.id === t.id;
+        })) {
+            if (typeof showToast === "function") showToast("الطلب غير موجود — أعد تحميل الصفحة", "error");
+            return true;
+        }
+        if (typeof openModal === "function") openModal("edit", t.id);
+        return true;
+    }
+    if (t.kind === "inv") {
+        if (typeof acctOpen !== "function" || typeof acctOpenDoc !== "function") return true;
+        if (typeof acctState === "undefined" || !acctState) {
+            acctOpen();
+            return false;
+        }
+        if (!acctState.load || acctState.load.status === "loading") return false;
+        acctOpenDoc(t.id);
+        return true;
+    }
+    if (t.kind === "doc") {
+        if (typeof acct2On !== "function" || !acct2On()) return false;
+        if (typeof acct2St === "undefined" || !acct2St || acct2St.screen !== "docs") {
+            acct2OpenDocsScreen();
+            return false;
+        }
+        if (typeof acct2DocById !== "function" || !acct2DocById(t.id)) return false;
+        acct2OpenDetail(t.id, "");
+        return true;
+    }
+    return true;
+}
+
+function taxxDeepLinkRun() {
+    const t = taxxDeepLinkParse();
+    if (!t || taxxDeepLinkRun.busy) return;
+    taxxDeepLinkRun.busy = true;
+    let tries = 0;
+    const tick = function() {
+        tries += 1;
+        let done = false;
+        try {
+            done = taxxDeepLinkStep(t);
+        } catch (e) {
+            done = true;
+        }
+        if (done || tries >= 300) {
+            taxxDeepLinkRun.busy = false;
+            taxxDeepLinkClear();
+            return;
+        }
+        setTimeout(tick, 1e3);
+    };
+    setTimeout(tick, 1500);
+}
+
+try {
+    if (typeof document !== "undefined" && document && typeof document.addEventListener === "function") {
+        document.addEventListener("change", taxxOnChange);
+        if (typeof window !== "undefined" && window && typeof window.addEventListener === "function") window.addEventListener("hashchange", taxxDeepLinkRun);
+        taxxDeepLinkRun();
+    }
+} catch (e) {}
 
 let statementCustomerId = null;
 
