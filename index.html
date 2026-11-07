@@ -3336,6 +3336,16 @@
     .acct2-card,.acct2-slot,.acct2-pay-status,.acct2-exp-opts{display:none !important;}
   }
   /* ACCT2 END css */
+  /* PINV BEGIN css */
+  /* قائمة «الفواتير» بقسم المشتريات: غلاف شاشة كامل كشاشة «📎 المستندات»، وبقية الشكل من قواعد .acct2-* نفسها (الترويسة، التبويبات، المجموعات، الصفوف، عنصر الفتحة) */
+  #pinv-root{position:fixed;inset:0;z-index:46;background:var(--bg);color:var(--text);overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;}
+  #pinv-root:not(.pinv-open){display:none !important;}
+  body.pinv-open{overflow:hidden;}
+  .pinv-item.pinv-done{border-inline-start-color:var(--green);}
+  .pinv-screen .acct2-tabs{overflow-y:hidden;}
+  .trk-drawer-list #btn-open-scrapyard-invoices::before{content:'🧾';}
+  @media print{ #pinv-root{display:none !important;} }
+  /* PINV END css */
   /* VCAT BEGIN css */
   /* كتالوج السيارة بالصور داخل «كتالوج القطع» (رقم الهيكل ← السيارة ← أقسام ← مجموعات ← لوحات ← قطع) */
   .vcat-card{background:var(--surface-2);border:1px solid var(--green-line);border-radius:var(--radius);padding:12px;display:flex;flex-direction:column;gap:8px;min-width:0;}
@@ -46373,6 +46383,10 @@ function acct2Policies() {
 function acct2YardRows() {
     try {
         const ss = typeof scrapyardSharedState !== "undefined" && scrapyardSharedState ? scrapyardSharedState : null;
+        if (typeof pinvMergeRows === "function") {
+            const pm = pinvMergeRows(ss && Array.isArray(ss.parts) ? ss.parts : []);
+            if (pm) return pm;
+        }
         return ss && Array.isArray(ss.parts) ? ss.parts : [];
     } catch (e) {
         return [];
@@ -50331,6 +50345,538 @@ async function acct2ExportRun() {
             acctToast("أُلغي التصدير");
         }
         if (gen === acctGen && acctState === st) acctRender();
+    }
+}
+
+function pinvC() {
+    return {
+        SINCE: "2026-10-14",
+        RPC: "get_scrapyard_purchase_invoices",
+        TIMEOUT_MS: 25e3,
+        PAGE: 60,
+        RED_DAYS: 7,
+        MISSING: [ "missing", "rejected", "claim", "queued" ],
+        DONE: [ "covered", "waived", "waived_policy" ]
+    };
+}
+
+function pinvS() {
+    const f = pinvS;
+    if (!f.st) f.st = {
+        open: false,
+        tab: "missing",
+        rows: null,
+        covers: false,
+        loading: false,
+        error: "",
+        gen: 0,
+        limit: 0,
+        unsub: null,
+        timer: null
+    };
+    return f.st;
+}
+
+function pinvEsc(s) {
+    try {
+        return escapeHtml(String(s === null || s === undefined ? "" : s));
+    } catch (e) {
+        return "";
+    }
+}
+
+function pinvLtr(s) {
+    return '<bdi dir="ltr">' + pinvEsc(s) + "</bdi>";
+}
+
+function pinvToast(msg, type) {
+    try {
+        if (typeof acct2Toast === "function") acct2Toast(msg, type); else if (typeof showToast === "function") showToast(msg, type);
+    } catch (e) {}
+}
+
+function pinvIo() {
+    try {
+        return typeof acct2Io === "function" ? acct2Io() : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function pinvSession() {
+    try {
+        return typeof acct2St !== "undefined" ? acct2St : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function pinvUnknown() {
+    try {
+        return ACCT2_TXT.card.unknownSupplier;
+    } catch (e) {
+        return "مورد غير محدد";
+    }
+}
+
+function pinvAvailable() {
+    try {
+        return typeof ACCT2_ENABLED !== "undefined" && ACCT2_ENABLED === true && typeof acct2IsYard === "function" && acct2IsYard() === true && typeof sb !== "undefined" && !!sb && typeof document !== "undefined" && !!document && !!document.body;
+    } catch (e) {
+        return false;
+    }
+}
+
+function pinvButtonHtml() {
+    try {
+        if (!pinvAvailable()) return "";
+        pinvBindOnce();
+        return '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-invoices" data-pinv-act="open">🧾 الفواتير</button>';
+    } catch (e) {
+        return "";
+    }
+}
+
+function pinvMergeRows(base) {
+    try {
+        const S = pinvS();
+        if (!S.open || !Array.isArray(S.rows) || !S.rows.length) return null;
+        const out = Array.isArray(base) ? base.slice() : [];
+        const have = {};
+        out.forEach(function(r) {
+            if (r && r.part_id) have[String(r.order_id) + "|" + String(r.part_id)] = true;
+        });
+        S.rows.forEach(function(r) {
+            if (!have[String(r.order_id) + "|" + String(r.part_id)]) out.push(r);
+        });
+        return out;
+    } catch (e) {
+        return null;
+    }
+}
+
+function pinvNormRows(data) {
+    const out = [];
+    (Array.isArray(data) ? data : []).forEach(function(r) {
+        if (!r || typeof r !== "object" || !r.order_id || !r.part_id) return;
+        out.push({
+            order_id: String(r.order_id),
+            order_number: String(r.order_number || ""),
+            order_label: String(r.order_label || ""),
+            supplied_at: r.supplied_at ? String(r.supplied_at) : "",
+            part_id: String(r.part_id),
+            description: String(r.description || ""),
+            qty: Number(r.qty) || 1,
+            cost_price: Number(r.cost_price) || 0,
+            supplier_id: r.supplier_id ? String(r.supplier_id) : "",
+            note: r.note ? String(r.note) : "",
+            condition: r.condition ? String(r.condition) : "",
+            used: r.used === true
+        });
+    });
+    return out;
+}
+
+function pinvBindOnce() {
+    const f = pinvBindOnce;
+    if (f.done || typeof document === "undefined" || !document || typeof document.addEventListener !== "function") return;
+    f.done = true;
+    document.addEventListener("click", pinvOnClick, false);
+    document.addEventListener("keydown", pinvOnKey, false);
+}
+
+function pinvOnClick(e) {
+    try {
+        const t = e && e.target && typeof e.target.closest === "function" ? e.target.closest("[data-pinv-act]") : null;
+        if (!t) return;
+        const act = t.getAttribute("data-pinv-act");
+        if (act === "open") {
+            if (typeof e.preventDefault === "function") e.preventDefault();
+            pinvOpen();
+        } else if (act === "close") pinvClose(); else if (act === "tab") pinvSetTab(t.getAttribute("data-pinv-id")); else if (act === "more") pinvMore(); else if (act === "reload") pinvLoad();
+    } catch (err) {
+        console.error("PINV:", err);
+    }
+}
+
+function pinvOnKey(e) {
+    try {
+        if (!e || e.key !== "Escape" || !pinvS().open) return;
+        const st = pinvSession();
+        if (st && (st.sheet || st.bar)) return;
+        pinvClose();
+    } catch (err) {}
+}
+
+function pinvRoot(create) {
+    let r = document.getElementById("pinv-root");
+    if (!r && create && document.body) {
+        r = document.createElement("div");
+        r.id = "pinv-root";
+        document.body.appendChild(r);
+    }
+    return r;
+}
+
+function pinvOpen() {
+    try {
+        if (!pinvAvailable()) {
+            pinvToast("غير متاح", "error");
+            return;
+        }
+        if (typeof acct2On === "function" && !acct2On()) {
+            pinvToast("المستندات غير جاهزة بعد — حاول بعد لحظات", "error");
+            return;
+        }
+        const S = pinvS();
+        S.open = true;
+        S.tab = "missing";
+        S.limit = pinvC().PAGE;
+        S.error = "";
+        S.rows = null;
+        S.covers = false;
+        S.gen++;
+        pinvRoot(true);
+        pinvSubscribe();
+        pinvRender();
+        pinvLoad();
+    } catch (err) {
+        console.error("PINV open:", err);
+    }
+}
+
+function pinvClose() {
+    try {
+        const S = pinvS();
+        S.open = false;
+        S.gen++;
+        S.rows = null;
+        S.covers = false;
+        S.loading = false;
+        S.error = "";
+        pinvUnsubscribe();
+        const st = pinvSession();
+        if (st) st.yardMemo = null;
+        const r = typeof document !== "undefined" ? document.getElementById("pinv-root") : null;
+        if (r) {
+            r.innerHTML = "";
+            r.classList.remove("pinv-open");
+            r.removeAttribute("role");
+            r.removeAttribute("aria-modal");
+            r.removeAttribute("aria-label");
+        }
+        if (typeof document !== "undefined" && document.body) document.body.classList.remove("pinv-open");
+    } catch (err) {
+        console.error("PINV close:", err);
+    }
+}
+
+function pinvSetTab(id) {
+    const S = pinvS();
+    S.tab = id === "done" ? "done" : "missing";
+    S.limit = pinvC().PAGE;
+    pinvRender();
+    try {
+        const r = pinvRoot(false);
+        if (r) r.scrollTop = 0;
+    } catch (e) {}
+}
+
+function pinvMore() {
+    const S = pinvS();
+    S.limit = (Number(S.limit) || pinvC().PAGE) + pinvC().PAGE;
+    pinvRender();
+}
+
+function pinvLoad() {
+    const S = pinvS();
+    const gen = S.gen;
+    const fail = function(msg) {
+        if (gen !== S.gen || !S.open) return;
+        S.loading = false;
+        S.rows = null;
+        S.covers = false;
+        S.error = msg;
+        pinvRender();
+    };
+    S.loading = true;
+    S.error = "";
+    S.covers = false;
+    let p = null;
+    try {
+        p = sb.rpc(pinvC().RPC, {
+            p_since: pinvC().SINCE
+        });
+        if (typeof withTimeout === "function") p = withTimeout(p, pinvC().TIMEOUT_MS, pinvC().RPC);
+    } catch (e) {
+        p = null;
+    }
+    if (!p || typeof p.then !== "function") {
+        fail("تعذّر قراءة المشتريات — حاول مرة أخرى");
+        return;
+    }
+    pinvRender();
+    Promise.resolve(p).then(function(res) {
+        if (gen !== S.gen || !S.open) return;
+        if (!res || res.error || !Array.isArray(res.data)) {
+            fail("تعذّر قراءة المشتريات — حاول مرة أخرى");
+            return;
+        }
+        S.rows = pinvNormRows(res.data);
+        const st = pinvSession();
+        if (st) st.yardMemo = null;
+        pinvLoadCovers(gen);
+    }, function() {
+        fail("تعذّر قراءة المشتريات — حاول مرة أخرى");
+    });
+}
+
+function pinvLoadCovers(gen) {
+    const S = pinvS();
+    const ids = [], seen = {};
+    (S.rows || []).forEach(function(r) {
+        const id = String(r.order_id || "");
+        if (id && !seen[id]) {
+            seen[id] = true;
+            ids.push(id);
+        }
+    });
+    if (!ids.length) {
+        S.loading = false;
+        S.covers = true;
+        pinvRender();
+        return;
+    }
+    const io = pinvIo();
+    const bad = function() {
+        if (gen !== S.gen || !S.open) return;
+        S.loading = false;
+        S.covers = false;
+        S.error = "تعذّر قراءة الفواتير المرفقة — حاول مرة أخرى";
+        pinvRender();
+    };
+    let p = null;
+    try {
+        p = io && typeof io.loadCovers === "function" ? io.loadCovers(ids) : null;
+    } catch (e) {
+        p = null;
+    }
+    if (!p || typeof p.then !== "function") {
+        bad();
+        return;
+    }
+    Promise.resolve(p).then(function(r) {
+        if (gen !== S.gen || !S.open) return;
+        if (r && r.ok) {
+            S.loading = false;
+            S.covers = true;
+            S.error = "";
+            pinvRender();
+        } else bad();
+    }, bad);
+}
+
+function pinvSubscribe() {
+    const S = pinvS();
+    pinvUnsubscribe();
+    try {
+        const io = pinvIo();
+        if (io && typeof io.on === "function") S.unsub = io.on(function() {
+            pinvSchedule();
+        });
+    } catch (e) {
+        S.unsub = null;
+    }
+}
+
+function pinvUnsubscribe() {
+    const S = pinvS();
+    if (typeof S.unsub === "function") {
+        try {
+            S.unsub();
+        } catch (e) {}
+    }
+    S.unsub = null;
+    if (S.timer) {
+        try {
+            clearTimeout(S.timer);
+        } catch (e) {}
+        S.timer = null;
+    }
+}
+
+function pinvSchedule() {
+    const S = pinvS();
+    if (!S.open || S.timer) return;
+    const gen = S.gen;
+    S.timer = setTimeout(function() {
+        S.timer = null;
+        if (gen === S.gen && S.open && S.covers) pinvRender();
+    }, 120);
+}
+
+function pinvModel() {
+    const S = pinvS();
+    const m = {
+        state: "ready",
+        error: S.error,
+        missing: [],
+        done: [],
+        descs: {}
+    };
+    if (S.error) {
+        m.state = "error";
+        return m;
+    }
+    if (!Array.isArray(S.rows) || !S.covers) {
+        m.state = "loading";
+        return m;
+    }
+    let y = null;
+    try {
+        y = acct2YardSlots();
+    } catch (e) {
+        y = null;
+    }
+    if (!y || !Array.isArray(y.slots)) {
+        m.state = "error";
+        m.error = "المستندات غير جاهزة — حاول مرة أخرى";
+        return m;
+    }
+    const mine = {};
+    S.rows.forEach(function(r) {
+        const k = "pur:" + r.order_id + ":" + (r.supplier_id || "-");
+        mine[k] = true;
+        const d = String(r.description || "").replace(/^\s+|\s+$/g, "");
+        if (d) {
+            const a = m.descs[k] = m.descs[k] || [];
+            if (a.length < 2 && a.indexOf(d) < 0) a.push(d);
+        }
+    });
+    const C = pinvC();
+    y.slots.forEach(function(s) {
+        if (!s || s.type !== "pur" || !mine[s.key]) return;
+        if (C.MISSING.indexOf(s.state) >= 0) m.missing.push(s); else if (C.DONE.indexOf(s.state) >= 0) m.done.push(s);
+    });
+    return m;
+}
+
+function pinvGroups(list) {
+    const by = {}, groups = [];
+    const dayOf = function(s) {
+        return String(s.eventDate || "") || "9999-99-99";
+    };
+    const cmp = function(a, b) {
+        return a < b ? -1 : a > b ? 1 : 0;
+    };
+    list.forEach(function(s) {
+        const id = String(s.supplierId || "-");
+        if (!by[id]) {
+            by[id] = {
+                id: id,
+                name: String(s.supplierName || "").replace(/^\s+|\s+$/g, "") || pinvUnknown(),
+                items: [],
+                first: ""
+            };
+            groups.push(by[id]);
+        }
+        by[id].items.push(s);
+    });
+    groups.forEach(function(g) {
+        g.items.sort(function(a, b) {
+            return cmp(dayOf(a), dayOf(b)) || cmp(String(a.orderNumber || ""), String(b.orderNumber || ""));
+        });
+        g.first = dayOf(g.items[0]);
+    });
+    groups.sort(function(a, b) {
+        return cmp(a.first, b.first) || cmp(a.name, b.name);
+    });
+    return groups;
+}
+
+function pinvDayText(s) {
+    try {
+        if (s.required && s.eventDate && typeof acct2DayText === "function") return acct2DayText(Number(s.daysOpen) || 0);
+        return s.eventDate ? PTX_ACCT.date.dmy(s.eventDate) : "";
+    } catch (e) {
+        return "";
+    }
+}
+
+function pinvItemHtml(s, isMissing, descs) {
+    const days = Number(s.daysOpen) || 0;
+    const late = isMissing && s.required && days > pinvC().RED_DAYS;
+    const desc = descs && descs[s.key] ? descs[s.key].join("، ") : "";
+    let money = "";
+    try {
+        money = acct2MoneyHtml(s.amountH);
+    } catch (e) {
+        money = pinvEsc(String((Number(s.amountH) || 0) / 100));
+    }
+    let slot = "";
+    try {
+        slot = acct2SlotHtml(s, {
+            compact: true
+        });
+    } catch (e) {
+        slot = "";
+    }
+    return '<div class="acct2-item pinv-item' + (isMissing ? " acct2-sev-" + (late ? "red" : "amber") : " pinv-done") + '" data-pinv-item="' + pinvEsc(s.key) + '">' + '<div class="acct2-item-main"><b class="acct2-item-ref">' + pinvLtr(s.orderNumber || "") + "</b>" + '<span class="acct2-item-party">' + pinvEsc(desc) + "</span>" + '<span class="acct2-item-amt">' + money + "</span>" + '<span class="acct2-item-days' + (late ? " acct2-red" : "") + '">' + pinvEsc(pinvDayText(s)) + "</span></div>" + '<div class="acct2-item-acts">' + slot + "</div></div>";
+}
+
+function pinvBodyHtml(m) {
+    const S = pinvS();
+    const isMissing = S.tab !== "done";
+    const list = isMissing ? m.missing : m.done;
+    if (!list.length) return '<div class="acct2-empty">' + (isMissing ? "كل فواتير المشتريات مرفقة ✓" : "لا توجد فواتير مرفقة بعد") + "</div>";
+    const groups = pinvGroups(list);
+    const limit = Math.max(Number(S.limit) || pinvC().PAGE, 1);
+    let shown = 0, h = "";
+    for (let i = 0; i < groups.length && shown < limit; i++) {
+        const g = groups[i];
+        h += '<section class="acct2-group"><h3 class="acct2-group-h"><span>' + pinvEsc(g.name) + '</span><span class="acct2-count">' + g.items.length + "</span></h3>";
+        for (let j = 0; j < g.items.length && shown < limit; j++) {
+            h += pinvItemHtml(g.items[j], isMissing, m.descs);
+            shown++;
+        }
+        h += "</section>";
+    }
+    if (list.length > shown) h += '<div class="acct2-more"><button type="button" class="acct2-chip" data-pinv-act="more">' + pinvEsc("عرض المزيد (" + (list.length - shown) + ")") + "</button></div>";
+    return h;
+}
+
+function pinvScreenHtml() {
+    const S = pinvS();
+    const m = pinvModel();
+    const tab = function(id, label, n) {
+        const on = (S.tab === "done" ? "done" : "missing") === id;
+        return '<button type="button" role="tab" class="acct2-tab' + (on ? " acct2-tab-on" : "") + '" aria-selected="' + (on ? "true" : "false") + '" data-pinv-act="tab" data-pinv-id="' + id + '">' + pinvEsc(label) + ' <span class="acct2-tab-n">' + n + "</span></button>";
+    };
+    let h = '<div class="acct2-screen pinv-screen" tabindex="-1"><div class="acct2-head"><div class="acct2-head-in"><div class="acct2-title">🧾 فواتير المشتريات</div><div class="acct2-head-acts">' + '<button type="button" class="acct2-x" data-pinv-act="close" aria-label="إغلاق">✕</button></div></div></div><div class="acct2-col">';
+    if (m.state === "loading") h += '<div class="acct2-empty" role="status">قراءة المشتريات…</div>'; else if (m.state === "error") h += '<div class="acct2-empty" role="alert">' + pinvEsc(m.error || "تعذّر قراءة المشتريات — حاول مرة أخرى") + '</div><div class="acct2-more"><button type="button" class="acct2-chip acct2-chip-on" data-pinv-act="reload">إعادة المحاولة</button></div>'; else {
+        h += '<div class="acct2-sum" id="pinv-sum">' + pinvEsc(m.missing.length + " ناقصة · " + m.done.length + " مرفقة") + "</div>" + '<div class="acct2-tabs" role="tablist">' + tab("missing", "ناقصة", m.missing.length) + tab("done", "مرفقة", m.done.length) + "</div>" + '<div class="acct2-body" id="pinv-body">' + pinvBodyHtml(m) + "</div>";
+    }
+    return h + "</div></div>";
+}
+
+function pinvRender() {
+    try {
+        const S = pinvS();
+        if (!S.open) return;
+        const r = pinvRoot(false);
+        if (!r) return;
+        const top = r.scrollTop;
+        r.innerHTML = pinvScreenHtml();
+        r.classList.add("pinv-open");
+        r.setAttribute("role", "dialog");
+        r.setAttribute("aria-modal", "true");
+        r.setAttribute("aria-label", "فواتير المشتريات");
+        if (document.body) document.body.classList.add("pinv-open");
+        try {
+            r.scrollTop = top;
+        } catch (e) {}
+    } catch (err) {
+        console.error("PINV render:", err);
     }
 }
 
@@ -66562,7 +67108,7 @@ function renderScrapyardHomeView() {
     const pendingSupplyReqs = scrapyardSupplyRequestsSorted(scrapyardSharedState.supplyRequests).length;
     const quotesBadge = pendingQuotes + pendingSupplyReqs;
     const settlementUnseen = scrapyardCustodyUnseenCount() + scrapyardPartsUnseenCount();
-    root.innerHTML = '<div class="app-top-utility-row">' + '<div class="app-top-logo-row"><span class="app-welcome-greeting">اهلا ' + escapeHtml(displayNameForEmail(presenceEmail)) + '</span><img class="app-corner-logo" src="' + PARTECH_LOGO_DATA_URI + '" id="scrapyard-home-logo-img" alt="PARTECH" title="الصفحة الرئيسية"></div>' + '<div class="corner-mini-bar">' + scrapyardThemeToggleHtml() + '<button id="btn-activity-log-scrapyard" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge-scrapyard" class="tasks-badge"></span></button></div>' + "</div>" + '<div class="app-top-divider"></div>' + announcementBannerHtml() + '<div class="app-top-divider"></div>' + '<header class="topbar" style="justify-content:space-between;"><div class="brand">قسم المشتريات</div>' + '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-suppliers">🏭 الموردين</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-statistics">📊 الإحصائيات</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-part-price-log">➕ إدخال بيانات</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-parts-catalog">📚 الكتالوج</button>' + "</div></header>" + '<section id="ops-kpi-scrapyard" class="ops-kpi" aria-label="مؤشر الأداء اليومي"></section>' + '<section class="kpi-row scrapyard-kpi-row">' + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للتشليح</div><div class="kpi-value num">' + fmtMoney(usedTotal) + "</div></div>" + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للموردين</div><div class="kpi-value num">' + fmtMoney(newTotal) + "</div></div>" + '<div class="kpi-card' + (pendingTasks > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">مهام معلّقة</div><div class="kpi-value num">' + pendingTasks + "</div></div>" + '<div class="kpi-card' + (pendingQuotes > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">طلبات تسعير معلّقة</div><div class="kpi-value num">' + pendingQuotes + "</div></div>" + "</section>" + '<div class="new-order-btn-row top-toggle-row">' + '<button type="button" class="btn btn-primary btn-with-badge" id="btn-toggle-scrapyard-settlement" aria-expanded="' + (scrapyardHomeOpenSection === "settlement" ? "true" : "false") + '">السداد<span class="tasks-badge" style="' + (settlementUnseen > 0 ? "display:flex;" : "display:none;") + '">' + (settlementUnseen > 0 ? settlementUnseen : "") + "</span></button>" + '<button type="button" class="btn btn-amber btn-with-badge" id="btn-toggle-scrapyard-quotes" aria-expanded="' + (scrapyardHomeOpenSection === "quotes" ? "true" : "false") + '">طلبات التسعير<span class="tasks-badge" style="' + (quotesBadge > 0 ? "display:flex;" : "display:none;") + '">' + (quotesBadge > 0 ? quotesBadge : "") + "</span></button>" + '<button type="button" class="btn btn-ghost" id="btn-toggle-scrapyard-approved" aria-expanded="' + (scrapyardHomeOpenSection === "approved" ? "true" : "false") + '">✅ التسعيرات المعتمدة</button>' + '<button type="button" class="btn btn-ghost btn-with-badge" id="btn-toggle-scrapyard-tasks" aria-expanded="' + (scrapyardHomeOpenSection === "tasks" ? "true" : "false") + '">المهام<span class="tasks-badge" style="' + (pendingTasks > 0 ? "display:flex;" : "display:none;") + '">' + (pendingTasks > 0 ? pendingTasks : "") + "</span></button>" + "</div>" + '<div id="scrapyard-home-settlement-section" style="' + (scrapyardHomeOpenSection === "settlement" ? "" : "display:none;") + '">' + '<div class="new-order-btn-row">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-settlement">' + SETTLEMENT_KINDS.used.homeLabel + " — " + fmtMoney(usedTotal) + "</button>" + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-new-parts-settlement">' + SETTLEMENT_KINDS.new.homeLabel + " — " + fmtMoney(newTotal) + "</button>" + "</div>" + "</div>" + '<div id="scrapyard-home-quotes-section" style="' + (scrapyardHomeOpenSection === "quotes" ? "" : "display:none;") + '">' + '<div class="task-items-list" id="scrapyard-quotes-items-list">' + scrapyardQuotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-approved-section" style="' + (scrapyardHomeOpenSection === "approved" ? "" : "display:none;") + '">' + '<input type="text" id="approved-quotes-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث برقم الطلبية أو وصف القطعة..." value="' + escapeHtml(approvedQuotesSearchQuery) + '">' + '<div class="task-items-list" id="scrapyard-approved-quotes-items-list">' + approvedQuotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-tasks-section" style="' + (scrapyardHomeOpenSection === "tasks" ? "" : "display:none;") + '">' + '<div class="task-items-list">' + purchasesTasksListHtml() + "</div>" + "</div>";
+    root.innerHTML = '<div class="app-top-utility-row">' + '<div class="app-top-logo-row"><span class="app-welcome-greeting">اهلا ' + escapeHtml(displayNameForEmail(presenceEmail)) + '</span><img class="app-corner-logo" src="' + PARTECH_LOGO_DATA_URI + '" id="scrapyard-home-logo-img" alt="PARTECH" title="الصفحة الرئيسية"></div>' + '<div class="corner-mini-bar">' + scrapyardThemeToggleHtml() + '<button id="btn-activity-log-scrapyard" class="corner-mini-btn btn-with-badge" title="سجل الإشعارات">🛎️<span id="activity-log-badge-scrapyard" class="tasks-badge"></span></button></div>' + "</div>" + '<div class="app-top-divider"></div>' + announcementBannerHtml() + '<div class="app-top-divider"></div>' + '<header class="topbar" style="justify-content:space-between;"><div class="brand">قسم المشتريات</div>' + '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + (typeof pinvButtonHtml === "function" ? pinvButtonHtml() : "") + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-suppliers">🏭 الموردين</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-statistics">📊 الإحصائيات</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-part-price-log">➕ إدخال بيانات</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-parts-catalog">📚 الكتالوج</button>' + "</div></header>" + '<section id="ops-kpi-scrapyard" class="ops-kpi" aria-label="مؤشر الأداء اليومي"></section>' + '<section class="kpi-row scrapyard-kpi-row">' + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للتشليح</div><div class="kpi-value num">' + fmtMoney(usedTotal) + "</div></div>" + '<div class="kpi-card kpi-rust"><div class="kpi-label">مستحق للموردين</div><div class="kpi-value num">' + fmtMoney(newTotal) + "</div></div>" + '<div class="kpi-card' + (pendingTasks > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">مهام معلّقة</div><div class="kpi-value num">' + pendingTasks + "</div></div>" + '<div class="kpi-card' + (pendingQuotes > 0 ? " kpi-attention" : "") + '"><div class="kpi-label">طلبات تسعير معلّقة</div><div class="kpi-value num">' + pendingQuotes + "</div></div>" + "</section>" + '<div class="new-order-btn-row top-toggle-row">' + '<button type="button" class="btn btn-primary btn-with-badge" id="btn-toggle-scrapyard-settlement" aria-expanded="' + (scrapyardHomeOpenSection === "settlement" ? "true" : "false") + '">السداد<span class="tasks-badge" style="' + (settlementUnseen > 0 ? "display:flex;" : "display:none;") + '">' + (settlementUnseen > 0 ? settlementUnseen : "") + "</span></button>" + '<button type="button" class="btn btn-amber btn-with-badge" id="btn-toggle-scrapyard-quotes" aria-expanded="' + (scrapyardHomeOpenSection === "quotes" ? "true" : "false") + '">طلبات التسعير<span class="tasks-badge" style="' + (quotesBadge > 0 ? "display:flex;" : "display:none;") + '">' + (quotesBadge > 0 ? quotesBadge : "") + "</span></button>" + '<button type="button" class="btn btn-ghost" id="btn-toggle-scrapyard-approved" aria-expanded="' + (scrapyardHomeOpenSection === "approved" ? "true" : "false") + '">✅ التسعيرات المعتمدة</button>' + '<button type="button" class="btn btn-ghost btn-with-badge" id="btn-toggle-scrapyard-tasks" aria-expanded="' + (scrapyardHomeOpenSection === "tasks" ? "true" : "false") + '">المهام<span class="tasks-badge" style="' + (pendingTasks > 0 ? "display:flex;" : "display:none;") + '">' + (pendingTasks > 0 ? pendingTasks : "") + "</span></button>" + "</div>" + '<div id="scrapyard-home-settlement-section" style="' + (scrapyardHomeOpenSection === "settlement" ? "" : "display:none;") + '">' + '<div class="new-order-btn-row">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-scrapyard-settlement">' + SETTLEMENT_KINDS.used.homeLabel + " — " + fmtMoney(usedTotal) + "</button>" + '<button type="button" class="btn btn-ghost btn-sm" id="btn-open-new-parts-settlement">' + SETTLEMENT_KINDS.new.homeLabel + " — " + fmtMoney(newTotal) + "</button>" + "</div>" + "</div>" + '<div id="scrapyard-home-quotes-section" style="' + (scrapyardHomeOpenSection === "quotes" ? "" : "display:none;") + '">' + '<div class="task-items-list" id="scrapyard-quotes-items-list">' + scrapyardQuotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-approved-section" style="' + (scrapyardHomeOpenSection === "approved" ? "" : "display:none;") + '">' + '<input type="text" id="approved-quotes-search-input" class="search-input" style="margin-bottom:12px;" placeholder="🔍 ابحث برقم الطلبية أو وصف القطعة..." value="' + escapeHtml(approvedQuotesSearchQuery) + '">' + '<div class="task-items-list" id="scrapyard-approved-quotes-items-list">' + approvedQuotesListHtml() + "</div>" + "</div>" + '<div id="scrapyard-home-tasks-section" style="' + (scrapyardHomeOpenSection === "tasks" ? "" : "display:none;") + '">' + '<div class="task-items-list">' + purchasesTasksListHtml() + "</div>" + "</div>";
     const logo = document.getElementById("scrapyard-home-logo-img");
     if (logo) logo.addEventListener("click", goToScrapyardHome);
     bindScrapyardThemeToggle();
