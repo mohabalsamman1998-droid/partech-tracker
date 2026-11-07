@@ -6240,11 +6240,56 @@ function netpLeadCompact(row) {
     }
 }
 
+function netpResync() {
+    try {
+        if (typeof draft === "undefined" || !draft || draft.confirmed || !Array.isArray(draft.parts)) return false;
+        const root = document.getElementById("modal-root");
+        if (!root || !root.querySelectorAll) return false;
+        let changed = false;
+        Array.from(root.querySelectorAll("[data-netp-slot]")).forEach(slot => {
+            const p = draft.parts.find(x => x && x.id === slot.getAttribute("data-netp-slot"));
+            const row = slot.closest ? slot.closest(".part-row") : null;
+            const sellEl = p && row && row.querySelector ? row.querySelector(".part-sell-input") : null;
+            if (!p || !sellEl || !netpTOn(p)) return;
+            if (!netpElevated() && p.supplierId && !netpFlagsLoad.map) return;
+            const pend = netpOnSell.pend && netpOnSell.pend[p.id];
+            if (pend && pend.d === draft) return;
+            const F = Math.max(0, netpSell(Number(p.costPrice) || 0, p.sellTyped, netpModeEff(p)));
+            if (Math.abs(F - p.sellTypedF) < .005) return;
+            p.sellTypedF = F;
+            p.sellPrice = F;
+            changed = true;
+            netpResync.told = netpResync.told || Object.create(null);
+            const key = p.id + "|" + (draft.id || "");
+            if (!netpResync.told[key]) {
+                netpResync.told[key] = true;
+                if (typeof showToast === "function") {
+                    try {
+                        showToast("«بالضريبة» تتبع سعر الشراء والمورد — تغيّر سعر الزبون لقطعة «" + String(p.description || "").slice(0, 24) + "» تلقائيًا", "ok");
+                    } catch (e) {}
+                }
+            }
+        });
+        return changed;
+    } catch (err) {
+        console.warn("netpResync:", err);
+        return false;
+    }
+}
+
 function netpRefresh() {
     try {
         if (typeof draft === "undefined" || !draft || !Array.isArray(draft.parts)) return;
         const root = document.getElementById("modal-root");
         if (!root || !root.querySelectorAll) return;
+        if (!netpRefresh.rs && netpResync()) {
+            netpRefresh.rs = true;
+            try {
+                if (typeof updateModalTotals === "function") updateModalTotals();
+            } finally {
+                netpRefresh.rs = false;
+            }
+        }
         Array.from(root.querySelectorAll("[data-netp-slot]")).forEach(slot => {
             const p = draft.parts.find(x => x && x.id === slot.getAttribute("data-netp-slot"));
             const row = slot.closest ? slot.closest(".part-row") : null;
