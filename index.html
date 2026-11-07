@@ -722,6 +722,11 @@
     .trk-pr:not(.trk-prq) .part-row:not(.part-row-returned) > .part-price-group:has(> .netp-slot > .netp-cell) > .netp-slot > .netp-cell > .netp-fv{width:100%;min-width:0;height:48px;padding-left:3px;padding-right:3px;}
   }
   .modal-card.trk-payo .section-sales > .netp-net-line{order:1;}
+  /* رسوم التوصيل والخدمات (نفس مبدأ القطع): الخانة الظاهرة هي «المبلغ قبل الضريبة» (netp-fn) وبجانبها «بالضريبة» للقراءة فقط؛ خانة المبلغ الأصلية (الشاملة الضريبة) تبقى بالصفحة تحمل المبلغ المخزَّن فقط وتُخفى. الصف يلتفّ بالجوال فتنزل «بالضريبة» لسطرها كوحدة بدل أن تضيق */
+  .netp-fee-base.fee-percent-row{display:none !important;}
+  .netp-fee-row{flex-wrap:wrap;}
+  .netp-fee-f{white-space:nowrap;}
+  .netp-fee-f:empty{display:none;}
 /* NETP END css */
   .quote-priority-controls{display:flex;flex-direction:column;gap:2px;flex-shrink:0;}
   .quote-priority-btn{
@@ -6286,6 +6291,8 @@ function netpRefresh() {
             netpRefresh.rs = true;
             try {
                 if (typeof updateModalTotals === "function") updateModalTotals();
+            } catch (e) {
+                console.warn("netpRefresh totals:", e);
             } finally {
                 netpRefresh.rs = false;
             }
@@ -6372,14 +6379,17 @@ function netpRefresh() {
 function netpFeeKinds() {
     return [ {
         key: "delivery",
+        label: "المبلغ",
         rowId: "order-delivery-fee-row",
         inputId: "order-delivery-fee-input"
     }, {
         key: "service",
+        label: "أو المبلغ مباشرة",
         rowId: "order-service-fee-amount-row",
         inputId: "order-service-fee-amount-input"
     }, {
         key: "fee",
+        label: "أو المبلغ مباشرة",
         rowId: "order-fee-amount-row",
         inputId: "order-fee-amount-input"
     } ];
@@ -6397,20 +6407,23 @@ function netpFeeSync() {
         netpFeeKinds().forEach(k => {
             const amountRow = document.getElementById(k.rowId), input = document.getElementById(k.inputId);
             if (!amountRow || !input || !amountRow.parentNode) return;
+            if (amountRow.classList && typeof amountRow.classList.add === "function") amountRow.classList.add("netp-fee-base");
             const id = "netp-fee-row-" + k.key;
             let row = document.getElementById(id);
             if (!row) {
                 row = document.createElement("div");
                 row.id = id;
                 row.className = "fee-percent-row netp-fee-row";
-                row.innerHTML = '<span>الصافي بعد الضريبة</span><input type="number" min="0" step="0.01" inputmode="decimal" class="netp-fn num" data-netp-fee="' + k.key + '" placeholder="0" title="ما يبقى لك من هذا الرسم بعد ضريبة القيمة المضافة 15% — اكتبه فيُحسب المبلغ على الزبون"><span>ر.س</span>';
+                row.innerHTML = "<span>" + k.label + '</span><input type="number" min="0" step="0.01" inputmode="decimal" class="netp-fn num" data-netp-fee="' + k.key + '" placeholder="0" title="المبلغ قبل ضريبة القيمة المضافة 15% — تُضاف الضريبة فوقه تلقائيًا ويظهر بجانبه ما يدفعه الزبون"><span>ر.س</span><span class="fee-amount-preview netp-fee-f"></span>';
                 amountRow.parentNode.insertBefore(row, amountRow.nextSibling);
             }
             row.style.display = amountRow.style && amountRow.style.display === "none" ? "none" : "";
-            const ni = row.querySelector(".netp-fn");
-            if (!ni || ni === document.activeElement) return;
             if (t === null) t = orderTotals(draft);
             const gross = netpFeeGross(k.key, t);
+            const fe = row.querySelector(".netp-fee-f"), ftxt = gross > 0 ? "بالضريبة " + netpNum(gross) + " ر.س" : "";
+            if (fe && fe.textContent !== ftxt) fe.textContent = ftxt;
+            const ni = row.querySelector(".netp-fn");
+            if (!ni || ni === document.activeElement) return;
             const typed = String(ni.value).trim();
             const same = gross > 0 ? typed !== "" && netpR2((Number(typed) || 0) * 1.15) === netpR2(gross) : typed === "";
             if (!same) ni.value = gross > 0 ? String(netpR2(gross / 1.15)) : "";
@@ -6647,6 +6660,112 @@ function netpEnsureDelegate() {
         root.addEventListener("change", later);
     } catch (e) {
         console.warn("netpEnsureDelegate:", e);
+    }
+}
+
+function netpDay(iso) {
+    const ms = iso ? new Date(iso).getTime() : NaN;
+    return isFinite(ms) ? new Date(ms + 3 * 36e5).toISOString().slice(0, 10) : "";
+}
+
+function netpVatFrom() {
+    let v = "";
+    try {
+        v = typeof taxinvKnownEffective === "function" ? String(taxinvKnownEffective() || "") : "";
+    } catch (e) {
+        v = "";
+    }
+    return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : "2026-11-01";
+}
+
+function netpTaxable(o, from, today) {
+    if (!o || !o.supplied) return today >= from;
+    const day = netpDay(o.suppliedAt) || netpDay(o.updatedAt) || netpDay(o.createdAt);
+    return !!day && day >= from;
+}
+
+function netpAfterVat(orders, nowIso) {
+    const from = netpVatFrom(), today = netpDay(nowIso || (new Date).toISOString());
+    const out = {
+        n: 0,
+        nTax: 0,
+        profit: 0,
+        after: 0,
+        vat: 0,
+        unk: 0
+    };
+    (orders || []).forEach(o => {
+        const t = orderTotals(o);
+        if (!t.profitCounted) return;
+        out.n++;
+        out.profit += t.profit;
+        const r = netpTaxable(o, from, today) ? netpOrderNet(o) : null;
+        if (!r) {
+            out.after += t.profit;
+            return;
+        }
+        out.nTax++;
+        out.after += r.net;
+        out.unk += netpUnknownCount(o);
+    });
+    out.profit = netpR2(out.profit);
+    out.after = netpR2(out.after);
+    out.vat = netpR2(out.profit - out.after);
+    return out;
+}
+
+function netpAggLineHtml(label, value, unk, title) {
+    return '<div class="netp-agg-line" style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;" title="' + escapeHtml(title) + '">' + escapeHtml(label) + ' <span class="num' + (value < 0 ? " text-rust" : "") + '">' + escapeHtml(fmtMoney(value)) + "</span>" + (unk > 0 ? ' <span title="' + escapeHtml(unk + " قطعة بلا علامة فاتورة للمورد — حُسبت بلا استرداد لضريبة الشراء") + '">⚠️</span>' : "") + "</div>";
+}
+
+function netpAggNote(a) {
+    return "الضريبة المستحقة = ضريبة المبيعات المستخرجة من إجمالي الزبون ناقص ضريبة المشتريات المستردّة (لموردين «فاتورة نظامية: نعم» فقط)، وتُحتسب لطلبيات توريدها من " + netpVatFrom() + " فصاعدًا (تاريخ سريان التسجيل الضريبي) — وما قبله لا ضريبة مستحقة عليه. رقم تقديري" + (a.unk > 0 ? " — ⚠️ " + a.unk + " قطعة بلا علامة فاتورة للمورد حُسبت بلا استرداد" : "") + ".";
+}
+
+function netpTreasuryDecorate(el, t) {
+    try {
+        if (!el || !t || typeof el.querySelector !== "function" || !netpElevated()) return;
+        const orders = (appData.orders || []).filter(o => o.confirmed && !o.isQuote).filter(orderMatchesExtraIndicatorsPeriod);
+        const a = netpAfterVat(orders);
+        if (!a.nTax || Math.abs(a.profit - Number(t.profitVolume)) > .015) return;
+        const net2 = netpR2(Number(t.netProfitVolumeAfterSettlement) - a.vat);
+        const term = (label, amount) => ({
+            label: label,
+            amount: Math.abs(netpR2(amount)),
+            negative: amount < 0
+        });
+        const ttl = "تقديري: الربح ناقص الضريبة المستحقة (ضريبة المبيعات − ضريبة المشتريات المستردّة) لطلبيات التوريد من " + netpVatFrom();
+        const put = (key, value, label, rowLabel) => {
+            const card = el.querySelector('[data-card-key="' + key + '"]');
+            const panel = card && typeof card.querySelector === "function" ? card.querySelector(".card-breakdown") : null;
+            if (!panel || card.querySelector(".netp-agg-line") || typeof panel.insertAdjacentHTML !== "function") return;
+            panel.insertAdjacentHTML("beforebegin", netpAggLineHtml(label, value, a.unk, ttl));
+            panel.insertAdjacentHTML("beforeend", treasuryCardBreakdownHtml({
+                terms: [ term("الضريبة المستحقة (تقديري)", -a.vat), term(rowLabel, value) ],
+                note: netpAggNote(a)
+            }));
+        };
+        put("profitVolume", a.after, "بعد الضريبة المستحقة:", "الربح بعد الضريبة المستحقة");
+        put("netProfitVolumeAfterSettlement", net2, "بعد الضريبة المستحقة:", "صافي الأرباح بعد الضريبة المستحقة");
+    } catch (e) {
+        console.warn("netpTreasuryDecorate:", e);
+    }
+}
+
+function netpStatMonthHtml(g) {
+    try {
+        if (!g || !g.key || !netpElevated()) return "";
+        const orders = (appData.orders || []).filter(o => {
+            if (!o.confirmed || o.isQuote || !o.supplied || !o.suppliedAt) return false;
+            const d = new Date(o.suppliedAt);
+            return !isNaN(d.getTime()) && d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") === g.key;
+        });
+        const a = netpAfterVat(orders);
+        if (!a.nTax || Math.abs(a.profit - Number(g.profit)) > .015) return "";
+        return netpAggLineHtml("بعد الضريبة المستحقة: أرباح", a.after, a.unk, "تقديري: الربح ناقص الضريبة المستحقة (ضريبة المبيعات − ضريبة المشتريات المستردّة) لطلبيات التوريد من " + netpVatFrom());
+    } catch (e) {
+        console.warn("netpStatMonthHtml:", e);
+        return "";
     }
 }
 
@@ -56284,6 +56403,7 @@ function renderTreasuryView() {
     const el = document.getElementById("treasury-view");
     const t = treasuryTotals();
     el.innerHTML = '<div class="treasury-header">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-orders">→ رجوع للطلبيات</button>' + '<div class="treasury-title">📦 الصندوق</div>' + "</div>" + tamaraWarnBarHtml(t) + '<div class="treasury-chip-row lvl-grid" style="margin-bottom:10px;">' + '<button type="button" id="btn-toggle-extra-indicators" class="chip" aria-expanded="' + (extraIndicatorsOpen ? "true" : "false") + '">📊 مؤشرات إضافية</button>' + '<button type="button" id="btn-toggle-expenses-block" class="chip" aria-expanded="' + (expensesBlockOpen ? "true" : "false") + '">💰 المصاريف</button>' + '<button type="button" id="btn-toggle-suppliers-settlement" class="chip" aria-expanded="' + (suppliersSettlementMenuOpen ? "true" : "false") + '">🧾 سداد الموردين' + (scrapyardMgmtState.proposals.length ? '<span class="inline-count-badge">' + scrapyardMgmtState.proposals.length + "</span>" : "") + "</button>" + '<button type="button" id="btn-open-accounts-activity" class="chip">📜 حركة الحسابات</button>' + '<button type="button" id="btn-open-edit-proposals" class="chip btn-with-badge">📋 طلبات التعديل<span id="edit-proposals-badge" class="tasks-badge" style="' + (editProposals.length ? "display:flex;" : "display:none;") + '">' + (editProposals.length || "") + "</span></button>" + tamaraChipHtml(t) + (typeof acnChipHtml === "function" ? acnChipHtml() : "") + "</div>" + '<div id="suppliers-settlement-wrap" class="treasury-chip-row lvl-grid" style="' + (suppliersSettlementMenuOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + scrapyardEntryBlockHtml("used") + scrapyardEntryBlockHtml("new") + "</div>" + '<div id="extra-indicators-wrap" style="' + (extraIndicatorsOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + '<button type="button" id="btn-toggle-extra-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر' + (extraIndicatorsPeriod === "customMonth" ? " (" + arabicMonthLabel(extraIndicatorsCustomMonth) + ")" : extraIndicatorsPeriod === "customRange" ? " (" + formatDateDMY(extraIndicatorsRangeFrom) + " → " + formatDateDMY(extraIndicatorsRangeTo) + ")" : extraIndicatorsPeriod !== "all" ? " (" + (TREASURY_PERIODS.find(p => p.key === extraIndicatorsPeriod) || {}).label + ")" : "") + "</button>" + '<div class="treasury-period-filter" id="extra-indicators-period-filter" style="' + (extraIndicatorsFilterOpen ? "" : "display:none;") + ' margin-bottom:14px;">' + TREASURY_PERIODS.map(p => '<button type="button" class="chip ' + (extraIndicatorsPeriod === p.key ? "chip-active" : "") + '" data-extra-period="' + escapeHtml(p.key) + '">' + p.label + "</button>").join("") + '<input type="month" id="extra-indicators-month-input" class="extra-indicators-month-input" value="' + (extraIndicatorsPeriod === "customMonth" ? extraIndicatorsCustomMonth : "") + '">' + '<label class="mini-label" style="margin:0;">من<input type="date" id="extra-indicators-range-from" class="extra-indicators-month-input" value="' + escapeHtml(extraIndicatorsRangeFrom || "") + '"></label>' + '<label class="mini-label" style="margin:0;">إلى<input type="date" id="extra-indicators-range-to" class="extra-indicators-month-input" value="' + escapeHtml(extraIndicatorsRangeTo || "") + '"></label>' + "</div>" + '<div class="extra-indicators-row" id="extra-indicators-row">' + treasuryCardHtml("purchaseVolume", "حجم الشراء", '<span class="treasury-profit-value">' + fmtMoney(t.purchaseVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم سداد منه: <span class="num">' + fmtMoney(t.purchaseVolumePaid) + "</span></div>", t.breakdowns.purchaseVolume) + treasuryCardHtml("salesVolume", "حجم عمليات البيع", '<span class="treasury-profit-value">' + fmtMoney(t.salesVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل: <span class="num">' + fmtMoney(t.salesVolumePaid) + "</span></div>", t.breakdowns.salesVolume) + treasuryCardHtml("profitVolume", "حجم صافي العمليات", '<span class="treasury-profit-value">' + fmtMoney(t.profitVolume) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل: <span class="num">' + fmtMoney(t.profitVolumePaid) + "</span></div>", t.breakdowns.profitVolume) + treasuryCardHtml("expensesVolume", "حجم المصاريف", '<span class="treasury-profit-value text-rust">' + fmtMoney(t.expensesVolume) + "</span>", null, t.breakdowns.expensesVolume) + treasuryCardHtml("netProfitVolumeAfterSettlement", "صافي الأرباح", '<span class="treasury-profit-value ' + (t.netProfitVolumeAfterSettlement < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(t.netProfitVolumeAfterSettlement) + "</span>", '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل منه: <span class="num">' + fmtMoney(t.netProfitVolume) + "</span></div>", t.breakdowns.netProfitVolumeAfterSettlement) + "</div>" + "</div>" + '<div id="expenses-block-wrap" style="' + (expensesBlockOpen ? "" : "display:none;") + ' margin-bottom:10px;">' + '<div class="treasury-block">' + '<div class="treasury-block-head">' + '<div class="treasury-block-title">المصاريف — كل مبلغ بتاريخه على حدة</div>' + (tamaraPlanButtonHtml() ? '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0;max-width:100%;"><button type="button" id="btn-open-add-expense" class="btn btn-primary btn-sm">➕ إضافة مصاريف</button>' + tamaraPlanButtonHtml() + "</div>" : '<button type="button" id="btn-open-add-expense" class="btn btn-primary btn-sm">➕ إضافة مصاريف</button>') + "</div>" + '<button type="button" id="btn-toggle-treasury-filter" class="chip" style="margin-bottom:10px;">🔍 فلتر' + (treasuryPeriodFilter !== "all" ? " (" + (TREASURY_PERIODS.find(p => p.key === treasuryPeriodFilter) || {}).label + ")" : "") + "</button>" + '<div class="treasury-period-filter" id="treasury-period-filter" style="' + (treasuryFilterOpen ? "" : "display:none;") + '">' + TREASURY_PERIODS.map(p => '<button type="button" class="chip ' + (treasuryPeriodFilter === p.key ? "chip-active" : "") + '" data-period="' + escapeHtml(p.key) + '">' + p.label + "</button>").join("") + "</div>" + '<div class="expense-categories">' + EXPENSE_CATEGORIES.filter(c => !c.system || (appData.treasury[c.key] || []).length > 0).map(expenseCategoryRowHtml).join("") + treasurySupportRowHtml() + "</div>" + tamaraPlansBlockHtml() + '<div class="treasury-summary">' + '<div class="treasury-summary-row"><span>إجمالي المصاريف</span><span class="num text-rust" id="treasury-total-expenses">' + fmtMoney(t.totalExpenses) + "</span></div>" + '<div class="treasury-summary-row"><span>إجمالي الدعم الخارجي</span><span class="num text-green" id="treasury-total-support">+' + fmtMoney(t.totalSupport) + "</span></div>" + "</div>" + "</div>" + "</div>" + treasuryCardHtml("net", "الصندوق حاليًا", '<span class="treasury-profit-value ' + (t.net < 0 ? "text-rust" : "") + '" id="treasury-net">' + fmtMoney(t.net) + "</span>", null, t.breakdowns.net, "treasury-profit-card-primary") + treasuryCardHtml("netAfterSettlement", "الصندوق بافتراض انتهاء التحصيل والسداد", '<span class="treasury-profit-value ' + (t.netAfterSettlement < 0 ? "text-rust" : "") + '">' + fmtMoney(t.netAfterSettlement) + "</span>", null, t.breakdowns.netAfterSettlement) + treasuryCardHtml("uncollectedProfit", "الربح غير المحصّل", '<span class="treasury-profit-value">' + fmtMoney(t.uncollectedProfit) + "</span>", null, t.breakdowns.uncollectedProfit) + treasuryCardHtml("debtsToSuppliers", "الديون للموردين", '<span class="treasury-profit-value text-rust">' + fmtMoney(t.debtsToSuppliers) + "</span>", null, t.breakdowns.debtsToSuppliers) + treasuryCardHtml("purchasingCustodyBalance", "رصيد المشتريات", '<span class="treasury-profit-value ' + (t.purchasingCustodyBalance < 0 ? "text-rust" : "text-green") + '">' + fmtMoney(t.purchasingCustodyBalance) + "</span>", t.purchasingCustodyDeficit > 0 ? '<div class="kpi-sub" style="color:var(--rust);">عليك سداد ' + fmtMoney(t.purchasingCustodyDeficit) + " لعهدة المشتريات (عامر وعمر)</div>" : null, t.breakdowns.purchasingCustodyBalance) + treasuryCardHtml("dueFromCustomers", "مستحق من الزبائن", '<span class="treasury-profit-value">' + fmtMoney(t.dueFromCustomers) + "</span>", null, t.breakdowns.dueFromCustomers) + '<div class="data-mgmt-row">' + '<span class="data-mgmt-label">إدارة البيانات</span>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-export-excel">⬇️ تصدير Excel</button>' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-excel">⬆️ استيراد Excel</button>' + '<input type="file" id="excel-import-input" accept=".xlsx" style="display:none;">' + '<button type="button" class="btn btn-ghost btn-sm" id="btn-import-oem-alts">📥 كتالوج الأرقام</button>' + '<input type="file" id="oem-alt-import-input" accept=".gz,.tsv,.txt" style="display:none;">' + '<span id="oem-alt-import-status" class="kpi-sub"></span>' + "</div>";
+    if (typeof netpTreasuryDecorate === "function") netpTreasuryDecorate(el, t);
     document.getElementById("btn-back-to-orders").addEventListener("click", closeTreasuryView);
     bindBusyButton(document.getElementById("btn-export-excel"), async () => {
         const btn = document.getElementById("btn-export-excel");
@@ -64249,7 +64369,7 @@ function salesPerformanceSectionHtml() {
     const timingBlock = '<div class="stat-chart-block">' + '<div class="stat-chart-title">⏱ زمن الاستجابة (الطلب ← التسعير ← التسعير للزبون ← التوريد)</div>' + '<div class="treasury-summary">' + timingRows + "</div>" + (timing ? '<div class="expense-empty-hint">«التسعير للزبون» = لحظة ✅ اعتماد التسعيرة، ومسجّلة للطلبيات المعتمدة من 30 سبتمبر 2026 فقط — الأقدم لا يوجد لها توقيت، فيظهر «—» إلى أن تتجمع بيانات.</div>' : "") + "</div>";
     const loyaltyBlock = '<div class="stat-chart-block">' + '<div class="stat-chart-title">🔁 ولاء العملاء</div>' + '<div class="treasury-summary">' + '<div class="treasury-summary-row"><span>عادوا وطلبوا أكثر من مرة (آخر 30 يوم)</span><span class="num">' + returning.returning + " من " + returning.total + " (" + returning.rate + "%)</span></div>" + '<div class="treasury-summary-row"><span>عملاء جدد (آخر 60 يوم)</span><span class="num text-green">' + newCustomers + "</span></div>" + "</div>" + "</div>";
     const growthGrowthSpan = v => '<span class="' + (v == null ? "" : v >= 0 ? "text-green" : "text-rust") + '">(' + fmtPercentSigned(v) + ")</span>";
-    const growthRows = growth.map(g => "<div>" + '<div class="treasury-summary-row"><span>' + escapeHtml(arabicMonthLabel(g.key)) + '</span><span class="num">مبيعات ' + fmtMoney(g.sales) + " " + growthGrowthSpan(g.salesGrowth) + " · أرباح " + fmtMoney(g.profit) + " " + growthGrowthSpan(g.profitGrowth) + "</span></div>" + '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل: مبيعات <span class="num">' + fmtMoney(g.salesPaid) + "</span> " + growthGrowthSpan(g.salesPaidGrowth) + ' · أرباح <span class="num">' + fmtMoney(g.profitPaid) + "</span> " + growthGrowthSpan(g.profitPaidGrowth) + "</div>" + "</div>").join("");
+    const growthRows = growth.map(g => "<div>" + '<div class="treasury-summary-row"><span>' + escapeHtml(arabicMonthLabel(g.key)) + '</span><span class="num">مبيعات ' + fmtMoney(g.sales) + " " + growthGrowthSpan(g.salesGrowth) + " · أرباح " + fmtMoney(g.profit) + " " + growthGrowthSpan(g.profitGrowth) + "</span></div>" + '<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:2px;">تم تحصيل: مبيعات <span class="num">' + fmtMoney(g.salesPaid) + "</span> " + growthGrowthSpan(g.salesPaidGrowth) + ' · أرباح <span class="num">' + fmtMoney(g.profitPaid) + "</span> " + growthGrowthSpan(g.profitPaidGrowth) + "</div>" + (typeof netpStatMonthHtml === "function" ? netpStatMonthHtml(g) : "") + "</div>").join("");
     const growthChartItems = arr => growth.map(g => ({
         label: arabicMonthLabel(g.key),
         value: arr(g),
