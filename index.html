@@ -83907,6 +83907,42 @@ function zatcaXlSheet(prev, inv, o) {
     }
 }
 
+function zatcaXlQuote(prev, order, data, mdl) {
+    try {
+        const lines = mdl && Array.isArray(mdl.lines) ? mdl.lines : null;
+        if (!lines || !lines.length || typeof PTX_TAXINV === "undefined" || !PTX_TAXINV || typeof PTX_TAXINV.sheetModel !== "function" || !PTX_TAXINV.labels) return prev(order, data, mdl);
+        if (!lines.some(function(L) {
+            return L && L.kind;
+        }) && !(data && Array.isArray(data.partsSnapshot)) && typeof taxinvBuildDraft === "function") {
+            const dr = taxinvBuildDraft(order);
+            if (dr && dr.ok && Array.isArray(dr.lines) && dr.lines.length === lines.length) {
+                const kindOfN = {};
+                dr.lines.forEach(function(D) {
+                    kindOfN[D.n] = D.kind;
+                });
+                lines.forEach(function(L) {
+                    if (L && kindOfN[L.n]) L.kind = kindOfN[L.n];
+                });
+            }
+        }
+        const fees = lines.filter(zatcaXlIsFee);
+        if (!fees.length || fees.length === lines.length) return prev(order, data, mdl);
+        const html = prev(order, data, Object.assign({}, mdl, {
+            lines: lines.filter(function(L) {
+                return !zatcaXlIsFee(L);
+            })
+        }));
+        const k = html.indexOf("</tbody></table></div>"), t = k < 0 ? -1 : html.lastIndexOf("<thead>", k);
+        const cols = t < 0 ? 0 : (html.slice(t, k).match(/<th[ >]/g) || []).length;
+        if (!cols) return prev(order, data, mdl);
+        return html.slice(0, k) + zatcaXlRowsHtml({
+            lines: fees
+        }, cols, false) + html.slice(k);
+    } catch (e) {
+        return prev(order, data, mdl);
+    }
+}
+
 const ZATCA_AM_REASON_TEXT = "تعديل الطلبية";
 
 let zatcaAm = null;
@@ -84682,6 +84718,12 @@ let zatcaOrigMount = null;
                     });
                 } catch (e) {}
                 return zatcaXlSheet(prevSheet, inv, o);
+            };
+        }
+        if (typeof taxinvQuoteSheetBody === "function") {
+            const prevQuote = taxinvQuoteSheetBody;
+            taxinvQuoteSheetBody = function(order, data, mdl) {
+                return zatcaXlQuote(prevQuote, order, data, mdl);
             };
         }
         if (typeof taxinvWhatsAppText === "function") {
