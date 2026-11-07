@@ -53037,6 +53037,21 @@ function taxxPdfJpegs(b) {
     return out;
 }
 
+function taxxPdfMainJpegs(list) {
+    const arr = taxxArr(list);
+    if (arr.length < 2) return arr;
+    const areas = arr.map(function(b) {
+        const i = taxxJpegInfo(b);
+        return i ? i.w * i.h : 0;
+    });
+    const top = Math.max.apply(null, areas);
+    if (!(top > 0)) return arr;
+    const keep = arr.filter(function(b, i) {
+        return areas[i] >= top * .04;
+    });
+    return keep.length ? keep : arr;
+}
+
 function taxxXmlEsc(s) {
     return String(s === null || s === undefined ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -53468,6 +53483,16 @@ function taxxOpsPad6(n) {
     return "000000".slice(s.length) + s;
 }
 
+function taxxOpsBelongs(s) {
+    const t = taxxStr(s);
+    return !t ? "—" : /^ord-/i.test(t) ? "طلب غير موجود بالبيانات الحالية" : t;
+}
+
+function taxxOpsMimeText(m) {
+    const s = String(m || "").toLowerCase();
+    return s === "application/pdf" ? "PDF" : s.indexOf("image/") === 0 ? "صورة" : "ملف";
+}
+
 function taxxOpsReviewText(d) {
     return d && d.review && d.review !== "unreviewed" ? " — " + (d.review === "accepted" ? "راجعها المحاسب" : "حالة المراجعة: " + d.review) : "";
 }
@@ -53564,7 +53589,7 @@ function taxxOpsSheets(model, imgs) {
                     d: d.date
                 } : "", p.supplier || d.party, reviewed ? taxxOpsAmt(d.net) : "", reviewed ? taxxOpsAmt(d.vat) : "", reviewed ? d.gross : i === 0 ? p.cost : "", "مرفقة" + taxxOpsReviewText(d), "", "", "", "" ];
                 addRow(rows1, cells, B.SAL, B.W, pages, "فاتورة شراء DOC-" + taxxOpsPad6(d.serial), 1, "فاتورة شراء (تابع)");
-                if (!pages.length) rows1[rows1.length - 1].cells[8] = "مرفقة — تعذّر تضمين صورتها (" + (d.mime || "ملف") + ")";
+                if (!pages.length) rows1[rows1.length - 1].cells[8] = "مرفقة — تعذّر تضمين صورتها (" + taxxOpsMimeText(d.mime) + ")";
             });
         });
         if (o.delivery) {
@@ -53584,7 +53609,7 @@ function taxxOpsSheets(model, imgs) {
                         d: d.date || dv.date
                     } : "", dv.agent || d.party, "", "", i === 0 ? dv.amount : "", (i === 0 && dv.pay ? dv.pay + " — " : "") + "مرفق", "", "", "", "" ];
                     addRow(rows1, cells, B.SAL, B.W, pages, "توصيل DOC-" + taxxOpsPad6(d.serial), 1, "توصيل (تابع)");
-                    if (!pages.length) rows1[rows1.length - 1].cells[8] = "مرفق — تعذّر تضمين صورته (" + (d.mime || "ملف") + ")";
+                    if (!pages.length) rows1[rows1.length - 1].cells[8] = "مرفق — تعذّر تضمين صورته (" + taxxOpsMimeText(d.mime) + ")";
                 });
             }
         }
@@ -53608,7 +53633,7 @@ function taxxOpsSheets(model, imgs) {
             const pages = taxxArr(docImgs[d.serial]);
             addRow(rows1, [ "", "مستند", d.no || "DOC-" + taxxOpsPad6(d.serial), d.date ? {
                 d: d.date
-            } : "", d.party, d.net, d.vat, d.gross, "مرفق — يخص: " + (d.belongs || "—"), "", "", "", "" ], B.SAL, B.W, pages, "مستند DOC-" + taxxOpsPad6(d.serial), 1, "مستند (تابع)");
+            } : "", d.party, d.net, d.vat, d.gross, "مرفق — يخص: " + taxxOpsBelongs(d.belongs), "", "", "", "" ], B.SAL, B.W, pages, "مستند DOC-" + taxxOpsPad6(d.serial), 1, "مستند (تابع)");
         });
     }
     if (!model.ops.length && !model.other.length) rows1.push({
@@ -53709,7 +53734,7 @@ function taxxOpsSheets(model, imgs) {
                 d: e.date
             } : "", e.cat, e.note, i === 0 ? e.amount : "", "مرفق" + taxxOpsReviewText(d), d.no || "DOC-" + taxxOpsPad6(d.serial), "", "", "", "" ];
             addRow(rows2, cells, B.EXP, B.W, pages, "مصروف " + e.cat + " DOC-" + taxxOpsPad6(d.serial), 1, e.cat + " (تابع)");
-            if (!pages.length) rows2[rows2.length - 1].cells[4] = "مرفق — تعذّر تضمين صورته (" + (d.mime || "ملف") + ")";
+            if (!pages.length) rows2[rows2.length - 1].cells[4] = "مرفق — تعذّر تضمين صورته (" + taxxOpsMimeText(d.mime) + ")";
         });
     });
     if (!model.expenses.length) rows2.push({
@@ -53903,7 +53928,7 @@ async function taxxOpsDocPages(io, d) {
     const bytes = await acct2BlobBytes(r.blob);
     if (!bytes || !bytes.length) return [];
     const isPdf = d.mime === "application/pdf" || bytes[0] === 37 && bytes[1] === 80 && bytes[2] === 68 && bytes[3] === 70;
-    const list = isPdf ? taxxPdfJpegs(bytes) : [ bytes ];
+    const list = isPdf ? taxxPdfMainJpegs(taxxPdfJpegs(bytes)) : [ bytes ];
     const pages = [];
     for (let i = 0; i < list.length && i < 12; i++) {
         const p = await taxxOpsPrepare(list[i], d.mime);
