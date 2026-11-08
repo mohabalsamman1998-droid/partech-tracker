@@ -29640,7 +29640,7 @@ function taxinvIssueConfirmText(st) {
         if (typeof h === "number" && isFinite(h)) amount = taxinvMoney(h);
     } catch (e) {}
     const who = st && st.buyer && st.buyer.name ? String(st.buyer.name).trim() : "";
-    return "ستصدر فاتورة رسمية للطلبية " + String(st && st.orderNumber || "") + (who ? " — " + who : "") + (amount ? " بقيمة " + amount + " شاملة الضريبة" : "") + "، وتُرسل فورًا إلى هيئة الزكاة والضريبة والجمارك. " + PTX_TAXINV.labels.confirmIssue + ".";
+    return "ستصدر فاتورة رسمية للطلبية " + String(st && st.orderNumber || "") + (who ? " — " + who : "") + (amount ? " بقيمة " + amount + " ر.س شاملة الضريبة" : "") + "، وتُرسل فورًا إلى هيئة الزكاة والضريبة والجمارك. " + PTX_TAXINV.labels.confirmIssue + ".";
 }
 
 async function taxinvIssue() {
@@ -99122,6 +99122,243 @@ function trackTaskAddBind(key) {
         document.addEventListener("change", trackOnChange, false);
     } catch (e) {
         console.error("TRACK install:", e);
+    }
+})();
+
+function opsxSdepCoverH(groups, kind) {
+    try {
+        if (typeof tamaraDepositUiOn !== "function" || typeof tamaraDepositOpenSumH !== "function" || !tamaraDepositUiOn()) return 0;
+        const bucket = kind === "used" ? "used" : "new";
+        let cover = 0;
+        (groups || []).forEach(function(g) {
+            if (!g || !Array.isArray(g.parts)) return;
+            const open = tamaraDepositOpenSumH(g.order_id, bucket);
+            if (!(open > 0)) return;
+            const due = Math.round(g.parts.reduce(function(s, p) {
+                return s + (Number(p && p.cost_price) || 0) * (Number(p && p.qty) || 1);
+            }, 0) * 100);
+            if (due > 0) cover += Math.min(open, due);
+        });
+        return cover;
+    } catch (e) {
+        return 0;
+    }
+}
+
+function opsxSdepCardHtml(baseAmount, coverH) {
+    const after = round2((Number(baseAmount) || 0) - coverH / 100);
+    return '<div class="settlement-summary-card opsx-sdep-card">' + '<div class="settlement-summary-row"><span>عربون مفتوح (يُخصم تلقائيًا عند السداد)</span><span class="num text-green">−' + fmtMoney(coverH / 100) + "</span></div>" + '<div class="settlement-summary-divider"></div>' + '<div class="settlement-summary-final"><span>المتبقي بعد العربون</span><span class="num ' + (after > 0 ? "text-rust" : "text-green") + '">' + fmtMoney(after) + "</span></div>" + "</div>";
+}
+
+function opsxSdepDecorate() {
+    const root = document.getElementById("scrapyard-root");
+    const st = typeof scrapyardSharedState !== "undefined" ? scrapyardSharedState : null;
+    if (!root || !st || typeof scrapyardCurrentScreen !== "undefined" && scrapyardCurrentScreen !== "settlement") return;
+    if (root.querySelector(".opsx-sdep-card")) return;
+    const kind = st.activeKind === "used" ? "used" : "new";
+    const coverH = opsxSdepCoverH(groupScrapyardPartsByOrder(st.parts || []), kind);
+    if (!(coverH > 0)) return;
+    const sum = function(a) {
+        return (a || []).reduce(function(s, p) {
+            return s + (Number(p && p.cost_price) || 0) * (Number(p && p.qty) || 1);
+        }, 0);
+    };
+    const total = round2(sum(st.parts) - sum(st.returnReceivables));
+    const anchor = kind === "used" ? root.querySelector(".settlement-summary-card") : root.querySelector(".total-box");
+    if (!anchor) return;
+    anchor.insertAdjacentHTML("afterend", opsxSdepCardHtml(kind === "used" ? round2(total - (Number(st.custodyBalance) || 0)) : total, coverH));
+}
+
+(function opsxSdepInstall() {
+    try {
+        if (typeof renderScrapyardView !== "function" || renderScrapyardView.opsxWrapped) return;
+        const prev = renderScrapyardView;
+        renderScrapyardView = function() {
+            const r = prev.apply(this, arguments);
+            try {
+                opsxSdepDecorate();
+            } catch (e) {
+                console.warn("OPSX sdep:", e);
+            }
+            return r;
+        };
+        renderScrapyardView.opsxWrapped = true;
+    } catch (e) {
+        console.warn("OPSX sdep install:", e);
+    }
+})();
+
+var OPSX_SRET_FROM_MS = Date.parse("2026-11-07T21:00:00Z");
+
+function opsxSretValid(p) {
+    if (!p) return false;
+    if (p.returnCollected) return true;
+    if (!p.returnedToSupplier) return false;
+    if (!p.returnedAt || !p.returnedToSupplierAt) return true;
+    const a = Date.parse(p.returnedToSupplierAt), b = Date.parse(p.returnedAt);
+    return isNaN(a) || isNaN(b) ? true : a >= b;
+}
+
+function opsxSretAskable(p) {
+    if (p.returnHasReceivable && !p.returnCollected) return true;
+    const at = Date.parse(p.returnedAt);
+    return !isNaN(at) && at >= OPSX_SRET_FROM_MS;
+}
+
+function opsxSretState(order) {
+    const out = {
+        pendingReturn: [],
+        pendingCollect: [],
+        returned: [],
+        collected: [],
+        collectH: 0,
+        collectedH: 0
+    };
+    (order && order.parts || []).forEach(function(p) {
+        if (!p || !p.returned || !p.supplierId) return;
+        const h = Math.round((Number(p.qty) || 1) * (Number(p.costPrice) || 0) * 100);
+        if (!opsxSretValid(p)) {
+            if (opsxSretAskable(p)) out.pendingReturn.push(p);
+            return;
+        }
+        out.returned.push(p);
+        if (p.returnHasReceivable) {
+            if (p.returnCollected) {
+                out.collected.push(p);
+                out.collectedH += h;
+            } else {
+                out.pendingCollect.push(p);
+                out.collectH += h;
+            }
+        }
+    });
+    return out;
+}
+
+function opsxSretHtml(order) {
+    try {
+        if (typeof hasElevatedAccess !== "function" || !hasElevatedAccess()) return "";
+        const s = opsxSretState(order);
+        let h = "";
+        if (s.pendingReturn.length) {
+            const n = s.pendingReturn.length;
+            h += '<div class="customer-refund-status customer-refund-status-pending opsx-sret">يجب إرجاع ' + (n === 1 ? "القطعة المرتجعة" : "القطع المرتجعة (" + n + ")") + " للمورد " + '<button type="button" class="btn btn-sm btn-danger-ghost" id="order-supplier-return-btn">' + (n === 1 ? "تم إرجاع القطعة للمورد" : "تم إرجاع القطع للمورد") + "</button></div>";
+        }
+        if (s.pendingCollect.length) {
+            h += '<div class="customer-refund-status customer-refund-status-pending opsx-sret">يجب استرجاع ' + modalMoney(s.collectH / 100) + " من المورد " + '<button type="button" class="btn btn-sm btn-danger-ghost" id="order-supplier-collect-btn">تم استرجاع المبلغ من المورد</button></div>';
+        }
+        if (s.returned.length) {
+            h += '<div class="customer-refund-status customer-refund-status-done opsx-sret">✅ أُرجعت للمورد (' + s.returned.length + ")" + (s.collected.length ? " · ✅ استُرجع " + modalMoney(s.collectedH / 100) + " من المورد" : "") + "</div>";
+        }
+        return h;
+    } catch (e) {
+        return "";
+    }
+}
+
+function opsxSretCollectMessage(order, parts) {
+    const ds = parts.map(function(p) {
+        return returnCollectDestination(order, p);
+    });
+    if (ds.length === 1) return ds[0].confirmMessage;
+    const labels = [];
+    let amount = 0;
+    ds.forEach(function(d) {
+        amount += Number(d.amount) || 0;
+        (d.labels || []).forEach(function(l) {
+            if (labels.indexOf(l) < 0) labels.push(l);
+        });
+    });
+    if (!labels.length) return ds[0].confirmMessage;
+    return "سيُضاف المبلغ (" + fmtMoney(round2(amount)) + ") إلى " + labels.join(" و") + " (بتاريخ اليوم " + todayNumeric() + ").";
+}
+
+function opsxSretAskReturn() {
+    confirmAction({
+        title: "تأكيد إرجاع القطع للمورد؟",
+        message: "سيُعلَّم أن القطع المرتجعة أُعيدت للمورد (بتاريخ اليوم " + todayNumeric() + "). احفظ الطلبية بعدها حتى يتم تثبيته.",
+        confirmLabel: "تم الإرجاع",
+        onConfirm: function() {
+            if (typeof draft === "undefined" || !draft) return;
+            const at = (new Date).toISOString();
+            opsxSretState(draft).pendingReturn.forEach(function(p) {
+                p.returnedToSupplier = true;
+                p.returnedToSupplierAt = at;
+            });
+            refreshPartsList();
+            updateModalTotals();
+            showToast('تم التعليم — اضغط "حفظ الطلبية" لتثبيته', "ok");
+        }
+    });
+}
+
+function opsxSretAskCollect() {
+    if (typeof draft === "undefined" || !draft) return;
+    const parts = opsxSretState(draft).pendingCollect;
+    if (!parts.length) return;
+    confirmAction({
+        title: "تأكيد استرجاع المبلغ من المورد؟",
+        message: opsxSretCollectMessage(draft, parts) + " احفظ الطلبية بعدها حتى يتم تثبيته.",
+        confirmLabel: "تم الاسترجاع",
+        dangerous: true,
+        onConfirm: function() {
+            if (typeof draft === "undefined" || !draft) return;
+            opsxSretState(draft).pendingCollect.forEach(function(p) {
+                stampPartReturnCollected(p);
+            });
+            refreshPartsList();
+            updateModalTotals();
+            showToast('تم التعليم — اضغط "حفظ الطلبية" لتثبيته', "ok");
+        }
+    });
+}
+
+function opsxSretBind() {
+    const root = document.getElementById("modal-root");
+    if (!root) return;
+    const b1 = root.querySelector("#order-supplier-return-btn");
+    if (b1 && !b1.getAttribute("data-opsx-bound")) {
+        b1.setAttribute("data-opsx-bound", "1");
+        b1.addEventListener("click", opsxSretAskReturn);
+    }
+    const b2 = root.querySelector("#order-supplier-collect-btn");
+    if (b2 && !b2.getAttribute("data-opsx-bound")) {
+        b2.setAttribute("data-opsx-bound", "1");
+        b2.addEventListener("click", opsxSretAskCollect);
+    }
+}
+
+(function opsxSretInstall() {
+    try {
+        if (typeof orderCustomerRefundStatusHtml === "function" && !orderCustomerRefundStatusHtml.opsxWrapped) {
+            const prevHtml = orderCustomerRefundStatusHtml;
+            orderCustomerRefundStatusHtml = function(order) {
+                const base = prevHtml.apply(this, arguments);
+                let extra = "";
+                try {
+                    extra = opsxSretHtml(order);
+                } catch (e) {
+                    extra = "";
+                }
+                return base + extra;
+            };
+            orderCustomerRefundStatusHtml.opsxWrapped = true;
+        }
+        if (typeof bindOrderRefundConfirmButton === "function" && !bindOrderRefundConfirmButton.opsxWrapped) {
+            const prevBind = bindOrderRefundConfirmButton;
+            bindOrderRefundConfirmButton = function() {
+                const r = prevBind.apply(this, arguments);
+                try {
+                    opsxSretBind();
+                } catch (e) {
+                    console.warn("OPSX sret bind:", e);
+                }
+                return r;
+            };
+            bindOrderRefundConfirmButton.opsxWrapped = true;
+        }
+    } catch (e) {
+        console.warn("OPSX sret install:", e);
     }
 })();</script>
 </body>
