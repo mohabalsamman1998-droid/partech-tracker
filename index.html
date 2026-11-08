@@ -99223,7 +99223,7 @@ function opsxSretAskable(p) {
     return !isNaN(at) && at >= OPSX_SRET_FROM_MS;
 }
 
-function opsxSretState(order) {
+function opsxSretState(order, bucket) {
     const out = {
         pendingReturn: [],
         pendingCollect: [],
@@ -99234,6 +99234,8 @@ function opsxSretState(order) {
     };
     (order && order.parts || []).forEach(function(p) {
         if (!p || !p.returned || !p.supplierId) return;
+        if (bucket === "used" && !p.used) return;
+        if (bucket === "new" && p.used) return;
         const h = Math.round((Number(p.qty) || 1) * (Number(p.costPrice) || 0) * 100);
         if (!opsxSretValid(p)) {
             if (opsxSretAskable(p)) out.pendingReturn.push(p);
@@ -99253,17 +99255,21 @@ function opsxSretState(order) {
     return out;
 }
 
-function opsxSretHtml(order) {
+function opsxSretBtn(kind, bucket, text) {
+    return '<button type="button" class="btn btn-sm btn-danger-ghost" data-opsx-sret="' + kind + '" data-opsx-bucket="' + (bucket || "") + '">' + text + "</button>";
+}
+
+function opsxSretHtml(order, bucket) {
     try {
         if (typeof hasElevatedAccess !== "function" || !hasElevatedAccess()) return "";
-        const s = opsxSretState(order);
+        const s = opsxSretState(order, bucket);
         let h = "";
         if (s.pendingReturn.length) {
             const n = s.pendingReturn.length;
-            h += '<div class="customer-refund-status customer-refund-status-pending opsx-sret">يجب إرجاع ' + (n === 1 ? "القطعة المرتجعة" : "القطع المرتجعة (" + n + ")") + " للمورد " + '<button type="button" class="btn btn-sm btn-danger-ghost" id="order-supplier-return-btn">' + (n === 1 ? "تم إرجاع القطعة للمورد" : "تم إرجاع القطع للمورد") + "</button></div>";
+            h += '<div class="customer-refund-status customer-refund-status-pending opsx-sret">يجب إرجاع ' + (n === 1 ? "القطعة المرتجعة" : "القطع المرتجعة (" + n + ")") + " للمورد " + opsxSretBtn("return", bucket, n === 1 ? "تم إرجاع القطعة للمورد" : "تم إرجاع القطع للمورد") + "</div>";
         }
         if (s.pendingCollect.length) {
-            h += '<div class="customer-refund-status customer-refund-status-pending opsx-sret">يجب استرجاع ' + modalMoney(s.collectH / 100) + " من المورد " + '<button type="button" class="btn btn-sm btn-danger-ghost" id="order-supplier-collect-btn">تم استرجاع المبلغ من المورد</button></div>';
+            h += '<div class="customer-refund-status customer-refund-status-pending opsx-sret">يجب استرجاع ' + modalMoney(s.collectH / 100) + " من المورد " + opsxSretBtn("collect", bucket, "تم استرجاع المبلغ من المورد") + "</div>";
         }
         if (s.returned.length) {
             h += '<div class="customer-refund-status customer-refund-status-done opsx-sret">✅ أُرجعت للمورد (' + s.returned.length + ")" + (s.collected.length ? " · ✅ استُرجع " + modalMoney(s.collectedH / 100) + " من المورد" : "") + "</div>";
@@ -99291,7 +99297,7 @@ function opsxSretCollectMessage(order, parts) {
     return "سيُضاف المبلغ (" + fmtMoney(round2(amount)) + ") إلى " + labels.join(" و") + " (بتاريخ اليوم " + todayNumeric() + ").";
 }
 
-function opsxSretAskReturn() {
+function opsxSretAskReturn(bucket) {
     confirmAction({
         title: "تأكيد إرجاع القطع للمورد؟",
         message: "سيُعلَّم أن القطع المرتجعة أُعيدت للمورد (بتاريخ اليوم " + todayNumeric() + "). احفظ الطلبية بعدها حتى يتم تثبيته.",
@@ -99299,7 +99305,7 @@ function opsxSretAskReturn() {
         onConfirm: function() {
             if (typeof draft === "undefined" || !draft) return;
             const at = (new Date).toISOString();
-            opsxSretState(draft).pendingReturn.forEach(function(p) {
+            opsxSretState(draft, bucket).pendingReturn.forEach(function(p) {
                 p.returnedToSupplier = true;
                 p.returnedToSupplierAt = at;
             });
@@ -99310,9 +99316,9 @@ function opsxSretAskReturn() {
     });
 }
 
-function opsxSretAskCollect() {
+function opsxSretAskCollect(bucket) {
     if (typeof draft === "undefined" || !draft) return;
-    const parts = opsxSretState(draft).pendingCollect;
+    const parts = opsxSretState(draft, bucket).pendingCollect;
     if (!parts.length) return;
     confirmAction({
         title: "تأكيد استرجاع المبلغ من المورد؟",
@@ -99321,7 +99327,7 @@ function opsxSretAskCollect() {
         dangerous: true,
         onConfirm: function() {
             if (typeof draft === "undefined" || !draft) return;
-            opsxSretState(draft).pendingCollect.forEach(function(p) {
+            opsxSretState(draft, bucket).pendingCollect.forEach(function(p) {
                 stampPartReturnCollected(p);
             });
             refreshPartsList();
@@ -99334,38 +99340,53 @@ function opsxSretAskCollect() {
 function opsxSretBind() {
     const root = document.getElementById("modal-root");
     if (!root) return;
-    const b1 = root.querySelector("#order-supplier-return-btn");
-    if (b1 && !b1.getAttribute("data-opsx-bound")) {
-        b1.setAttribute("data-opsx-bound", "1");
-        b1.addEventListener("click", opsxSretAskReturn);
-    }
-    const b2 = root.querySelector("#order-supplier-collect-btn");
-    if (b2 && !b2.getAttribute("data-opsx-bound")) {
-        b2.setAttribute("data-opsx-bound", "1");
-        b2.addEventListener("click", opsxSretAskCollect);
-    }
+    Array.from(root.querySelectorAll("[data-opsx-sret]")).forEach(function(el) {
+        if (el.getAttribute("data-opsx-bound")) return;
+        el.setAttribute("data-opsx-bound", "1");
+        const kind = el.getAttribute("data-opsx-sret"), bucket = el.getAttribute("data-opsx-bucket") || "";
+        el.addEventListener("click", function() {
+            if (kind === "collect") opsxSretAskCollect(bucket); else opsxSretAskReturn(bucket);
+        });
+    });
 }
 
 (function opsxSretInstall() {
     try {
-        if (typeof orderCustomerRefundStatusHtml === "function" && !orderCustomerRefundStatusHtml.opsxWrapped) {
-            const prevHtml = orderCustomerRefundStatusHtml;
-            orderCustomerRefundStatusHtml = function(order) {
-                const base = prevHtml.apply(this, arguments);
+        if (typeof costSplitPayBoxHtml === "function" && !costSplitPayBoxHtml.opsxWrapped) {
+            const prevBox = costSplitPayBoxHtml;
+            costSplitPayBoxHtml = function(d, pi, id) {
+                const h = prevBox.apply(this, arguments);
                 let extra = "";
                 try {
-                    extra = opsxSretHtml(order);
+                    extra = opsxSretHtml(d, id === "cost-split-btn-scrapyard" ? "used" : id === "cost-split-btn-new" ? "new" : "");
                 } catch (e) {
                     extra = "";
                 }
-                return base + extra;
+                if (!extra || typeof h !== "string") return h;
+                const i = h.lastIndexOf("</div>");
+                return i >= 0 ? h.slice(0, i) + extra + h.slice(i) : h + extra;
             };
-            orderCustomerRefundStatusHtml.opsxWrapped = true;
+            costSplitPayBoxHtml.opsxWrapped = true;
         }
-        if (typeof bindOrderRefundConfirmButton === "function" && !bindOrderRefundConfirmButton.opsxWrapped) {
-            const prevBind = bindOrderRefundConfirmButton;
-            bindOrderRefundConfirmButton = function() {
-                const r = prevBind.apply(this, arguments);
+        if (typeof costSplitButtonsHtml === "function" && !costSplitButtonsHtml.opsxWrapped) {
+            const prevBtns = costSplitButtonsHtml;
+            costSplitButtonsHtml = function(d, t) {
+                const h = prevBtns.apply(this, arguments);
+                if (typeof h !== "string" || h.indexOf("supplier-pay-block") >= 0) return h;
+                let extra = "";
+                try {
+                    extra = opsxSretHtml(d, "");
+                } catch (e) {
+                    extra = "";
+                }
+                return h + extra;
+            };
+            costSplitButtonsHtml.opsxWrapped = true;
+        }
+        if (typeof bindCostSplitButtons === "function" && !bindCostSplitButtons.opsxWrapped) {
+            const prevBindCs = bindCostSplitButtons;
+            bindCostSplitButtons = function() {
+                const r = prevBindCs.apply(this, arguments);
                 try {
                     opsxSretBind();
                 } catch (e) {
@@ -99373,7 +99394,7 @@ function opsxSretBind() {
                 }
                 return r;
             };
-            bindOrderRefundConfirmButton.opsxWrapped = true;
+            bindCostSplitButtons.opsxWrapped = true;
         }
     } catch (e) {
         console.warn("OPSX sret install:", e);
