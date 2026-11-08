@@ -3376,6 +3376,15 @@
   .opsx-act-chip.opsx-act-on{background:var(--rust-dim);border-color:var(--rust-line);color:var(--rust);font-weight:800;}
   .trk-chip[data-trk-sub="action"]{border-color:var(--rust-line);}
   .trk-chip[data-trk-sub="action"].trk-chip-on{background:var(--rust-dim);color:var(--rust);}
+  /* نوع فاتورة شراء قطعة التشليح (طلب المالك 2026-11-08): الحقل سطر كامل بعد حقول القطعة بزرّين متساويين، والناقص يُعلَّم بلون الصدأ من الباليت؛ وشارة المبيعات سطر مستقل */
+  .part-price-group > .mini-label-invkind{flex:1 1 100%;}
+  .opsx-invk .chip{flex:1 1 0;}
+  .opsx-invk-missing .chip:not(.chip-active){border-color:var(--rust-line);color:var(--rust);}
+  .opsx-invk-line{display:flex;margin:4px 0 0;}
+  @media (max-width:600px){
+    .trk-prq .part-row:not(.part-row-returned) > .part-price-group > .mini-label-invkind{order:6;grid-column:1 / -1;}
+    .opsx-invk .chip{min-height:44px;}
+  }
   /* OPSX END css */
   /* VCAT BEGIN css */
   /* كتالوج السيارة بالصور داخل «كتالوج القطع» (رقم الهيكل ← السيارة ← أقسام ← مجموعات ← لوحات ← قطع) */
@@ -99874,6 +99883,182 @@ function opsxTaxNameFieldHtml(c) {
         }
     } catch (e) {
         console.warn("OPSX taxname install:", e);
+    }
+})();
+
+function opsxInvkOn(p) {
+    return !!p && p.used === true && !p.returned;
+}
+
+function opsxInvkPriced(p) {
+    return Number(p && p.costPrice) > 0;
+}
+
+function opsxInvkValid(v) {
+    return v === "tax" || v === "plain";
+}
+
+function opsxInvkLabel(v) {
+    return v === "tax" ? "فاتورة ضريبية" : v === "plain" ? "فاتورة عادية" : "";
+}
+
+function opsxInvkFieldHtml(p) {
+    const chip = function(v) {
+        const on = p.invoiceKind === v;
+        return '<button type="button" class="chip' + (on ? " chip-active" : "") + '" data-opsx-invk="' + v + '" aria-pressed="' + (on ? "true" : "false") + '">' + opsxInvkLabel(v) + "</button>";
+    };
+    const miss = opsxInvkPriced(p) && !opsxInvkValid(p.invoiceKind);
+    return '<div class="mini-label mini-label-invkind' + (miss ? " opsx-invk-missing" : "") + '">فاتورة الشراء<div class="filter-chips opsx-invk" role="radiogroup" aria-label="نوع فاتورة الشراء">' + chip("tax") + chip("plain") + "</div></div>";
+}
+
+function opsxInvkBadgeHtml(p) {
+    if (!opsxInvkOn(p)) return "";
+    if (opsxInvkValid(p.invoiceKind)) return '<div class="opsx-invk-line"><span class="stamp ' + (p.invoiceKind === "tax" ? "stamp-green" : "stamp-rust") + '">' + opsxInvkLabel(p.invoiceKind) + "</span></div>";
+    return opsxInvkPriced(p) ? '<div class="opsx-invk-line"><span class="stamp stamp-rust">نوع الفاتورة غير محدد</span></div>' : "";
+}
+
+function opsxInvkMissingParts() {
+    const d = typeof quoteDraft !== "undefined" ? quoteDraft : null;
+    if (!d || !Array.isArray(d.parts)) return [];
+    return d.parts.filter(function(p) {
+        return !!p && String(p.description || "").trim() !== "" && opsxInvkOn(p) && opsxInvkPriced(p) && !opsxInvkValid(p.invoiceKind);
+    });
+}
+
+function opsxInvkMissing() {
+    return opsxInvkMissingParts().length > 0;
+}
+
+function opsxInvkMark() {
+    const root = document.getElementById("modal-root");
+    if (!root) return;
+    const rows = Array.prototype.slice.call(root.querySelectorAll("#quote-parts-list .part-row"));
+    let first = null;
+    opsxInvkMissingParts().forEach(function(p) {
+        const row = rows.find(function(r) {
+            return r.getAttribute("data-part-id") === String(p.id);
+        });
+        const grp = row ? row.querySelector(".mini-label-invkind") : null;
+        if (grp) {
+            grp.classList.add("opsx-invk-missing");
+            if (!first) first = grp;
+        }
+    });
+    if (first && first.scrollIntoView) first.scrollIntoView({
+        block: "center"
+    });
+}
+
+function opsxInvkBind() {
+    const root = document.getElementById("modal-root");
+    if (!root || typeof quoteDraft === "undefined" || !quoteDraft) return;
+    root.querySelectorAll("#quote-parts-list .part-row [data-opsx-invk]").forEach(function(btn) {
+        if (btn.getAttribute("data-opsx-bound")) return;
+        btn.setAttribute("data-opsx-bound", "1");
+        btn.addEventListener("click", function() {
+            const row = btn.closest(".part-row");
+            const pid = row ? row.getAttribute("data-part-id") : null;
+            const part = quoteDraft.parts.find(function(p) {
+                return p.id === pid;
+            });
+            if (!part) return;
+            part.invoiceKind = btn.getAttribute("data-opsx-invk");
+            row.querySelectorAll("[data-opsx-invk]").forEach(function(b) {
+                const on = b.getAttribute("data-opsx-invk") === part.invoiceKind;
+                b.classList.toggle("chip-active", on);
+                b.setAttribute("aria-pressed", on ? "true" : "false");
+            });
+            const grp = row.querySelector(".mini-label-invkind");
+            if (grp) grp.classList.remove("opsx-invk-missing");
+        });
+    });
+}
+
+function opsxInvkGuard(kind) {
+    if (!opsxInvkMissing()) return false;
+    showToast(kind === "approve" ? "توجد قطعة تشليح مسعّرة بلا نوع فاتورة (ضريبية / عادية) — يجب تحديده قبل الاعتماد (أو إعادتها إلى عامر للتصحيح)" : "يجب تحديد نوع فاتورة كل قطعة تشليح (فاتورة ضريبية / فاتورة عادية) قبل الحفظ", "error");
+    try {
+        opsxInvkMark();
+    } catch (e) {}
+    return true;
+}
+
+(function opsxInvkInstall() {
+    try {
+        if (typeof quotePartRowHtml === "function" && !quotePartRowHtml.opsxWrapped) {
+            const prevRow = quotePartRowHtml;
+            quotePartRowHtml = function(p, i) {
+                let h = prevRow.apply(this, arguments);
+                try {
+                    if (typeof h === "string" && opsxInvkOn(p)) {
+                        if (typeof quoteModalRole !== "undefined" && quoteModalRole === "purchasing") {
+                            const a = h.indexOf("mini-label-condition"), b = a < 0 ? -1 : h.indexOf("</label>", a);
+                            if (b >= 0) h = h.slice(0, b + 8) + opsxInvkFieldHtml(p) + h.slice(b + 8);
+                        } else {
+                            const mark = '</div><div class="part-price-group">', j = h.indexOf(mark), badge = opsxInvkBadgeHtml(p);
+                            if (j >= 0 && badge) h = h.slice(0, j) + badge + h.slice(j);
+                        }
+                    }
+                } catch (e) {}
+                return h;
+            };
+            quotePartRowHtml.opsxWrapped = true;
+        }
+        if (typeof bindQuotePartRowEvents === "function" && !bindQuotePartRowEvents.opsxWrapped) {
+            const prevBindQ = bindQuotePartRowEvents;
+            bindQuotePartRowEvents = function() {
+                const r = prevBindQ.apply(this, arguments);
+                try {
+                    opsxInvkBind();
+                } catch (e) {
+                    console.warn("OPSX invk bind:", e);
+                }
+                return r;
+            };
+            bindQuotePartRowEvents.opsxWrapped = true;
+        }
+        if (typeof scrapyardQuotePricingRpcParams === "function" && !scrapyardQuotePricingRpcParams.opsxWrapped) {
+            const prevParams = scrapyardQuotePricingRpcParams;
+            scrapyardQuotePricingRpcParams = function(order, quoteReady, expectedUpdatedAt) {
+                const r = prevParams.apply(this, arguments);
+                try {
+                    const src = order && Array.isArray(order.parts) ? order.parts : [];
+                    if (r && Array.isArray(r.p_parts)) r.p_parts.forEach(function(pp, i) {
+                        const p = src[i];
+                        if (!p || !pp) return;
+                        if (p.used === true && opsxInvkValid(p.invoiceKind)) pp.invoiceKind = p.invoiceKind; else if (p.used !== true && p.invoiceKind) pp.invoiceKind = null;
+                    });
+                } catch (e) {}
+                return r;
+            };
+            scrapyardQuotePricingRpcParams.opsxWrapped = true;
+        }
+        if (typeof onSaveQuotePricing === "function" && !onSaveQuotePricing.opsxWrapped) {
+            const prevSavePricing = onSaveQuotePricing;
+            onSaveQuotePricing = async function() {
+                if (opsxInvkGuard("save")) return;
+                return prevSavePricing.apply(this, arguments);
+            };
+            onSaveQuotePricing.opsxWrapped = true;
+        }
+        if (typeof onSaveAndSendQuotePricing === "function" && !onSaveAndSendQuotePricing.opsxWrapped) {
+            const prevSaveSend = onSaveAndSendQuotePricing;
+            onSaveAndSendQuotePricing = async function() {
+                if (opsxInvkGuard("save")) return;
+                return prevSaveSend.apply(this, arguments);
+            };
+            onSaveAndSendQuotePricing.opsxWrapped = true;
+        }
+        if (typeof onApproveQuote === "function" && !onApproveQuote.opsxWrapped) {
+            const prevApprove = onApproveQuote;
+            onApproveQuote = async function() {
+                if (opsxInvkGuard("approve")) return;
+                return prevApprove.apply(this, arguments);
+            };
+            onApproveQuote.opsxWrapped = true;
+        }
+    } catch (e) {
+        console.warn("OPSX invk install:", e);
     }
 })();</script>
 </body>
