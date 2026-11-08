@@ -99587,6 +99587,182 @@ function opsxActnOnClick(e) {
     } catch (e) {
         console.warn("OPSX actn install:", e);
     }
+})();
+
+function opsxCpickOptions() {
+    const list = typeof appData !== "undefined" && appData && Array.isArray(appData.customers) ? appData.customers : [];
+    const opts = list.filter(function(c) {
+        return c && c.id;
+    }).map(function(c) {
+        const sub = [ c.phone || "", c.vatNumber ? "ض " + c.vatNumber : "" ].filter(Boolean).join(" · ");
+        return {
+            id: c.id,
+            label: c.name || c.phone || "عميل",
+            sublabel: sub
+        };
+    });
+    return [ {
+        id: "",
+        label: "— بدون عميل (إدخال يدوي) —"
+    } ].concat(opts);
+}
+
+function opsxCpickHtml(st) {
+    if (!st || st.mode !== "preview" || typeof searchableSelectHtml !== "function") return "";
+    return '<div class="taxinv-field taxinv-field-wide opsx-cpick"><span class="taxinv-field-label">العميل (تُؤخذ بياناته الضريبية من بطاقته)</span><div id="opsx-cpick-select">' + searchableSelectHtml("opsx-cpick-input", opsxCpickOptions().filter(function(o) {
+        return o.id;
+    }), st.customerId || "", "— اختر العميل —") + "</div>" + '<div class="taxinv-hint" style="margin-top:6px;">اختيار عميل هنا يملأ «المشتري» من بطاقته (الاسم والرقم الضريبي والعنوان إن كانت مسجَّلة) ولا يغيّر عميل الطلبية.</div></div>';
+}
+
+function opsxCpickChoose(id) {
+    const st = typeof taxinvState !== "undefined" ? taxinvState : null;
+    if (!st || st.mode !== "preview" || st.busy || st.asking) return false;
+    const cust = id ? (appData.customers || []).find(function(c) {
+        return c && c.id === id;
+    }) : null;
+    if (id && !cust) return false;
+    if (cust) {
+        st.buyer = taxinvBuyerFromCustomer(cust, taxinvOrder(st.orderId));
+        st.customerId = cust.id;
+        st.customerLinked = true;
+        st.contactName = cust.name || "";
+        st.saveToCustomer = st.buyer.kind === "business";
+    } else {
+        st.buyer = {
+            kind: "individual",
+            name: "",
+            phone: "",
+            vat_number: "",
+            additional_id_type: "",
+            additional_id: "",
+            street: "",
+            building_no: "",
+            district: "",
+            city: "",
+            postal_code: ""
+        };
+        st.customerId = null;
+        st.customerLinked = false;
+        st.contactName = "";
+        st.saveToCustomer = false;
+    }
+    st.kindAuto = true;
+    st.kind = PTX_TAXINV.suggestDocKind(st.buyer.kind);
+    taxinvNormalizeKind(st);
+    taxinvUpdatePreview({
+        form: true
+    });
+    return true;
+}
+
+function opsxCpickBind() {
+    const st = typeof taxinvState !== "undefined" ? taxinvState : null;
+    if (!st || st.mode !== "preview" || typeof bindSearchableSelect !== "function") return;
+    const wrap = document.querySelector("#opsx-cpick-select .searchable-select");
+    if (!wrap || wrap.getAttribute("data-opsx-bound")) return;
+    wrap.setAttribute("data-opsx-bound", "1");
+    bindSearchableSelect(wrap, opsxCpickOptions, function(id) {
+        try {
+            opsxCpickChoose(id || "");
+        } catch (e) {
+            console.warn("OPSX cpick:", e);
+        }
+    });
+}
+
+function opsxDocCustomerPrefill() {
+    if (typeof docState === "undefined" || !docState || !docState.data || typeof appData === "undefined" || !appData) return false;
+    const order = (appData.orders || []).find(function(o) {
+        return o && o.id === docState.orderId;
+    });
+    const cust = order && order.customerId ? (appData.customers || []).find(function(c) {
+        return c && c.id === order.customerId;
+    }) : null;
+    if (!cust) return false;
+    const d = docState.data, name = String(cust.name || "").trim(), vat = String(cust.vatNumber || "").trim();
+    let changed = false;
+    if (name && !String(d.customerName || "").trim()) {
+        d.customerName = name;
+        changed = true;
+    }
+    if (vat && !String(d.customerCR || "").trim()) {
+        d.customerCR = vat;
+        changed = true;
+    }
+    if (changed && typeof refreshDocSheet === "function") refreshDocSheet();
+    return changed;
+}
+
+(function opsxCpickInstall() {
+    try {
+        if (typeof taxinvFormHtml === "function" && !taxinvFormHtml.opsxWrapped) {
+            const prevForm = taxinvFormHtml;
+            taxinvFormHtml = function(st) {
+                const h = prevForm.apply(this, arguments);
+                try {
+                    if (typeof h !== "string") return h;
+                    const mark = '<div class="taxinv-grid">', i = h.indexOf(mark), extra = opsxCpickHtml(st);
+                    return i < 0 || !extra ? h : h.slice(0, i + mark.length) + extra + h.slice(i + mark.length);
+                } catch (e) {
+                    return h;
+                }
+            };
+            taxinvFormHtml.opsxWrapped = true;
+        }
+        if (typeof taxinvMount === "function" && !taxinvMount.opsxWrapped) {
+            const prevMount = taxinvMount;
+            taxinvMount = function() {
+                const r = prevMount.apply(this, arguments);
+                try {
+                    opsxCpickBind();
+                } catch (e) {
+                    console.warn("OPSX cpick bind:", e);
+                }
+                return r;
+            };
+            taxinvMount.opsxWrapped = true;
+        }
+        if (typeof taxinvUpdatePreview === "function" && !taxinvUpdatePreview.opsxWrapped) {
+            const prevUpd = taxinvUpdatePreview;
+            taxinvUpdatePreview = function(opts) {
+                const r = prevUpd.apply(this, arguments);
+                try {
+                    if (opts && opts.form) opsxCpickBind();
+                } catch (e) {
+                    console.warn("OPSX cpick bind:", e);
+                }
+                return r;
+            };
+            taxinvUpdatePreview.opsxWrapped = true;
+        }
+        if (typeof taxinvBuyerFromCustomer === "function" && !taxinvBuyerFromCustomer.opsxWrapped) {
+            const prevBuyer = taxinvBuyerFromCustomer;
+            taxinvBuyerFromCustomer = function(cust, order) {
+                const b = prevBuyer.apply(this, arguments);
+                try {
+                    if (b && b.kind === "business" && !String(b.name || "").trim() && cust && String(cust.name || "").trim()) b.name = String(cust.name).trim();
+                } catch (e) {}
+                return b;
+            };
+            taxinvBuyerFromCustomer.opsxWrapped = true;
+        }
+        if (typeof openDocumentView === "function" && !openDocumentView.opsxWrapped) {
+            const prevOpenDoc = openDocumentView;
+            openDocumentView = function(orderId, type) {
+                const before = typeof docState !== "undefined" ? docState : null;
+                const r = prevOpenDoc.apply(this, arguments);
+                try {
+                    if (typeof docState !== "undefined" && docState && docState !== before) opsxDocCustomerPrefill();
+                } catch (e) {
+                    console.warn("OPSX doc prefill:", e);
+                }
+                return r;
+            };
+            openDocumentView.opsxWrapped = true;
+        }
+    } catch (e) {
+        console.warn("OPSX cpick install:", e);
+    }
 })();</script>
 </body>
 </html>
