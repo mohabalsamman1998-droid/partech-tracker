@@ -1415,6 +1415,7 @@
   .tamara-row input[type="checkbox"]{width:20px;height:20px;flex:0 0 20px;accent-color:var(--green);cursor:pointer;}
   .tamara-row-main{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:3px;}
   .tamara-row-title{font-size:13.5px;font-weight:700;color:var(--text);overflow-wrap:anywhere;}
+  .tamara-row-title[data-tamara-open]{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;}
   .tamara-row-meta{display:flex;flex-wrap:wrap;align-items:center;gap:3px 8px;font-size:12px;color:var(--text-dim);min-width:0;}
   .tamara-row-amounts{flex:0 0 auto;max-width:42%;display:flex;flex-direction:column;align-items:flex-end;gap:2px;}
   .tamara-row-gross{font-size:14px;font-weight:800;white-space:nowrap;}
@@ -60750,12 +60751,20 @@ function tamaraPopDefaultSel() {
     }).map(tamaraPopKey));
 }
 
+function tamaraPopRowTitle(r) {
+    const o = (appData && appData.orders || []).find(function(x) {
+        return x && x.id === r.orderId;
+    });
+    const label = o && typeof orderDisplayLabel === "function" ? orderDisplayLabel(o) : r.orderLabel || "";
+    return String(r.orderNumber || r.orderId) + (label ? " — " + label : "") + (r.customerName ? " — " + r.customerName : "");
+}
+
 function tamaraPendingRowHtml(r) {
     const key = tamaraPopKey(r);
     const on = tamaraPop.sel.has(key);
-    const title = String(r.orderNumber || r.orderId) + (r.orderLabel ? " — " + r.orderLabel : "") + (r.customerName ? " — " + r.customerName : "");
+    const title = tamaraPopRowTitle(r);
     const days = tamaraDaysText(r.days);
-    return '<label class="tamara-row' + (on ? " tamara-row-on" : "") + '">' + '<input type="checkbox" class="tamara-row-check" data-tamara-key="' + escapeHtml(key) + '"' + (on ? " checked" : "") + (r.badAmount ? " disabled" : "") + ">" + '<span class="tamara-row-main">' + '<span class="tamara-row-title">' + escapeHtml(title) + "</span>" + '<span class="tamara-row-meta">' + "<span>" + escapeHtml(r.date || "بلا تاريخ") + "</span>" + (days ? "<span>" + escapeHtml(days) + "</span>" : "") + (r.ref ? "<span>رقم الطلب: " + escapeHtml(r.ref) + "</span>" : "") + (r.isQuote ? "<span>طلب تسعير</span>" : "") + (r.overdue ? '<span class="stamp stamp-rust tamara-stamp">متأخرة</span>' : "") + (r.badAmount ? '<span class="stamp stamp-rust tamara-stamp">' + escapeHtml(TAMARA_TEXT.badAmountMark) + "</span>" : "") + "</span>" + "</span>" + '<span class="tamara-row-amounts"><span class="num tamara-row-gross">' + tamaraMoneyText(r.grossH) + '</span><span class="tamara-row-net">الصافي ' + tamaraMoneyText(r.netH) + "</span></span>" + "</label>";
+    return '<label class="tamara-row' + (on ? " tamara-row-on" : "") + '">' + '<input type="checkbox" class="tamara-row-check" data-tamara-key="' + escapeHtml(key) + '"' + (on ? " checked" : "") + (r.badAmount ? " disabled" : "") + ">" + '<span class="tamara-row-main">' + '<span class="tamara-row-title" data-tamara-open="' + escapeHtml(r.orderId) + '" role="link" tabindex="0">' + escapeHtml(title) + "</span>" + '<span class="tamara-row-meta">' + "<span>" + escapeHtml(r.date || "بلا تاريخ") + "</span>" + (days ? "<span>" + escapeHtml(days) + "</span>" : "") + (r.ref ? "<span>رقم الطلب: " + escapeHtml(r.ref) + "</span>" : "") + (r.isQuote ? "<span>طلب تسعير</span>" : "") + (r.overdue ? '<span class="stamp stamp-rust tamara-stamp">متأخرة</span>' : "") + (r.badAmount ? '<span class="stamp stamp-rust tamara-stamp">' + escapeHtml(TAMARA_TEXT.badAmountMark) + "</span>" : "") + "</span>" + "</span>" + '<span class="tamara-row-amounts"><span class="num tamara-row-gross">' + tamaraMoneyText(r.grossH) + '</span><span class="tamara-row-net">الصافي ' + tamaraMoneyText(r.netH) + "</span></span>" + "</label>";
 }
 
 function tamaraPopPendingHtml(rows) {
@@ -60870,9 +60879,9 @@ function tamaraPopRefundRowHtml(g) {
         return tamaraPop.sel.has(k);
     }).length;
     const on = g.keys.length > 0 && nSel === g.keys.length;
-    const title = String(g.orderNumber || g.orderId) + (g.orderLabel ? " — " + g.orderLabel : "") + (g.customerName ? " — " + g.customerName : "");
+    const title = tamaraPopRowTitle(g);
     const days = tamaraDaysText(g.days);
-    return '<label class="tamara-row tamara-row-refund' + (on ? " tamara-row-on" : "") + '">' + '<input type="checkbox" class="tamara-refund-check" data-tamara-refund-order="' + escapeHtml(g.orderId) + '"' + (on ? " checked" : "") + (g.badAmount ? " disabled" : "") + ">" + '<span class="tamara-row-main">' + '<span class="tamara-row-title">' + escapeHtml(title) + "</span>" + '<span class="tamara-row-meta">' + (g.parts > 1 ? "<span>" + escapeHtml(tamaraPartsCountText(g.parts)) + "</span>" : g.partDescription ? "<span>" + escapeHtml(g.partDescription) + "</span>" : "") + "<span>" + escapeHtml(g.executed ? "نُفّذ " + g.executed : "بلا تاريخ") + "</span>" + (days ? "<span>" + escapeHtml(days) + "</span>" : "") + (g.overdue ? '<span class="stamp stamp-rust tamara-stamp">' + escapeHtml(TAMARA_TEXT.uiPopRefundLate) + "</span>" : "") + (g.badAmount ? '<span class="stamp stamp-rust tamara-stamp">' + escapeHtml(TAMARA_TEXT.badAmountMark) + "</span>" : "") + "</span>" + "</span>" + '<span class="tamara-row-amounts"><span class="num tamara-row-gross tamara-row-refund-amt">' + tamaraMoneyHtml(-g.grossH) + "</span></span>" + "</label>";
+    return '<label class="tamara-row tamara-row-refund' + (on ? " tamara-row-on" : "") + '">' + '<input type="checkbox" class="tamara-refund-check" data-tamara-refund-order="' + escapeHtml(g.orderId) + '"' + (on ? " checked" : "") + (g.badAmount ? " disabled" : "") + ">" + '<span class="tamara-row-main">' + '<span class="tamara-row-title" data-tamara-open="' + escapeHtml(g.orderId) + '" role="link" tabindex="0">' + escapeHtml(title) + "</span>" + '<span class="tamara-row-meta">' + (g.parts > 1 ? "<span>" + escapeHtml(tamaraPartsCountText(g.parts)) + "</span>" : g.partDescription ? "<span>" + escapeHtml(g.partDescription) + "</span>" : "") + "<span>" + escapeHtml(g.executed ? "نُفّذ " + g.executed : "بلا تاريخ") + "</span>" + (days ? "<span>" + escapeHtml(days) + "</span>" : "") + (g.overdue ? '<span class="stamp stamp-rust tamara-stamp">' + escapeHtml(TAMARA_TEXT.uiPopRefundLate) + "</span>" : "") + (g.badAmount ? '<span class="stamp stamp-rust tamara-stamp">' + escapeHtml(TAMARA_TEXT.badAmountMark) + "</span>" : "") + "</span>" + "</span>" + '<span class="tamara-row-amounts"><span class="num tamara-row-gross tamara-row-refund-amt">' + tamaraMoneyHtml(-g.grossH) + "</span></span>" + "</label>";
 }
 
 function tamaraPopRefundsHtml(refundRows) {
@@ -61018,20 +61027,21 @@ function tamaraPopResetFields() {
     if (d) d.value = tamaraPop.date;
 }
 
-function openTamaraPopup() {
+function openTamaraPopup(keep) {
     if (!tamaraElevated()) {
         showToast(TAMARA_TEXT.denied, "error");
         return;
     }
+    const k = keep && Array.isArray(keep.sel) ? keep : null;
     const root = document.getElementById("modal-root");
     if (!root) return;
     tamaraPop.gen++;
     tamaraPop.busy = false;
-    tamaraPop.sel = tamaraPopDefaultSel();
-    tamaraPop.bank = "";
-    tamaraPop.ref = "";
-    tamaraPop.date = tamaraTodayRiyadhIso();
-    tamaraPop.histAll = false;
+    tamaraPop.sel = k ? new Set(k.sel) : tamaraPopDefaultSel();
+    tamaraPop.bank = k ? String(k.bank == null ? "" : k.bank) : "";
+    tamaraPop.ref = k ? String(k.ref == null ? "" : k.ref) : "";
+    tamaraPop.date = k && k.date ? String(k.date) : tamaraTodayRiyadhIso();
+    tamaraPop.histAll = !!(k && k.histAll);
     tamaraPop.open = true;
     root.innerHTML = tamaraPopShellHtml();
     root.classList.add("modal-open");
@@ -61047,6 +61057,7 @@ function openTamaraPopup() {
         card.addEventListener("keydown", tamaraPopOnKeydown);
     }
     tamaraPopRenderParts();
+    if (k && backdrop && Number(k.scroll) > 0) backdrop.scrollTop = Number(k.scroll);
 }
 
 function tamaraPopClose() {
@@ -61061,7 +61072,39 @@ function tamaraPopClose() {
     }
 }
 
+function tamaraPopOpenOrder(orderId) {
+    if (tamaraPop.busy || !orderId) return;
+    const order = (appData && appData.orders || []).find(function(o) {
+        return o && o.id === orderId;
+    });
+    if (!order) {
+        showToast("هذه الطلبية غير موجودة (ربما تم حذفها)", "error");
+        return;
+    }
+    const card = tamaraPopCard();
+    const backdrop = card && card.closest ? card.closest("[data-close-backdrop]") : null;
+    const keep = {
+        sel: Array.from(tamaraPop.sel),
+        bank: tamaraPop.bank,
+        ref: tamaraPop.ref,
+        date: tamaraPop.date,
+        histAll: tamaraPop.histAll,
+        scroll: backdrop ? backdrop.scrollTop : 0
+    };
+    tamaraPopClose();
+    modalCloseCallback = function() {
+        openTamaraPopup(keep);
+    };
+    openModal("edit", orderId);
+}
+
 function tamaraPopOnClick(e) {
+    const op = e.target && e.target.closest ? e.target.closest("[data-tamara-open]") : null;
+    if (op) {
+        e.preventDefault();
+        tamaraPopOpenOrder(op.getAttribute("data-tamara-open"));
+        return;
+    }
     const t = e.target && e.target.closest ? e.target.closest("[data-tamara-act]") : null;
     if (!t) return;
     const act = t.getAttribute("data-tamara-act");
@@ -61139,6 +61182,11 @@ function tamaraPopOnKeydown(e) {
     if (e.key === "Enter" && e.target && e.target.id === "tamara-pop-bank") {
         e.preventDefault();
         tamaraPopSubmit();
+        return;
+    }
+    if ((e.key === "Enter" || e.key === " ") && e.target && e.target.hasAttribute && e.target.hasAttribute("data-tamara-open")) {
+        e.preventDefault();
+        tamaraPopOpenOrder(e.target.getAttribute("data-tamara-open"));
     }
 }
 
