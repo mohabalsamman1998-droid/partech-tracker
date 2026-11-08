@@ -6373,8 +6373,7 @@ function netpRefresh() {
         }
         if (el) {
             const sum = netpSumInfo(draft);
-            const before = r ? orderTotals(draft).profit : 0;
-            el.innerHTML = (sum ? '<div class="netp-sum-row">مجموع القطع بالضريبة: <b class="num">' + escapeHtml(modalMoney(sum.total)) + '</b> <span class="muted">(منها ضريبة ' + escapeHtml(modalMoney(sum.vat)) + ")</span></div>" : "") + (r ? '<div class="netp-net-row">الربح قبل الضريبة المستحقة <span class="num' + (before < 0 ? " text-rust" : "") + '">' + escapeHtml(modalMoney(before)) + '</span> · بعد خصمها <b class="num' + (r.net < 0 ? " text-rust" : "") + '">' + escapeHtml(modalMoney(r.net)) + '</b> <span class="muted">(تقديري)</span></div>' + (netpUnknownCount(draft) > 0 && netpElevated() ? '<div class="netp-warn-row muted">⚠️ بعض القطع لم يُحدَّد لها استرداد ضريبة الشراء — حُسبت بلا استرداد</div>' : "") : "") + (netpPendingCount() > 0 ? '<div class="netp-warn-row muted">' + (netpFlagsLoad.failAt ? "⚠️ تعذّر تحميل بيانات الموردين — قد يكون سعر بعض القطع أعلى من الصحيح؛ أعد فتح الطلبية قبل الحفظ" : "⚠️ بيانات الموردين لم تصل بعد — قد يتغيّر سعر بعض القطع عند وصولها، فلا تحفظ قبل ذلك") + "</div>" : "");
+            el.innerHTML = (sum ? '<div class="netp-sum-row">مجموع القطع بالضريبة: <b class="num">' + escapeHtml(modalMoney(sum.total)) + "</b></div>" : "") + (r ? '<div class="netp-net-row">الربح بعد الضريبة المستحقة <b class="num' + (r.net < 0 ? " text-rust" : "") + '">' + escapeHtml(modalMoney(r.net)) + '</b> <span class="muted">(تقديري)</span></div>' + (netpUnknownCount(draft) > 0 && netpElevated() ? '<div class="netp-warn-row muted">⚠️ ضريبة الشراء غير محدّدة لبعض القطع</div>' : "") : "") + (netpPendingCount() > 0 ? '<div class="netp-warn-row muted">' + (netpFlagsLoad.failAt ? "⚠️ تعذّر تحميل بيانات الموردين — قد يكون سعر بعض القطع أعلى من الصحيح؛ أعد فتح الطلبية قبل الحفظ" : "⚠️ بيانات الموردين لم تصل بعد — قد يتغيّر سعر بعض القطع عند وصولها، فلا تحفظ قبل ذلك") + "</div>" : "");
             el.title = r ? "الضريبة المستحقة = الضريبة المستخرجة من إجمالي الزبون ناقص ضريبة الشراء المستردّة (لموردين علامتهم «فاتورة نظامية: نعم» فقط)" : "";
         }
         netpFeeSync();
@@ -76042,6 +76041,18 @@ function attUsualLoc(emp, locs) {
     })[0] || null;
 }
 
+function attUsualLocs(emp, locs) {
+    const L = Array.isArray(locs) ? locs : [];
+    const first = attUsualLoc(emp, L), out = first ? [ first ] : [];
+    (emp && Array.isArray(emp.extra_location_ids) ? emp.extra_location_ids : []).forEach(function(id) {
+        const l = L.filter(function(x) {
+            return x && x.id === id;
+        })[0];
+        if (l && out.indexOf(l) < 0) out.push(l);
+    });
+    return out;
+}
+
 function attZoneOf(loc, emp, usual) {
     const mine = !!(usual && loc.id === usual.id);
     const own = emp && emp.radius_m !== null && emp.radius_m !== undefined;
@@ -76056,9 +76067,18 @@ function attZoneOf(loc, emp, usual) {
     };
 }
 
+function attZoneSet(list, emp, usual) {
+    const zs = list.map(function(l) {
+        return attZoneOf(l, emp, usual);
+    });
+    return zs.length > 1 ? Object.assign({}, zs[0], {
+        zones: zs
+    }) : zs[0];
+}
+
 function attZoneFor(emp, r, cfg) {
     const locs = cfg && cfg.locations || [];
-    const usual = attUsualLoc(emp, locs);
+    const set = attUsualLocs(emp, locs), usual = set[0] || null;
     let loc = null;
     if (r && r.location_id !== null && r.location_id !== undefined) loc = locs.filter(function(x) {
         return x && x.id === r.location_id;
@@ -76069,11 +76089,13 @@ function attZoneFor(emp, r, cfg) {
         });
         if (named.length === 1) loc = named[0];
     }
+    const act = set.filter(function(x) {
+        return x.active || x === loc;
+    });
     if (!loc) {
-        if (!usual || !usual.active) return null;
-        loc = usual;
-    }
-    return attZoneOf(loc, emp, usual);
+        if (!act.length) return null;
+    } else if (set.indexOf(loc) < 0) return attZoneOf(loc, emp, usual);
+    return attZoneSet(act, emp, usual);
 }
 
 function attZoneForDay(emp, ymd, cfg, today, day, reportOk) {
@@ -76085,7 +76107,7 @@ function attZoneForDay(emp, ymd, cfg, today, day, reportOk) {
     };
     if (!ymd || !today || ymd >= today || reportOk === false || !day) return plain;
     const locs = cfg && cfg.locations || [];
-    const usual = attUsualLoc(emp, locs);
+    const set = attUsualLocs(emp, locs), usual = set[0] || null;
     let hit = null;
     if (day.location_id !== null && day.location_id !== undefined) hit = locs.filter(function(x) {
         return x && x.id === day.location_id;
@@ -76105,9 +76127,11 @@ function attZoneForDay(emp, ymd, cfg, today, day, reportOk) {
         }
     }
     if (!hit) return plain;
-    const mine = !!(usual && usual.id === hit.id);
+    const mine = set.indexOf(hit) >= 0;
     return {
-        zone: attZoneOf(hit, emp, usual),
+        zone: attZoneFor(emp, {
+            location_id: hit.id
+        }, cfg),
         note: mine ? "" : "مكانه في هذا اليوم: " + hit.name,
         noBar: false
     };
@@ -76132,7 +76156,17 @@ function attPtsFromRows(rows, zone, opts) {
         const t = Date.parse(r.recorded_at) / 1e3, la = num(r.lat), ln = num(r.lng);
         if (!isFinite(t) || !isFinite(la) || !isFinite(ln)) return;
         const a = hist ? 0 : num(r.accuracy);
-        out.push([ t, attHav(la, ln, zone.lat, zone.lng), isFinite(a) ? a : null ]);
+        if (zone.zones && zone.zones.length > 1) {
+            let best = null;
+            zone.zones.forEach(function(z) {
+                const d = attHav(la, ln, z.lat, z.lng), e = z.radius_m > 0 ? d * zone.radius_m / z.radius_m : d;
+                if (!best || e < best.e) best = {
+                    e: e,
+                    d: d
+                };
+            });
+            out.push([ t, best.e, isFinite(a) ? a : null, best.d ]);
+        } else out.push([ t, attHav(la, ln, zone.lat, zone.lng), isFinite(a) ? a : null ]);
     });
     out.sort(function(x, y) {
         return x[0] - y[0];
@@ -76481,7 +76515,7 @@ function attMonLive(pts, zone, maxAcc, nowMs) {
     const base = {
         at: p[0] * 1e3,
         age: age,
-        dist: p[1],
+        dist: p.length > 3 && isFinite(p[3]) ? p[3] : p[1],
         acc: p[2],
         kind: kind
     };
@@ -76564,7 +76598,7 @@ function attMonExitLines(events, tz, max) {
 }
 
 function attMonFit(pts, zone, maxAcc) {
-    if (!zone) return null;
+    if (!zone || zone.zones && zone.zones.length > 1) return null;
     let valid = 0, near = 0, maxM = 0;
     (Array.isArray(pts) ? pts : []).forEach(function(p) {
         if (attMonKind(p, zone, maxAcc) === "gap") return;
@@ -79090,9 +79124,12 @@ function attTabMap(panel) {
         const out = [], seen = {};
         roster.forEach(function(e) {
             const z = attZoneFor(e, rowOf(e.id), cfg);
-            if (!z || seen[z.id + "|" + z.radius_m]) return;
-            seen[z.id + "|" + z.radius_m] = true;
-            out.push(z);
+            if (!z) return;
+            (z.zones || [ z ]).forEach(function(q) {
+                if (seen[q.id + "|" + q.radius_m]) return;
+                seen[q.id + "|" + q.radius_m] = true;
+                out.push(q);
+            });
         });
         return out;
     }
@@ -79449,7 +79486,8 @@ function attSecEmployees(host) {
         class: "att-empty"
     }, "لا يوجد موظفون بعد."));
     emps.forEach(function(e) {
-        const bits = [ locName(e.location_id) || (firstActive ? "الموقع الافتراضي (" + firstActive.name + ")" : "لم يُحدَّد موقع") ];
+        const ids = (e.location_id ? [ e.location_id ] : []).concat(Array.isArray(e.extra_location_ids) ? e.extra_location_ids : []);
+        const bits = [ ids.map(locName).filter(Boolean).join("، ") || (firstActive ? "الموقع الافتراضي (" + firstActive.name + ")" : "لم يُحدَّد موقع") ];
         if (e.radius_m !== null && e.radius_m !== undefined) bits.push("قطر خاص " + attFmtDiam(e.radius_m * 2));
         bits.push("الدوام " + String(e.shift_start || cfg.settings.default_shift_start).slice(0, 5) + (e.shift_start ? "" : " (وقت الشركة)"));
         const alarmTxt = attAlarmSummary(attView.alarm && attView.alarm.map[e.id]);
@@ -79468,8 +79506,10 @@ function attSecEmployees(host) {
             class: "att-chip"
         }, "معطّل") : null, e.active && !e.location_id ? attEl("span", {
             class: "att-chip att-s-late"
-        }, "حدّد موقعه") : null, e.active && e.location_id && locs.some(function(x) {
-            return x.id === e.location_id && !x.active;
+        }, "حدّد موقعه") : null, e.active && e.location_id && ids.some(function(id) {
+            return locs.some(function(x) {
+                return x.id === id && !x.active;
+            });
         }) ? attEl("span", {
             class: "att-chip att-s-late"
         }, "موقعه معطّل") : null, attEl("button", {
@@ -79650,6 +79690,68 @@ async function attEmployeeForm(e) {
             ownBtn.classList.add("att-hide");
         }
     }, "استخدم قطر المكان") : null;
+    let extras = e && Array.isArray(e.extra_location_ids) ? e.extra_location_ids.slice() : [];
+    const hadExtras = extras.length > 0;
+    const exRow = attEl("div", {
+        class: "att-chiprow",
+        role: "group",
+        "aria-label": "مواقع إضافية"
+    });
+    const exAdd = attEl("select", {
+        class: "att-in",
+        "aria-label": "إضافة موقع آخر"
+    });
+    const exName = function(id) {
+        const l = cfg.locations.filter(function(x) {
+            return x.id === id;
+        })[0];
+        return l ? l.name : "";
+    };
+    const exDraw = function() {
+        const first = loc.value ? Number(loc.value) : null;
+        extras = extras.filter(function(id) {
+            return id !== first;
+        });
+        exRow.innerHTML = "";
+        extras.forEach(function(id) {
+            exRow.appendChild(attEl("button", {
+                type: "button",
+                class: "att-chipbtn",
+                "aria-label": "إزالة " + exName(id),
+                onclick: function() {
+                    extras = extras.filter(function(x) {
+                        return x !== id;
+                    });
+                    exDraw();
+                }
+            }, exName(id) + " ✕"));
+        });
+        exAdd.innerHTML = "";
+        exAdd.appendChild(attEl("option", {
+            value: ""
+        }, "إضافة موقع آخر…"));
+        cfg.locations.filter(function(l) {
+            return l.active && l.id !== first && extras.indexOf(l.id) < 0;
+        }).forEach(function(l) {
+            exAdd.appendChild(attEl("option", {
+                value: String(l.id)
+            }, l.name + " — قطر " + attFmtDiam(l.radius_m * 2)));
+        });
+        exAdd.disabled = !first;
+        exAdd.value = "";
+    };
+    exAdd.addEventListener("change", function() {
+        const id = Number(exAdd.value);
+        if (id && extras.indexOf(id) < 0) extras.push(id);
+        exDraw();
+    });
+    loc.addEventListener("change", exDraw);
+    exDraw();
+    const exBox = attEl("div", {
+        class: "att-field att-extra-locs"
+    }, attEl("span", {}, "مواقع أخرى (اختياري)"), exRow, exAdd, attEl("div", {
+        class: "att-hint"
+    }, "كل موقع منها مكان دوامه الرسمي أيضًا: يُحتسب حضوره إن وصل إلى أيٍّ منها. اختر موقع العمل أولًا."));
     const shift = attEl("input", {
         type: "time",
         class: "att-in",
@@ -79665,7 +79767,7 @@ async function attEmployeeForm(e) {
         class: "att-notice att-warn"
     }, "لا يوجد موقع عمل فعّال بعد. أضف مكانًا من «الإعدادات» ثم اخترْه لهذا الموظف، وإلا لن يُحتسب حضوره."), attField("موقع العمل", loc, "لكل موظف موقعه. تغييره لا يمسّ الأيام التي سُجّل حضورها بالفعل."), hasOwn ? attEl("div", {
         class: "att-ownrow"
-    }, ownHint, ownBtn) : null, attField("وقت دوامه الخاص (اختياري)", shift, "اتركه فارغًا ليتبع وقت الشركة."), attEl("label", {
+    }, ownHint, ownBtn) : null, exBox, attField("وقت دوامه الخاص (اختياري)", shift, "اتركه فارغًا ليتبع وقت الشركة."), attEl("label", {
         class: "att-check"
     }, active, "موظف فعّال"));
     attModal(isNew ? "إضافة موظف" : "تعديل موظف", body, function(close) {
@@ -79694,7 +79796,10 @@ async function attEmployeeForm(e) {
                     radius_m: clearRadius ? null : e ? e.radius_m : null,
                     shift_start: shift.value || null,
                     active: active.checked,
-                    pin: null
+                    pin: null,
+                    ...loc.value && (extras.length || hadExtras) ? {
+                        location_ids: [ loc.value ].concat(extras.map(String))
+                    } : {}
                 });
                 if (!r || !r.ok) {
                     attToast(attErrText(r), "error");
@@ -79737,7 +79842,7 @@ function attSecPlaces(host) {
     }, "لا توجد أماكن عمل بعد."));
     cfg.locations.forEach(function(l) {
         const used = cfg.employees.filter(function(e) {
-            return e.location_id === l.id;
+            return e.location_id === l.id || Array.isArray(e.extra_location_ids) && e.extra_location_ids.indexOf(l.id) >= 0;
         }).length;
         sec.appendChild(attEl("div", {
             class: "att-row" + (l.active ? "" : " att-off")
@@ -80555,6 +80660,10 @@ function attPlanSheet(empId, opts) {
     const usual = locs.filter(function(l) {
         return l.id === emp.usual_location_id;
     })[0] || null;
+    const usualSet = attUsualLocs(emp, locs);
+    const usualLabel = usualSet.length ? usualSet.map(function(l) {
+        return l.name;
+    }).join("، ") : usual ? usual.name : "";
     const usualTime = attPlanUsualTime(emp, cfg);
     const row = (v.today && v.today.rows || []).filter(function(x) {
         return x.employee_id === empId;
@@ -80675,7 +80784,7 @@ function attPlanSheet(empId, opts) {
             to: st.scope === "today" ? today : st.scope === "tomorrow" ? tomorrow : st.to,
             today: today,
             locName: m.locObj ? m.locObj.name : "",
-            usualName: usual ? usual.name : "",
+            usualName: usualLabel,
             time: m.time,
             usualTime: usualTime,
             dayCount: m.dm.dates.length
@@ -80757,11 +80866,11 @@ function attPlanSheet(empId, opts) {
         box.appendChild(b);
         return tx;
     }
-    usualLocTx = chip(locBox, "usual", "كالمعتاد", usual ? usual.name : "", function() {
+    usualLocTx = chip(locBox, "usual", "كالمعتاد", usualLabel, function() {
         st.loc = "usual";
     });
     locs.filter(function(l) {
-        return !usual || l.id !== usual.id;
+        return (!usual || l.id !== usual.id) && usualSet.indexOf(l) < 0;
     }).forEach(function(l) {
         chip(locBox, l.id, l.name, "", function() {
             st.loc = String(l.id);
@@ -80931,7 +81040,7 @@ function attPlanSheet(empId, opts) {
         class: "att-plan-body"
     }, attEl("p", {
         class: "att-muted att-plan-who"
-    }, name + " — المعتاد: " + (usual ? usual.name : "بلا مكان معتاد") + " · " + (usualTime ? attHmText(usualTime) : "")), attEl("h4", {
+    }, name + " — المعتاد: " + (usualLabel || "بلا مكان معتاد") + " · " + (usualTime ? attHmText(usualTime) : "")), attEl("h4", {
         class: "att-plan-h"
     }, "متى؟"), scopeBox, rangeBox, attEl("h4", {
         class: "att-plan-h"
@@ -80944,7 +81053,7 @@ function attPlanSheet(empId, opts) {
             const m = model();
             if (okBtn.disabled) return;
             if (m.always) {
-                const msg = (m.locObj ? "المكان المعتاد: «" + (usual ? usual.name : "—") + "» ← «" + m.locObj.name + "»" : "") + (m.locObj && m.time ? " · " : "") + (m.time ? "الدوام: " + (usualTime ? attHmText(usualTime) : "—") + " ← " + attHmText(m.time) : "") + ". يسري من الآن على كل الأيام القادمة، ولا يمسّ الأيام التي سُجّل حضورها.";
+                const msg = (m.locObj ? "المكان المعتاد: «" + (usualLabel || "—") + "» ← «" + m.locObj.name + "»" : "") + (m.locObj && m.time ? " · " : "") + (m.time ? "الدوام: " + (usualTime ? attHmText(usualTime) : "—") + " ← " + attHmText(m.time) : "") + ". يسري من الآن على كل الأيام القادمة، ولا يمسّ الأيام التي سُجّل حضورها.";
                 if (typeof confirmAction === "function") confirmAction({
                     title: "تغيير دائم لـ" + name + "؟",
                     message: msg,
