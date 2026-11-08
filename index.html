@@ -99763,6 +99763,118 @@ function opsxDocCustomerPrefill() {
     } catch (e) {
         console.warn("OPSX cpick install:", e);
     }
+})();
+
+var OPSX_ISSUE_SNAP = null;
+
+function opsxTaxNameFieldHtml(c) {
+    return '<label class="taxinv-field taxinv-field-wide opsx-taxname"><span class="taxinv-field-label">الاسم النظامي للمنشأة (كما في شهادة الضريبة) — يظهر اسمًا للمشتري بالفاتورة الضريبية</span>' + '<input type="text" data-taxinv-ck="tax_name" value="' + escapeHtml(String(c && c.taxName || "")) + '" dir="auto" autocomplete="off" maxlength="200"></label>';
+}
+
+(function opsxTaxNameInstall() {
+    try {
+        if (typeof TAXINV_ID_FIELDS !== "undefined" && Array.isArray(TAXINV_ID_FIELDS) && TAXINV_ID_FIELDS.indexOf("tax_name") < 0) TAXINV_ID_FIELDS.push("tax_name");
+        if (typeof taxinvCustomerCols === "function" && !taxinvCustomerCols.opsxWrapped) {
+            const prevCols = taxinvCustomerCols;
+            taxinvCustomerCols = function(r) {
+                const o = prevCols.apply(this, arguments);
+                try {
+                    if (o && r && typeof r === "object" && "customer_kind" in r && "tax_name" in r) o.taxName = r.tax_name || "";
+                } catch (e) {}
+                return o;
+            };
+            taxinvCustomerCols.opsxWrapped = true;
+        }
+        if (typeof taxinvCustomerBlockHtml === "function" && !taxinvCustomerBlockHtml.opsxWrapped) {
+            const prevBlock = taxinvCustomerBlockHtml;
+            taxinvCustomerBlockHtml = function(c) {
+                const h = prevBlock.apply(this, arguments);
+                try {
+                    if (typeof h !== "string") return h;
+                    const mark = '<div class="taxinv-grid">', i = h.indexOf(mark);
+                    return i < 0 ? h : h.slice(0, i + mark.length) + opsxTaxNameFieldHtml(c) + h.slice(i + mark.length);
+                } catch (e) {
+                    return h;
+                }
+            };
+            taxinvCustomerBlockHtml.opsxWrapped = true;
+        }
+        if (typeof taxinvFormHtml === "function" && !taxinvFormHtml.opsxNameNote) {
+            const prevForm2 = taxinvFormHtml;
+            taxinvFormHtml = function(st) {
+                const h = prevForm2.apply(this, arguments);
+                try {
+                    return typeof h === "string" ? h.replace("حفظ بيانات المشتري في سجل العميل (الاسم والجوال لا يتغيّران)", "حفظ بيانات المشتري في سجل العميل (يُحفظ الاسم النظامي، ولا يتغيّر اسم العميل ولا جواله)") : h;
+                } catch (e) {
+                    return h;
+                }
+            };
+            taxinvFormHtml.opsxWrapped = true;
+            taxinvFormHtml.opsxNameNote = true;
+        }
+        if (typeof taxinvSetPath === "function" && !taxinvSetPath.opsxWrapped) {
+            const prevSetPath = taxinvSetPath;
+            taxinvSetPath = function(st, path, value, checked) {
+                const r = prevSetPath.apply(this, arguments);
+                try {
+                    if (path === "buyer.kind" && st && st.buyer && st.buyer.kind === "business" && !String(st.buyer.name || "").trim() && st.customerId) {
+                        const c = (appData.customers || []).find(function(x) {
+                            return x && x.id === st.customerId;
+                        });
+                        const nm = c ? String(c.taxName || "").trim() : "";
+                        if (nm) st.buyer.name = nm;
+                    }
+                } catch (e) {}
+                return r;
+            };
+            taxinvSetPath.opsxWrapped = true;
+        }
+        if (typeof taxinvIssue === "function" && !taxinvIssue.opsxWrapped) {
+            const prevIssue = taxinvIssue;
+            taxinvIssue = async function() {
+                const st = typeof taxinvState !== "undefined" ? taxinvState : null;
+                OPSX_ISSUE_SNAP = st && st.mode === "preview" && st.saveToCustomer && st.customerId && st.buyer && st.buyer.kind === "business" && String(st.buyer.name || "").trim() ? {
+                    id: st.customerId,
+                    name: String(st.buyer.name).trim()
+                } : null;
+                try {
+                    return await prevIssue.apply(this, arguments);
+                } finally {
+                    OPSX_ISSUE_SNAP = null;
+                }
+            };
+            taxinvIssue.opsxWrapped = true;
+        }
+        if (typeof taxinvSaveBuyerToCustomer === "function" && !taxinvSaveBuyerToCustomer.opsxWrapped) {
+            const prevSaveBuyer = taxinvSaveBuyerToCustomer;
+            taxinvSaveBuyerToCustomer = function(customerId, vals) {
+                try {
+                    if (OPSX_ISSUE_SNAP && OPSX_ISSUE_SNAP.id === customerId) vals = Object.assign({}, vals, {
+                        tax_name: OPSX_ISSUE_SNAP.name
+                    });
+                } catch (e) {}
+                return prevSaveBuyer.call(this, customerId, vals);
+            };
+            taxinvSaveBuyerToCustomer.opsxWrapped = true;
+        }
+        if (typeof taxinvBuyerFromCustomer === "function" && !taxinvBuyerFromCustomer.opsxTaxName) {
+            const prevBuyer2 = taxinvBuyerFromCustomer;
+            taxinvBuyerFromCustomer = function(cust, order) {
+                const b = prevBuyer2.apply(this, arguments);
+                try {
+                    if (b && b.kind === "business" && cust) {
+                        const nm = String(cust.taxName || "").trim();
+                        if (nm) b.name = nm;
+                    }
+                } catch (e) {}
+                return b;
+            };
+            taxinvBuyerFromCustomer.opsxWrapped = true;
+            taxinvBuyerFromCustomer.opsxTaxName = true;
+        }
+    } catch (e) {
+        console.warn("OPSX taxname install:", e);
+    }
 })();</script>
 </body>
 </html>
