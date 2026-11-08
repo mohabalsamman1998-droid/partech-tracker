@@ -29633,6 +29633,16 @@ function taxinvAfterIssue(st, doc) {
     } catch (e) {}
 }
 
+function taxinvIssueConfirmText(st) {
+    let amount = "";
+    try {
+        const h = st && st.draft && st.draft.halalas ? st.draft.halalas.total_inc : null;
+        if (typeof h === "number" && isFinite(h)) amount = taxinvMoney(h);
+    } catch (e) {}
+    const who = st && st.buyer && st.buyer.name ? String(st.buyer.name).trim() : "";
+    return "ستصدر فاتورة رسمية للطلبية " + String(st && st.orderNumber || "") + (who ? " — " + who : "") + (amount ? " بقيمة " + amount + " شاملة الضريبة" : "") + "، وتُرسل فورًا إلى هيئة الزكاة والضريبة والجمارك. " + PTX_TAXINV.labels.confirmIssue + ".";
+}
+
 async function taxinvIssue() {
     const st = taxinvState;
     if (!st || st.mode !== "preview" || st.busy || st.asking) return;
@@ -29660,9 +29670,10 @@ async function taxinvIssue() {
     }
     st.asking = true;
     const yes = await taxinvConfirm({
-        title: "إصدار الفاتورة؟",
-        message: PTX_TAXINV.labels.confirmIssue,
-        confirmLabel: "إصدار",
+        title: "إصدار الفاتورة الضريبية؟",
+        message: taxinvIssueConfirmText(st),
+        confirmLabel: "نعم، أصدر الفاتورة",
+        cancelLabel: "رجوع",
         dangerous: true
     });
     st.asking = false;
