@@ -3385,6 +3385,18 @@
     .trk-prq .part-row:not(.part-row-returned) > .part-price-group > .mini-label-invkind{order:6;grid-column:1 / -1;}
     .opsx-invk .chip{min-height:44px;}
   }
+  /* نوع الطلبية (طلب المالك 2026-11-09): سطر فوق قطع الطلبية بزرّين متساويين؛ المقفول بعد التأكيد باهت؛ وبدون فاتورة نظامية تُخفى علامات ضريبة المورد وخانتا ضريبة مستند عرض السعر */
+  .opsx-imode-bar{margin:0 0 10px;}
+  .opsx-imode-label{display:block;font-size:13px;font-weight:700;color:var(--text-dim);margin:0 0 4px;}
+  .opsx-imode .chip{flex:1 1 0;}
+  .opsx-imode .chip.is-locked{opacity:.65;cursor:not-allowed;}
+  .opsx-imode-hint{font-size:13px;margin:4px 0 0;}
+  .opsx-imode-hint:empty{display:none;}
+  #modal-root.imode-none .acn-sup-warn{display:none !important;}
+  .opsx-imode-hide{display:none !important;}
+  @media (max-width:600px){
+    .opsx-imode .chip{min-height:44px;}
+  }
   /* OPSX END css */
   /* VCAT BEGIN css */
   /* كتالوج السيارة بالصور داخل «كتالوج القطع» (رقم الهيكل ← السيارة ← أقسام ← مجموعات ← لوحات ← قطع) */
@@ -6027,6 +6039,14 @@ function netpElevated() {
     }
 }
 
+function netpNone(d) {
+    try {
+        return !!d && d.invoiceMode === "none";
+    } catch (e) {
+        return false;
+    }
+}
+
 function netpOver(p) {
     return !!(p && p.supplierId && p.noTaxInvoiceFor && p.noTaxInvoiceFor === p.supplierId);
 }
@@ -6139,6 +6159,7 @@ function netpFcellHtml(p) {
 
 function netpSumInfo(d) {
     try {
+        if (netpNone(d)) return null;
         if (!orderActiveParts(d).some(p => netpTOn(p))) return null;
         const t = orderTotals(d);
         return {
@@ -6177,6 +6198,16 @@ function netpSupMark(row, p) {
     try {
         const lab = row && row.querySelector ? row.querySelector(".part-price-group > .mini-label-supplier") : null;
         if (!lab) return;
+        if (typeof draft !== "undefined" && netpNone(draft)) {
+            const old = lab.querySelector(".netp-sup-tag");
+            if (old) {
+                old.textContent = "";
+                old.setAttribute("data-tax", "");
+                old.setAttribute("data-over", "");
+                old.setAttribute("data-netp-toggle", "");
+            }
+            return;
+        }
         let tag = lab.querySelector(".netp-sup-tag");
         if (!tag) {
             tag = document.createElement("span");
@@ -6209,6 +6240,7 @@ function netpSlotPlace(slot, row) {
 }
 
 function netpOrderNet(d) {
+    if (netpNone(d)) return null;
     const t = orderTotals(d);
     if (!(t.profitCounted && t.hasChargeable)) return null;
     const vatOut = computeVatAmount(t.sellTotal);
@@ -6224,6 +6256,7 @@ function netpOrderNet(d) {
 }
 
 function netpUnknownCount(d) {
+    if (netpNone(d)) return 0;
     return orderActiveParts(d).filter(p => p && !p.returned && (Number(p.costPrice) || 0) > 0 && !netpMode(p)).length;
 }
 
@@ -6262,6 +6295,7 @@ function netpLeadCompact(row) {
 function netpResync() {
     try {
         if (typeof draft === "undefined" || !draft || draft.confirmed || !Array.isArray(draft.parts)) return false;
+        if (netpNone(draft)) return false;
         const root = document.getElementById("modal-root");
         if (!root || !root.querySelectorAll) return false;
         let changed = false;
@@ -6318,6 +6352,21 @@ function netpRefresh() {
             netpSlotPlace(slot, row);
             netpSupMark(row, p);
             const sellEl = p && row && row.querySelector ? row.querySelector(".part-sell-input") : null;
+            if (netpNone(draft)) {
+                if (slot.getAttribute("data-netp-sig")) {
+                    slot.innerHTML = "";
+                    slot.setAttribute("data-netp-sig", "");
+                }
+                if (row && row.classList && row.classList.contains && row.classList.contains("netp-tm")) {
+                    row.classList.remove("netp-tm");
+                    if (row.style && row.style.removeProperty) row.style.removeProperty("--netp-f");
+                }
+                if (p && sellEl && sellEl !== document.activeElement) {
+                    const sp0 = p.sellPrice !== null && p.sellPrice !== undefined && p.sellPrice !== "" ? String(p.sellPrice) : "";
+                    if (String(sellEl.value) !== sp0) sellEl.value = sp0;
+                }
+                return;
+            }
             const tOn = !!(sellEl && netpTOn(p));
             if (p && sellEl && !tOn && sellEl !== document.activeElement) {
                 if (p.sellTyped !== undefined || p.sellTypedF !== undefined) {
@@ -6416,6 +6465,15 @@ function netpFeeGross(key, t) {
 function netpFeeSync() {
     try {
         if (typeof draft === "undefined" || !draft) return;
+        if (netpNone(draft)) {
+            netpFeeKinds().forEach(k => {
+                const nrow = document.getElementById("netp-fee-row-" + k.key);
+                if (nrow && nrow.parentNode) nrow.parentNode.removeChild(nrow);
+                const arow = document.getElementById(k.rowId);
+                if (arow && arow.classList && typeof arow.classList.remove === "function") arow.classList.remove("netp-fee-base");
+            });
+            return;
+        }
         let t = null;
         netpFeeKinds().forEach(k => {
             const amountRow = document.getElementById(k.rowId), input = document.getElementById(k.inputId);
@@ -6448,6 +6506,7 @@ function netpFeeSync() {
 
 function netpOnFeeInput(e) {
     try {
+        if (typeof draft !== "undefined" && netpNone(draft)) return;
         const t = e && e.target;
         if (!t || !t.classList || !t.classList.contains("netp-fn")) return;
         const k = netpFeeKinds().find(x => x.key === t.getAttribute("data-netp-fee"));
@@ -6485,6 +6544,7 @@ function netpOnInput(e) {
         const t = e && e.target;
         if (!t || !t.classList || !t.classList.contains("netp-t")) return;
         if (typeof draft === "undefined" || !draft) return;
+        if (netpNone(draft)) return;
         const part = (draft.parts || []).find(x => x && x.id === t.getAttribute("data-netp-t"));
         const row = t.closest ? t.closest(".part-row") : null;
         const sellInput = row ? row.querySelector(".part-sell-input") : null;
@@ -6517,6 +6577,7 @@ function netpOnSellPre(e) {
         const t = e && e.target;
         if (!t || !t.classList || !t.classList.contains("part-sell-input") || netpOnInput.busy) return;
         if (typeof draft === "undefined" || !draft) return;
+        if (netpNone(draft)) return;
         const row = t.closest ? t.closest(".part-row") : null;
         const pid = row ? row.getAttribute("data-part-id") : null;
         const part = (draft.parts || []).find(x => x && x.id === pid);
@@ -6537,6 +6598,16 @@ function netpOnSell(e) {
         if (!t || !t.classList || !t.classList.contains("part-sell-input")) return;
         if (netpOnInput.busy) return;
         if (typeof draft === "undefined" || !draft) return;
+        if (netpNone(draft)) {
+            const row0 = t.closest ? t.closest(".part-row") : null;
+            const pid0 = row0 ? row0.getAttribute("data-part-id") : null;
+            const part0 = (draft.parts || []).find(x => x && x.id === pid0);
+            if (part0) {
+                delete part0.sellTyped;
+                delete part0.sellTypedF;
+            }
+            return;
+        }
         const row = t.closest ? t.closest(".part-row") : null;
         const pid = row ? row.getAttribute("data-part-id") : null;
         const part = (draft.parts || []).find(x => x && x.id === pid);
@@ -6579,7 +6650,7 @@ function netpOnSell(e) {
 function netpPendingCount() {
     try {
         const pend = netpOnSell.pend;
-        if (!pend || typeof draft === "undefined" || !draft || !Array.isArray(draft.parts) || netpElevated()) return 0;
+        if (!pend || typeof draft === "undefined" || !draft || !Array.isArray(draft.parts) || netpElevated() || netpNone(draft)) return 0;
         return Object.keys(pend).filter(id => {
             const e = pend[id], p = draft.parts.find(x => x && x.id === id);
             return !!(e && e.d === draft && p && netpTOn(p));
@@ -6593,6 +6664,12 @@ function netpRederive() {
     try {
         const pend = netpOnSell.pend;
         if (!pend || typeof draft === "undefined" || !draft || !Array.isArray(draft.parts)) return;
+        if (netpNone(draft)) {
+            Object.keys(pend).forEach(id => {
+                delete pend[id];
+            });
+            return;
+        }
         let any = false;
         Object.keys(pend).forEach(id => {
             const e = pend[id];
@@ -100059,6 +100136,313 @@ function opsxInvkGuard(kind) {
         }
     } catch (e) {
         console.warn("OPSX invk install:", e);
+    }
+})();
+
+function opsxImodeNone(o) {
+    return !!o && o.invoiceMode === "none";
+}
+
+function opsxImodeOrder(id) {
+    try {
+        return typeof appData !== "undefined" && appData && Array.isArray(appData.orders) ? appData.orders.find(function(o) {
+            return !!o && o.id === id;
+        }) || null : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function opsxImodeToast(msg, kind) {
+    try {
+        if (typeof showToast === "function") showToast(msg, kind || "ok");
+    } catch (e) {}
+}
+
+function opsxImodeLockText() {
+    return "لتغيير النوع ألغِ تأكيد الطلبية أولًا";
+}
+
+function opsxImodeBlockText() {
+    return "هذه الطلبية «بدون فاتورة نظامية»: عرض سعر فقط. لإصدار فاتورة غيّر نوعها إلى «بفاتورة نظامية» (بعد إلغاء التأكيد)";
+}
+
+function opsxImodeBarHtml() {
+    const chip = function(v, label) {
+        return '<button type="button" class="chip" data-opsx-imode="' + v + '" aria-pressed="false">' + label + "</button>";
+    };
+    return '<div class="opsx-imode-bar" data-opsx-imode-bar="1"><span class="opsx-imode-label">نوع الطلبية</span>' + '<div class="filter-chips opsx-imode" role="radiogroup" aria-label="نوع الطلبية">' + chip("tax", "بفاتورة نظامية") + chip("none", "بدون فاتورة نظامية") + "</div>" + '<div class="opsx-imode-hint muted"></div></div>';
+}
+
+function opsxImodeEnsureDelegate() {
+    try {
+        const root = document.getElementById("modal-root");
+        if (!root || root._opsxImodeBound) return;
+        root._opsxImodeBound = true;
+        root.addEventListener("click", opsxImodeOnClick);
+    } catch (e) {
+        console.warn("opsxImodeEnsureDelegate:", e);
+    }
+}
+
+function opsxImodeOnClick(e) {
+    try {
+        const t = e && e.target;
+        const b = t && t.closest ? t.closest("[data-opsx-imode]") : null;
+        if (!b) return;
+        if (typeof e.preventDefault === "function") e.preventDefault();
+        opsxImodeSet(b.getAttribute("data-opsx-imode"));
+    } catch (err) {
+        console.warn("opsxImodeOnClick:", err);
+    }
+}
+
+function opsxImodePriced(d) {
+    try {
+        return orderActiveParts(d).filter(function(p) {
+            return !!p && !p.returned && p.sellPrice !== null && p.sellPrice !== undefined && p.sellPrice !== "";
+        }).length;
+    } catch (e) {
+        return 0;
+    }
+}
+
+function opsxImodeSet(mode) {
+    const d = typeof draft !== "undefined" ? draft : null;
+    if (!d) return false;
+    const want = mode === "none" ? "none" : "tax";
+    if (want === (opsxImodeNone(d) ? "none" : "tax")) return true;
+    if (d.confirmed) {
+        opsxImodeToast(opsxImodeLockText(), "error");
+        return false;
+    }
+    if (want === "none") d.invoiceMode = "none"; else delete d.invoiceMode;
+    const priced = opsxImodePriced(d) > 0;
+    try {
+        if (typeof updateModalTotals === "function") updateModalTotals();
+    } catch (e) {
+        console.warn("opsx imode totals:", e);
+    }
+    opsxImodeSync();
+    if (priced) opsxImodeToast("تغيّر النوع إلى «" + (want === "none" ? "بدون فاتورة نظامية" : "بفاتورة نظامية") + "»: الأسعار المكتوبة لم تتغيّر، راجعها", "ok");
+    return true;
+}
+
+function opsxImodeSync() {
+    try {
+        const d = typeof draft !== "undefined" ? draft : null;
+        const root = document.getElementById("modal-root");
+        if (!d || !root || !root.querySelector) return;
+        const none = opsxImodeNone(d), locked = !!d.confirmed;
+        if (root.classList) {
+            if (none) root.classList.add("imode-none"); else root.classList.remove("imode-none");
+        }
+        const bar = root.querySelector("[data-opsx-imode-bar]");
+        if (bar) {
+            Array.prototype.slice.call(bar.querySelectorAll("[data-opsx-imode]")).forEach(function(b) {
+                const on = b.getAttribute("data-opsx-imode") === (none ? "none" : "tax");
+                if (on) b.classList.add("chip-active"); else b.classList.remove("chip-active");
+                if (locked) b.classList.add("is-locked"); else b.classList.remove("is-locked");
+                b.setAttribute("aria-pressed", on ? "true" : "false");
+                b.setAttribute("aria-disabled", locked ? "true" : "false");
+                b.title = locked ? opsxImodeLockText() : "";
+            });
+            const hint = bar.querySelector(".opsx-imode-hint");
+            if (hint) hint.textContent = none ? "لا ضريبة ولا فاتورة: عرض سعر فقط، والسعر النهائي هو ما تكتبه" : "";
+        }
+        const inv = root.querySelector("#modal-invoice-btn");
+        if (inv && inv.style) inv.style.display = none ? "none" : "";
+    } catch (e) {
+        console.warn("opsxImodeSync:", e);
+    }
+}
+
+function opsxImodeDocHtml(html) {
+    return String(html == null ? "" : html).replace('<label class="doc-vat-toggle no-print">', '<label class="doc-vat-toggle no-print opsx-imode-hide">').replace('<div class="doc-meta-field field-cr doc-cr-line">', '<div class="doc-meta-field field-cr doc-cr-line opsx-imode-hide">');
+}
+
+function opsxImodeDocText(text) {
+    return String(text == null ? "" : text).split("\n").filter(function(l) {
+        return l.indexOf("ر.ض: ") !== 0;
+    }).join("\n");
+}
+
+function opsxImodeNoneIds() {
+    const ids = Object.create(null);
+    try {
+        (typeof appData !== "undefined" && appData && Array.isArray(appData.orders) ? appData.orders : []).forEach(function(o) {
+            if (opsxImodeNone(o) && o.id !== undefined && o.id !== null) ids[String(o.id)] = true;
+        });
+    } catch (e) {}
+    return ids;
+}
+
+function opsxImodeHasNone(ids) {
+    for (const k in ids) return true;
+    return false;
+}
+
+function opsxImodeAlertItem(it, ids) {
+    return !!it && (it.type === "missing_invoice" || it.type === "legacy_cash" || it.type === "advance_no_invoice") && ids[String(it.orderId)] === true;
+}
+
+function opsxImodeFilterNa(na, ids) {
+    if (!na || typeof na !== "object") return na;
+    return Object.assign({}, na, {
+        items: Array.isArray(na.items) ? na.items.filter(function(it) {
+            return !opsxImodeAlertItem(it, ids);
+        }) : na.items,
+        quiet: Array.isArray(na.quiet) ? na.quiet.filter(function(q) {
+            return !(q && ids[String(q.orderId)] === true);
+        }) : na.quiet
+    });
+}
+
+function opsxImodeOrdersText(n) {
+    return n === 1 ? "طلبية واحدة موردة" : n === 2 ? "طلبيتان موردتان" : n <= 10 ? n + " طلبيات موردة" : n + " طلبية موردة";
+}
+
+function opsxImodeAcctPart(args, ids) {
+    const a = args && typeof args === "object" ? args : {};
+    const F = a.facts && typeof a.facts === "object" ? a.facts : {};
+    const per = a.period && typeof a.period === "object" ? a.period : {
+        from: "",
+        to: ""
+    };
+    let n = 0, h = 0;
+    (Array.isArray(F.orders) ? F.orders : []).forEach(function(o) {
+        if (!o || o.isQuote || !o.confirmed || !o.supplied || !o.hasChargeable || ids[String(o.id)] !== true) return;
+        if (!PTX_ACCT.period.contains(per, o.supplyDate)) return;
+        n++;
+        h += Number(o.sellH) || 0;
+    });
+    return n ? {
+        key: "imode",
+        text: "بدون فاتورة نظامية: " + opsxImodeOrdersText(n) + " · " + PTX_ACCT.money.fmtUnit(h)
+    } : null;
+}
+
+function opsxImodeAcctScreen(m, args) {
+    const ids = opsxImodeNoneIds();
+    if (!m || typeof m !== "object" || !opsxImodeHasNone(ids)) return m;
+    const out = Object.assign({}, m);
+    if (Array.isArray(m.actionItems)) {
+        out.actionItems = m.actionItems.filter(function(it) {
+            return !opsxImodeAlertItem(it, ids);
+        });
+        out.actionCount = out.actionItems.length;
+        out.badge = out.actionItems.length;
+    }
+    if (Array.isArray(m.quiet)) out.quiet = m.quiet.filter(function(q) {
+        return !(q && ids[String(q.orderId)] === true);
+    });
+    const part = opsxImodeAcctPart(args, ids);
+    if (part) out.stripParts = (Array.isArray(m.stripParts) ? m.stripParts : []).concat([ part ]);
+    return out;
+}
+
+(function() {
+    try {
+        if (typeof netpAddBarHtml === "function" && !netpAddBarHtml.opsxWrapped) {
+            const prevBar = netpAddBarHtml;
+            netpAddBarHtml = function(kind) {
+                let h = "";
+                try {
+                    h = prevBar.apply(this, arguments);
+                } catch (e) {
+                    h = "";
+                }
+                if (kind === "quote") return h;
+                try {
+                    opsxImodeEnsureDelegate();
+                    return opsxImodeBarHtml() + h;
+                } catch (e) {
+                    return h;
+                }
+            };
+            netpAddBarHtml.opsxWrapped = true;
+        }
+        if (typeof netpRefresh === "function" && !netpRefresh.opsxWrapped) {
+            const prevRefresh = netpRefresh;
+            netpRefresh = function() {
+                const r = prevRefresh.apply(this, arguments);
+                try {
+                    opsxImodeSync();
+                } catch (e) {}
+                return r;
+            };
+            netpRefresh.opsxWrapped = true;
+        }
+        if (typeof docSheetHtml === "function" && !docSheetHtml.opsxWrapped) {
+            const prevDoc = docSheetHtml;
+            docSheetHtml = function(order, type, data) {
+                if (!opsxImodeNone(order) || type === "invoice" || !data || typeof data !== "object") return prevDoc.apply(this, arguments);
+                return opsxImodeDocHtml(prevDoc.call(this, order, type, Object.assign({}, data, {
+                    showVat: false,
+                    taxQuoteV: 1
+                })));
+            };
+            docSheetHtml.opsxWrapped = true;
+        }
+        if (typeof buildDocWhatsAppText === "function" && !buildDocWhatsAppText.opsxWrapped) {
+            const prevWa = buildDocWhatsAppText;
+            buildDocWhatsAppText = function(order, type, data) {
+                if (!opsxImodeNone(order) || type === "invoice" || !data || typeof data !== "object") return prevWa.apply(this, arguments);
+                return opsxImodeDocText(prevWa.call(this, order, type, Object.assign({}, data, {
+                    showVat: false,
+                    taxQuoteV: 1
+                })));
+            };
+            buildDocWhatsAppText.opsxWrapped = true;
+        }
+        if (typeof taxinvOpenForOrder === "function" && !taxinvOpenForOrder.opsxWrapped) {
+            const prevOpen = taxinvOpenForOrder;
+            taxinvOpenForOrder = async function(orderId, opts) {
+                if (opsxImodeNone(opsxImodeOrder(orderId)) && !(opts && (opts.creditDialog || opts.debitDialog))) {
+                    opsxImodeToast(opsxImodeBlockText(), "error");
+                    return true;
+                }
+                return prevOpen.apply(this, arguments);
+            };
+            taxinvOpenForOrder.opsxWrapped = true;
+        }
+        if (typeof orderSupplyBadgeHtml === "function" && !orderSupplyBadgeHtml.opsxWrapped) {
+            const prevBadge = orderSupplyBadgeHtml;
+            orderSupplyBadgeHtml = function(order) {
+                const base = prevBadge.apply(this, arguments);
+                return base + (opsxImodeNone(order) ? '<span class="stamp stamp-amber opsx-imode-tag" title="بدون فاتورة نظامية: لا ضريبة ولا فاتورة، عرض سعر فقط">بدون فاتورة نظامية</span>' : "");
+            };
+            orderSupplyBadgeHtml.opsxWrapped = true;
+        }
+        if (typeof PTX_ACCT !== "undefined" && PTX_ACCT && PTX_ACCT.model) {
+            if (typeof PTX_ACCT.model.needsAction === "function" && !PTX_ACCT.model.needsAction.opsxWrapped) {
+                const prevNa = PTX_ACCT.model.needsAction;
+                PTX_ACCT.model.needsAction = function(facts, docs, opts) {
+                    const r = prevNa.apply(this, arguments);
+                    try {
+                        const ids = opsxImodeNoneIds();
+                        return opsxImodeHasNone(ids) ? opsxImodeFilterNa(r, ids) : r;
+                    } catch (e) {
+                        return r;
+                    }
+                };
+                PTX_ACCT.model.needsAction.opsxWrapped = true;
+            }
+            if (typeof PTX_ACCT.model.screen === "function" && !PTX_ACCT.model.screen.opsxWrapped) {
+                const prevScreen = PTX_ACCT.model.screen;
+                PTX_ACCT.model.screen = function(args) {
+                    const m = prevScreen.apply(this, arguments);
+                    try {
+                        return opsxImodeAcctScreen(m, args);
+                    } catch (e) {
+                        return m;
+                    }
+                };
+                PTX_ACCT.model.screen.opsxWrapped = true;
+            }
+        }
+    } catch (e) {
+        console.warn("OPSX imode install:", e);
     }
 })();</script>
 </body>
