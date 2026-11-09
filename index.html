@@ -100623,6 +100623,31 @@ function opsxImodeAcctScreen(m, args) {
     } catch (e) {
         console.warn("OPSX imode install:", e);
     }
+})();
+
+function opsxSupdefNeeds(s) {
+    if (!s || typeof s !== "object" || s.taxInvoice !== undefined) return false;
+    const list = typeof appData !== "undefined" && appData && Array.isArray(appData.suppliers) ? appData.suppliers : [];
+    return !list.some(function(x) {
+        return !!x && x.id === s.id;
+    });
+}
+
+(function() {
+    try {
+        if (typeof persistSupplier === "function" && !persistSupplier.opsxWrapped) {
+            const prevPersistSup = persistSupplier;
+            persistSupplier = function(supplier) {
+                try {
+                    if (opsxSupdefNeeds(supplier)) supplier.taxInvoice = "yes";
+                } catch (e) {}
+                return prevPersistSup.apply(this, arguments);
+            };
+            persistSupplier.opsxWrapped = true;
+        }
+    } catch (e) {
+        console.warn("OPSX supdef install:", e);
+    }
 })();</script>
 </body>
 </html>
