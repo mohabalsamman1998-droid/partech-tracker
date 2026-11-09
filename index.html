@@ -100648,6 +100648,91 @@ function opsxSupdefNeeds(s) {
     } catch (e) {
         console.warn("OPSX supdef install:", e);
     }
+})();
+
+function opsxBidiAsciiDigits(txt) {
+    return String(txt == null ? "" : txt).replace(/[٠-٩۰-۹٪٫٬]/g, function(ch) {
+        const c = ch.charCodeAt(0);
+        if (c >= 1632 && c <= 1641) return String.fromCharCode(48 + c - 1632);
+        if (c >= 1776 && c <= 1785) return String.fromCharCode(48 + c - 1776);
+        return c === 1643 ? "." : c === 1644 ? "," : "%";
+    });
+}
+
+function opsxBidiRuns(prev, txt) {
+    const s = String(txt || "");
+    const runs = prev(opsxBidiAsciiDigits(s));
+    if (!runs) return null;
+    let pos = 0;
+    return runs.map(function(r) {
+        const t = s.substr(pos, r.t.length);
+        pos += r.t.length;
+        return {
+            t: t,
+            ltr: r.ltr
+        };
+    });
+}
+
+(function() {
+    try {
+        if (typeof pdfSplitLtrRuns === "function" && !pdfSplitLtrRuns.opsxWrapped) {
+            const prevSplit = pdfSplitLtrRuns;
+            pdfSplitLtrRuns = function(txt) {
+                return opsxBidiRuns(prevSplit, txt);
+            };
+            pdfSplitLtrRuns.opsxWrapped = true;
+        }
+    } catch (e) {
+        console.warn("OPSX bidi install:", e);
+    }
+})();
+
+function opsxTitlesStrip(txt, kind) {
+    const s = String(txt == null ? "" : txt);
+    if (kind === "ar") return s.replace(/\s*[—–-]\s*ليس فاتورة ضريبية\s*$/, "");
+    if (kind === "en") return s.replace(/\s*[—–-]\s*NOT A TAX INVOICE\s*$/i, "");
+    return s.replace(/\s*\(ليس فاتورة ضريبية\)\s*$/, "");
+}
+
+(function() {
+    try {
+        if (typeof taxinvQuoteTitleAr === "function" && !taxinvQuoteTitleAr.opsxWrapped) {
+            const prevTitleAr = taxinvQuoteTitleAr;
+            taxinvQuoteTitleAr = function() {
+                return opsxTitlesStrip(prevTitleAr.apply(this, arguments), "ar");
+            };
+            taxinvQuoteTitleAr.opsxWrapped = true;
+        }
+        if (typeof taxinvQuoteTitleEn === "function" && !taxinvQuoteTitleEn.opsxWrapped) {
+            const prevTitleEn = taxinvQuoteTitleEn;
+            taxinvQuoteTitleEn = function() {
+                return opsxTitlesStrip(prevTitleEn.apply(this, arguments), "en");
+            };
+            taxinvQuoteTitleEn.opsxWrapped = true;
+        }
+        if (typeof taxinvQuoteShareTitle === "function" && !taxinvQuoteShareTitle.opsxWrapped) {
+            const prevShareTitle = taxinvQuoteShareTitle;
+            taxinvQuoteShareTitle = function() {
+                return opsxTitlesStrip(prevShareTitle.apply(this, arguments), "share");
+            };
+            taxinvQuoteShareTitle.opsxWrapped = true;
+        }
+        if (typeof taxinvStatementNoteHtml === "function" && !taxinvStatementNoteHtml.opsxWrapped) {
+            taxinvStatementNoteHtml = function() {
+                return "";
+            };
+            taxinvStatementNoteHtml.opsxWrapped = true;
+        }
+        if (typeof taxinvStatementNoteText === "function" && !taxinvStatementNoteText.opsxWrapped) {
+            taxinvStatementNoteText = function() {
+                return "";
+            };
+            taxinvStatementNoteText.opsxWrapped = true;
+        }
+    } catch (e) {
+        console.warn("OPSX titles install:", e);
+    }
 })();</script>
 </body>
 </html>
