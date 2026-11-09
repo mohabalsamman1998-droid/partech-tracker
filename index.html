@@ -3392,6 +3392,13 @@
   .opsx-imode .chip.is-locked{opacity:.65;cursor:not-allowed;}
   .opsx-imode-hint{font-size:13px;margin:4px 0 0;}
   .opsx-imode-hint:empty{display:none;}
+  /* اختيار إجباري عند الإنشاء: الشريحتان غير النشطتين والتلميح بلون الصدأ من الباليت كحالة «ناقص» بنوع فاتورة الشراء؛ وسطر قراءة للمشتريات */
+  .opsx-imode-bar.opsx-imode-missing .chip:not(.chip-active){border-color:var(--rust-line);color:var(--rust);}
+  .opsx-imode-bar.opsx-imode-missing .opsx-imode-hint{color:var(--rust);font-weight:700;}
+  .opsx-imode-ro{font-size:13px;font-weight:700;color:var(--text-dim);margin:0 0 10px;overflow-wrap:anywhere;}
+  .opsx-imode-ro:empty{display:none;}
+  /* «بدون فاتورة نظامية»: لا يُشترط نوع فاتورة الشراء فيُخفى حقله (المشتريات) وشارته (المبيعات) فور اختيار النوع، ويعودان عند الرجوع للنظامية */
+  #modal-root.imode-none .mini-label-invkind,#modal-root.imode-none .opsx-invk-line{display:none !important;}
   #modal-root.imode-none .acn-sup-warn{display:none !important;}
   .opsx-imode-hide{display:none !important;}
   @media (max-width:600px){
@@ -99997,6 +100004,7 @@ function opsxInvkBadgeHtml(p) {
 function opsxInvkMissingParts() {
     const d = typeof quoteDraft !== "undefined" ? quoteDraft : null;
     if (!d || !Array.isArray(d.parts)) return [];
+    if (typeof opsxImodeNone === "function" && opsxImodeNone(d)) return [];
     return d.parts.filter(function(p) {
         return !!p && String(p.description || "").trim() !== "" && opsxInvkOn(p) && opsxInvkPriced(p) && !opsxInvkValid(p.invoiceKind);
     });
@@ -100129,6 +100137,7 @@ function opsxInvkGuard(kind) {
         if (typeof onApproveQuote === "function" && !onApproveQuote.opsxWrapped) {
             const prevApprove = onApproveQuote;
             onApproveQuote = async function() {
+                if (typeof opsxImodeGate === "function" && opsxImodeGate(typeof quoteDraft !== "undefined" ? quoteDraft : null)) return;
                 if (opsxInvkGuard("approve")) return;
                 return prevApprove.apply(this, arguments);
             };
@@ -100167,7 +100176,61 @@ function opsxImodeBlockText() {
     return "هذه الطلبية «بدون فاتورة نظامية»: عرض سعر فقط. لإصدار فاتورة غيّر نوعها إلى «بفاتورة نظامية» (بعد إلغاء التأكيد)";
 }
 
-function opsxImodeBarHtml() {
+function opsxImodeEffective(d) {
+    if (!d) return "";
+    if (d.invoiceMode === "none") return "none";
+    if (d.invoiceMode === "tax") return "tax";
+    return d.isNew === true ? "" : "tax";
+}
+
+function opsxImodeUnchosen(d) {
+    return !!d && opsxImodeEffective(d) === "";
+}
+
+function opsxImodeMissingText() {
+    return "حدّد نوع الطلبية أولًا: بفاتورة نظامية أو بدون فاتورة نظامية";
+}
+
+function opsxImodeCur() {
+    try {
+        const q = typeof quoteDraft !== "undefined" ? quoteDraft : null;
+        const o = typeof draft !== "undefined" ? draft : null;
+        if (q && o) {
+            const root = document.getElementById("modal-root");
+            if (root && root.querySelector && root.querySelector("#quote-parts-list")) return {
+                d: q,
+                kind: "quote"
+            };
+            return {
+                d: o,
+                kind: "order"
+            };
+        }
+        if (q) return {
+            d: q,
+            kind: "quote"
+        };
+        if (o) return {
+            d: o,
+            kind: "order"
+        };
+    } catch (e) {}
+    return {
+        d: null,
+        kind: ""
+    };
+}
+
+function opsxImodeCanEdit(kind) {
+    if (!opsxImodeRoleOk()) return false;
+    try {
+        if (kind === "quote" && typeof quoteModalRole !== "undefined" && quoteModalRole === "purchasing") return false;
+    } catch (e) {}
+    return true;
+}
+
+function opsxImodeBarHtml(editable) {
+    if (editable === false) return '<div class="opsx-imode-ro" data-opsx-imode-ro="1"></div>';
     const chip = function(v, label) {
         return '<button type="button" class="chip" data-opsx-imode="' + v + '" aria-pressed="false">' + label + "</button>";
     };
@@ -100216,18 +100279,21 @@ function opsxImodeRoleOk() {
 }
 
 function opsxImodeSet(mode) {
-    const d = typeof draft !== "undefined" ? draft : null;
-    if (!d || !opsxImodeRoleOk()) return false;
+    const cur = opsxImodeCur(), d = cur.d;
+    if (!d || !opsxImodeCanEdit(cur.kind)) return false;
     const want = mode === "none" ? "none" : "tax";
-    if (want === (opsxImodeNone(d) ? "none" : "tax")) return true;
+    const was = opsxImodeEffective(d);
+    if (was === want) return true;
     if (d.confirmed) {
         opsxImodeToast(opsxImodeLockText(), "error");
         return false;
     }
-    if (want === "none") d.invoiceMode = "none"; else delete d.invoiceMode;
-    const priced = opsxImodePriced(d) > 0;
+    d.invoiceMode = want;
+    const priced = was !== "" && opsxImodePriced(d) > 0;
     try {
-        if (typeof updateModalTotals === "function") updateModalTotals();
+        if (cur.kind === "quote") {
+            if (typeof updateQuoteModalTotals === "function") updateQuoteModalTotals();
+        } else if (typeof updateModalTotals === "function") updateModalTotals();
     } catch (e) {
         console.warn("opsx imode totals:", e);
     }
@@ -100238,34 +100304,62 @@ function opsxImodeSet(mode) {
 
 function opsxImodeSync() {
     try {
-        const d = typeof draft !== "undefined" ? draft : null;
+        const cur = opsxImodeCur(), d = cur.d;
         const root = document.getElementById("modal-root");
         if (!root || !root.querySelector) return;
         if (!d) {
             if (root.classList) root.classList.remove("imode-none");
             return;
         }
-        const none = opsxImodeNone(d), locked = !!d.confirmed;
+        const eff = opsxImodeEffective(d), none = eff === "none", locked = !!d.confirmed;
         if (root.classList) {
             if (none) root.classList.add("imode-none"); else root.classList.remove("imode-none");
         }
         const bar = root.querySelector("[data-opsx-imode-bar]");
         if (bar) {
             Array.prototype.slice.call(bar.querySelectorAll("[data-opsx-imode]")).forEach(function(b) {
-                const on = b.getAttribute("data-opsx-imode") === (none ? "none" : "tax");
+                const on = eff !== "" && b.getAttribute("data-opsx-imode") === eff;
                 if (on) b.classList.add("chip-active"); else b.classList.remove("chip-active");
                 if (locked) b.classList.add("is-locked"); else b.classList.remove("is-locked");
                 b.setAttribute("aria-pressed", on ? "true" : "false");
                 b.setAttribute("aria-disabled", locked ? "true" : "false");
                 b.title = locked ? opsxImodeLockText() : "";
             });
+            if (bar.classList) {
+                if (eff === "") bar.classList.add("opsx-imode-missing"); else bar.classList.remove("opsx-imode-missing");
+            }
             const hint = bar.querySelector(".opsx-imode-hint");
-            if (hint) hint.textContent = none ? "لا ضريبة ولا فاتورة: عرض سعر فقط، والسعر النهائي هو ما تكتبه" : "";
+            if (hint) hint.textContent = eff === "" ? "اختيار النوع إجباري قبل الحفظ" : none ? cur.kind === "quote" ? "لا ضريبة ولا فاتورة: عرض سعر فقط" : "لا ضريبة ولا فاتورة: عرض سعر فقط، والسعر النهائي هو ما تكتبه" : "";
         }
+        const ro = root.querySelector("[data-opsx-imode-ro]");
+        if (ro) ro.textContent = "نوع الطلبية: " + (eff === "" ? "غير محدد" : none ? "بدون فاتورة نظامية" + (cur.kind === "quote" ? " — لا يُشترط نوع فاتورة الشراء" : "") : "بفاتورة نظامية");
         const inv = root.querySelector("#modal-invoice-btn");
         if (inv && inv.style) inv.style.display = none ? "none" : "";
     } catch (e) {
         console.warn("opsxImodeSync:", e);
+    }
+}
+
+function opsxImodeGate(d) {
+    try {
+        if (!d || d.isNew !== true || opsxImodeEffective(d) !== "") return false;
+        if (!opsxImodeRoleOk()) {
+            d.invoiceMode = "tax";
+            return false;
+        }
+        const root = document.getElementById("modal-root");
+        const bar = root && root.querySelector ? root.querySelector("[data-opsx-imode-bar]") : null;
+        if (!bar) return false;
+        opsxImodeToast(opsxImodeMissingText(), "error");
+        try {
+            if (bar.classList) bar.classList.add("opsx-imode-missing");
+            if (bar.scrollIntoView) bar.scrollIntoView({
+                block: "center"
+            });
+        } catch (e) {}
+        return true;
+    } catch (e) {
+        return false;
     }
 }
 
@@ -100364,17 +100458,10 @@ function opsxImodeAcctScreen(m, args) {
                 } catch (e) {
                     h = "";
                 }
-                if (kind === "quote") {
-                    try {
-                        const mr = document.getElementById("modal-root");
-                        if (mr && mr.classList) mr.classList.remove("imode-none");
-                    } catch (e) {}
-                    return h;
-                }
                 try {
-                    if (!opsxImodeRoleOk()) return h;
-                    opsxImodeEnsureDelegate();
-                    return opsxImodeBarHtml() + h;
+                    const editable = opsxImodeCanEdit(kind === "quote" ? "quote" : "order");
+                    if (editable) opsxImodeEnsureDelegate();
+                    return opsxImodeBarHtml(editable) + h;
                 } catch (e) {
                     return h;
                 }
@@ -100436,16 +100523,16 @@ function opsxImodeAcctScreen(m, args) {
         if (typeof cpyDoCopy === "function" && !cpyDoCopy.opsxWrapped) {
             const prevCopy = cpyDoCopy;
             cpyDoCopy = function(snap, ids) {
-                let none = false;
+                let mode = "";
                 try {
-                    none = typeof draft !== "undefined" && !!draft && opsxImodeNone(draft);
+                    if (typeof draft !== "undefined" && draft) mode = opsxImodeNone(draft) ? "none" : "tax";
                 } catch (e) {
-                    none = false;
+                    mode = "";
                 }
                 const r = prevCopy.apply(this, arguments);
                 try {
-                    if (none && typeof draft !== "undefined" && draft && draft.isNew) {
-                        draft.invoiceMode = "none";
+                    if (mode && typeof draft !== "undefined" && draft && draft.isNew) {
+                        draft.invoiceMode = mode;
                         if (typeof updateModalTotals === "function") updateModalTotals();
                         opsxImodeSync();
                     }
@@ -100455,6 +100542,56 @@ function opsxImodeAcctScreen(m, args) {
                 return r;
             };
             cpyDoCopy.opsxWrapped = true;
+        }
+        if (typeof qdupRun === "function" && !qdupRun.opsxWrapped) {
+            const prevDup = qdupRun;
+            qdupRun = function() {
+                let mode = "";
+                try {
+                    if (typeof quoteDraft !== "undefined" && quoteDraft && !quoteDraft.isNew) mode = opsxImodeNone(quoteDraft) ? "none" : "tax";
+                } catch (e) {
+                    mode = "";
+                }
+                const r = prevDup.apply(this, arguments);
+                try {
+                    if (mode && typeof quoteDraft !== "undefined" && quoteDraft && quoteDraft.isNew) {
+                        quoteDraft.invoiceMode = mode;
+                        if (typeof updateQuoteModalTotals === "function") updateQuoteModalTotals();
+                        opsxImodeSync();
+                    }
+                } catch (e) {
+                    console.warn("OPSX imode dup:", e);
+                }
+                return r;
+            };
+            qdupRun.opsxWrapped = true;
+        }
+        if (typeof onSaveOrder === "function" && !onSaveOrder.opsxWrapped) {
+            const prevSaveOrder = onSaveOrder;
+            onSaveOrder = async function() {
+                if (opsxImodeGate(typeof draft !== "undefined" ? draft : null)) return false;
+                return prevSaveOrder.apply(this, arguments);
+            };
+            onSaveOrder.opsxWrapped = true;
+        }
+        if (typeof saveQuoteDraft === "function" && !saveQuoteDraft.opsxWrapped) {
+            const prevSaveQuote = saveQuoteDraft;
+            saveQuoteDraft = async function() {
+                if (opsxImodeGate(typeof quoteDraft !== "undefined" ? quoteDraft : null)) return false;
+                return prevSaveQuote.apply(this, arguments);
+            };
+            saveQuoteDraft.opsxWrapped = true;
+        }
+        if (typeof updateQuoteModalTotals === "function" && !updateQuoteModalTotals.opsxWrapped) {
+            const prevQuoteTotals = updateQuoteModalTotals;
+            updateQuoteModalTotals = function() {
+                const r = prevQuoteTotals.apply(this, arguments);
+                try {
+                    opsxImodeSync();
+                } catch (e) {}
+                return r;
+            };
+            updateQuoteModalTotals.opsxWrapped = true;
         }
         if (typeof PTX_ACCT !== "undefined" && PTX_ACCT && PTX_ACCT.model) {
             if (typeof PTX_ACCT.model.needsAction === "function" && !PTX_ACCT.model.needsAction.opsxWrapped) {
