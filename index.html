@@ -100207,9 +100207,17 @@ function opsxImodePriced(d) {
     }
 }
 
+function opsxImodeRoleOk() {
+    try {
+        return typeof currentUserRole === "undefined" || currentUserRole === "full";
+    } catch (e) {
+        return true;
+    }
+}
+
 function opsxImodeSet(mode) {
     const d = typeof draft !== "undefined" ? draft : null;
-    if (!d) return false;
+    if (!d || !opsxImodeRoleOk()) return false;
     const want = mode === "none" ? "none" : "tax";
     if (want === (opsxImodeNone(d) ? "none" : "tax")) return true;
     if (d.confirmed) {
@@ -100232,7 +100240,11 @@ function opsxImodeSync() {
     try {
         const d = typeof draft !== "undefined" ? draft : null;
         const root = document.getElementById("modal-root");
-        if (!d || !root || !root.querySelector) return;
+        if (!root || !root.querySelector) return;
+        if (!d) {
+            if (root.classList) root.classList.remove("imode-none");
+            return;
+        }
         const none = opsxImodeNone(d), locked = !!d.confirmed;
         if (root.classList) {
             if (none) root.classList.add("imode-none"); else root.classList.remove("imode-none");
@@ -100352,8 +100364,15 @@ function opsxImodeAcctScreen(m, args) {
                 } catch (e) {
                     h = "";
                 }
-                if (kind === "quote") return h;
+                if (kind === "quote") {
+                    try {
+                        const mr = document.getElementById("modal-root");
+                        if (mr && mr.classList) mr.classList.remove("imode-none");
+                    } catch (e) {}
+                    return h;
+                }
                 try {
+                    if (!opsxImodeRoleOk()) return h;
                     opsxImodeEnsureDelegate();
                     return opsxImodeBarHtml() + h;
                 } catch (e) {
@@ -100413,6 +100432,29 @@ function opsxImodeAcctScreen(m, args) {
                 return base + (opsxImodeNone(order) ? '<span class="stamp stamp-amber opsx-imode-tag" title="بدون فاتورة نظامية: لا ضريبة ولا فاتورة، عرض سعر فقط">بدون فاتورة نظامية</span>' : "");
             };
             orderSupplyBadgeHtml.opsxWrapped = true;
+        }
+        if (typeof cpyDoCopy === "function" && !cpyDoCopy.opsxWrapped) {
+            const prevCopy = cpyDoCopy;
+            cpyDoCopy = function(snap, ids) {
+                let none = false;
+                try {
+                    none = typeof draft !== "undefined" && !!draft && opsxImodeNone(draft);
+                } catch (e) {
+                    none = false;
+                }
+                const r = prevCopy.apply(this, arguments);
+                try {
+                    if (none && typeof draft !== "undefined" && draft && draft.isNew) {
+                        draft.invoiceMode = "none";
+                        if (typeof updateModalTotals === "function") updateModalTotals();
+                        opsxImodeSync();
+                    }
+                } catch (e) {
+                    console.warn("OPSX imode copy:", e);
+                }
+                return r;
+            };
+            cpyDoCopy.opsxWrapped = true;
         }
         if (typeof PTX_ACCT !== "undefined" && PTX_ACCT && PTX_ACCT.model) {
             if (typeof PTX_ACCT.model.needsAction === "function" && !PTX_ACCT.model.needsAction.opsxWrapped) {
