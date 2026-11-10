@@ -4303,6 +4303,30 @@
   #treasury-view > .treasury-chip-row > .chip{position:relative;overflow:visible;}
   #treasury-view > .treasury-chip-row > .chip > .inline-count-badge{position:absolute;top:-7px;inset-inline-end:-7px;margin:0;min-width:19px;height:19px;padding:0 4px;border:2px solid var(--bg);font-size:13px;}
   /* TCHIP END css */
+  /* TRFX BEGIN css */
+  /* TRFX (2026-11-10): الصندوق على الجوال فقط (حتى 600px) وبالشبكة المتساوية نفسها، بثلاث نقاط اختارها المالك: ١) صف الأدوات يُطوى خلف زر «أدوات الصندوق» (عدّاد مجموع، والصف نفسه لا يُمسّ ولا يُنقل، ويُخفى بالـCSS فقط ما دام الزر قبله مباشرة)، ٢) «مؤشرات إضافية» عند فتحها: مسافة واحدة وفلتر بعرض السطر وأزرار الفترة بخلايا متساوية والقيمة تلي عنوانها، ٣) تسميات البطاقات والأسطر الفرعية أكبر بدرجة. لا لون جديد ولا تغيير لشكل البطاقات؛ كل محدّد يبدأ بـ#treasury-view */
+  #treasury-view > .trfx-tools-btn{display:none;}
+  @media (max-width:600px){
+    #treasury-view > .trfx-tools-btn{display:flex;align-items:center;justify-content:space-between;gap:10px;position:relative;overflow:visible;width:100%;box-sizing:border-box;min-height:44px;padding-inline:18px;}
+    #treasury-view > .trfx-tools-btn::after{content:'';flex:0 0 auto;box-sizing:border-box;width:9px;height:9px;border-right:2px solid var(--text-faint);border-bottom:2px solid var(--text-faint);transform:rotate(45deg);margin-top:-4px;}
+    #treasury-view > .trfx-tools-btn[aria-expanded="true"]{background:var(--green-dim);border-color:var(--green-line);color:var(--green);}
+    #treasury-view > .trfx-tools-btn[aria-expanded="true"]::after{transform:rotate(-135deg);margin-top:4px;}
+    #treasury-view > .trfx-tools-btn > .inline-count-badge{position:absolute;top:-7px;inset-inline-end:-7px;margin:0;min-width:19px;height:19px;padding:0 4px;border:2px solid var(--bg);font-size:13px;}
+    #treasury-view:not(.trfx-open) > .trfx-tools-btn + .treasury-chip-row.lvl-grid{display:none;}
+    #treasury-view #extra-indicators-wrap{margin-bottom:0 !important;}
+    #treasury-view #extra-indicators-wrap > #btn-toggle-extra-filter{display:flex;align-items:center;justify-content:center;width:100%;box-sizing:border-box;min-height:44px;}
+    #treasury-view .extra-indicators-row{margin-bottom:0;}
+    #treasury-view .extra-indicators-row .treasury-profit-card{justify-content:flex-start;}
+    #treasury-view #extra-indicators-period-filter{gap:8px;align-items:stretch;margin-bottom:10px !important;}
+    #treasury-view #extra-indicators-period-filter > .chip{flex:1 1 calc(33.333% - 6px);min-width:0;justify-content:center;box-sizing:border-box;min-height:44px;}
+    #treasury-view #extra-indicators-period-filter > input.extra-indicators-month-input{flex:1 1 100%;min-width:0;box-sizing:border-box;min-height:44px;}
+    #treasury-view #extra-indicators-period-filter > label.mini-label{flex:1 1 calc(50% - 4px);min-width:0;display:flex;flex-direction:column;gap:4px;}
+    #treasury-view #extra-indicators-period-filter > label.mini-label > input{width:100%;box-sizing:border-box;min-height:44px;}
+    #treasury-view .treasury-profit-label{font-size:15px;line-height:1.5;}
+    #treasury-view .treasury-profit-card div[style*="size:12px"]{font-size:14px !important;}
+    #treasury-view .card-breakdown-row,#treasury-view .card-breakdown-row .num,#treasury-view .card-breakdown-note{font-size:14px;}
+  }
+  /* TRFX END css */
 </style>
 </head>
 <body>
@@ -100770,6 +100794,101 @@ function opsxTitlesStrip(txt, kind) {
         }
     } catch (e) {
         console.warn("RTLFX install:", e);
+    }
+})();
+
+(function() {
+    try {
+        if (typeof document === "undefined" || typeof MutationObserver !== "function") return;
+        if (window.__trfxInstalled) return;
+        var view = document.getElementById("treasury-view");
+        if (!view) return;
+        window.__trfxInstalled = true;
+        var LABEL = "أدوات الصندوق", busy = false;
+        function mainRow() {
+            var kids = view.children;
+            for (var i = 0; i < kids.length; i++) {
+                var k = kids[i];
+                if (k.classList && k.classList.contains("treasury-chip-row") && k.classList.contains("lvl-grid") && !k.id) return k;
+            }
+            return null;
+        }
+        function ownBtn() {
+            var kids = view.children;
+            for (var i = 0; i < kids.length; i++) {
+                if (kids[i].id === "trfx-tools-btn") return kids[i];
+            }
+            return null;
+        }
+        function badgeSum(row) {
+            var n = 0, els = row.querySelectorAll(".inline-count-badge, .tasks-badge");
+            for (var i = 0; i < els.length; i++) {
+                var v = parseInt(els[i].textContent, 10);
+                if (v > 0) n += v;
+            }
+            return n;
+        }
+        function build() {
+            var b = document.createElement("button");
+            b.type = "button";
+            b.id = "trfx-tools-btn";
+            b.className = "chip trfx-tools-btn";
+            b.setAttribute("aria-expanded", view.classList.contains("trfx-open") ? "true" : "false");
+            b.textContent = LABEL;
+            b.addEventListener("click", function() {
+                var open = !view.classList.contains("trfx-open");
+                if (open) view.classList.add("trfx-open"); else view.classList.remove("trfx-open");
+                b.setAttribute("aria-expanded", open ? "true" : "false");
+            });
+            return b;
+        }
+        function sync() {
+            if (busy) return;
+            busy = true;
+            try {
+                var row = mainRow(), b = ownBtn();
+                if (!row) {
+                    if (b && b.parentNode) b.parentNode.removeChild(b);
+                    return;
+                }
+                if (!b) {
+                    b = build();
+                    view.insertBefore(b, row);
+                } else if (b.nextElementSibling !== row) {
+                    view.insertBefore(b, row);
+                }
+                var n = badgeSum(row), bd = b.trfxBadge || null;
+                if (n > 0) {
+                    if (!bd) {
+                        bd = document.createElement("span");
+                        bd.className = "inline-count-badge";
+                        b.appendChild(bd);
+                        b.trfxBadge = bd;
+                    }
+                    if (bd.textContent !== String(n)) bd.textContent = String(n);
+                } else if (bd) {
+                    if (bd.parentNode) bd.parentNode.removeChild(bd);
+                    b.trfxBadge = null;
+                }
+                var want = view.classList.contains("trfx-open") ? "true" : "false";
+                if (b.getAttribute("aria-expanded") !== want) b.setAttribute("aria-expanded", want);
+            } catch (e) {
+                console.warn("TRFX sync:", e);
+            } finally {
+                busy = false;
+            }
+        }
+        new MutationObserver(function() {
+            sync();
+        }).observe(view, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: [ "style" ]
+        });
+        sync();
+    } catch (e) {
+        console.warn("TRFX install:", e);
     }
 })();</script>
 </body>
