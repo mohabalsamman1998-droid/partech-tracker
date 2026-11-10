@@ -4327,6 +4327,11 @@
     #treasury-view .card-breakdown-row,#treasury-view .card-breakdown-row .num,#treasury-view .card-breakdown-note{font-size:14px;}
   }
   /* TRFX END css */
+  /* GRDU BEGIN css */
+  /* GRDU (2026-11-10): صف «الجودة لكل القطع» يُخفى حين توجد قطع بالقائمة ولا واحدة منها قابلة لاختيار الجودة (كلها مستعملة أو مرتجعة)؛ gradeOrderHtml يحذفه أصلًا عند الرسم، وهذا يغطي إضافة قطعة مستعملة بعد فتح النافذة. لا لون ولا شكل جديد، وبلا !important */
+  .grade-order[data-grade-src="order"]:has(~ #parts-list .part-row:not(.part-row-returned)):not(:has(~ #parts-list .grade-pick[data-grade-part])){display:none;}
+  .grade-order[data-grade-src="quote"]:has(~ #quote-parts-list .part-row:not(.part-row-returned)):not(:has(~ #quote-parts-list .grade-pick[data-grade-part])){display:none;}
+  /* GRDU END css */
 </style>
 </head>
 <body>
@@ -100367,7 +100372,7 @@ function opsxImodeSync() {
             if (hint) hint.textContent = eff === "" ? "اختيار النوع إجباري قبل الحفظ" : none ? cur.kind === "quote" ? "لا ضريبة ولا فاتورة: عرض سعر فقط" : "لا ضريبة ولا فاتورة: عرض سعر فقط، والسعر النهائي هو ما تكتبه" : "";
         }
         const ro = root.querySelector("[data-opsx-imode-ro]");
-        if (ro) ro.textContent = "نوع الطلبية: " + (eff === "" ? "غير محدد" : none ? "بدون فاتورة نظامية" + (cur.kind === "quote" ? " — لا يُشترط نوع فاتورة الشراء" : "") : "بفاتورة نظامية");
+        if (ro) ro.textContent = "نوع الطلبية: " + (eff === "" ? "غير محدد" : none ? "بدون فاتورة نظامية" + (cur.kind === "quote" ? " — ارفق فواتير عادية غير ضريبية" : "") : "بفاتورة نظامية" + (cur.kind === "quote" ? " — يشترط فاتورة حتى لو ضريبية" : ""));
         const inv = root.querySelector("#modal-invoice-btn");
         if (inv && inv.style) inv.style.display = none ? "none" : "";
     } catch (e) {
@@ -100889,6 +100894,60 @@ function opsxTitlesStrip(txt, kind) {
         sync();
     } catch (e) {
         console.warn("TRFX install:", e);
+    }
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__grduInstalled) return;
+        window.__grduInstalled = true;
+        function usedPart(p) {
+            return !!p && p.used === true;
+        }
+        if (typeof gradeEditable === "function") {
+            var prevEditable = gradeEditable;
+            gradeEditable = function(src, p) {
+                return usedPart(p) ? false : prevEditable.apply(this, arguments);
+            };
+        }
+        if (typeof gradePickHtml === "function") {
+            var prevPick = gradePickHtml;
+            gradePickHtml = function(p, src, i) {
+                return usedPart(p) ? "" : prevPick.apply(this, arguments);
+            };
+        }
+        if (typeof gradeTagHtml === "function") {
+            var prevTag = gradeTagHtml;
+            gradeTagHtml = function(p) {
+                return usedPart(p) ? "" : prevTag.apply(this, arguments);
+            };
+        }
+        if (typeof addPartsToOrderSupply === "function") {
+            var prevAdd = addPartsToOrderSupply;
+            addPartsToOrderSupply = function(order, list) {
+                try {
+                    if (list && list.length) {
+                        for (var i = 0; i < list.length; i++) {
+                            var q = list[i];
+                            if (usedPart(q) && Object.prototype.hasOwnProperty.call(q, "quality")) delete q.quality;
+                        }
+                    }
+                } catch (e) {}
+                return prevAdd.apply(this, arguments);
+            };
+        }
+        if (typeof supcopyPartKeys === "function") {
+            var prevKeys = supcopyPartKeys;
+            supcopyPartKeys = function(p) {
+                var k = prevKeys.apply(this, arguments);
+                if (usedPart(p) && k && typeof k.filter === "function") return k.filter(function(x) {
+                    return x === "used";
+                });
+                return k;
+            };
+        }
+    } catch (e) {
+        if (typeof console !== "undefined") console.warn("GRDU install:", e);
     }
 })();</script>
 </body>
