@@ -100963,11 +100963,36 @@ function opsxTitlesStrip(txt, kind) {
             list.appendChild(off);
         }
     }
+    function nuiOfferSwitch() {
+        var list = document.querySelector("#trk-drawer .trk-drawer-list"), app = document.getElementById("app-root");
+        if (!list || !app || app.style.display === "none") return false;
+        if (document.getElementById("nui-on-btn")) return true;
+        if (typeof hasElevatedAccess !== "function" || !hasElevatedAccess()) return false;
+        var on = document.createElement("button");
+        on.type = "button";
+        on.id = "nui-on-btn";
+        on.className = "btn btn-ghost";
+        on.textContent = "جرّب المظهر الجديد";
+        on.addEventListener("click", function() {
+            try {
+                localStorage.setItem(NUI_KEY, "1");
+            } catch (e) {}
+            location.reload();
+        });
+        list.appendChild(on);
+        return true;
+    }
     try {
         var flag = nuiParseFlag(location.search, localStorage.getItem(NUI_KEY));
         if (flag.save !== null) localStorage.setItem(NUI_KEY, flag.save);
         if (flag.strip && window.history && history.replaceState) history.replaceState(null, "", location.pathname + nuiStripParam(location.search) + location.hash);
-        if (!flag.on) return;
+        if (!flag.on) {
+            var tries = 0, timer = setInterval(function() {
+                tries++;
+                if (nuiOfferSwitch() || tries > 400) clearInterval(timer);
+            }, 1500);
+            return;
+        }
         document.body.classList.add("nui");
         var nav = nuiBuild(), pending = false;
         var schedule = function(muts) {
