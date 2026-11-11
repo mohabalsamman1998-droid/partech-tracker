@@ -4372,6 +4372,20 @@
   .omlay-sup-add::before{content:"";display:block;width:16px;height:16px;background-color:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M12 5v14M5 12h14'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M12 5v14M5 12h14'/%3E%3C/svg%3E") center/contain no-repeat;}
   .omlay-sup-add:hover{color:var(--text);}
   /* OMLAY END css */
+  /* OMLAY2 BEGIN css */
+  /* نافذة التسعير بنفس تخطيط نافذة الطلبية: نوع الفاتورة بجانب عنوان النافذة بعبارتين مختصرتين، وشريط إضافة القطعة تحت القطع، وزر «مورد جديد» (للمشتريات) يُخفى وتحلّ محلّه علامة + داخل حقل المورد (CSS علامة + في منطقة OMLAY) */
+  .modal-card.omlay2-on .modal-title > .omlay-imode{display:inline-flex;align-items:center;margin:0 10px;font-size:13px;font-weight:700;vertical-align:middle;}
+  .modal-card.omlay2-on .omlay-imode .opsx-imode-label,.modal-card.omlay2-on .omlay-imode .opsx-imode-hint{display:none;}
+  .modal-card.omlay2-on .omlay-imode .opsx-imode{display:inline-flex;flex-wrap:nowrap;gap:6px;}
+  .modal-card.omlay2-on .omlay-imode .chip{flex:0 0 auto;min-height:44px;padding:0 14px;font-size:0;line-height:0;}
+  .modal-card.omlay2-on .omlay-imode .chip::after{font-size:13px;line-height:1.2;font-weight:700;}
+  .modal-card.omlay2-on .omlay-imode .chip[data-opsx-imode="tax"]::after{content:"نظامية";}
+  .modal-card.omlay2-on .omlay-imode .chip[data-opsx-imode="none"]::after{content:"بدون";}
+  .modal-card.omlay2-on #quote-parts-list + .netp-addbar{margin:10px 0 0;}
+  .modal-card.omlay2-on #quote-add-supplier-btn{display:none;}
+  /* سطر المشتريات (ارفق فواتير… / يشترط فاتورة…) أول ما بالنافذة، واضح وهادئ من الباليت */
+  .modal-card.omlay2-on .omlay2-ro{margin:0 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);font-size:14px;font-weight:800;color:var(--text);}
+  /* OMLAY2 END css */
 </style>
 </head>
 <body>
@@ -101094,6 +101108,127 @@ function opsxTitlesStrip(txt, kind) {
         } catch (e3) {}
     } catch (e) {
         if (typeof console !== "undefined") console.warn("OMLAY install:", e);
+    }
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__omlay2Installed) return;
+        window.__omlay2Installed = true;
+        if (typeof dnotePartLine === "function" && !dnotePartLine.omlay2Wrapped) {
+            var prevLine = dnotePartLine;
+            dnotePartLine = function(it, i, picked) {
+                try {
+                    if (it && it.used === true && it.quality !== undefined) {
+                        var c = {};
+                        for (var k in it) {
+                            if (Object.prototype.hasOwnProperty.call(it, k) && k !== "quality") c[k] = it[k];
+                        }
+                        return prevLine.call(this, c, i, picked);
+                    }
+                } catch (e) {}
+                return prevLine.apply(this, arguments);
+            };
+            dnotePartLine.omlay2Wrapped = true;
+        }
+        if (typeof opsxImodeSync === "function" && !opsxImodeSync.omlay2Wrapped) {
+            var prevSync = opsxImodeSync;
+            opsxImodeSync = function() {
+                var r = prevSync.apply(this, arguments);
+                try {
+                    var cur = opsxImodeCur(), d = cur && cur.d;
+                    var root = document.getElementById("modal-root");
+                    var ro = root && root.querySelector ? root.querySelector("[data-opsx-imode-ro]") : null;
+                    if (ro && d && cur.kind === "quote") {
+                        var eff = opsxImodeEffective(d);
+                        var txt = eff === "none" ? "ارفق فواتير عادية غير ضريبية" : eff === "tax" ? "يشترط فاتورة حتى لو ضريبية" : "نوع الطلبية غير محدد";
+                        if (ro.textContent !== txt) ro.textContent = txt;
+                    }
+                } catch (e) {}
+                return r;
+            };
+            opsxImodeSync.omlay2Wrapped = true;
+        }
+        function after(ref, el) {
+            if (!ref || !el || !ref.parentNode) return;
+            if (ref.nextElementSibling !== el) ref.parentNode.insertBefore(el, ref.nextSibling);
+        }
+        function arrange() {
+            try {
+                var root = document.getElementById("modal-root");
+                var card = root && root.querySelector ? root.querySelector(".modal-card") : null;
+                var car = card ? card.querySelector("#quote-car-field") : null;
+                if (!card || !car) return;
+                var vin = card.querySelector("#quote-vin-input"), vf = vin && vin.closest ? vin.closest(".field") : null;
+                if (vf) after(car, vf);
+                var list = card.querySelector("#quote-parts-list"), bar = card.querySelector('.netp-addbar[data-netp-addbar="quote"]');
+                if (list && bar) after(list, bar);
+                var title = card.querySelector(".modal-header .modal-title"), im = card.querySelector("[data-opsx-imode-bar]");
+                if (title && im && im.parentNode !== title) {
+                    im.classList.add("omlay-imode");
+                    title.appendChild(im);
+                }
+                var ro = card.querySelector("[data-opsx-imode-ro]"), body = card.querySelector(".modal-body");
+                if (ro && body && body.firstElementChild !== ro) {
+                    if (!ro.classList.contains("omlay2-ro")) ro.classList.add("omlay2-ro");
+                    body.insertBefore(ro, body.firstChild);
+                }
+                if (card.querySelector("#quote-add-supplier-btn")) {
+                    var inputs = card.querySelectorAll(".searchable-select > .quote-part-supplier-select, .searchable-select > .suppall-select-input");
+                    for (var i = 0; i < inputs.length; i++) {
+                        var w = inputs[i].parentNode;
+                        if (w.querySelector(":scope > .omlay-sup-add")) continue;
+                        var b = document.createElement("button");
+                        b.type = "button";
+                        b.className = "omlay-sup-add";
+                        b.setAttribute("aria-label", "مورد جديد");
+                        b.title = "مورد جديد";
+                        w.appendChild(b);
+                        if (!w.classList.contains("omlay-has-add")) w.classList.add("omlay-has-add");
+                    }
+                }
+                if (!card._omlay2Bound) {
+                    card._omlay2Bound = true;
+                    card.addEventListener("click", function(e) {
+                        var t = e.target && e.target.closest ? e.target.closest(".omlay-sup-add") : null;
+                        if (!t) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        var orig = document.getElementById("quote-add-supplier-btn");
+                        if (orig) orig.click();
+                    }, true);
+                }
+                if (!card.classList.contains("omlay2-on")) card.classList.add("omlay2-on");
+            } catch (err) {
+                try {
+                    console.warn("OMLAY2:", err);
+                } catch (e2) {}
+            }
+        }
+        window.__omlay2Arrange = arrange;
+        var queued = false;
+        function schedule() {
+            if (queued) return;
+            queued = true;
+            (window.requestAnimationFrame || window.setTimeout)(function() {
+                queued = false;
+                arrange();
+            });
+        }
+        try {
+            var rootEl = document.getElementById("modal-root");
+            if (rootEl && typeof MutationObserver === "function") {
+                new MutationObserver(schedule).observe(rootEl, {
+                    childList: true,
+                    subtree: true,
+                    attributes: true,
+                    attributeFilter: [ "class" ]
+                });
+            }
+            schedule();
+        } catch (e3) {}
+    } catch (e) {
+        if (typeof console !== "undefined") console.warn("OMLAY2 install:", e);
     }
 })();</script>
 </body>
