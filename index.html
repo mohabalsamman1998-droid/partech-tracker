@@ -101659,6 +101659,217 @@ function opsxTitlesStrip(txt, kind) {
     } catch (e) {
         if (typeof console !== "undefined") console.warn("SUPED install:", e);
     }
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__shrdxInstalled) return;
+        if (typeof shareDoc !== "function" || typeof persistDocMeta !== "function" || typeof buildDocPdfBlob !== "function" || typeof withTimeout !== "function" || typeof docPdfFilename !== "function" || typeof buildDocWhatsAppText !== "function" || typeof writeTextToClipboard !== "function") return;
+        window.__shrdxInstalled = true;
+        var IDLE_LABEL = "📤 مشاركة", READY_LABEL = "📤 اضغط لإرسال الملف";
+        var ready = null;
+        function hashOf(s) {
+            var h = 5381;
+            for (var i = 0; i < s.length; i++) {
+                h = (h << 5) + h + s.charCodeAt(i) | 0;
+            }
+            return h + ":" + s.length;
+        }
+        function docKey() {
+            var sh = document.getElementById("doc-sheet");
+            return hashOf(JSON.stringify(docState.data) + "|" + (sh ? sh.innerHTML : ""));
+        }
+        function noteFailure(stage, err) {
+            var d = {
+                at: (new Date).toISOString(),
+                stage: stage,
+                name: err && err.name || "Error",
+                msg: String(err && err.message || err || "").replace(/\s+/g, " ").slice(0, 100)
+            };
+            window.__shrdxLast = d;
+            try {
+                localStorage.setItem("partech-share-diag", JSON.stringify(d));
+            } catch (e) {}
+            return d;
+        }
+        function isGestureError(err) {
+            return !!err && err.name === "NotAllowedError";
+        }
+        function attemptFile(file, title) {
+            var p;
+            try {
+                p = navigator.share({
+                    files: [ file ],
+                    title: title,
+                    text: title
+                });
+            } catch (e) {
+                return Promise.resolve({
+                    err: e
+                });
+            }
+            return withTimeout(p, NATIVE_SHARE_TIMEOUT_MS, "navigator.share files").then(function() {
+                return {
+                    ok: true
+                };
+            }, function(e) {
+                return e && e.name === "AbortError" ? {
+                    abort: true
+                } : {
+                    err: e
+                };
+            });
+        }
+        async function textFallback(fullText, shareTitle, priorErr) {
+            var lastErr = priorErr || null;
+            if (navigator.share) {
+                try {
+                    await withTimeout(navigator.share({
+                        title: shareTitle,
+                        text: fullText
+                    }), NATIVE_SHARE_TIMEOUT_MS, "navigator.share text");
+                    return;
+                } catch (errText) {
+                    if (errText && errText.name === "AbortError") return;
+                    lastErr = errText;
+                }
+            }
+            if (lastErr) noteFailure("text", lastErr);
+            var ok = await writeTextToClipboard(fullText);
+            var code = lastErr ? " (" + (lastErr && lastErr.name || "Error") + ")" : "";
+            showToast(ok ? "المشاركة غير مدعومة بهذا المتصفح، تم نسخ النص — الصقه في واتساب" + code : "تعذرت المشاركة، جرّب متصفح Chrome" + code, ok ? "ok" : "error");
+        }
+        shareDoc = async function() {
+            if (!docState) return;
+            var openedDocState = docState;
+            var order = appData.orders.find(function(o) {
+                return o.id === docState.orderId;
+            });
+            if (!order) return;
+            var btn = document.getElementById("doc-share-btn");
+            var closeBtn = document.getElementById("doc-close-btn");
+            var setBusy = function(b, label) {
+                if (btn) {
+                    btn.disabled = b;
+                    btn.textContent = b ? label || "جاري التجهيز…" : IDLE_LABEL;
+                }
+                if (closeBtn) closeBtn.disabled = b;
+                if (b) document.removeEventListener("keydown", docEscListener); else if (docState === openedDocState) document.addEventListener("keydown", docEscListener);
+            };
+            var r0 = ready && ready.ds === openedDocState && ready.key === docKey() ? ready : null;
+            ready = null;
+            if (r0) {
+                setBusy(true, "جاري فتح المشاركة…");
+                try {
+                    var res0 = await attemptFile(r0.file, r0.title);
+                    if (res0.ok || res0.abort) return;
+                    noteFailure("file", res0.err);
+                    await textFallback(r0.fullText, r0.title, res0.err);
+                } catch (e) {
+                    showToast("حدث خطأ أثناء محاولة المشاركة", "error");
+                } finally {
+                    setBusy(false);
+                }
+                return;
+            }
+            setBusy(true, "جاري التجهيز…");
+            var offered = false;
+            try {
+                markEmptyDocFields();
+                var fileShareSupported = false;
+                if (navigator.share && navigator.canShare) {
+                    try {
+                        var dummy = new File([ "%PDF" ], "test.pdf", {
+                            type: "application/pdf"
+                        });
+                        fileShareSupported = navigator.canShare({
+                            files: [ dummy ]
+                        });
+                    } catch (e) {
+                        fileShareSupported = false;
+                    }
+                }
+                var step = {
+                    saved: false,
+                    built: false
+                };
+                var relabel = function() {
+                    if (!btn || !btn.disabled) return;
+                    btn.textContent = step.saved && !step.built ? "جاري إنشاء PDF…" : step.built && !step.saved ? "جاري الحفظ…" : "جاري التجهيز…";
+                };
+                var pSave = persistDocMeta(false, true).then(function(v) {
+                    step.saved = true;
+                    relabel();
+                    return v;
+                });
+                var pBuild = fileShareSupported ? buildDocPdfBlob().catch(function() {
+                    return null;
+                }).then(function(v) {
+                    step.built = true;
+                    relabel();
+                    return v;
+                }) : Promise.resolve(null);
+                var both = await Promise.all([ pSave, pBuild ]);
+                var saved = both[0], blob = both[1];
+                if (docState !== openedDocState) return;
+                if (!saved) {
+                    showToast("تعذر حفظ نسخة المستند — تم إلغاء المشاركة، حاول مرة أخرى", "error");
+                    return;
+                }
+                if (fileShareSupported && !blob) fileShareSupported = false;
+                var liveOrder = appData.orders.find(function(o) {
+                    return o.id === docState.orderId;
+                }) || order;
+                var isInvoice = docState.type === "invoice";
+                var shareTitle = "PARTECH — " + (isInvoice ? "فاتورة نقدية" : typeof taxinvQuoteShareTitle === "function" ? taxinvQuoteShareTitle() : "عرض أسعار") + " " + docState.data.number;
+                var fullText = buildDocWhatsAppText(liveOrder, docState.type, docState.data);
+                var lastErr = null;
+                if (fileShareSupported) {
+                    var file = new File([ blob ], docPdfFilename(), {
+                        type: "application/pdf"
+                    });
+                    var noActivation = false;
+                    try {
+                        noActivation = !!(navigator.userActivation && navigator.userActivation.isActive === false);
+                    } catch (e) {
+                        noActivation = false;
+                    }
+                    if (!noActivation) {
+                        setBusy(true, "جاري فتح المشاركة…");
+                        var res = await attemptFile(file, shareTitle);
+                        if (res.ok || res.abort) return;
+                        lastErr = res.err;
+                        noteFailure("file", lastErr);
+                        noActivation = isGestureError(lastErr);
+                    }
+                    if (noActivation) {
+                        if (docState !== openedDocState) return;
+                        ready = {
+                            ds: openedDocState,
+                            key: docKey(),
+                            file: file,
+                            title: shareTitle,
+                            fullText: fullText
+                        };
+                        offered = true;
+                        showToast("الملف جاهز — اضغط «إرسال الملف» لفتح المشاركة", "ok");
+                        return;
+                    }
+                }
+                await textFallback(fullText, shareTitle, lastErr);
+            } catch (e) {
+                showToast("حدث خطأ أثناء محاولة المشاركة", "error");
+            } finally {
+                setBusy(false);
+                if (offered && docState === openedDocState) {
+                    var b2 = document.getElementById("doc-share-btn");
+                    if (b2) b2.textContent = READY_LABEL;
+                }
+            }
+        };
+    } catch (e) {
+        if (typeof console !== "undefined") console.warn("SHRDX install:", e);
+    }
 })();</script>
 </body>
 </html>
