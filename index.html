@@ -101870,6 +101870,471 @@ function opsxTitlesStrip(txt, kind) {
     } catch (e) {
         if (typeof console !== "undefined") console.warn("SHRDX install:", e);
     }
+})();
+
+(function() {
+    try {
+        if (window.__pdfsfInstalled) return;
+        if (typeof buildDocPdfBlob !== "function" || typeof pdfMeasureFrame !== "function" || typeof pdfPagedSheet !== "function" || typeof pdfIsolateLtrRuns !== "function" || typeof ensureHtml2pdf !== "function" || typeof withTimeout !== "function" || typeof docPdfFilename !== "function" || typeof PDF_RENDER_W === "undefined" || typeof PDF_RENDER_SCALE === "undefined" || typeof PDF_RENDER_MAX_PAGES === "undefined") return;
+        window.__pdfsfInstalled = true;
+        var CAP_FONTS_MS = 3500, CAP_IMG_MS = 3e3, CAP_PAGED_MS = 8e3, CAP_RENDER_PAGED_MS = 12e3, CAP_RENDER_LEGACY_MS = 15e3;
+        var FAILS_KEY = "partech-pdfsf-paged", FAILS_TO_SKIP = 2, SKIP_MS = 3 * 24 * 3600 * 1e3;
+        var BLANK_PX = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+        var fontCss = "", fontProbes = [], fontsPromise = null, imgCache = {};
+        function wait(ms) {
+            return new Promise(function(r) {
+                setTimeout(r, ms);
+            });
+        }
+        function errCode(e) {
+            return String(e && e.message || e || "err").replace(/^TIMEOUT: /, "T:").slice(0, 28);
+        }
+        function toB64(buf) {
+            var u = new Uint8Array(buf), s = "", i;
+            for (i = 0; i < u.length; i += 32768) s += String.fromCharCode.apply(null, u.subarray(i, i + 32768));
+            return btoa(s);
+        }
+        function mimeOf(url) {
+            return /\.woff2(\?|$)/i.test(url) ? "font/woff2" : /\.woff(\?|$)/i.test(url) ? "font/woff" : /\.ttf(\?|$)/i.test(url) ? "font/ttf" : "font/woff2";
+        }
+        async function embedFontCss(cssText, fetchBin) {
+            var blocks = String(cssText || "").match(/@font-face\s*\{[^}]*\}/g) || [];
+            var groups = {}, order = [], urls = {};
+            blocks.forEach(function(b) {
+                var u = /url\(\s*['"]?([^)'"\s]+)['"]?\s*\)/.exec(b);
+                if (!u) return;
+                var fam = /font-family:\s*['"]?([^;'"]+?)['"]?\s*;/.exec(b), wt = /font-weight:\s*(\d+)/.exec(b), st = /font-style:\s*([a-z]+)/.exec(b), ur = /unicode-range:\s*([^;]+);/.exec(b);
+                var key = u[1] + "|" + (ur ? ur[1].trim() : "") + "|" + (st ? st[1] : "normal") + "|" + (fam ? fam[1].trim() : "");
+                if (!groups[key]) {
+                    groups[key] = {
+                        url: u[1],
+                        fam: fam ? fam[1].trim() : "",
+                        st: st ? st[1] : "normal",
+                        ur: ur ? ur[1].trim() : "",
+                        ws: []
+                    };
+                    order.push(key);
+                }
+                if (wt) groups[key].ws.push(+wt[1]);
+                urls[u[1]] = 1;
+            });
+            var data = {};
+            await Promise.all(Object.keys(urls).map(function(u) {
+                return Promise.resolve(fetchBin(u)).then(function(buf) {
+                    data[u] = toB64(buf);
+                });
+            }));
+            var probes = [], seen = {};
+            var css = order.map(function(k) {
+                var g = groups[k], lo = g.ws.length ? Math.min.apply(null, g.ws) : 400, hi = g.ws.length ? Math.max.apply(null, g.ws) : 400;
+                g.ws.forEach(function(w) {
+                    var p = w + ' 16px "' + g.fam + '"';
+                    if (!seen[p]) {
+                        seen[p] = 1;
+                        probes.push(p);
+                    }
+                });
+                return "@font-face{font-family:'" + g.fam + "';font-style:" + g.st + ";font-weight:" + (lo === hi ? lo : lo + " " + hi) + ";src:url(data:" + mimeOf(g.url) + ";base64," + data[g.url] + ") format('" + (mimeOf(g.url) === "font/woff2" ? "woff2" : "woff") + "');" + (g.ur ? "unicode-range:" + g.ur + ";" : "") + "}";
+            }).join("\n");
+            return {
+                css: css,
+                probes: probes
+            };
+        }
+        function isGoogleFontLink(n) {
+            return !!n && n.tagName === "LINK" && /fonts[.]googleapis[.]com/.test(n.getAttribute("href") || "");
+        }
+        function loadFonts() {
+            if (fontsPromise) return fontsPromise;
+            var link = document.querySelector('link[rel~="stylesheet"][href*="fonts.googleapis.com"]');
+            if (!link) {
+                fontsPromise = Promise.resolve("");
+                return fontsPromise;
+            }
+            var p = withTimeout(async function() {
+                var r = await fetch(link.href, {
+                    credentials: "omit"
+                });
+                if (!r.ok) throw new Error("FONT_CSS_HTTP");
+                var out = await embedFontCss(await r.text(), function(u) {
+                    return fetch(u, {
+                        credentials: "omit"
+                    }).then(function(x) {
+                        if (!x.ok) throw new Error("FONT_HTTP");
+                        return x.arrayBuffer();
+                    });
+                });
+                if (!out.css) throw new Error("FONT_CSS_EMPTY");
+                fontCss = out.css;
+                fontProbes = out.probes;
+                return out.css;
+            }(), CAP_FONTS_MS, "pdf fonts");
+            fontsPromise = p;
+            p.then(null, function() {
+                if (fontsPromise === p) fontsPromise = null;
+            });
+            return p;
+        }
+        function fromLoadedImage(src) {
+            var imgs = document.images, i, im, c;
+            for (i = 0; i < imgs.length; i++) {
+                im = imgs[i];
+                if (im.getAttribute("src") !== src || !im.complete || !im.naturalWidth) continue;
+                try {
+                    c = document.createElement("canvas");
+                    c.width = im.naturalWidth;
+                    c.height = im.naturalHeight;
+                    c.getContext("2d").drawImage(im, 0, 0);
+                    return c.toDataURL("image/png");
+                } catch (e) {
+                    return null;
+                }
+            }
+            return null;
+        }
+        function fetchDataUrl(src) {
+            return withTimeout(fetch(src, {
+                credentials: "same-origin"
+            }).then(function(r) {
+                if (!r.ok) throw new Error("IMG_HTTP");
+                return r.blob();
+            }).then(function(b) {
+                return new Promise(function(res, rej) {
+                    var fr = new FileReader;
+                    fr.onload = function() {
+                        res(fr.result);
+                    };
+                    fr.onerror = function() {
+                        rej(new Error("IMG_READ"));
+                    };
+                    fr.readAsDataURL(b);
+                });
+            }), CAP_IMG_MS, "pdf image");
+        }
+        async function inlineLiveImages(root, track) {
+            var list = root.querySelectorAll("img"), i, im, src, url, n = 0, dropped = 0;
+            for (i = 0; i < list.length; i++) {
+                im = list[i];
+                src = im.getAttribute("src");
+                if (!src || /^data:/i.test(src)) continue;
+                url = imgCache[src] || fromLoadedImage(src);
+                if (!url) {
+                    try {
+                        url = await fetchDataUrl(src);
+                    } catch (e) {
+                        url = null;
+                    }
+                }
+                track.push([ im, src ]);
+                if (url) {
+                    imgCache[src] = url;
+                    im.setAttribute("src", url);
+                    n++;
+                } else {
+                    im.setAttribute("src", BLANK_PX);
+                    dropped++;
+                }
+            }
+            return {
+                inlined: n,
+                dropped: dropped
+            };
+        }
+        pdfMeasureFrame = async function() {
+            var f = document.createElement("iframe");
+            f.setAttribute("aria-hidden", "true");
+            f.setAttribute("tabindex", "-1");
+            f.style.cssText = "position:fixed;left:-20000px;top:0;width:" + PDF_RENDER_W + "px;height:1400px;border:0;visibility:hidden;pointer-events:none;";
+            document.body.appendChild(f);
+            try {
+                var d = f.contentDocument;
+                d.open();
+                d.write('<!doctype html><html><head><meta charset="utf-8"></head><body></body></html>');
+                d.close();
+                Array.from(document.documentElement.attributes).forEach(function(a) {
+                    try {
+                        d.documentElement.setAttribute(a.name, a.value);
+                    } catch (e) {}
+                });
+                Array.from(document.body.attributes).forEach(function(a) {
+                    try {
+                        d.body.setAttribute(a.name, a.value);
+                    } catch (e) {}
+                });
+                var pend = [];
+                document.querySelectorAll('style, link[rel~="stylesheet"]').forEach(function(n) {
+                    if (isGoogleFontLink(n)) return;
+                    var c = n.cloneNode(true);
+                    if (c.tagName === "LINK") pend.push(new Promise(function(res) {
+                        c.addEventListener("load", res);
+                        c.addEventListener("error", res);
+                    }));
+                    d.head.appendChild(c);
+                });
+                if (fontCss) {
+                    var st = d.createElement("style");
+                    st.setAttribute("data-pdfsf-fonts", "1");
+                    st.textContent = fontCss;
+                    d.head.appendChild(st);
+                }
+                if (pend.length) await Promise.race([ Promise.all(pend), new Promise(function(res) {
+                    setTimeout(res, 4e3);
+                }) ]);
+                return f;
+            } catch (e) {
+                try {
+                    f.remove();
+                } catch (x) {}
+                throw e;
+            }
+        };
+        function pruneEl(el) {
+            if (el.parentNode === document.body) return !(el.classList && el.classList.contains("html2pdf__overlay")) && el.tagName !== "STYLE" && el.tagName !== "LINK";
+            return isGoogleFontLink(el);
+        }
+        function mkOnclone() {
+            return function(cd) {
+                try {
+                    var c = cd.querySelector(".html2pdf__container");
+                    if (c) pdfIsolateLtrRuns(c);
+                } catch (e) {}
+                if (!fontCss) return;
+                try {
+                    var st = cd.createElement("style");
+                    st.setAttribute("data-pdfsf-fonts", "1");
+                    st.textContent = fontCss;
+                    cd.head.appendChild(st);
+                    var loads = fontProbes.map(function(p) {
+                        try {
+                            return cd.fonts.load(p, "ابتثجحخدذرزسشصضطظعغفقكلمنهوي ABCabc 0123456789").then(null, function() {});
+                        } catch (e) {
+                            return null;
+                        }
+                    });
+                    return Promise.race([ Promise.all(loads), wait(CAP_FONTS_MS) ]).then(null, function() {});
+                } catch (e) {}
+            };
+        }
+        function optPaged(paged) {
+            return {
+                margin: 8,
+                filename: docPdfFilename(),
+                image: {
+                    type: "jpeg",
+                    quality: .92
+                },
+                html2canvas: {
+                    scale: paged.pages <= PDF_RENDER_MAX_PAGES ? PDF_RENDER_SCALE : 1,
+                    useCORS: true,
+                    backgroundColor: "#ffffff",
+                    windowWidth: PDF_RENDER_W,
+                    ignoreElements: pruneEl,
+                    onclone: mkOnclone()
+                },
+                jsPDF: {
+                    unit: "mm",
+                    format: "a4",
+                    orientation: "portrait"
+                },
+                pagebreak: {
+                    mode: []
+                }
+            };
+        }
+        function optLegacy() {
+            return {
+                margin: 8,
+                filename: docPdfFilename(),
+                image: {
+                    type: "jpeg",
+                    quality: .98
+                },
+                html2canvas: {
+                    scale: 1,
+                    useCORS: true,
+                    backgroundColor: "#ffffff",
+                    windowWidth: PDF_RENDER_W,
+                    ignoreElements: pruneEl,
+                    onclone: mkOnclone()
+                },
+                jsPDF: {
+                    unit: "mm",
+                    format: "a4",
+                    orientation: "portrait"
+                },
+                pagebreak: {
+                    mode: [ "css", "legacy" ],
+                    avoid: [ "tr", ".doc-totals", ".doc-totals-row" ]
+                }
+            };
+        }
+        function snap() {
+            try {
+                var f = document.querySelector("iframe.html2canvas-container");
+                if (!f) return "no-clone";
+                var d = f.contentDocument;
+                if (!d) return "no-doc";
+                var im = Array.prototype.slice.call(d.images);
+                return "rs=" + d.readyState + ";fonts=" + (d.fonts ? d.fonts.status : "-") + ";img=" + im.filter(function(i) {
+                    return i.complete;
+                }).length + "/" + im.length;
+            } catch (e) {
+                return "snap-err";
+            }
+        }
+        function cleanupStray() {
+            try {
+                Array.prototype.slice.call(document.querySelectorAll(".html2pdf__overlay, iframe.html2canvas-container")).forEach(function(n) {
+                    n.remove();
+                });
+            } catch (e) {}
+            try {
+                Array.prototype.slice.call(document.querySelectorAll('iframe[aria-hidden="true"][tabindex="-1"]')).forEach(function(n) {
+                    if (/-20000px/.test(n.style.cssText)) n.remove();
+                });
+            } catch (e) {}
+        }
+        async function renderOnce(srcEl, opt, capMs, label, D, key) {
+            var t0 = performance.now();
+            var pr = html2pdf().set(opt).from(srcEl).outputPdf("blob");
+            try {
+                pr.then(null, function() {});
+            } catch (e) {}
+            var timer = setTimeout(function() {
+                D["snap" + key] = snap();
+            }, Math.max(1e3, capMs - 2e3));
+            try {
+                var b = await withTimeout(pr, capMs, label);
+                D.tl.push(key + ":" + Math.round(performance.now() - t0));
+                return b;
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+        function pagedState() {
+            try {
+                var o = JSON.parse(localStorage.getItem(FAILS_KEY) || "null");
+                return o && typeof o.n === "number" && Date.now() - o.t < SKIP_MS ? o.n : 0;
+            } catch (e) {
+                return 0;
+            }
+        }
+        function setPagedState(n) {
+            try {
+                if (n) localStorage.setItem(FAILS_KEY, JSON.stringify({
+                    n: n,
+                    t: Date.now()
+                })); else localStorage.removeItem(FAILS_KEY);
+            } catch (e) {}
+        }
+        function persistDiag(D) {
+            try {
+                localStorage.setItem("partech-pdf-diag", JSON.stringify(D));
+            } catch (e) {}
+        }
+        buildDocPdfBlob = async function() {
+            var T0 = performance.now();
+            var D = window.__pdfsfLast = {
+                tl: [],
+                mode: "",
+                fonts: "",
+                imgs: "",
+                errA: "",
+                errB: "",
+                snapA: "",
+                snapB: ""
+            };
+            var mark = function(n) {
+                D.tl.push(n + ":" + Math.round(performance.now() - T0));
+            };
+            var fp = loadFonts().then(function() {
+                return true;
+            }, function(e) {
+                D.fonts = "none(" + errCode(e) + ")";
+                return false;
+            });
+            try {
+                await ensureHtml2pdf();
+            } catch (e) {
+                throw new Error("LIB_MISSING");
+            }
+            if (typeof html2pdf === "undefined") throw new Error("LIB_MISSING");
+            var sheet = document.getElementById("doc-sheet");
+            if (!sheet) throw new Error("NO_SHEET");
+            mark("lib");
+            sheet.classList.add("pdf-export-mode");
+            sheet.querySelectorAll("input").forEach(function(inp) {
+                inp.setAttribute("value", inp.value);
+            });
+            var track = [], paged = null, blob = null;
+            try {
+                await fp;
+                if (fontCss) D.fonts = "embedded";
+                mark("fonts");
+                var im = await inlineLiveImages(sheet, track);
+                D.imgs = im.inlined + "/" + im.dropped;
+                mark("imgs");
+                var skip = pagedState() >= FAILS_TO_SKIP;
+                if (skip) {
+                    D.mode = "skip";
+                } else {
+                    try {
+                        paged = await withTimeout(pdfPagedSheet(sheet), CAP_PAGED_MS, "pdfPagedSheet");
+                    } catch (e) {
+                        paged = null;
+                        D.errA = errCode(e);
+                    }
+                    mark("paged:" + (paged ? paged.pages : D.errA ? "err" : "null"));
+                    if (paged) {
+                        try {
+                            blob = await renderOnce(paged.root, optPaged(paged), CAP_RENDER_PAGED_MS, "html2pdf paged", D, "A");
+                            D.mode = "paged";
+                            setPagedState(0);
+                        } catch (e) {
+                            D.errA = errCode(e);
+                        }
+                        try {
+                            paged.cleanup();
+                        } catch (e) {}
+                        paged = null;
+                    }
+                    if (!blob && D.errA) cleanupStray();
+                }
+                if (!blob) {
+                    try {
+                        blob = await renderOnce(sheet, optLegacy(), CAP_RENDER_LEGACY_MS, "html2pdf legacy", D, "B");
+                        D.mode = D.mode === "skip" ? "legacy-skip" : "legacy";
+                        if (D.errA) setPagedState(pagedState() + 1);
+                    } catch (e) {
+                        D.errB = errCode(e);
+                        cleanupStray();
+                        mark("fail");
+                        try {
+                            if (typeof showPersistentErrorToast === "function") showPersistentErrorToast("تعذّر إنشاء PDF — " + D.tl.join(" ") + " | A=" + (D.errA || "-") + " B=" + D.errB + " | " + (D.snapB || D.snapA || "-"));
+                        } catch (x) {}
+                        throw e;
+                    }
+                }
+                mark("done");
+                return blob;
+            } finally {
+                track.forEach(function(t) {
+                    try {
+                        t[0].setAttribute("src", t[1]);
+                    } catch (e) {}
+                });
+                sheet.classList.remove("pdf-export-mode");
+                if (paged) {
+                    try {
+                        paged.cleanup();
+                    } catch (e) {}
+                }
+                persistDiag(D);
+            }
+        };
+    } catch (e) {
+        console.warn("PDFSF install:", e);
+    }
 })();</script>
 </body>
 </html>
