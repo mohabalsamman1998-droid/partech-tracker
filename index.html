@@ -101311,6 +101311,354 @@ function opsxTitlesStrip(txt, kind) {
         }
         schedule();
     } catch (e) {}
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__supedInstalled) return;
+        if (typeof acnMemberAccounts !== "function" || typeof acnEntriesAct !== "function" || typeof acnSupportValidate !== "function" || typeof acnSupportFormHtml !== "function") return;
+        window.__supedInstalled = true;
+        var BOX_PREFIX = "box-";
+        function toast(msg, kind) {
+            try {
+                if (typeof showToast === "function") showToast(msg, kind);
+            } catch (e) {}
+        }
+        function elevated() {
+            return typeof hasElevatedAccess !== "function" || !!hasElevatedAccess();
+        }
+        function stateNow() {
+            return typeof acnState !== "undefined" ? acnState : null;
+        }
+        function rawId(lineId) {
+            var s = String(lineId == null ? "" : lineId);
+            return s.indexOf(BOX_PREFIX) === 0 ? s.slice(BOX_PREFIX.length) : "";
+        }
+        function supportOf(treasury) {
+            return treasury && Array.isArray(treasury.support) ? treasury.support : [];
+        }
+        function liveEntry(id) {
+            var l = supportOf(typeof appData !== "undefined" && appData ? appData.treasury : null);
+            for (var i = 0; i < l.length; i++) {
+                if (l[i] && l[i].id === id) return l[i];
+            }
+            return null;
+        }
+        function managed(id) {
+            try {
+                if (typeof expenseEntryIsSystem === "function" && expenseEntryIsSystem(id)) return true;
+                if (typeof tamaraPlanIsEntryId === "function" && tamaraPlanIsEntryId(id)) return true;
+                if (typeof tamaraDepositIsEntryId === "function" && tamaraDepositIsEntryId(id)) return true;
+                if (typeof unsavedDraftEntryIds !== "undefined" && unsavedDraftEntryIds && typeof unsavedDraftEntryIds.has === "function" && unsavedDraftEntryIds.has(id)) return true;
+            } catch (e) {
+                return true;
+            }
+            return false;
+        }
+        function detailsOf(note, key) {
+            var t = acnClean(note);
+            var name = typeof ACN_MEMBERS !== "undefined" && ACN_MEMBERS[key] || "";
+            if (!name) return t;
+            var m = new RegExp("^(?:دعم\\s+من|سحب|دعم|من)?\\s*" + name + "\\s*(?:[\\u2014\\u2013-]+\\s*)?").exec(t);
+            return m ? t.slice(m[0].length).trim() : t;
+        }
+        function nextValues(orig, ve, form) {
+            var key = acnMemberKeyFromNote(orig.note);
+            var dir0 = (Number(orig.amount) || 0) < 0 ? "out" : "in";
+            var keepNote = form.member === key && form.dir === dir0 && acnClean(form.note) === acnClean(detailsOf(orig.note, key));
+            var odt = acnParseDmy(orig.date);
+            return {
+                amount: ve.amount,
+                date: odt && odt.ymd === form.date ? orig.date : ve.date,
+                note: keepNote ? orig.note : ve.note
+            };
+        }
+        async function submitEdit(id, form) {
+            var st = stateNow();
+            if (!st) return {
+                ok: false,
+                error: "الشاشة مغلقة"
+            };
+            if (st.busy) return {
+                ok: false,
+                busy: true
+            };
+            var v = acnSupportValidate(form);
+            if (!v.ok) return v;
+            var cur = liveEntry(id);
+            if (!cur) return {
+                ok: false,
+                stale: true,
+                error: "القيد لم يعد موجودًا — حُدِّثت الشاشة"
+            };
+            var orig = {
+                amount: cur.amount,
+                date: cur.date,
+                note: cur.note
+            };
+            var next = nextValues(orig, v.entry, form);
+            if (Number(next.amount) === Number(orig.amount) && next.date === orig.date && next.note === orig.note) return {
+                ok: true,
+                nochange: true
+            };
+            st.busy = true;
+            try {
+                if (typeof acnDupGuard === "function") {
+                    var proceed = true;
+                    try {
+                        proceed = await acnDupGuard({
+                            src: "box",
+                            category: "support",
+                            entry: {
+                                id: id,
+                                amount: next.amount,
+                                date: next.date,
+                                note: next.note
+                            },
+                            isNew: false,
+                            orig: orig
+                        });
+                    } catch (e) {
+                        proceed = true;
+                    }
+                    if (!proceed) return {
+                        ok: false,
+                        cancelled: true
+                    };
+                }
+                var live = liveEntry(id);
+                if (!live) return {
+                    ok: false,
+                    stale: true,
+                    error: "القيد لم يعد موجودًا — حُدِّثت الشاشة"
+                };
+                var prev = {
+                    amount: live.amount,
+                    date: live.date,
+                    note: live.note
+                };
+                live.amount = next.amount;
+                live.date = next.date;
+                live.note = next.note;
+                var saved = await persistTreasuryEntry(live, "support");
+                if (!saved) {
+                    live.amount = prev.amount;
+                    live.date = prev.date;
+                    live.note = prev.note;
+                    return {
+                        ok: false,
+                        error: "تعذر حفظ القيد بالصندوق"
+                    };
+                }
+                return {
+                    ok: true
+                };
+            } finally {
+                st.busy = false;
+            }
+        }
+        function refreshViews() {
+            try {
+                if (typeof renderTreasuryView === "function") renderTreasuryView();
+            } catch (e) {}
+            if (stateNow()) {
+                acnRecompute();
+                acnRender();
+            }
+        }
+        function closePopup() {
+            if (typeof acnPopupClose === "function") acnPopupClose();
+        }
+        function openEdit(id) {
+            if (!elevated()) {
+                toast("غير متاح", "error");
+                return false;
+            }
+            var root = document.getElementById("modal-root");
+            if (!root || !stateNow()) return false;
+            var e = liveEntry(id);
+            if (!e) {
+                toast("القيد غير موجود — أعد التحميل", "error");
+                return false;
+            }
+            var key = acnMemberKeyFromNote(e.note);
+            if (managed(id) || !key) {
+                toast("غير متاح", "error");
+                return false;
+            }
+            var amt = Number(e.amount) || 0, dir0 = amt < 0 ? "out" : "in", dt = acnParseDmy(e.date);
+            root.innerHTML = acnSupportFormHtml(key, dir0);
+            root.classList.add("modal-open");
+            var q = function(sel) {
+                return root.querySelector(sel);
+            };
+            var title = q(".modal-title");
+            if (title) title.textContent = "✏️ تعديل دعم أو سحب بالصندوق";
+            var hint = q(".acn-note");
+            if (hint) hint.textContent = "يُعدَّل القيد بالصندوق نفسه فيتغيّر رصيد الصندوق وحساب العضو معًا.";
+            var amtEl = q("#acn-s-amount"), dateEl = q("#acn-s-date"), noteEl = q("#acn-s-note");
+            if (amtEl) amtEl.value = String(Math.abs(amt));
+            if (dateEl) dateEl.value = dt ? dt.ymd : "";
+            if (noteEl) noteEl.value = detailsOf(e.note, key);
+            var who = key, dir = dir0;
+            var chips = function(attr, setter) {
+                var list = root.querySelectorAll("[" + attr + "]");
+                for (var i = 0; i < list.length; i++) {
+                    (function(btn) {
+                        btn.addEventListener("click", function() {
+                            setter(btn.getAttribute(attr));
+                            var all = root.querySelectorAll("[" + attr + "]");
+                            for (var k = 0; k < all.length; k++) all[k].classList.remove("chip-active");
+                            btn.classList.add("chip-active");
+                        });
+                    })(list[i]);
+                }
+            };
+            chips("data-acn-smember", function(v) {
+                who = v;
+            });
+            chips("data-acn-sdir", function(v) {
+                dir = v;
+            });
+            var bd = q("[data-close-backdrop]");
+            if (bd) bd.addEventListener("click", function(ev) {
+                if (ev.target && ev.target.hasAttribute && ev.target.hasAttribute("data-close-backdrop")) closePopup();
+            });
+            var cancel = q("#acn-s-cancel");
+            if (cancel) cancel.addEventListener("click", closePopup);
+            var val = function(sel) {
+                var el = q(sel);
+                return el ? el.value : "";
+            };
+            var errEl = q("#acn-s-err"), saveBtn = q("#acn-s-save");
+            if (saveBtn) saveBtn.addEventListener("click", function() {
+                if (saveBtn.disabled) return;
+                if (errEl) errEl.textContent = "";
+                saveBtn.disabled = true;
+                var p;
+                try {
+                    p = submitEdit(id, {
+                        member: who,
+                        dir: dir,
+                        amount: val("#acn-s-amount"),
+                        date: val("#acn-s-date"),
+                        note: val("#acn-s-note")
+                    });
+                } catch (x) {
+                    p = Promise.resolve({
+                        ok: false,
+                        error: "تعذر الحفظ"
+                    });
+                }
+                Promise.resolve(p).then(function(res) {
+                    if (res && res.ok) {
+                        closePopup();
+                        if (!res.nochange) {
+                            toast("تم تعديل القيد بالصندوق", "ok");
+                            refreshViews();
+                        }
+                    } else if (res && res.stale) {
+                        closePopup();
+                        toast(res.error || "القيد لم يعد موجودًا", "error");
+                        refreshViews();
+                    } else if (errEl && res && !res.busy && !res.cancelled) {
+                        errEl.textContent = res.error || "تعذر الحفظ";
+                    }
+                }, function() {
+                    if (errEl) errEl.textContent = "تعذر الحفظ";
+                }).then(function() {
+                    saveBtn.disabled = false;
+                });
+            });
+            return true;
+        }
+        async function doDelete(id) {
+            var st = stateNow();
+            if (!st || st.busy) return;
+            st.busy = true;
+            var done = false;
+            try {
+                var ok = await deleteTreasuryEntry(id);
+                if (ok) {
+                    if (typeof appData !== "undefined" && appData && appData.treasury) appData.treasury.support = supportOf(appData.treasury).filter(function(x) {
+                        return !x || x.id !== id;
+                    });
+                    done = true;
+                }
+            } finally {
+                st.busy = false;
+            }
+            if (done) {
+                toast("تم حذف القيد من الصندوق", "ok");
+                refreshViews();
+            }
+        }
+        function askDelete(id) {
+            if (!elevated()) {
+                toast("غير متاح", "error");
+                return false;
+            }
+            var e = liveEntry(id);
+            if (!e) {
+                toast("القيد غير موجود — أعد التحميل", "error");
+                return false;
+            }
+            var key = acnMemberKeyFromNote(e.note);
+            if (managed(id) || !key) {
+                toast("غير متاح", "error");
+                return false;
+            }
+            if (typeof confirmAction !== "function") return false;
+            var amt = Number(e.amount) || 0, who = typeof ACN_MEMBERS !== "undefined" && ACN_MEMBERS[key] || "";
+            confirmAction({
+                title: "حذف هذا القيد من الصندوق؟",
+                message: acnClean(e.note) + " — " + acnNum(Math.abs(amt)) + " ريال" + (who ? " (" + (amt < 0 ? "عليه " : "له ") + who + ")" : "") + ". يُحذف من الصندوق نفسه فيتغيّر رصيده. لا يمكن التراجع.",
+                confirmLabel: "حذف",
+                dangerous: true,
+                onConfirm: function() {
+                    doDelete(id);
+                }
+            });
+            return true;
+        }
+        var prevAct = acnEntriesAct;
+        acnEntriesAct = function(act, el) {
+            if ((act === "entry-edit" || act === "entry-del") && el && typeof el.getAttribute === "function") {
+                var id = rawId(el.getAttribute("data-acn-id"));
+                if (id) {
+                    try {
+                        if (act === "entry-edit") openEdit(id); else askDelete(id);
+                    } catch (e) {
+                        if (typeof console !== "undefined") console.warn("SUPED act:", e);
+                        toast("تعذر فتح القيد", "error");
+                    }
+                    return true;
+                }
+            }
+            return prevAct.apply(this, arguments);
+        };
+        var prevAccounts = acnMemberAccounts;
+        acnMemberAccounts = function(entries, treasury) {
+            var r = prevAccounts.apply(this, arguments);
+            try {
+                var have = {}, sup = supportOf(treasury);
+                for (var s = 0; s < sup.length; s++) {
+                    if (sup[s] && sup[s].id) have[sup[s].id] = true;
+                }
+                var ms = r && r.members || [];
+                for (var i = 0; i < ms.length; i++) {
+                    var lines = ms[i] && ms[i].lines || [];
+                    for (var j = 0; j < lines.length; j++) {
+                        var l = lines[j], id = l && l.source === "box" ? rawId(l.id) : "";
+                        if (id && have[id] === true && !managed(id)) l.editable = true;
+                    }
+                }
+            } catch (e) {}
+            return r;
+        };
+    } catch (e) {
+        if (typeof console !== "undefined") console.warn("SUPED install:", e);
+    }
 })();</script>
 </body>
 </html>
