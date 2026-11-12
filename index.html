@@ -102523,6 +102523,93 @@ function opsxTitlesStrip(txt, kind) {
     } catch (e) {
         if (typeof console !== "undefined") console.warn("STSHR install:", e);
     }
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__hydltInstalled) return;
+        if (typeof hydrateArchivedOrders !== "function" || typeof fetchAllRows !== "function" || typeof withRetry !== "function" || typeof orderRowToObject !== "function" || typeof scheduleOrderRenderCascade !== "function" || typeof renderOpsKpi !== "function" || typeof showToast !== "function" || typeof migrateLegacyCustomerPayment !== "function" || typeof migrateLegacyOrderLabel !== "function" || typeof updateArchivePendingBadge !== "function") return;
+        window.__hydltInstalled = true;
+        var ID_CHUNK = 40;
+        hydrateArchivedOrders = async function() {
+            try {
+                if (!sb) return;
+                var both = await Promise.all([ withRetry(function() {
+                    return fetchAllRows(function(from, to) {
+                        return sb.from("orders").select("*").eq("extra->>archived", "true").order("id", {
+                            ascending: true
+                        }).range(from, to);
+                    });
+                }, 3, 1500), withRetry(function() {
+                    return fetchAllRows(function(from, to) {
+                        return sb.from("orders").select("id").order("id", {
+                            ascending: true
+                        }).range(from, to);
+                    });
+                }, 3, 1500) ]);
+                var arch = both[0], idsRes = both[1];
+                if (arch.error) throw arch.error;
+                if (idsRes.error) throw idsRes.error;
+                var archivedRows = arch.data || [];
+                var gotIds = new Set(archivedRows.map(function(r) {
+                    return r.id;
+                }));
+                var haveIds = new Set(appData.orders.map(function(o) {
+                    return o.id;
+                }));
+                var need = [];
+                (idsRes.data || []).forEach(function(r) {
+                    var id = r.id;
+                    if (gotIds.has(id)) return;
+                    if (!haveIds.has(id) || carriedArchivedOrderIds.has(id)) need.push(id);
+                });
+                var extraRows = [];
+                for (var i = 0; i < need.length; i += ID_CHUNK) {
+                    var chunk = need.slice(i, i + ID_CHUNK);
+                    var got = await withRetry(function() {
+                        return sb.from("orders").select("*").in("id", chunk);
+                    }, 3, 1500);
+                    if (got.error) throw got.error;
+                    (got.data || []).forEach(function(row) {
+                        extraRows.push(row);
+                    });
+                }
+                var data = archivedRows.concat(extraRows);
+                let addedAny = false;
+                if (carriedArchivedOrderIds.size) {
+                    const freshById = new Map((data || []).map(r => [ r.id, r ]));
+                    appData.orders = appData.orders.map(o => {
+                        if (!carriedArchivedOrderIds.has(o.id)) return o;
+                        const fr = freshById.get(o.id);
+                        return fr ? orderRowToObject(fr) : null;
+                    }).filter(Boolean);
+                    carriedArchivedOrderIds = new Set;
+                    addedAny = true;
+                }
+                const existingIds = new Set(appData.orders.map(o => o.id));
+                (data || []).forEach(row => {
+                    if (existingIds.has(row.id)) return;
+                    appData.orders.push(orderRowToObject(row));
+                    addedAny = true;
+                });
+                if (addedAny) {
+                    migrateLegacyCustomerPayment();
+                    migrateLegacyOrderLabel();
+                    updateArchivePendingBadge();
+                    scheduleOrderRenderCascade();
+                }
+            } catch (e) {
+                console.error("hydrateArchivedOrders:", e);
+                carriedArchivedOrderIds = new Set;
+                showToast("تعذر تحميل باقي الطلبيات بالخلفية — بعض البيانات قد تكون ناقصة مؤقتًا، جرّب تحديث الصفحة", "error");
+            } finally {
+                opsKpiOrdersReady = true;
+                renderOpsKpi();
+            }
+        };
+    } catch (e) {
+        console.warn("HYDLT install:", e);
+    }
 })();</script>
 </body>
 </html>
