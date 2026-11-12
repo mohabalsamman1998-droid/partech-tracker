@@ -102335,6 +102335,194 @@ function opsxTitlesStrip(txt, kind) {
     } catch (e) {
         console.warn("PDFSF install:", e);
     }
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__stshrInstalled) return;
+        if (typeof shareStatement !== "function" || typeof buildDocPdfBlob !== "function" || typeof withTimeout !== "function" || typeof statementPdfFilename !== "function" || typeof buildStatementWhatsAppText !== "function" || typeof customerOrderHistory !== "function" || typeof customerRefundsPending !== "function" || typeof writeTextToClipboard !== "function" || typeof showToast !== "function" || typeof NATIVE_SHARE_TIMEOUT_MS === "undefined") return;
+        window.__stshrInstalled = true;
+        var IDLE_LABEL = "📤 مشاركة", READY_LABEL = "📤 اضغط لإرسال الملف";
+        var ready = null;
+        function hashOf(s) {
+            var h = 5381;
+            for (var i = 0; i < s.length; i++) {
+                h = (h << 5) + h + s.charCodeAt(i) | 0;
+            }
+            return h + ":" + s.length;
+        }
+        function sheetKey(cid) {
+            var sh = document.getElementById("doc-sheet");
+            return String(cid) + "|" + hashOf(sh ? sh.innerHTML : "");
+        }
+        function noteFailure(stage, err) {
+            var d = {
+                at: (new Date).toISOString(),
+                what: "statement",
+                stage: stage,
+                name: err && err.name || "Error",
+                msg: String(err && err.message || err || "").replace(/\s+/g, " ").slice(0, 100)
+            };
+            window.__stshrLast = d;
+            try {
+                localStorage.setItem("partech-share-diag", JSON.stringify(d));
+            } catch (e) {}
+            return d;
+        }
+        function isGestureError(err) {
+            return !!err && err.name === "NotAllowedError";
+        }
+        function attemptFile(file, title) {
+            var p;
+            try {
+                p = navigator.share({
+                    files: [ file ],
+                    title: title,
+                    text: title
+                });
+            } catch (e) {
+                return Promise.resolve({
+                    err: e
+                });
+            }
+            return withTimeout(p, NATIVE_SHARE_TIMEOUT_MS, "navigator.share files").then(function() {
+                return {
+                    ok: true
+                };
+            }, function(e) {
+                return e && e.name === "AbortError" ? {
+                    abort: true
+                } : {
+                    err: e
+                };
+            });
+        }
+        async function textFallback(fullText, shareTitle, priorErr) {
+            var lastErr = priorErr || null;
+            if (navigator.share) {
+                try {
+                    await withTimeout(navigator.share({
+                        title: shareTitle,
+                        text: fullText
+                    }), NATIVE_SHARE_TIMEOUT_MS, "navigator.share text");
+                    return;
+                } catch (errText) {
+                    if (errText && errText.name === "AbortError") return;
+                    lastErr = errText;
+                }
+            }
+            if (lastErr) noteFailure("text", lastErr);
+            var ok = await writeTextToClipboard(fullText);
+            var code = lastErr ? " (" + (lastErr && lastErr.name || "Error") + ")" : "";
+            showToast(ok ? "المشاركة غير مدعومة بهذا المتصفح، تم نسخ النص — ألصقه في واتساب" + code : "تعذرت المشاركة، جرّب متصفح Chrome" + code, ok ? "ok" : "error");
+        }
+        shareStatement = async function() {
+            if (!statementCustomerId) return;
+            var openedFor = statementCustomerId;
+            var customer = (appData.customers || []).find(function(c) {
+                return c.id === openedFor;
+            });
+            if (!customer) return;
+            var btn = document.getElementById("statement-share-btn");
+            var closeBtn = document.getElementById("statement-close-btn");
+            var setBusy = function(b, label) {
+                if (btn) {
+                    btn.disabled = b;
+                    btn.textContent = b ? label || "جاري التجهيز…" : IDLE_LABEL;
+                }
+                if (closeBtn) closeBtn.disabled = b;
+            };
+            var r0 = ready && ready.cid === openedFor && ready.key === sheetKey(openedFor) ? ready : null;
+            ready = null;
+            if (r0) {
+                setBusy(true, "جاري فتح المشاركة…");
+                try {
+                    var res0 = await attemptFile(r0.file, r0.title);
+                    if (res0.ok || res0.abort) return;
+                    noteFailure("file", res0.err);
+                    await textFallback(r0.fullText, r0.title, res0.err);
+                } catch (e) {
+                    showToast("حدث خطأ أثناء محاولة المشاركة", "error");
+                } finally {
+                    setBusy(false);
+                }
+                return;
+            }
+            setBusy(true, "جاري التجهيز…");
+            var offered = false;
+            try {
+                var fileShareSupported = false;
+                if (navigator.share && navigator.canShare) {
+                    try {
+                        var dummy = new File([ "%PDF" ], "test.pdf", {
+                            type: "application/pdf"
+                        });
+                        fileShareSupported = navigator.canShare({
+                            files: [ dummy ]
+                        });
+                    } catch (e) {
+                        fileShareSupported = false;
+                    }
+                }
+                var blob = fileShareSupported ? await buildDocPdfBlob().catch(function() {
+                    return null;
+                }) : null;
+                if (statementCustomerId !== openedFor) return;
+                if (fileShareSupported && !blob) fileShareSupported = false;
+                var hist = customerOrderHistory(openedFor);
+                var refunds = customerRefundsPending(openedFor);
+                var shareTitle = "PARTECH — كشف حساب — " + (customer.name || customer.phone || "عميل");
+                var fullText = buildStatementWhatsAppText(customer, hist.ongoing, hist.past, refunds, {
+                    showPaid: statementShowPaid,
+                    showRefunds: statementShowRefunds
+                });
+                var lastErr = null;
+                if (fileShareSupported) {
+                    var file = new File([ blob ], statementPdfFilename(customer), {
+                        type: "application/pdf"
+                    });
+                    var noActivation = false;
+                    try {
+                        noActivation = !!(navigator.userActivation && navigator.userActivation.isActive === false);
+                    } catch (e) {
+                        noActivation = false;
+                    }
+                    if (!noActivation) {
+                        setBusy(true, "جاري فتح المشاركة…");
+                        var res = await attemptFile(file, shareTitle);
+                        if (res.ok || res.abort) return;
+                        lastErr = res.err;
+                        noteFailure("file", lastErr);
+                        noActivation = isGestureError(lastErr);
+                    }
+                    if (noActivation) {
+                        if (statementCustomerId !== openedFor) return;
+                        ready = {
+                            cid: openedFor,
+                            key: sheetKey(openedFor),
+                            file: file,
+                            title: shareTitle,
+                            fullText: fullText
+                        };
+                        offered = true;
+                        showToast("الملف جاهز — اضغط «إرسال الملف» لفتح المشاركة", "ok");
+                        return;
+                    }
+                }
+                await textFallback(fullText, shareTitle, lastErr);
+            } catch (e) {
+                showToast("حدث خطأ أثناء محاولة المشاركة", "error");
+            } finally {
+                setBusy(false);
+                if (offered && statementCustomerId === openedFor) {
+                    var b2 = document.getElementById("statement-share-btn");
+                    if (b2) b2.textContent = READY_LABEL;
+                }
+            }
+        };
+    } catch (e) {
+        if (typeof console !== "undefined") console.warn("STSHR install:", e);
+    }
 })();</script>
 </body>
 </html>
