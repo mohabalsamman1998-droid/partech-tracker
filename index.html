@@ -6171,12 +6171,17 @@ function netpOver(p) {
     return !!(p && p.supplierId && p.noTaxInvoiceFor && p.noTaxInvoiceFor === p.supplierId);
 }
 
+function netpPlain(p) {
+    return !!(p && p.used === true && p.invoiceKind === "plain");
+}
+
 function netpMode(p) {
     return netpOver(p) ? "no" : netpBaseMode(p);
 }
 
 function netpBaseMode(p) {
     try {
+        if (netpPlain(p)) return "no";
         if (!p || !p.supplierId) return "";
         const list = typeof appData !== "undefined" && appData && Array.isArray(appData.suppliers) ? appData.suppliers : [];
         const s = list.find(x => x && x.id === p.supplierId);
@@ -6335,15 +6340,15 @@ function netpSupMark(row, p) {
             lab.classList.add("netp-sup-host");
             lab.appendChild(tag);
         }
-        const has = !!(p && p.supplierId), over = netpOver(p), base = has ? netpBaseMode(p) : "", mode = over ? "no" : base;
-        const canToggle = has && (over || base !== "no");
-        const text = !has ? "" : over ? "بلا فاتورة ✱" : mode === "yes" ? "🧾 نظامي" : mode === "no" ? "بلا فاتورة" : "غير محدد";
+        const has = !!(p && p.supplierId), plain = netpPlain(p), over = netpOver(p), base = has ? netpBaseMode(p) : "", mode = over || plain ? "no" : base;
+        const canToggle = has && !plain && (over || base !== "no");
+        const text = !has ? "" : plain ? "فاتورة عادية" : over ? "بلا فاتورة ✱" : mode === "yes" ? "🧾 نظامي" : mode === "no" ? "بلا فاتورة" : "غير محدد";
         if (tag.textContent !== text) {
             tag.textContent = text;
-            tag.title = !has ? "" : over ? "استثناء لهذا الشراء فقط: لا فاتورة ضريبية — اضغط لإلغاء الاستثناء" : mode === "yes" ? "المورد نظامي — ضريبة الشراء تُسترد. اضغط إن لم يسلّمك فاتورة هذه المرة" : mode === "no" ? "المورد لا يصدر فاتورة ضريبية — ضريبة الشراء لا تُسترد" : "علامة فاتورة المورد غير محددة — حساب الضريبة التلقائي متوقف. اضغط لتسجيل هذا الشراء «بلا فاتورة»، أو حدّد علامة المورد من بطاقته";
+            tag.title = !has ? "" : plain ? "المشتريات سجّلت هذه القطعة بفاتورة عادية — ضريبة شرائها لا تُسترد" : over ? "استثناء لهذا الشراء فقط: لا فاتورة ضريبية — اضغط لإلغاء الاستثناء" : mode === "yes" ? "المورد نظامي — ضريبة الشراء تُسترد. اضغط إن لم يسلّمك فاتورة هذه المرة" : mode === "no" ? "المورد لا يصدر فاتورة ضريبية — ضريبة الشراء لا تُسترد" : "علامة فاتورة المورد غير محددة — حساب الضريبة التلقائي متوقف. اضغط لتسجيل هذا الشراء «بلا فاتورة»، أو حدّد علامة المورد من بطاقته";
         }
         tag.setAttribute("data-tax", has ? mode : "");
-        tag.setAttribute("data-over", over ? "1" : "");
+        tag.setAttribute("data-over", over && !plain ? "1" : "");
         tag.setAttribute("data-netp-toggle", canToggle ? "1" : "");
     } catch (e) {
         console.warn("netpSupMark:", e);
@@ -32794,6 +32799,28 @@ var PTX_ACCT = function() {
         }
         return doc.issuedDate <= prev ? "amount" : "adjust";
     }
+    function lateInvoiceClass(doc, ctx) {
+        var c = obj(ctx), period = obj(c.period), otp, prev, pp;
+        if (!doc || !doc.isInvoice || doc.series !== "live") {
+            return "";
+        }
+        if (str(period.from) === "" || !periodContains(period, doc.issuedDate)) {
+            return "";
+        }
+        otp = periodDate(doc, lookup(c.ordIdx, doc.orderId), c.effective);
+        if (otp === "" || otp >= period.from) {
+            return "";
+        }
+        pp = previousFilingPeriod(period);
+        if (pp.from === "" || otp < pp.from) {
+            return "older";
+        }
+        prev = isIso(c.previousFilingDate) ? c.previousFilingDate : "";
+        if (prev === "") {
+            return "needs_input";
+        }
+        return doc.issuedDate <= prev ? "before" : "after";
+    }
     var BASE_FN = [ "orderTotals", "orderHasSupplyKeys", "orderSupplyLedger", "partIsIncludedInOrder", "partPayStamp", "partPurchaseCostSettled", "bucketSettlement", "partSupplied", "partSuppliedAtIso", "partInPurchaseLedger", "orderDisplayLabel", "deliveryOrderEligible", "treasuryTotals", "amerCustodyBalance", "omarCustodyBalance", "draftTotalH" ];
     var TREASURY_KEYS = [ "delivery", "transport", "unexpectedLosses", "salaries", "hr", "other", "tamaraFees", "support", "amerCustody", "omarCustody" ];
     var EVENT_RANK = {
@@ -34426,6 +34453,7 @@ var PTX_ACCT = function() {
             currentInvoice: currentInvoice,
             hasInvoice: hasInvoice,
             creditClass: creditClass,
+            lateInvoiceClass: lateInvoiceClass,
             earliestReceipt: earliestReceipt
         },
         facts: {
@@ -35067,6 +35095,44 @@ var PTX_ACCT_SHEETS = function(core) {
             sumH: sumH,
             partial: partial
         };
+    }
+    function sxLate(c) {
+        const ctx = {
+            period: c.period,
+            ordIdx: c.ordIdx,
+            previousFilingDate: c.opts.previousFilingDate,
+            effective: c.effective
+        };
+        const picked = [];
+        c.docs.forEach(function(d) {
+            const cls = core.docs.lateInvoiceClass(d, ctx);
+            if (cls !== "") picked.push({
+                d: d,
+                cls: cls,
+                tp: sxTaxPoint(c, d)
+            });
+        });
+        return sxSortBy(picked, function(z) {
+            return sxStr(z.tp.date) + "|" + sxStr(z.d.issuedAt) + "|" + sxStr(z.d.number);
+        }).map(function(z) {
+            const d = z.d;
+            return {
+                id: sxStr(d.id),
+                number: sxStr(d.number),
+                kind: KIND[d.kind] || sxStr(d.kind),
+                taxDate: sxStr(z.tp.date),
+                issued: sxStr(d.issuedDate),
+                supply: sxStr(d.supplyDate),
+                customer: sxStr(d.buyerName),
+                custVat: sxStr(d.buyerVat),
+                taxH: sxInt(d.taxableH),
+                vatH: sxInt(d.vatH),
+                totH: sxInt(d.totalH),
+                creditedH: sxInt(d.creditedH),
+                order: sxStr(d.orderNumber),
+                cls: z.cls
+            };
+        });
     }
     function sxSheet03(c) {
         const picked = [];
@@ -35989,6 +36055,9 @@ var PTX_ACCT_SHEETS = function(core) {
             list: [],
             signedH: 0
         });
+        s.late = sxGuard(c, "late", function() {
+            return sxLate(c);
+        }, []);
         s.r01 = sxGuard(c, "01", function() {
             return sxSheet01(c, s.r02, s.r03);
         }, {
@@ -36119,6 +36188,7 @@ var PTX_ACCT_SHEETS = function(core) {
             checks: s.checks,
             readiness: s.readiness,
             quality: s.quality,
+            late: s.late,
             fileName: "",
             stamp: core.date.riyadhStamp(f.nowIso)
         };
@@ -40290,6 +40360,14 @@ var PTX_ACCT_PACK = function(A) {
     const UNINV_INCL = "لا يدخل الإقرار — بلا فاتورة (تقدير)";
     const UNINV_SALES_ID = "UNS:";
     const UNINV_EST_ID = "EST:";
+    const LATE_SERIES = "فترة سابقة";
+    const LATE_ID = "LATE:";
+    const LATE_INCL = {
+        older: "لا — تاريخ استحقاقها أقدم من الفترة السابقة مباشرة: تصحيح فترتها قرار المحاسب",
+        needs_input: "لا — يحتاج تاريخ تقديم إقرار الفترة السابقة",
+        before: "لا — صدرت قبل تقديم إقرار فترتها: تأكد أنها أُدرجت فيه",
+        after: "لا — صدرت بعد تقديم إقرار فترتها: تصحيح فترة سابقة (الخانة 14 أو تعديل الإقرار) — قرار المحاسب"
+    };
     const VOUCHER_HEADERS = [ "رقم السند", "التاريخ", "المورد", "الطلب", "المبلغ", "جهة السداد", "السبب", "توقيع الدافع", "توقيع المستلم" ];
     const VOUCHER_FILE = "internal-payment-vouchers.csv";
     const DQ_CODES = [ "D03", "D10", "D11", "D12", "D16", "D17", "D18", "D19", "D20", "D21" ];
@@ -40369,7 +40447,7 @@ var PTX_ACCT_PACK = function(A) {
     const IN_PRE_WORD = "قبل التسجيل";
     const IN_DUP_PREFIX = "لا — مكرّر";
     const VAT_TOLERANCE_H = 100;
-    const EXP_CAT_ORDER = [ "التوصيل", "مواصلات", "خسائر غير متوقعة", "رواتب", "موارد بشرية", "أخرى" ];
+    const EXP_CAT_ORDER = [ "التوصيل", "مواصلات", "خسائر غير متوقعة", "رواتب", "موارد بشرية", "أخرى", "رسوم تمارا" ];
     const DELIVERY_CAT = "تكلفة توصيل الطلبيات";
     const DELIVERY_ACCOUNT = "مصاريف توصيل";
     const SHEET_CONTENT = {
@@ -41303,6 +41381,44 @@ var PTX_ACCT_PACK = function(A) {
                 return x.vatH;
             })
         };
+        const lateAll = guard("الفواتير المتأخرة", function() {
+            return objs(p1 && p1.late).map(function(x) {
+                const cls = str(x.cls);
+                let note = cls === "older" ? "تاريخ استحقاقها أقدم من الفترة السابقة مباشرة فلا يكفي تاريخ تقديم الفترة السابقة لتصنيفها — يقرّر المحاسب أهي مُدرجة بإقرار فترتها أم تحتاج تصحيحًا (الخانة 14 أو تعديل الإقرار)" : cls === "needs_input" ? "صدرت بالفترة وتاريخ استحقاقها بالفترة السابقة مباشرة — أدخل «تاريخ تقديم إقرار الفترة السابقة» ثم أعد التصدير لتُصنَّف" : cls === "before" ? "تاريخ استحقاقها قبل هذه الفترة وصدرت قبل تقديم إقرار فترتها — لا تدخل هذه الفترة؛ تأكد أنها أُدرجت بإقرار فترتها" : "تاريخ استحقاقها قبل هذه الفترة وصدرت بعد تقديم إقرار فترتها فلا يحملها ذلك الإقرار — لا تدخل هذه الفترة أيضًا؛ تصحيح فترة سابقة قرار المحاسب";
+                if (int(x.creditedH) > 0) {
+                    note += " — رُدّ منها " + fmt(int(x.creditedH)) + " ر.س بإشعار دائن (يظهر الإشعار بتاريخ إصداره)";
+                }
+                return {
+                    rowId: LATE_ID + str(x.id),
+                    series: LATE_SERIES,
+                    number: str(x.number),
+                    kind: str(x.kind),
+                    taxDate: str(x.taxDate),
+                    issued: str(x.issued),
+                    customer: str(x.customer),
+                    custVat: str(x.custVat),
+                    taxH: int(x.taxH),
+                    vatH: int(x.vatH),
+                    totH: int(x.totH),
+                    incl: has(LATE_INCL, cls) ? LATE_INCL[cls] : "",
+                    order: str(x.order),
+                    cls: cls,
+                    note: note
+                };
+            });
+        }, []);
+        const lateAfter = lateAll.filter(function(x) {
+            return x.cls === "after";
+        });
+        const lateNeeds = lateAll.filter(function(x) {
+            return x.cls === "needs_input";
+        });
+        const lateOlder = lateAll.filter(function(x) {
+            return x.cls === "older";
+        });
+        const lateBefore = lateAll.filter(function(x) {
+            return x.cls === "before";
+        });
         const purch = guard("سجل المشتريات", function() {
             const out = [];
             eligible.forEach(function(d) {
@@ -42063,6 +42179,18 @@ var PTX_ACCT_PACK = function(A) {
             if (uninv.est.length || estimate.amountH + estimate.vatH !== 0) {
                 rows.push([ "TOTAL:est", "تقدير", "الإجمالي — تقدير الضريبة بلا فاتورة (سطر التقدير بالورقة 01)", "", "", "", "", "", M(estimate.amountH), M(estimate.vatH), M(uninvEstH), "", "", "", estDiffH !== 0 ? "فرق عن تقدير الورقة 01: " + fmt(estDiffH) + " ر.س" : "" ]);
             }
+            lateAll.forEach(function(x) {
+                rows.push([ x.rowId, LATE_SERIES, x.number, x.kind, D(x.taxDate), D(x.issued), x.customer, x.custVat, M(x.taxH), M(x.vatH), M(x.totH), "", x.incl, x.order, x.note ]);
+            });
+            if (lateAll.length) {
+                rows.push([ "TOTAL:late", LATE_SERIES, "الإجمالي — فواتير صدرت بالفترة بتاريخ استحقاق سابق (لا تدخل أي خانة)", "", "", "", "", "", M(sum(lateAll, function(x) {
+                    return x.taxH;
+                })), M(sum(lateAll, function(x) {
+                    return x.vatH;
+                })), M(sum(lateAll, function(x) {
+                    return x.totH;
+                })), "", "", "", "" ]);
+            }
             return rows;
         });
         put("03", function() {
@@ -42110,6 +42238,13 @@ var PTX_ACCT_PACK = function(A) {
             }
             rows.push(blank(7));
             rows.push([ "", "[تقدير] مقبوضات وتوريدات بلا فاتورة بالفترة — غير مضمّنة بالخانة 1", M(estimate.amountH), "", M(estimate.vatH), "تقدير 15%", "قرار المحاسب" ]);
+            if (lateAfter.length) {
+                rows.push([ "", "[معلومات] فواتير صدرت بعد تقديم إقرار فترتها — غير محتسبة بأي خانة", M(sum(lateAfter, function(x) {
+                    return x.taxH;
+                })), "", M(sum(lateAfter, function(x) {
+                    return x.vatH;
+                })), "02 سجل المبيعات", lateAfter.length + " فاتورة — تصحيح فترة سابقة (الخانة 14 أو تعديل الإقرار) قرار المحاسب" ]);
+            }
             rows.push([ "", "[معلومات] فواتير وإشعارات «قبل التسجيل» — خارج الإقرار", M(sum(preSales, function(x) {
                 return x.taxH;
             })), "", M(sum(preSales, function(x) {
@@ -42127,13 +42262,15 @@ var PTX_ACCT_PACK = function(A) {
                 return x.vatH;
             })), "02 سجل المبيعات", needsInput.length + " إشعار" ]);
             rows.push(blank(7));
-            const noOfficial = p1 !== null && !sales.some(function(x) {
+            const noOfficial = p1 !== null && !lateAll.length && !sales.some(function(x) {
                 return x.series === SERIES_LIVE;
             });
             const partialVat = sum(partialSales, function(x) {
                 return x.vatH;
             });
-            rows.push([ "", "⚠ للتأكيد", "", "", "", "", "للتأكيد: الخانتان 14 و15 يُدخلهما المحاسب" + (noOfficial ? "؛ لا مستندات رسمية بالفترة — كل ما فيها «قبل التسجيل» أو لا شيء، فالمخرجات الخاضعة صفر ولا تُقرّ ضريبة عنها" : "") + (estimate.vatH ? "؛ التقدير بلا فاتورة " + fmt(estimate.vatH) + " ر.س غير مضمّن" : "") + (awaiting.length ? "؛ " + awaiting.length + " مستند مدخلات بانتظار المراجعة" : "") + (heldNotes.length ? "؛ " + heldNotes.length + " إشعار دائن من مورد لم يُعدَّل لأن أصله غير مخصوم" : "") + (rcUndecided.length ? "؛ " + rcUndecided.length + " مستند احتساب عكسي بلا قرار خصم (ضريبته بالخانة 13 ولا تُخصم بالخانة 12)" : "") + (needsInput.length ? "؛ " + needsInput.length + " إشعار يحتاج تاريخ الإقرار الأصلي" : "") + (partialSales.length ? "؛ " + partialSales.length + " فاتورة مؤرّخة بقبض جزئي (" + fmt(partialVat) + " ر.س ضريبة) وتجزئتها قرار المحاسب" : "") + dqClause("01") + "؛ تُطابَق أرقام الخانات مع النموذج الحي." ]);
+            rows.push([ "", "⚠ للتأكيد", "", "", "", "", "للتأكيد: الخانتان 14 و15 يُدخلهما المحاسب" + (noOfficial ? "؛ لا مستندات رسمية بالفترة — كل ما فيها «قبل التسجيل» أو لا شيء، فالمخرجات الخاضعة صفر ولا تُقرّ ضريبة عنها" : "") + (estimate.vatH ? "؛ التقدير بلا فاتورة " + fmt(estimate.vatH) + " ر.س غير مضمّن" : "") + (awaiting.length ? "؛ " + awaiting.length + " مستند مدخلات بانتظار المراجعة" : "") + (heldNotes.length ? "؛ " + heldNotes.length + " إشعار دائن من مورد لم يُعدَّل لأن أصله غير مخصوم" : "") + (rcUndecided.length ? "؛ " + rcUndecided.length + " مستند احتساب عكسي بلا قرار خصم (ضريبته بالخانة 13 ولا تُخصم بالخانة 12)" : "") + (needsInput.length ? "؛ " + needsInput.length + " إشعار يحتاج تاريخ الإقرار الأصلي" : "") + (partialSales.length ? "؛ " + partialSales.length + " فاتورة مؤرّخة بقبض جزئي (" + fmt(partialVat) + " ر.س ضريبة) وتجزئتها قرار المحاسب" : "") + (lateAfter.length ? "؛ " + lateAfter.length + " فاتورة صدرت بعد تقديم إقرار فترتها (" + fmt(sum(lateAfter, function(x) {
+                return x.vatH;
+            })) + " ر.س ضريبة) ولا تدخل أي خانة هنا — تصحيح فترة سابقة قرار المحاسب" : "") + (lateNeeds.length ? "؛ " + lateNeeds.length + " فاتورة صدرت بالفترة وتاريخ استحقاقها بالفترة السابقة مباشرة وتحتاج تاريخ تقديم إقرار الفترة السابقة" : "") + (lateOlder.length ? "؛ " + lateOlder.length + " فاتورة صدرت بالفترة وتاريخ استحقاقها أقدم من الفترة السابقة مباشرة — تصحيح فترتها قرار المحاسب" : "") + (lateBefore.length ? "؛ " + lateBefore.length + " فاتورة صدرت قبل تقديم إقرار فترتها وتاريخ استحقاقها قبل هذه الفترة — تأكد أنها أُدرجت بإقرار فترتها" : "") + dqClause("01") + "؛ تُطابَق أرقام الخانات مع النموذج الحي." ]);
             return rows;
         });
         put("04", function() {
@@ -52214,12 +52351,13 @@ function taxxSheetReturn(ctx) {
     };
 }
 
-function taxxSheetSales(ctx) {
+function taxxSheetSales(ctx, noLate) {
     const pkg = ctx.pkg, s = taxxSheetOf(pkg, "02"), cols = taxxColsOf(s);
     const headers = [ "الرقم", "النوع", "السلسلة", "تاريخ الاستحقاق الضريبي", "تاريخ الإصدار", "العميل", "الرقم الضريبي للعميل", "قبل الضريبة", "الضريبة", "الإجمالي", "الفاتورة الأصلية", "يُدرج في", "الطلب", "ملاحظة", "الفاتورة" ];
     const rows = [], links = [], totals = {}, counts = {};
     taxxRowsOf(s).forEach(function(r) {
         const rid = taxxStr(r[0]);
+        if (noLate && (rid.indexOf("LATE:") === 0 || rid === "TOTAL:late")) return;
         if (rid.indexOf("TOTAL:") === 0) {
             totals[rid.slice(6)] = r;
             return;
@@ -52228,7 +52366,7 @@ function taxxSheetSales(ctx) {
         counts[series] = (counts[series] || 0) + 1;
         let url = "", text = "";
         const i = rid.indexOf(":"), rest = i >= 0 ? rid.slice(i + 1) : "";
-        if (rid.indexOf("INV:") === 0 || rid.indexOf("NOTE:") === 0) {
+        if (rid.indexOf("INV:") === 0 || rid.indexOf("NOTE:") === 0 || rid.indexOf("LATE:") === 0) {
             url = taxxLinkUrl(ctx.base, "inv", rest);
             text = url ? "فتح الفاتورة" : "";
         } else if (rid.indexOf("UNS:") === 0 || rid.indexOf("EST:") === 0) {
@@ -52242,7 +52380,7 @@ function taxxSheetSales(ctx) {
             tip: text
         } : null);
     });
-    const SUM = [ [ "live", "رسمية", "الفواتير والإشعارات الرسمية (تدخل الإقرار بحسب عمود «يُدرج في»)" ], [ "prelaunch", "قبل التسجيل", "فواتير وإشعارات قبل التسجيل (لا تدخل الإقرار)" ], [ "uninv", "بلا فاتورة", "طلبات موردة بلا فاتورة ضريبية (تقدير — لا تدخل الإقرار)" ], [ "est", "تقدير", "تقدير الضريبة على مقبوضات وتوريدات بلا فاتورة (يطابق سطر التقدير بورقة الإقرار)" ] ];
+    const SUM = [ [ "live", "رسمية", "الفواتير والإشعارات الرسمية (تدخل الإقرار بحسب عمود «يُدرج في»)" ], [ "prelaunch", "قبل التسجيل", "فواتير وإشعارات قبل التسجيل (لا تدخل الإقرار)" ], [ "uninv", "بلا فاتورة", "طلبات موردة بلا فاتورة ضريبية (تقدير — لا تدخل الإقرار)" ], [ "est", "تقدير", "تقدير الضريبة على مقبوضات وتوريدات بلا فاتورة (يطابق سطر التقدير بورقة الإقرار)" ], [ "late", "فترة سابقة", "فواتير صدرت بالفترة بتاريخ استحقاق سابق (لا تدخل أي خانة هنا — قرار المحاسب)" ] ];
     const sumRows = [];
     SUM.forEach(function(x) {
         const t = totals[x[0]];
@@ -52331,7 +52469,7 @@ function taxxSupplierMap(list) {
 
 function taxxSheetOrderCosts(ctx, inp) {
     const pkg = ctx.pkg, s = taxxSheetOf(pkg, "06"), cols = taxxColsOf(s);
-    const sup = taxxSupplierMap(inp.suppliers), modes = taxxObj(inp.modes), orders = {};
+    const sup = taxxSupplierMap(inp.suppliers), modes = taxxObj(inp.modes), plainMap = taxxObj(inp.plain), orders = {};
     taxxArr(ctx.facts.orders).forEach(function(o) {
         if (o && o.id !== undefined) orders[taxxRowKey(o.id)] = o;
     });
@@ -52343,7 +52481,7 @@ function taxxSheetOrderCosts(ctx, inp) {
         const bits = rid.split(":"), orderKey = bits[1] || "", supKey = bits[2] || "-";
         const o = orders[orderKey] || null, si = supKey !== "-" ? sup[supKey] || null : null;
         const rowCostH = taxxH(taxxPick(r, cols, "التكلفة"));
-        let y = 0, n = 0, u = 0, over = 0;
+        let y = 0, n = 0, u = 0, over = 0, pl = 0;
         if (o) {
             taxxArr(o.parts).forEach(function(p) {
                 if (!p || !p.included || p.returned || taxxRowKey(p.supplierId) !== supKey) return;
@@ -52353,7 +52491,7 @@ function taxxSheetOrderCosts(ctx, inp) {
                 const base = si ? taxxSupMode(si.tax) : "";
                 const m = Object.prototype.hasOwnProperty.call(modes, key) ? taxxSupMode(modes[key]) : base;
                 if (m === "yes") y += h; else if (m === "no") n += h; else u += h;
-                if (base === "yes" && m === "no") over += 1;
+                if (plainMap[key] === true) pl += 1; else if (base === "yes" && m === "no") over += 1;
             });
         }
         const tot = y + n + u;
@@ -52368,6 +52506,7 @@ function taxxSheetOrderCosts(ctx, inp) {
         const notes = [];
         if (flag === "مختلط") notes.push("نظامي " + (y / 100).toFixed(2) + " — بلا فاتورة " + (n / 100).toFixed(2) + " — غير محدد " + (u / 100).toFixed(2));
         if (over > 0) notes.push("بلا فاتورة هذه المرة (" + over + " قطعة)");
+        if (pl > 0) notes.push("فاتورة عادية — لا تُسترد ضريبتها (" + pl + " قطعة)");
         if (y > 0 && docState.indexOf("ناقص") >= 0) notes.push("فاتورة المورد النظامية ناقصة — تُطلب منه");
         if (y > 0 && si && taxxStr(si.vat) === "") notes.push("الرقم الضريبي للمورد غير مُدخل");
         if (tot > 0 && flag === "غير محدد") notes.push("علامة المورد غير محددة");
@@ -52500,6 +52639,21 @@ function taxxMissingGroups(ctx, kind) {
         return taxxStr(taxxPick(r, c2, "يُدرج في")).indexOf("لا يدخل الآن") === 0;
     });
     if (needs.length) out.push([ "إشعارات دائنة تحتاج تاريخ تقديم الإقرار الأصلي", needs.length, taxxSumH(needs, c2["الإجمالي"]), "أدخل «تاريخ تقديم إقرار الفترة السابقة» في نافذة التصدير ثم أعد التصدير" ]);
+    const lateRows = sales.filter(function(r) {
+        return taxxStr(r[0]).indexOf("LATE:") === 0;
+    });
+    const lateNeeds = lateRows.filter(function(r) {
+        return taxxStr(taxxPick(r, c2, "يُدرج في")).indexOf("يحتاج") >= 0;
+    });
+    if (lateNeeds.length) out.push([ "فواتير صدرت بالفترة وتاريخ استحقاقها بالفترة السابقة مباشرة تحتاج تاريخ تقديم إقرار الفترة السابقة", lateNeeds.length, taxxSumH(lateNeeds, c2["الإجمالي"]), "أدخل «تاريخ تقديم إقرار الفترة السابقة» في نافذة التصدير ثم أعد التصدير" ]);
+    const lateOlder = lateRows.filter(function(r) {
+        return taxxStr(taxxPick(r, c2, "يُدرج في")).indexOf("أقدم من الفترة السابقة") >= 0;
+    });
+    if (lateOlder.length) out.push([ "فواتير صدرت بالفترة وتاريخ استحقاقها أقدم من الفترة السابقة مباشرة (لا تدخل أي خانة)", lateOlder.length, taxxSumH(lateOlder, c2["الإجمالي"]), "تصحيح فترتها: الخانة 14 أو تعديل الإقرار — قرار المحاسب" ]);
+    const lateAfter = lateRows.filter(function(r) {
+        return taxxStr(taxxPick(r, c2, "يُدرج في")).indexOf("صدرت بعد تقديم") >= 0;
+    });
+    if (lateAfter.length) out.push([ "فواتير صدرت بعد تقديم إقرار فترتها (لا تدخل أي خانة)", lateAfter.length, taxxSumH(lateAfter, c2["الإجمالي"]), "تصحيح فترة سابقة: الخانة 14 أو تعديل الإقرار — قرار المحاسب" ]);
     const wait = purch.filter(function(r) {
         return taxxStr(taxxPick(r, c3, "في الإقرار")) === "لا — بانتظار مراجعة المحاسب";
     });
@@ -52652,7 +52806,7 @@ function taxxSheetIncome(ctx) {
 }
 
 function taxxSheetCitSales(ctx) {
-    const sh = taxxSheetSales(ctx);
+    const sh = taxxSheetSales(ctx, true);
     sh.id = "C3";
     sh.top = [ [ "سجل المبيعات — فواتير وإشعارات الفترة والطلبات الموردة بلا فاتورة" ], [ "الإيراد للضريبة على الدخل بتاريخ التوريد؛ وعمود «يُدرج في» خاص بإقرار القيمة المضافة" ], [ "" ] ];
     return sh;
@@ -53140,7 +53294,8 @@ function taxxOnChange(e) {
 function taxxCollect() {
     const out = {
         suppliers: [],
-        modes: {}
+        modes: {},
+        plain: {}
     };
     try {
         const d = typeof appData !== "undefined" && appData ? appData : {};
@@ -53164,6 +53319,9 @@ function taxxCollect() {
                     m = "";
                 }
                 out.modes[taxxStr(o.id) + "|" + taxxStr(p.id)] = m;
+                try {
+                    if (typeof netpPlain === "function" && netpPlain(p)) out.plain[taxxStr(o.id) + "|" + taxxStr(p.id)] = true;
+                } catch (err) {}
             });
         });
     } catch (e) {}
@@ -53192,6 +53350,7 @@ async function taxxFinish(c) {
         facts: c.facts,
         suppliers: info.suppliers,
         modes: info.modes,
+        plain: info.plain,
         docIdBySerial: idBySerial,
         linkBase: taxxLinkBase()
     };
@@ -53539,8 +53698,13 @@ function taxxOpsModel(input) {
     };
     const dayOf = taxxDayOf;
     const s02 = taxxSheetOf(pkg, "02"), c02 = taxxColsOf(s02), none = {};
+    let lateN = 0;
     taxxRowsOf(s02).forEach(function(r) {
         const rid = taxxStr(r[0]), p = rid.slice(0, rid.indexOf(":")), rest = rid.slice(rid.indexOf(":") + 1);
+        if (p === "LATE") {
+            lateN += 1;
+            return;
+        }
         if (p !== "INV" && p !== "NOTE" && p !== "UNS" && p !== "EST") return;
         const o = op(taxxPick(r, c02, "الطلب"));
         if (!o) return;
@@ -53737,7 +53901,7 @@ function taxxOpsModel(input) {
         expH += taxxH(e.amount);
         if (e.docs.length) expDocs += e.docs.length; else if (/ناقص/.test(e.docState)) expMissing++;
     });
-    return {
+    const model = {
         ok: true,
         ops: list,
         expenses: expenses,
@@ -53761,6 +53925,8 @@ function taxxOpsModel(input) {
             preparedBy: ctx.preparedBy
         }
     };
+    if (lateN > 0) model.summary.late = lateN;
+    return model;
 }
 
 function taxxOpsBox() {
@@ -53845,6 +54011,7 @@ function taxxOpsSheets(model, imgs) {
     const COLS1 = B.SAL + B.COLS, COLS2 = B.EXP + B.COLS;
     const aoa1 = [], merges1 = [], heights1 = {}, pics1 = [];
     const top1 = [ [ "ملف المحاسب — العمليات" ], [ "الفترة: " + taxxStr(cx.periodText).replace(/^من /, "من ") + "    تاريخ التجهيز (الرياض): " + taxxStr(cx.stamp) + (cx.preparedBy ? "    المُجهِّز: " + cx.preparedBy : "") ], [ "عدد العمليات: " + S.ops + " · فواتير بيع: " + S.inv + " · إشعارات: " + S.notes + " · عمليات بلا فاتورة بيع: " + S.noInv + " · مشتريات: " + S.purchases + " (فواتير مرفقة " + S.purDocs + "، ناقصة " + S.purMissing + ")" ], [ "كل صف فاتورة بصورتها داخل هذا الملف نفسه (بلا روابط). «ناقصة» = لم تُرفع فاتورتها بالتطبيق. المبالغ شاملة الضريبة ما لم يُذكر غير ذلك." ], [] ];
+    if (S.late > 0) top1.splice(top1.length - 1, 0, [ "⚠ " + S.late + " فاتورة صدرت بالفترة بتاريخ استحقاق سابق — لا تظهر بهذا الملف ولا تدخل إقرار هذه الفترة؛ تظهر بملف إقرار القيمة المضافة وبالحزمة الكاملة وتصحيح فترتها قرار المحاسب" ]);
     top1.forEach(function(t) {
         aoa1.push(taxxTextRow(t));
     });
