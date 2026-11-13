@@ -102610,6 +102610,47 @@ function opsxTitlesStrip(txt, kind) {
     } catch (e) {
         console.warn("HYDLT install:", e);
     }
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__tmdueInstalled) return;
+        if (typeof tamaraPlansRemainingH !== "function" || typeof tamaraElevated !== "function" || typeof tamaraTodayRiyadhIso !== "function" || typeof tamaraToHalalas !== "function" || typeof TAMARA_PLAN_TEXT !== "object") return;
+        window.__tmdueInstalled = true;
+        var monthDue = function(nowDate) {
+            if (!tamaraElevated()) return 0;
+            var month = tamaraTodayRiyadhIso(nowDate).slice(0, 7);
+            var list = appData && Array.isArray(appData.tamaraPlans) ? appData.tamaraPlans : [];
+            var h = 0;
+            for (var i = 0; i < list.length; i++) {
+                var inst = list[i] && Array.isArray(list[i].installments) ? list[i].installments : [];
+                for (var k = 0; k < inst.length; k++) {
+                    if (!inst[k] || inst[k].paidOn) continue;
+                    if (String(inst[k].dueOn == null ? "" : inst[k].dueOn).slice(0, 7) <= month) h += tamaraToHalalas(inst[k].amount);
+                }
+            }
+            return h;
+        };
+        window.tamaraPlansMonthDueH = monthDue;
+        tamaraPlansRemainingH = monthDue;
+        TAMARA_PLAN_TEXT.nasTerm = "أقساط تمارا المستحقة (هذا الشهر وما قبله)";
+    } catch (e) {
+        console.warn("TMDUE install:", e);
+    }
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__mbrsupInstalled) return;
+        if (typeof treasurySupportRowHtml !== "function") return;
+        window.__mbrsupInstalled = true;
+        var withAddButton = treasurySupportRowHtml;
+        treasurySupportRowHtml = function() {
+            return String(withAddButton.apply(this, arguments)).replace(/<button type="button" class="btn btn-ghost btn-sm expense-add-entry-btn" data-add-entry-key="support"[^>]*>[^<]*<\/button>/g, "");
+        };
+    } catch (e) {
+        console.warn("MBRSUP install:", e);
+    }
 })();</script>
 </body>
 </html>
