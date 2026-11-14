@@ -102818,6 +102818,87 @@ function opsxTitlesStrip(txt, kind) {
     } catch (e) {
         console.warn("MBRSUP install:", e);
     }
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__rcvnoInstalled) return;
+        if (typeof treasuryCardHtml !== "function" || typeof supplierRowHtml !== "function" || typeof supplierReturnReceivables !== "function" || typeof supplierReturnReceivablesIndex !== "function") return;
+        window.__rcvnoInstalled = true;
+        var ordersOf = function(supplierId) {
+            var rows = supplierReturnReceivables(supplierId), by = {}, list = [];
+            for (var i = 0; i < rows.length; i++) {
+                var r = rows[i], k = String(r.orderId);
+                if (!by[k]) {
+                    by[k] = {
+                        orderId: r.orderId,
+                        orderNumber: r.orderNumber || "",
+                        amount: 0
+                    };
+                    list.push(by[k]);
+                }
+                by[k].amount = round2(by[k].amount + (Number(r.amount) || 0));
+            }
+            return list;
+        };
+        window.rcvnoOrdersOf = ordersOf;
+        var plainCard = treasuryCardHtml;
+        treasuryCardHtml = function(key, label, valueHtml, subHtml, breakdown) {
+            var args = arguments;
+            if (key === "kpiReturnReceivables" && breakdown && typeof breakdown === "object" && !Array.isArray(breakdown)) {
+                try {
+                    var byId = supplierReturnReceivablesIndex().bySupplier, terms = [];
+                    (appData.suppliers || []).forEach(function(s) {
+                        if (!((byId[s.id] || 0) > 0)) return;
+                        ordersOf(s.id).forEach(function(o) {
+                            terms.push({
+                                label: (o.orderNumber || "—") + " — " + (s.name || "بدون اسم"),
+                                amount: o.amount,
+                                negative: false
+                            });
+                        });
+                    });
+                    if (terms.length) {
+                        args = Array.prototype.slice.call(arguments);
+                        args[4] = {
+                            terms: terms.concat(Array.isArray(breakdown.terms) ? breakdown.terms : []),
+                            note: breakdown.note || null
+                        };
+                    }
+                } catch (e) {
+                    args = arguments;
+                }
+            }
+            return plainCard.apply(this, args);
+        };
+        var plainRow = supplierRowHtml;
+        supplierRowHtml = function(s, receivablesIdx, owedIdx) {
+            var html = plainRow.apply(this, arguments);
+            try {
+                if (!s || !s.id || typeof editingSuppliers !== "undefined" && editingSuppliers[s.id]) return html;
+                var rec = receivablesIdx ? receivablesIdx[s.id] || 0 : supplierReturnReceivableTotal(s.id);
+                if (!(rec > 0)) return html;
+                var owed = owedIdx ? owedIdx[s.id] || 0 : supplierOwedAmount(s.id);
+                var nums = ordersOf(s.id).map(function(o) {
+                    return o.orderNumber;
+                }).filter(Boolean);
+                var slot = '<span class="num text-green">' + fmtMoney(owed) + "</span>";
+                var line = '<span class="text-green">مسترجع بانتظار التحصيل: ' + fmtMoney(rec) + "</span>";
+                var out = String(html);
+                if (!(owed > 0)) out = out.replace(slot, function() {
+                    return '<span class="num text-green">لنا ' + fmtMoney(rec) + "</span>";
+                });
+                if (nums.length) out = out.replace(line, function() {
+                    return '<span class="text-green">مسترجع بانتظار التحصيل: ' + fmtMoney(rec) + " — " + escapeHtml(nums.join("، ")) + "</span>";
+                });
+                return out;
+            } catch (e) {
+                return html;
+            }
+        };
+    } catch (e) {
+        console.warn("RCVNO install:", e);
+    }
 })();</script>
 </body>
 </html>
