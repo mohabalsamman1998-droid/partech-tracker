@@ -102899,6 +102899,71 @@ function opsxTitlesStrip(txt, kind) {
     } catch (e) {
         console.warn("RCVNO install:", e);
     }
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__netpuInstalled) return;
+        if (typeof netpRefresh !== "function" || typeof netpInnerHtml !== "function" || typeof netpFcellHtml !== "function" || typeof netpTOn !== "function" || typeof netpMode !== "function" || typeof netpSell !== "function" || typeof netpNone !== "function") return;
+        window.__netpuInstalled = true;
+        var typedOf = function(c, F, mode) {
+            var eff = mode === "yes" ? "yes" : "no";
+            var exact = eff === "yes" ? c + (F - c) / 1.15 : F / 1.15;
+            var offs = [ 0, -1, 1 ];
+            for (var d = 2; d <= 4; d++) {
+                var f = Math.pow(10, d), base = Math.round(exact * f);
+                for (var k = 0; k < offs.length; k++) {
+                    var T = (base + offs[k]) / f;
+                    if (T >= 0 && Math.abs(netpSell(c, T, eff) - F) < .005) return T;
+                }
+            }
+            return null;
+        };
+        window.netpuTypedOf = typedOf;
+        var normalize = function() {
+            if (typeof draft === "undefined" || !draft || draft.confirmed || draft.isQuote || !Array.isArray(draft.parts) || netpNone(draft)) return;
+            var root = document.getElementById("modal-root");
+            if (!root || !root.querySelectorAll) return;
+            Array.prototype.slice.call(root.querySelectorAll("[data-netp-slot]")).forEach(function(slot) {
+                var p = draft.parts.find(function(x) {
+                    return x && x.id === slot.getAttribute("data-netp-slot");
+                });
+                var row = slot.closest ? slot.closest(".part-row") : null;
+                var sellEl = p && row && row.querySelector ? row.querySelector(".part-sell-input") : null;
+                if (!p || !sellEl || sellEl === document.activeElement || p.returned || netpTOn(p)) return;
+                var S = p.sellPrice;
+                if (S === null || S === undefined || S === "") return;
+                var F = Number(S), c = Number(p.costPrice) || 0, mode = netpMode(p);
+                if (!isFinite(F) || F < 0 || !(c > 0) || mode !== "yes" && mode !== "no") return;
+                var T = typedOf(c, F, mode);
+                if (T === null) return;
+                p.sellTyped = T;
+                p.sellTypedF = F;
+            });
+        };
+        var plainRefresh = netpRefresh;
+        netpRefresh = function() {
+            try {
+                normalize();
+            } catch (e) {}
+            return plainRefresh.apply(this, arguments);
+        };
+        netpRefresh.opsxWrapped = plainRefresh.opsxWrapped;
+        var plainInner = netpInnerHtml;
+        netpInnerHtml = function(p) {
+            var html = plainInner.apply(this, arguments);
+            try {
+                if (html && p && (p.sellPrice === null || p.sellPrice === undefined || p.sellPrice === "") && typeof draft !== "undefined" && draft && !draft.confirmed && !draft.isQuote && !netpNone(draft)) {
+                    return String(netpFcellHtml(p)).replace(/<span class="netp-fv num">[^<]*<\/span>/, function() {
+                        return '<span class="netp-fv num">—</span>';
+                    });
+                }
+            } catch (e) {}
+            return html;
+        };
+    } catch (e) {
+        console.warn("NETPU install:", e);
+    }
 })();</script>
 </body>
 </html>
