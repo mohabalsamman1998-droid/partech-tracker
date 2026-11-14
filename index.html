@@ -102964,6 +102964,508 @@ function opsxTitlesStrip(txt, kind) {
     } catch (e) {
         console.warn("NETPU install:", e);
     }
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__asortInstalled) return;
+        if (typeof acnOpsHtml !== "function" || typeof acnMonthHtml !== "function" || typeof acnSumRows !== "function" || typeof acnCountRows !== "function" || typeof acnRefKey !== "function" || typeof acnRiyadh !== "function" || typeof acnRender !== "function") return;
+        window.__asortInstalled = true;
+        var MODES = [ "month", "supply", "number" ];
+        var LS_KEY = "partech-acn-ops-sort";
+        var LABELS = {
+            month: "حسب الشهر",
+            supply: "حسب تاريخ التوريد",
+            number: "حسب رقم الطلبية"
+        };
+        var TITLES = {
+            supply: "كل العمليات — مرتّبة بتاريخ التوريد (الأحدث أولًا)",
+            number: "كل العمليات — مرتّبة برقم الطلبية (الأعلى أولًا)"
+        };
+        var tzMs = typeof ACN_TZ_MS === "number" ? ACN_TZ_MS : 108e5;
+        var load = function() {
+            try {
+                var v = localStorage.getItem(LS_KEY);
+                return MODES.indexOf(v) >= 0 ? v : "month";
+            } catch (e) {
+                return "month";
+            }
+        };
+        var save = function(v) {
+            try {
+                localStorage.setItem(LS_KEY, v);
+            } catch (e) {}
+        };
+        var modeOf = function(st) {
+            if (st && st.sort === undefined) st.sort = load();
+            return st && MODES.indexOf(st.sort) >= 0 ? st.sort : "month";
+        };
+        var tsOf = function(iso) {
+            var ms = Date.parse(iso);
+            return isNaN(ms) ? 0 : ms;
+        };
+        var dayMs = function(ymd) {
+            var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || ""));
+            return m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) - tzMs : 0;
+        };
+        var infoOf = function(r, byId) {
+            var o = r && r.orderId ? byId[r.orderId] : null;
+            if (o) {
+                var s = tsOf(o.suppliedAt), dt = (s ? acnRiyadh(o.suppliedAt) : null) || acnRiyadh(o.createdAt);
+                return {
+                    ms: s || tsOf(o.createdAt),
+                    dmy: dt ? dt.dmy : String(r && r.dmy || "")
+                };
+            }
+            return {
+                ms: dayMs(r && r.ymd),
+                dmy: String(r && r.dmy || "")
+            };
+        };
+        var sortRows = function(rows, mode, byId) {
+            var keyed = rows.map(function(r, i) {
+                var f = infoOf(r, byId);
+                return {
+                    r: r,
+                    i: i,
+                    ms: f.ms,
+                    dmy: f.dmy,
+                    no: acnRefKey(r),
+                    ord: r.kind === "order" ? 0 : 1
+                };
+            });
+            keyed.sort(function(a, b) {
+                var d = mode === "number" ? b.no - a.no || b.ms - a.ms : b.ms - a.ms || b.no - a.no;
+                return d || a.ord - b.ord || a.i - b.i;
+            });
+            return keyed;
+        };
+        var barHtml = function(mode) {
+            return '<div class="filter-chips lvl-grid" id="acn-sort-chips" role="group" aria-label="ترتيب العمليات" style="margin-bottom:12px;">' + MODES.map(function(k) {
+                var on = k === mode;
+                return '<button type="button" class="chip' + (on ? " chip-active" : "") + '" data-acnsort="' + k + '" aria-pressed="' + (on ? "true" : "false") + '">' + LABELS[k] + "</button>";
+            }).join("") + "</div>";
+        };
+        var flatHtml = function(model, st, mode, byId) {
+            var all = [];
+            model.months.forEach(function(m) {
+                m.rows.forEach(function(r) {
+                    all.push(r);
+                });
+            });
+            if (!all.length) return null;
+            var keyed = sortRows(all, mode, byId);
+            var orig = keyed.map(function(k) {
+                return k.r;
+            });
+            var shown = keyed.map(function(k) {
+                return mode === "supply" ? Object.assign({}, k.r, {
+                    dmy: k.dmy
+                }) : k.r;
+            });
+            var sec = {
+                ym: "all",
+                label: TITLES[mode],
+                rows: shown,
+                sums: acnSumRows(orig),
+                counts: acnCountRows(orig),
+                requests: 0,
+                hasHist: orig.some(function(r) {
+                    return !!r.hist;
+                }),
+                histOnly: false
+            };
+            st.openMonths = st.openMonths || {};
+            if (st.openMonths.all === undefined) st.openMonths.all = true;
+            var html = acnMonthHtml(sec, !!st.openMonths.all);
+            if (mode === "supply") {
+                html = html.split('<td class="acn-d">').join('<td class="acn-d" data-l="تاريخ التوريد">').replace('<th rowspan="2">تاريخ الطلب</th>', function() {
+                    return '<th rowspan="2">تاريخ التوريد</th>';
+                });
+            }
+            return html;
+        };
+        var plainOps = acnOpsHtml;
+        acnOpsHtml = function(model, st) {
+            var base = plainOps.apply(this, arguments);
+            try {
+                if (!model || !st || typeof base !== "string") return base;
+                var mode = modeOf(st);
+                var iTotal = base.indexOf('<div class="acn-total">');
+                var iMonths = base.indexOf('<section class="acn-month');
+                if (iMonths < 0 || iMonths > iTotal) iMonths = base.indexOf('<div class="acn-empty">');
+                if (iTotal < 0 || iMonths < 0 || iMonths > iTotal) return base;
+                if (mode === "month") return base.slice(0, iMonths) + barHtml(mode) + base.slice(iMonths);
+                var byId = {};
+                (typeof appData !== "undefined" && appData && appData.orders || []).forEach(function(o) {
+                    if (o && o.id) byId[o.id] = o;
+                });
+                var flat = flatHtml(model, st, mode, byId);
+                return base.slice(0, iMonths) + barHtml(mode) + (flat === null ? base.slice(iMonths, iTotal) : flat) + base.slice(iTotal);
+            } catch (e) {
+                return base;
+            }
+        };
+        if (typeof acnDeliveryRowsForEntries === "function" && typeof acnCarText === "function" && typeof acnCarYear === "function") {
+            var plainEntries = acnDeliveryRowsForEntries;
+            acnDeliveryRowsForEntries = function(entries) {
+                var rows = plainEntries.apply(this, arguments);
+                try {
+                    var byNo = null;
+                    rows.forEach(function(r) {
+                        var m = /\bPT[-\s]?0*(\d{1,5})\b/i.exec(String(r && r.note || ""));
+                        if (!m) return;
+                        if (byNo === null) {
+                            byNo = {};
+                            (typeof appData !== "undefined" && appData && appData.orders || []).forEach(function(o) {
+                                var k = /(\d+)\s*$/.exec(String(o && o.orderNumber || ""));
+                                if (k && !o.isQuote) byNo[Number(k[1])] = o;
+                            });
+                        }
+                        var o = byNo[Number(m[1])];
+                        if (!o) return;
+                        r.orderId = o.id;
+                        r.ref = String(o.orderNumber || "");
+                        r.car = acnCarText(o);
+                        r.year = acnCarYear(o);
+                    });
+                } catch (e) {}
+                return rows;
+            };
+        }
+        var onClick = function(e) {
+            try {
+                var t = e && e.target;
+                var b = t && t.closest ? t.closest("[data-acnsort]") : null;
+                if (!b || typeof acnState === "undefined" || !acnState) return;
+                var k = b.getAttribute("data-acnsort");
+                if (MODES.indexOf(k) < 0) return;
+                acnState.sort = k;
+                save(k);
+                acnRender();
+            } catch (err) {}
+        };
+        document.addEventListener("click", onClick);
+        window.asortOnClick = onClick;
+        window.asortSortRows = sortRows;
+    } catch (e) {
+        console.warn("ASORT install:", e);
+    }
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__rtnumInstalled) return;
+        if (typeof scrapyardReturnReceivablesHtml !== "function" || typeof scrapyardSharedState === "undefined" || typeof escapeHtml !== "function") return;
+        window.__rtnumInstalled = true;
+        var ROW = '<div class="scrapyard-part-row">';
+        var DESC = '<span class="scrapyard-part-desc">';
+        var plainReturns = scrapyardReturnReceivablesHtml;
+        scrapyardReturnReceivablesHtml = function() {
+            var html = plainReturns.apply(this, arguments);
+            try {
+                var rows = scrapyardSharedState && scrapyardSharedState.returnReceivables || [];
+                if (!rows.length || typeof html !== "string") return html;
+                var chunks = html.split(ROW);
+                if (chunks.length !== rows.length + 1) return html;
+                var canOpen = !!(scrapyardSharedState.canManage || scrapyardSharedState.viewerOnly);
+                var out = chunks[0];
+                for (var i = 0; i < rows.length; i++) {
+                    var r = rows[i] || {};
+                    var no = String(r.order_number || "").trim();
+                    var chunk = chunks[i + 1];
+                    if (no && chunk.indexOf(DESC) >= 0) {
+                        var tag = '<bdi dir="ltr" class="text-green' + (canOpen && r.order_id ? " scrapyard-order-header-clickable" : "") + '"' + (canOpen && r.order_id ? ' data-open-order-scrapyard="' + escapeHtml(String(r.order_id)) + '" title="فتح الطلبية"' : "") + ">" + escapeHtml(no) + "</bdi> — ";
+                        chunk = chunk.replace(DESC, function(m) {
+                            return m + tag;
+                        });
+                    }
+                    out += ROW + chunk;
+                }
+                return out;
+            } catch (e) {
+                return html;
+            }
+        };
+    } catch (e) {
+        console.warn("RTNUM install:", e);
+    }
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__camscInstalled) return;
+        if (typeof document === "undefined" || typeof ACCT2_TXT === "undefined" || !ACCT2_TXT || !ACCT2_TXT.buttons) return;
+        window.__camscInstalled = true;
+        ACCT2_TXT.buttons.fileAria = "رفع";
+        var CAM = 'button[data-acct2-act="cam"],button[data-acct2-act="exp-cam"],button[data-pinv-act="page-cam"]';
+        var SCAN = 'button[data-pdfimg-scan],button[data-pinv-act="page-scan"]';
+        try {
+            var css = document.createElement("style");
+            css.id = "camsc-css";
+            css.textContent = SCAN + "{display:none !important;}";
+            (document.head || document.documentElement).appendChild(css);
+        } catch (e) {}
+        var onClick = function(e) {
+            try {
+                var t = e && e.target;
+                var cam = t && t.closest ? t.closest(CAM) : null;
+                var scan = cam && cam.parentNode && cam.parentNode.querySelector ? cam.parentNode.querySelector(SCAN) : null;
+                if (!scan) return;
+                scan.click();
+                e.preventDefault();
+                e.stopImmediatePropagation();
+            } catch (err) {}
+        };
+        window.addEventListener("click", onClick, true);
+        window.camscOnClick = onClick;
+    } catch (e) {
+        console.warn("CAMSC install:", e);
+    }
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__rrcvInstalled) return;
+        if (typeof loadScrapyardData !== "function" || typeof scrapyardReturnReceivablesHtml !== "function" || typeof applyEditProposal !== "function" || typeof editProposalAcceptMessage !== "function" || typeof editProposalKindLabel !== "function" || typeof editProposalPendingHtml !== "function" || typeof pendingActionProposalFor !== "function" || typeof partIsIncludedInOrder !== "function" || typeof refreshEditProposals !== "function" || typeof confirmAction !== "function" || typeof persistOrder !== "function" || typeof escapeHtml !== "function" || typeof showToast !== "function" || typeof todayNumeric !== "function" || typeof scrapyardSharedState === "undefined") return;
+        window.__rrcvInstalled = true;
+        var KIND = "return_collect";
+        var receivedOf = function(p) {
+            return !!(p && p.returnReceived === true && String(p.returnReceivedAt || "") >= String(p.returnedAt || ""));
+        };
+        var waitingOf = function(o, p) {
+            return !!(o && p && o.confirmed && p.returned && !p.returnHasReceivable && !receivedOf(p) && p.used && partIsIncludedInOrder(o, p));
+        };
+        var ordersOf = function() {
+            return typeof appData !== "undefined" && appData && appData.orders || [];
+        };
+        var receiptPartOf = function(pr) {
+            if (!pr || pr.kind !== KIND) return null;
+            var o = ordersOf().find(function(x) {
+                return x && x.id === pr.order_id;
+            });
+            var p = o ? (o.parts || []).find(function(x) {
+                return x && x.id === pr.part_id;
+            }) : null;
+            return p && p.returned && !p.returnHasReceivable && !receivedOf(p) ? p : null;
+        };
+        var numKey = function(s) {
+            var m = /(\d+)\s*$/.exec(String(s || ""));
+            return m ? Number(m[1]) : 0;
+        };
+        var sortRows = function(rows) {
+            return rows.sort(function(a, b) {
+                return numKey(b.order_number) - numKey(a.order_number) || String(a.part_id).localeCompare(String(b.part_id));
+            });
+        };
+        var localRows = function() {
+            var out = [];
+            ordersOf().forEach(function(o) {
+                (o && o.parts || []).forEach(function(p) {
+                    if (!waitingOf(o, p)) return;
+                    out.push({
+                        order_id: o.id,
+                        order_number: o.orderNumber,
+                        part_id: p.id,
+                        description: p.description,
+                        qty: p.qty,
+                        cost_price: p.costPrice,
+                        supplier_id: p.supplierId || null,
+                        condition: p.condition || null,
+                        returned_at: String(p.returnedAt || "")
+                    });
+                });
+            });
+            return out;
+        };
+        var plainLoad = loadScrapyardData;
+        loadScrapyardData = async function(kind) {
+            var ok = await plainLoad.apply(this, arguments);
+            var st = scrapyardSharedState;
+            try {
+                if (ok === false || !st) return ok;
+                var rows = [];
+                if (kind === "used") {
+                    if (st.viewerOnly || st.canManage) rows = localRows(); else if (typeof sb !== "undefined" && sb) {
+                        var res = await sb.rpc("get_scrapyard_returned_parts", {
+                            p_kind: kind
+                        });
+                        rows = res && !res.error && Array.isArray(res.data) ? res.data.slice() : [];
+                    }
+                }
+                if (st.activeKind === kind) st.returnedParts = sortRows(rows);
+            } catch (e) {
+                try {
+                    if (st) st.returnedParts = [];
+                } catch (x) {}
+            }
+            return ok;
+        };
+        var pendingHtml = function(pr, canManage) {
+            var mine = pr.submitted_by === scrapyardSharedState.email;
+            return '<span class="proposal-pending-banner"><span class="proposal-pending-text">⏳ بانتظار تأكيد الاستلام</span>' + (canManage ? '<button type="button" class="icon-btn proposal-accept-btn" data-collect-accept="' + escapeHtml(pr.id) + '" title="تم الاستلام فعلًا">✓</button><button type="button" class="icon-btn proposal-reject-btn" data-collect-reject="' + escapeHtml(pr.id) + '" title="رفض">✗</button>' : mine ? '<button type="button" class="icon-btn proposal-withdraw-btn" data-collect-withdraw="' + escapeHtml(pr.id) + '" title="سحب الطلب">✕</button>' : "") + "</span>";
+        };
+        var sectionHtml = function() {
+            var st = scrapyardSharedState;
+            var rows = st && st.activeKind === "used" && st.returnedParts || [];
+            if (!rows.length) return "";
+            var canManage = !!st.canManage, viewerOnly = !!st.viewerOnly, canOpen = canManage || viewerOnly;
+            var body = rows.map(function(p) {
+                var supplier = (st.suppliers || []).find(function(s) {
+                    return s.id === p.supplier_id;
+                });
+                var name = supplier ? supplier.name || supplier.phone || "مورد" : "غير محدد";
+                var no = String(p.order_number || "").trim();
+                var openable = canOpen && p.order_id;
+                var tag = no ? '<bdi dir="ltr" class="text-green' + (openable ? " scrapyard-order-header-clickable" : "") + '"' + (openable ? ' data-open-order-scrapyard="' + escapeHtml(String(p.order_id)) + '" title="فتح الطلبية"' : "") + ">" + escapeHtml(no) + "</bdi> — " : "";
+                var badge = typeof partConditionBadgeFromValue === "function" ? partConditionBadgeFromValue(p.condition) : "";
+                var pending = pendingActionProposalFor(KIND, p.order_id, p.part_id);
+                var action = viewerOnly ? pending ? '<span class="proposal-pending-text">⏳ بانتظار تأكيد الاستلام</span>' : "" : pending ? pendingHtml(pending, canManage) : '<span class="scrapyard-collect-question">هل استُلمت القطعة؟</span><button type="button" class="btn btn-sm ' + (canManage ? "btn-primary" : "btn-ghost") + ' scrapyard-recv-btn" data-order-id="' + escapeHtml(String(p.order_id)) + '" data-part-id="' + escapeHtml(String(p.part_id)) + '">' + (canManage ? "✅ تم الاستلام" : "📨 طلب تأكيد الاستلام") + "</button>";
+                return '<div class="scrapyard-part-row"><span class="scrapyard-part-desc">' + tag + escapeHtml(p.description || "") + badge + '</span><span class="num scrapyard-qty-slot">×' + (p.qty || 1) + '</span><span class="scrapyard-days-since muted">' + escapeHtml(name) + '</span><div class="scrapyard-part-actions scrapyard-collect-actions">' + action + "</div></div>";
+            }).join("");
+            return '<div class="section-block rrcv-block"><div class="section-head"><span class="section-title">📦 مرتجعات بانتظار تأكيد الاستلام</span><span class="num">' + rows.length + "</span></div>" + body + "</div>";
+        };
+        var plainReturns = scrapyardReturnReceivablesHtml;
+        scrapyardReturnReceivablesHtml = function() {
+            var html = plainReturns.apply(this, arguments);
+            try {
+                return html + sectionHtml();
+            } catch (e) {
+                return html;
+            }
+        };
+        var plainApply = applyEditProposal;
+        applyEditProposal = function(pr, orderOverride, opts) {
+            try {
+                var o = pr && pr.kind === KIND ? orderOverride || ordersOf().find(function(x) {
+                    return x && x.id === pr.order_id;
+                }) : null;
+                var p = o ? (o.parts || []).find(function(x) {
+                    return x && x.id === pr.part_id;
+                }) : null;
+                if (p && p.returned && !p.returnHasReceivable && !receivedOf(p)) {
+                    lastEditProposalLeftoverExcess = 0;
+                    lastEditProposalDroppedPartIds = [];
+                    lastEditProposalLinkedPartId = null;
+                    lastEditProposalDeliveryDropped = 0;
+                    lastEditProposalBlockMessage = "";
+                    var now = (new Date).toISOString();
+                    p.returnReceived = true;
+                    p.returnReceivedAt = now;
+                    o.updatedAt = now;
+                    return true;
+                }
+            } catch (e) {}
+            return plainApply.apply(this, arguments);
+        };
+        var plainMessage = editProposalAcceptMessage;
+        editProposalAcceptMessage = function(pr) {
+            try {
+                if (receiptPartOf(pr)) return "سيُسجَّل استلام القطعة المرتجعة بتاريخ اليوم (" + todayNumeric() + ") — بلا أي أثر على الصندوق أو العهدة.";
+            } catch (e) {}
+            return plainMessage.apply(this, arguments);
+        };
+        var plainLabel = editProposalKindLabel;
+        editProposalKindLabel = function(pr) {
+            try {
+                if (receiptPartOf(pr)) return "تأكيد استلام قطعة مرتجعة";
+            } catch (e) {}
+            return plainLabel.apply(this, arguments);
+        };
+        var plainPending = editProposalPendingHtml;
+        editProposalPendingHtml = function(pr) {
+            var html = plainPending.apply(this, arguments);
+            try {
+                if (typeof html === "string" && receiptPartOf(pr)) return html.replace("📨 طلب تأكيد تحصيل المبلغ من المورد/التشليح", function() {
+                    return "📨 طلب تأكيد استلام القطعة المرتجعة";
+                });
+            } catch (e) {}
+            return html;
+        };
+        var requestReceive = async function(orderId, partId) {
+            try {
+                if (pendingActionProposalFor(KIND, orderId, partId)) return;
+                var res = await sb.from("edit_proposals").insert({
+                    order_id: orderId,
+                    kind: KIND,
+                    part_id: partId,
+                    current_value: null,
+                    proposed_value: null,
+                    submitted_by: presenceEmail
+                });
+                if (res && res.error) {
+                    showToast("تعذر إرسال الطلب", "error");
+                    return;
+                }
+                showToast("تم إرسال طلب تأكيد الاستلام", "ok");
+                await refreshEditProposals();
+            } catch (e) {
+                showToast("تعذر إرسال الطلب", "error");
+            }
+        };
+        var markDirect = function(orderId, partId) {
+            var order = ordersOf().find(function(o) {
+                return o && o.id === orderId;
+            });
+            var part = order ? (order.parts || []).find(function(p) {
+                return p && p.id === partId;
+            }) : null;
+            if (!order || !part) return;
+            confirmAction({
+                title: "تأكيد استلام هذه القطعة المرتجعة؟",
+                message: "سيُسجَّل استلام القطعة المرتجعة بتاريخ اليوم (" + todayNumeric() + ") — بلا أي أثر على الصندوق أو العهدة.",
+                confirmLabel: "تم الاستلام",
+                onConfirm: async function() {
+                    var fresh = ordersOf().find(function(o) {
+                        return o && o.id === orderId;
+                    });
+                    var fp = fresh ? (fresh.parts || []).find(function(p) {
+                        return p && p.id === partId;
+                    }) : null;
+                    if (!fp || !fp.returned || fp.returnHasReceivable || receivedOf(fp)) return;
+                    var prev = {
+                        r: fp.returnReceived,
+                        at: fp.returnReceivedAt,
+                        u: fresh.updatedAt
+                    };
+                    var now = (new Date).toISOString();
+                    fp.returnReceived = true;
+                    fp.returnReceivedAt = now;
+                    fresh.updatedAt = now;
+                    var saved = await persistOrder(fresh);
+                    if (!saved) {
+                        if (prev.r === undefined) delete fp.returnReceived; else fp.returnReceived = prev.r;
+                        if (prev.at === undefined) delete fp.returnReceivedAt; else fp.returnReceivedAt = prev.at;
+                        fresh.updatedAt = prev.u;
+                        return;
+                    }
+                    try {
+                        var stale = pendingActionProposalFor(KIND, orderId, partId);
+                        if (stale) await sb.from("edit_proposals").delete().eq("id", stale.id);
+                    } catch (e) {}
+                    showToast("تم تسجيل استلام القطعة المرتجعة", "ok");
+                    await refreshEditProposals();
+                }
+            });
+        };
+        var onClick = function(e) {
+            try {
+                var t = e && e.target;
+                var b = t && t.closest ? t.closest(".scrapyard-recv-btn") : null;
+                if (!b) return;
+                var orderId = b.getAttribute("data-order-id"), partId = b.getAttribute("data-part-id");
+                if (!orderId || !partId) return;
+                if (scrapyardSharedState && scrapyardSharedState.canManage) markDirect(orderId, partId); else requestReceive(orderId, partId);
+            } catch (err) {}
+        };
+        document.addEventListener("click", onClick);
+        window.rrcvOnClick = onClick;
+        window.rrcvRows = function() {
+            return sortRows(localRows());
+        };
+    } catch (e) {
+        console.warn("RRCV install:", e);
+    }
 })();</script>
 </body>
 </html>
