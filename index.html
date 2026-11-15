@@ -103583,6 +103583,178 @@ function opsxTitlesStrip(txt, kind) {
     } catch (e) {
         console.warn("NETPE install:", e);
     }
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__actbnInstalled) return;
+        if (typeof document === "undefined" || typeof trackDueBannerHtml !== "function" || typeof trackApply !== "function" || typeof trackRefresh !== "function" || typeof trackEl !== "function" || typeof trackIsFull !== "function" || typeof trackDueNoun !== "function" || typeof opsxActnOn !== "function") return;
+        window.__actbnInstalled = true;
+        var viewOn = false;
+        var prevSel = 0;
+        var isOn = function(o) {
+            return !!(o && opsxActnOn(o) && String(o.archived) !== "true");
+        };
+        var flaggedList = function() {
+            var out = [];
+            var all = typeof appData !== "undefined" && appData && appData.orders || [];
+            all.forEach(function(o) {
+                if (isOn(o)) out.push(o);
+            });
+            return out;
+        };
+        var searchOn = function() {
+            return !!(typeof currentSearch === "string" && currentSearch.trim());
+        };
+        var plainBan = trackDueBannerHtml;
+        trackDueBannerHtml = function() {
+            var base = plainBan.apply(this, arguments);
+            try {
+                if (typeof base !== "string" || !trackIsFull()) return base;
+                var n = flaggedList().length;
+                if (!n) return base;
+                return base + '<button type="button" class="trk-dueban opsx-actban" data-actban aria-pressed="' + (viewOn ? "true" : "false") + '"><span class="trk-dueb-t">مطلوب إجراء: <b>' + trackDueNoun(n) + '</b></span><span class="trk-dueb-go">' + (viewOn ? "إغلاق ✕" : "عرض ‹") + "</span></button>";
+            } catch (e) {
+                return base;
+            }
+        };
+        var show = function() {
+            if (trackBroken) {
+                viewOn = false;
+                return;
+            }
+            var view = trackEl("orders-view");
+            var ordersSec = trackEl("orders-list-section");
+            var quotesSec = trackEl("quotes-list-section");
+            if (!view || !ordersSec || !quotesSec) throw new Error("ACTBN: list hosts missing");
+            var byId = new Map((typeof appData !== "undefined" && appData && appData.orders || []).map(function(o) {
+                return [ o.id, o ];
+            }));
+            [ 1, 2, 3, 4 ].forEach(function(k) {
+                view.classList.remove("trk-s" + k);
+            });
+            view.classList.add("trk-searching");
+            view.classList.remove("trk-none");
+            ordersSec.style.display = "";
+            quotesSec.style.display = "";
+            ordersSec.querySelectorAll("#table-container [data-open]").forEach(function(btn) {
+                var host = btn.closest("tr") || btn.closest(".order-card");
+                if (!host) return;
+                host.classList.toggle("trk-off", !isOn(byId.get(btn.getAttribute("data-open"))));
+            });
+            var qrows = [];
+            quotesSec.querySelectorAll("#quotes-table-container .quote-row[data-quote-id]").forEach(function(row) {
+                var on = isOn(byId.get(row.getAttribute("data-quote-id")));
+                row.classList.toggle("trk-off", !on);
+                if (on) qrows.push(row);
+            });
+            qrows.forEach(function(row, i) {
+                var up = row.querySelector('[data-priority-move="up"]');
+                var dn = row.querySelector('[data-priority-move="down"]');
+                if (up) up.disabled = i === 0;
+                if (dn) dn.disabled = i === qrows.length - 1;
+            });
+        };
+        var plainApply = trackApply;
+        trackApply = function() {
+            try {
+                if (viewOn) {
+                    var searching = searchOn();
+                    if (trackSel !== 0 || searching || !trackIsFull() || !flaggedList().length) {
+                        var restore = trackSel === 0 && !searching && trackIsFull();
+                        viewOn = false;
+                        if (restore) trackSel = prevSel;
+                        try {
+                            trackRender();
+                        } catch (e0) {}
+                    }
+                }
+            } catch (e) {
+                viewOn = false;
+            }
+            var r = plainApply.apply(this, arguments);
+            if (viewOn) {
+                try {
+                    show();
+                } catch (e1) {
+                    console.warn("ACTBN show:", e1);
+                    viewOn = false;
+                    trackSel = prevSel;
+                    try {
+                        trackRender();
+                        r = plainApply.apply(this, arguments);
+                    } catch (e2) {}
+                }
+            }
+            return r;
+        };
+        if (typeof trackFocusSel === "function") {
+            var plainFocus = trackFocusSel;
+            trackFocusSel = function(el) {
+                var r = plainFocus.apply(this, arguments);
+                try {
+                    if (!r && el && el.hasAttribute && el.hasAttribute("data-actban")) return "[data-actban]";
+                } catch (e) {}
+                return r;
+            };
+        }
+        var onClick = function(e) {
+            try {
+                var t = e && e.target;
+                var b = t && t.closest ? t.closest("[data-actban]") : null;
+                if (!b) return;
+                if (e.preventDefault) e.preventDefault();
+                if (viewOn) {
+                    viewOn = false;
+                    trackSel = prevSel;
+                } else {
+                    if (searchOn()) {
+                        try {
+                            trackClearSearch();
+                        } catch (e1) {}
+                        try {
+                            renderTable();
+                        } catch (e2) {}
+                    }
+                    prevSel = trackSel || 0;
+                    viewOn = true;
+                    trackSel = 0;
+                    trackFiltersOpen = false;
+                }
+                trackRefresh();
+                if (viewOn) {
+                    try {
+                        var g = document.querySelector("#trk-root .trk-grid");
+                        if (g && g.scrollIntoView) g.scrollIntoView({
+                            block: "start",
+                            behavior: "smooth"
+                        });
+                    } catch (e3) {}
+                }
+            } catch (err) {
+                console.warn("ACTBN click:", err);
+            }
+        };
+        document.addEventListener("click", onClick, false);
+        try {
+            if (document.head && !document.getElementById("actbn-css")) {
+                var st = document.createElement("style");
+                st.id = "actbn-css";
+                st.textContent = ".trk-dueban.opsx-actban{background:var(--rust-dim);border-color:var(--rust-line);border-inline-start-color:var(--rust);}" + ".trk-dueban.opsx-actban b{color:var(--rust);}" + '.trk-dueban.opsx-actban[aria-pressed="true"]{border-color:var(--rust);}';
+                document.head.appendChild(st);
+            }
+        } catch (e4) {}
+        window.actbnOnClick = onClick;
+        window.actbnFlagged = flaggedList;
+        window.actbnState = function() {
+            return {
+                on: viewOn,
+                prevSel: prevSel
+            };
+        };
+    } catch (e) {
+        console.warn("ACTBN install:", e);
+    }
 })();</script>
 </body>
 </html>
