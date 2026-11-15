@@ -103465,6 +103465,124 @@ function opsxTitlesStrip(txt, kind) {
     } catch (e) {
         console.warn("RRCV install:", e);
     }
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__netpeInstalled) return;
+        if (typeof document === "undefined" || typeof netpFcellHtml !== "function" || typeof netpRefresh !== "function" || typeof netpNone !== "function" || typeof netpModeEff !== "function" || typeof netpElevated !== "function" || typeof netpFlagsLoad !== "function" || typeof netpR2 !== "function" || typeof netpOnSell !== "function" || typeof netpOnSellPre !== "function" || typeof escapeHtml !== "function" || typeof window.netpuTypedOf !== "function") return;
+        window.__netpeInstalled = true;
+        var TITLE = "ما يدفعه الزبون عن هذه القطعة شاملًا ضريبة القيمة المضافة 15% — اكتبه فيُحسب سعر البيع، أو اكتب سعر البيع فيظهر هنا";
+        var live = function(p) {
+            try {
+                return !!(p && !p.returned && typeof draft !== "undefined" && draft && !draft.confirmed && !draft.isQuote && !netpNone(draft));
+            } catch (e) {
+                return false;
+            }
+        };
+        var waiting = function(p) {
+            try {
+                return !netpElevated() && !!(p && p.supplierId) && !netpFlagsLoad.map;
+            } catch (e) {
+                return true;
+            }
+        };
+        var priced = function(p) {
+            return !!p && p.sellPrice !== null && p.sellPrice !== undefined && p.sellPrice !== "";
+        };
+        var plainCell = netpFcellHtml;
+        netpFcellHtml = function(p) {
+            var html = plainCell.apply(this, arguments);
+            try {
+                if (!live(p)) return html;
+                return '<label class="mini-label netp-cell netp-fcell" title="' + TITLE + '">بالضريبة<input type="number" min="0" step="0.01" inputmode="decimal" class="netp-fi num" data-netp-f="' + escapeHtml(p.id) + '" placeholder="—" value="' + (priced(p) ? escapeHtml(String(netpR2(p.sellPrice))) : "") + '"' + (waiting(p) ? " readonly" : "") + "></label>";
+            } catch (e) {}
+            return html;
+        };
+        var onInput = function(e) {
+            try {
+                var t = e && e.target;
+                if (!t || !t.classList || !t.classList.contains("netp-fi")) return;
+                if (typeof draft === "undefined" || !draft || !Array.isArray(draft.parts)) return;
+                var pid = t.getAttribute("data-netp-f");
+                var p = draft.parts.find(function(x) {
+                    return x && x.id === pid;
+                });
+                var row = t.closest ? t.closest(".part-row") : null;
+                var sellEl = row && row.querySelector ? row.querySelector(".part-sell-input") : null;
+                if (!live(p) || !sellEl || sellEl.disabled || sellEl.readOnly || waiting(p)) return;
+                var raw = String(t.value).trim();
+                if (raw === "") return;
+                var v = Number(raw);
+                if (!isFinite(v) || v < 0) return;
+                var F = netpR2(v);
+                var T = window.netpuTypedOf(Number(p.costPrice) || 0, F, netpModeEff(p));
+                if (typeof T !== "number" || !isFinite(T) || T < 0) return;
+                var slot = t.closest ? t.closest("[data-netp-slot]") : null;
+                if (slot && slot.setAttribute) slot.setAttribute("data-netp-sig", "T");
+                sellEl.value = String(T);
+                netpOnSellPre({
+                    target: sellEl
+                });
+                netpOnSell({
+                    target: sellEl
+                });
+            } catch (err) {
+                console.warn("NETPE input:", err);
+            }
+        };
+        var syncOne = function(inp, force) {
+            var p = typeof draft !== "undefined" && draft && Array.isArray(draft.parts) ? draft.parts.find(function(x) {
+                return x && x.id === inp.getAttribute("data-netp-f");
+            }) : null;
+            if (!p) return;
+            var row = inp.closest ? inp.closest(".part-row") : null;
+            var sellEl = row && row.querySelector ? row.querySelector(".part-sell-input") : null;
+            var lock = !!(sellEl && (sellEl.disabled || sellEl.readOnly)) || waiting(p);
+            if (inp.readOnly !== lock) inp.readOnly = lock;
+            if (!force && inp === document.activeElement) return;
+            var want = priced(p) ? String(netpR2(p.sellPrice)) : "";
+            if (String(inp.value) !== want) inp.value = want;
+        };
+        var syncCells = function() {
+            var root = document.getElementById("modal-root");
+            if (!root || !root.querySelectorAll) return;
+            Array.prototype.slice.call(root.querySelectorAll("input.netp-fi")).forEach(function(inp) {
+                syncOne(inp, false);
+            });
+        };
+        var onBlur = function(e) {
+            try {
+                var t = e && e.target;
+                if (t && t.classList && t.classList.contains("netp-fi")) syncOne(t, true);
+            } catch (err) {}
+        };
+        var plainRefresh = netpRefresh;
+        netpRefresh = function() {
+            var r = plainRefresh.apply(this, arguments);
+            try {
+                syncCells();
+            } catch (e) {}
+            return r;
+        };
+        netpRefresh.opsxWrapped = plainRefresh.opsxWrapped;
+        try {
+            if (!document.getElementById("netpe-css")) {
+                var css = document.createElement("style");
+                css.id = "netpe-css";
+                css.textContent = ".netp-fi{width:84px;background:var(--bg);border:1px solid var(--green-line);color:var(--green);padding:8px 6px;border-radius:6px;font-size:12px;font-weight:700;}.netp-fi:focus{outline:none;border-color:var(--green);}";
+                (document.head || document.documentElement).appendChild(css);
+            }
+        } catch (e) {}
+        try {
+            document.addEventListener("input", onInput);
+            document.addEventListener("focusout", onBlur);
+        } catch (e) {}
+        window.netpeOnInput = onInput;
+        window.netpeOnBlur = onBlur;
+    } catch (e) {
+        console.warn("NETPE install:", e);
+    }
 })();</script>
 </body>
 </html>
