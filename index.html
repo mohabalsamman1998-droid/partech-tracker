@@ -103780,6 +103780,106 @@ function opsxTitlesStrip(txt, kind) {
     } catch (e) {
         console.warn("INVRG install:", e);
     }
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__supbnInstalled) return;
+        if (typeof document === "undefined" || typeof trackDueBannerHtml !== "function" || typeof trackIsFull !== "function" || typeof trackDueNoun !== "function" || typeof escapeHtml !== "function" || typeof acctLoadDocs !== "function" || typeof acct2AllSlots !== "function" || typeof acct2OpenSlot !== "function" || typeof hasElevatedAccess !== "function") return;
+        window.__supbnInstalled = true;
+        var invoiced = null;
+        var capture = function(docs) {
+            if (!Array.isArray(docs)) return;
+            var set = Object.create(null);
+            docs.forEach(function(d) {
+                if (d && d.isInvoice === true && d.series === "live" && d.orderId && (Number(d.totalH) || 0) - (Number(d.creditedH) || 0) > 0) set[String(d.orderId)] = true;
+            });
+            invoiced = set;
+        };
+        var missingOrders = function() {
+            if (invoiced === null) return [];
+            var all = acct2AllSlots(false);
+            if (!all || !Array.isArray(all.slots)) return [];
+            var seen = Object.create(null);
+            var list = [];
+            all.slots.forEach(function(s) {
+                if (!s || s.type !== "pur" || s.state !== "missing" || !s.orderId) return;
+                var id = String(s.orderId);
+                if (invoiced[id] !== true) return;
+                var days = Number(s.daysOpen) || 0;
+                if (!seen[id]) {
+                    seen[id] = {
+                        orderId: id,
+                        number: String(s.orderNumber || ""),
+                        key: String(s.key || ""),
+                        days: days
+                    };
+                    list.push(seen[id]);
+                } else if (days > seen[id].days) {
+                    seen[id].days = days;
+                    seen[id].key = String(s.key || "");
+                }
+            });
+            list.sort(function(a, b) {
+                return b.days - a.days || (a.number < b.number ? -1 : a.number > b.number ? 1 : 0);
+            });
+            return list;
+        };
+        var plainBan = trackDueBannerHtml;
+        trackDueBannerHtml = function() {
+            var base = plainBan.apply(this, arguments);
+            try {
+                if (typeof base !== "string" || !trackIsFull() || !hasElevatedAccess()) return base;
+                var list = missingOrders();
+                if (!list.length) return base;
+                var label = list.length <= 3 ? list.map(function(x) {
+                    return '<bdi dir="ltr">' + escapeHtml(x.number) + "</bdi>";
+                }).join(" · ") : trackDueNoun(list.length);
+                return base + '<button type="button" class="trk-dueban opsx-supban" data-supban><span class="trk-dueb-t">فاتورة مورد ناقصة: <b>' + label + '</b></span><span class="trk-dueb-go">إرفاق ‹</span></button>';
+            } catch (e) {
+                return base;
+            }
+        };
+        var plainLoad = acctLoadDocs;
+        acctLoadDocs = async function() {
+            var got = await plainLoad.apply(this, arguments);
+            try {
+                capture(got && got.docs);
+                if (trackIsFull() && typeof trackRender === "function") trackRender();
+            } catch (e) {}
+            return got;
+        };
+        if (typeof acctSetBadge === "function") {
+            var plainBadge = acctSetBadge;
+            acctSetBadge = function() {
+                var r = plainBadge.apply(this, arguments);
+                try {
+                    if (trackIsFull() && typeof trackRender === "function") trackRender();
+                } catch (e) {}
+                return r;
+            };
+        }
+        var onClick = function(e) {
+            try {
+                var t = e && e.target;
+                var b = t && t.closest ? t.closest("[data-supban]") : null;
+                if (!b) return;
+                if (e.preventDefault) e.preventDefault();
+                var list = missingOrders();
+                if (list.length && list[0].key) acct2OpenSlot(list[0].key);
+            } catch (err) {
+                console.warn("SUPBN click:", err);
+            }
+        };
+        document.addEventListener("click", onClick, false);
+        window.supbnOnClick = onClick;
+        window.supbnMissing = missingOrders;
+        window.supbnInvoiced = function() {
+            return invoiced === null ? null : Object.keys(invoiced).sort();
+        };
+    } catch (e) {
+        console.warn("SUPBN install:", e);
+    }
 })();</script>
 </body>
 </html>
