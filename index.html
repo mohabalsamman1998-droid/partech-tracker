@@ -104085,6 +104085,136 @@ function opsxTitlesStrip(txt, kind) {
     } catch (e) {
         console.warn("SUPBN install:", e);
     }
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__dueorInstalled) return;
+        if (typeof document === "undefined" || typeof treasuryCardHtml !== "function" || typeof orderTotals !== "function" || typeof bucketDueNow !== "function" || typeof bucketPayInfo !== "function" || typeof partialPaymentActive !== "function" || typeof orderActiveParts !== "function" || typeof escapeHtml !== "function" || typeof fmtMoney !== "function" || typeof openModal !== "function") return;
+        window.__dueorInstalled = true;
+        var KIND = {
+            kpiDueToScrapyard: "used",
+            kpiDueToSuppliers: "new",
+            kpiDueFromCustomers: "cust"
+        };
+        var MAX = 40;
+        var byId = function(list, id) {
+            if (!Array.isArray(list)) return null;
+            for (var i = 0; i < list.length; i++) {
+                if (list[i] && list[i].id === id) return list[i];
+            }
+            return null;
+        };
+        var supplierNames = function(o, usedFlag, t) {
+            var ids = null;
+            try {
+                if (partialPaymentActive(o)) ids = bucketPayInfo(o, usedFlag, t).dueIds;
+            } catch (e) {
+                ids = null;
+            }
+            var names = [], seen = Object.create(null);
+            orderActiveParts(o).forEach(function(p) {
+                if (!p || !!p.used !== !!usedFlag || !p.supplierId) return;
+                if (Array.isArray(ids) && ids.indexOf(p.id) < 0) return;
+                var s = byId(typeof appData !== "undefined" && appData ? appData.suppliers : null, p.supplierId);
+                var nm = s ? String(s.name || "").replace(/^\s+|\s+$/g, "") : "";
+                if (nm && !seen[nm]) {
+                    seen[nm] = true;
+                    names.push(nm);
+                }
+            });
+            return names;
+        };
+        var customerName = function(o) {
+            var c = o.customerId ? byId(typeof appData !== "undefined" && appData ? appData.customers : null, o.customerId) : null;
+            return String(c && c.name || o.customerName || "").replace(/^\s+|\s+$/g, "");
+        };
+        var rowsFor = function(key) {
+            var kind = KIND[key];
+            var out = [];
+            var orders = typeof appData !== "undefined" && appData && Array.isArray(appData.orders) ? appData.orders : [];
+            orders.forEach(function(o) {
+                if (!o || o.isQuote || !o.confirmed) return;
+                var t = orderTotals(o);
+                var amt = 0;
+                if (kind === "cust") {
+                    if (!(o.supplied && t.hasChargeable && !t.customerFullyPaid)) return;
+                    amt = t.customerRemaining;
+                } else {
+                    amt = bucketDueNow(o, kind === "used", t);
+                }
+                if (!(amt > 0)) return;
+                out.push({
+                    id: String(o.id),
+                    number: String(o.orderNumber || ""),
+                    amount: amt,
+                    party: (kind === "cust" ? [ customerName(o) ] : supplierNames(o, kind === "used", t)).filter(Boolean).join("، ")
+                });
+            });
+            out.sort(function(a, b) {
+                return b.amount - a.amount || (a.number < b.number ? -1 : a.number > b.number ? 1 : 0);
+            });
+            return out;
+        };
+        var rowHtml = function(r) {
+            return '<button type="button" class="dueor-row" data-dueor-order="' + escapeHtml(r.id) + '"><span class="dueor-t"><bdi dir="ltr">' + escapeHtml(r.number) + "</bdi>" + (r.party ? " — " + escapeHtml(r.party) : "") + '</span><span class="num dueor-amt">' + fmtMoney(r.amount) + '</span><span class="dueor-go" aria-hidden="true">‹</span></button>';
+        };
+        var listHtml = function(rows) {
+            var more = rows.length > MAX ? '<div class="card-breakdown-note dueor-more">و ' + (rows.length - MAX) + " طلبية أخرى</div>" : "";
+            return '<div class="dueor-list">' + rows.slice(0, MAX).map(rowHtml).join("") + more + "</div>";
+        };
+        var TAIL = "</div></div>";
+        var plainCard = treasuryCardHtml;
+        treasuryCardHtml = function(key) {
+            var base = plainCard.apply(this, arguments);
+            try {
+                if (typeof base !== "string" || !KIND[key]) return base;
+                if (base.slice(-TAIL.length) !== TAIL || base.indexOf('id="card-breakdown-' + key + '"') < 0) return base;
+                var rows = rowsFor(key);
+                if (!rows.length) return base;
+                return base.slice(0, base.length - TAIL.length) + listHtml(rows) + TAIL;
+            } catch (e) {
+                return base;
+            }
+        };
+        var onClick = function(e) {
+            try {
+                var t = e && e.target;
+                if (!t || !t.closest) return;
+                var b = t.closest("[data-dueor-order]");
+                if (!b) return;
+                if (e.stopPropagation) e.stopPropagation();
+                if (e.preventDefault) e.preventDefault();
+                var id = b.getAttribute("data-dueor-order");
+                if (id) openModal("edit", id);
+            } catch (err) {
+                console.warn("DUEOR click:", err);
+            }
+        };
+        var onKey = function(e) {
+            try {
+                if (!e || e.key !== "Enter" && e.key !== " ") return;
+                var t = e.target;
+                if (!t || !t.closest || !t.closest("[data-dueor-order]")) return;
+                if (e.stopPropagation) e.stopPropagation();
+            } catch (err) {}
+        };
+        document.addEventListener("click", onClick, true);
+        document.addEventListener("keydown", onKey, true);
+        try {
+            if (document.head && !document.getElementById("dueor-css")) {
+                var st = document.createElement("style");
+                st.id = "dueor-css";
+                st.textContent = ".card-breakdown .dueor-list{display:flex;flex-direction:column;gap:4px;margin-top:6px;}" + ".dueor-row{appearance:none;display:flex;align-items:center;gap:8px;width:100%;min-height:44px;margin:0;padding:4px 10px;font:inherit;font-size:13px;text-align:start;color:var(--text);background:var(--surface-2);border:1px solid var(--border-soft);border-radius:var(--radius-sm);cursor:pointer;}" + ".dueor-row .dueor-t{flex:1 1 0;min-width:0;overflow-wrap:anywhere;}" + ".dueor-row .dueor-t bdi{font-weight:800;}" + ".dueor-row .dueor-amt{flex-shrink:0;font-weight:700;}" + ".dueor-row .dueor-go{flex-shrink:0;color:var(--text-dim);}";
+                document.head.appendChild(st);
+            }
+        } catch (e4) {}
+        window.dueorRows = rowsFor;
+        window.dueorOnClick = onClick;
+        window.dueorOnKey = onKey;
+    } catch (e) {
+        console.warn("DUEOR install:", e);
+    }
 })();</script>
 </body>
 </html>
