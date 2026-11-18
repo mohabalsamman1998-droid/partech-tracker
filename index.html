@@ -103785,9 +103785,26 @@ function opsxTitlesStrip(txt, kind) {
 (function() {
     try {
         if (typeof window === "undefined" || window.__supbnInstalled) return;
-        if (typeof document === "undefined" || typeof trackDueBannerHtml !== "function" || typeof trackIsFull !== "function" || typeof trackDueNoun !== "function" || typeof escapeHtml !== "function" || typeof acctLoadDocs !== "function" || typeof acct2AllSlots !== "function" || typeof acct2OpenSlot !== "function" || typeof hasElevatedAccess !== "function") return;
+        if (typeof document === "undefined" || typeof trackDueBannerHtml !== "function" || typeof trackIsFull !== "function" || typeof escapeHtml !== "function" || typeof acctLoadDocs !== "function" || typeof acct2AllSlots !== "function" || typeof acct2OpenSlot !== "function" || typeof hasElevatedAccess !== "function") return;
         window.__supbnInstalled = true;
+        var SHOW = 3;
         var invoiced = null;
+        var yard = {
+            invoiced: null,
+            rows: null,
+            covers: false,
+            loading: false,
+            at: 0,
+            memo: null,
+            unsub: null
+        };
+        var isYard = function() {
+            try {
+                return typeof trackIsYard === "function" && trackIsYard() === true;
+            } catch (e) {
+                return false;
+            }
+        };
         var capture = function(docs) {
             if (!Array.isArray(docs)) return;
             var set = Object.create(null);
@@ -103796,16 +103813,14 @@ function opsxTitlesStrip(txt, kind) {
             });
             invoiced = set;
         };
-        var missingOrders = function() {
-            if (invoiced === null) return [];
-            var all = acct2AllSlots(false);
-            if (!all || !Array.isArray(all.slots)) return [];
+        var collect = function(slots, set) {
+            if (!set || !Array.isArray(slots)) return [];
             var seen = Object.create(null);
             var list = [];
-            all.slots.forEach(function(s) {
+            slots.forEach(function(s) {
                 if (!s || s.type !== "pur" || s.state !== "missing" || !s.orderId) return;
                 var id = String(s.orderId);
-                if (invoiced[id] !== true) return;
+                if (set[id] !== true) return;
                 var days = Number(s.daysOpen) || 0;
                 if (!seen[id]) {
                     seen[id] = {
@@ -103825,17 +103840,144 @@ function opsxTitlesStrip(txt, kind) {
             });
             return list;
         };
+        var ownerMissing = function() {
+            if (invoiced === null) return [];
+            var all = acct2AllSlots(false);
+            return all && Array.isArray(all.slots) ? collect(all.slots, invoiced) : [];
+        };
+        var redrawYard = function() {
+            try {
+                if (isYard() && typeof trackYardApply === "function") trackYardApply();
+            } catch (e) {}
+        };
+        var yardReady = function() {
+            try {
+                return isYard() && typeof pinvAvailable === "function" && pinvAvailable() === true && typeof acct2On === "function" && acct2On() === true && typeof sb !== "undefined" && !!sb;
+            } catch (e) {
+                return false;
+            }
+        };
+        var yardWatch = function() {
+            if (yard.unsub) return;
+            try {
+                var io = typeof acct2Io === "function" ? acct2Io() : null;
+                if (io && typeof io.on === "function") yard.unsub = io.on(function() {
+                    yard.memo = null;
+                    redrawYard();
+                });
+            } catch (e) {}
+        };
+        var yardLoad = function() {
+            if (yard.loading) return;
+            yard.loading = true;
+            yard.at = Date.now();
+            var fin = function() {
+                yard.loading = false;
+                redrawYard();
+            };
+            try {
+                var call = function(name, args) {
+                    var p = sb.rpc(name, args);
+                    return typeof withTimeout === "function" ? withTimeout(p, 25e3, name) : p;
+                };
+                Promise.all([ call("get_scrapyard_invoiced_order_ids"), call("get_scrapyard_purchase_invoices", {
+                    p_since: "2026-10-14"
+                }) ]).then(function(rs) {
+                    var a = rs[0], b = rs[1];
+                    if (!a || a.error || !Array.isArray(a.data) || !b || b.error || !Array.isArray(b.data)) {
+                        fin();
+                        return;
+                    }
+                    var inv = Object.create(null);
+                    a.data.forEach(function(r) {
+                        var id = r && typeof r === "object" ? r.order_id : r;
+                        if (id) inv[String(id)] = true;
+                    });
+                    var rows = (typeof pinvNormRows === "function" ? pinvNormRows(b.data) : []).filter(function(r) {
+                        return inv[r.order_id] === true;
+                    });
+                    yard.invoiced = inv;
+                    yard.rows = rows;
+                    yard.covers = false;
+                    yard.memo = null;
+                    var ids = [];
+                    var seen = Object.create(null);
+                    rows.forEach(function(r) {
+                        if (!seen[r.order_id]) {
+                            seen[r.order_id] = true;
+                            ids.push(r.order_id);
+                        }
+                    });
+                    var io = typeof acct2Io === "function" ? acct2Io() : null;
+                    if (!ids.length || !io || typeof io.loadCovers !== "function") {
+                        yard.covers = true;
+                        fin();
+                        return;
+                    }
+                    Promise.resolve(io.loadCovers(ids)).then(function(r) {
+                        if (r && r.ok) yard.covers = true;
+                        fin();
+                    }, fin);
+                }, fin);
+            } catch (e) {
+                yard.loading = false;
+            }
+        };
+        var yardSlots = function() {
+            var st = typeof acct2St !== "undefined" ? acct2St : null;
+            var d = typeof acct2D === "function" ? acct2D() : null;
+            if (!st || !d || !yard.rows || !yard.covers) return null;
+            var s = acct2IoState();
+            var sig = acct2IoVer() + "|" + yard.rows.length;
+            if (yard.memo && yard.memo.sig === sig) return yard.memo.res;
+            var names = {};
+            (typeof scrapyardSharedState !== "undefined" && scrapyardSharedState && Array.isArray(scrapyardSharedState.suppliers) ? scrapyardSharedState.suppliers : []).forEach(function(x) {
+                if (x && x.id) names[String(x.id)] = String(x.name || x.phone || "");
+            });
+            var res = d.slots.fromYard({
+                parts: yard.rows,
+                covers: Array.isArray(s.covers) ? s.covers : [],
+                policies: Array.isArray(s.policies) ? s.policies : [],
+                queue: acct2QueueMine(),
+                opts: {
+                    today: acct2Today(),
+                    nowIso: acct2NowIso(),
+                    supplierNames: names,
+                    email: st.email || ""
+                }
+            });
+            yard.memo = {
+                sig: sig,
+                res: res
+            };
+            return res;
+        };
+        var yardMissing = function() {
+            if (!yardReady()) return [];
+            yardWatch();
+            if (yard.at === 0 || Date.now() - yard.at > 3e5) yardLoad();
+            var res = yardSlots();
+            return res && Array.isArray(res.slots) ? collect(res.slots, yard.invoiced) : [];
+        };
+        var missingNow = function() {
+            if (isYard()) return yardMissing();
+            return trackIsFull() && hasElevatedAccess() ? ownerMissing() : [];
+        };
+        var bandHtml = function(list) {
+            var chips = list.slice(0, SHOW).map(function(x) {
+                return '<button type="button" class="supban-no" data-supban-order="' + escapeHtml(x.orderId) + '"><bdi dir="ltr">' + escapeHtml(x.number) + "</bdi></button>";
+            }).join(" ");
+            var more = list.length > SHOW ? ' <span class="supban-more">+' + (list.length - SHOW) + "</span>" : "";
+            return '<div class="trk-dueban opsx-supban" data-supban role="group" aria-label="فاتورة مورد ناقصة"><span class="trk-dueb-t">فاتورة مورد ناقصة: <b>' + chips + more + '</b></span><button type="button" class="trk-dueb-go supban-go" data-supban-attach>إرفاق ‹</button></div>';
+        };
         var plainBan = trackDueBannerHtml;
         trackDueBannerHtml = function() {
             var base = plainBan.apply(this, arguments);
             try {
-                if (typeof base !== "string" || !trackIsFull() || !hasElevatedAccess()) return base;
-                var list = missingOrders();
+                if (typeof base !== "string") return base;
+                var list = missingNow();
                 if (!list.length) return base;
-                var label = list.length <= 3 ? list.map(function(x) {
-                    return '<bdi dir="ltr">' + escapeHtml(x.number) + "</bdi>";
-                }).join(" · ") : trackDueNoun(list.length);
-                return base + '<button type="button" class="trk-dueban opsx-supban" data-supban><span class="trk-dueb-t">فاتورة مورد ناقصة: <b>' + label + '</b></span><span class="trk-dueb-go">إرفاق ‹</span></button>';
+                return base + bandHtml(list);
             } catch (e) {
                 return base;
             }
@@ -103859,23 +104001,86 @@ function opsxTitlesStrip(txt, kind) {
                 return r;
             };
         }
+        if (typeof pinvBodyHtml === "function" && typeof pinvGroups === "function" && typeof pinvItemHtml === "function" && typeof pinvS === "function" && typeof pinvC === "function" && typeof pinvEsc === "function") {
+            var plainBody = pinvBodyHtml;
+            pinvBodyHtml = function(m) {
+                try {
+                    var S = pinvS();
+                    var isMissing = S.tab !== "done";
+                    var list = m ? isMissing ? m.missing : m.done : null;
+                    if (!Array.isArray(list) || !list.length) return plainBody.apply(this, arguments);
+                    var limit = Math.max(Number(S.limit) || pinvC().PAGE, 1);
+                    var shown = 0;
+                    var h = "";
+                    [ [ "new", "جديد" ], [ "used", "مستخدم" ], [ "mixed", "جديد ومستخدم" ] ].forEach(function(k) {
+                        var part = list.filter(function(s) {
+                            return (s && s.bucket === "used" ? "used" : s && s.bucket === "new" ? "new" : "mixed") === k[0];
+                        });
+                        if (!part.length || shown >= limit) return;
+                        h += '<div class="pinv-kind pinv-kind-' + k[0] + '"><span>' + k[1] + '</span><span class="acct2-count">' + part.length + "</span></div>";
+                        var groups = pinvGroups(part);
+                        for (var i = 0; i < groups.length && shown < limit; i++) {
+                            var g = groups[i];
+                            h += '<section class="acct2-group"><h3 class="acct2-group-h"><span>' + pinvEsc(g.name) + '</span><span class="acct2-count">' + g.items.length + "</span></h3>";
+                            for (var j = 0; j < g.items.length && shown < limit; j++) {
+                                h += pinvItemHtml(g.items[j], isMissing, m.descs);
+                                shown++;
+                            }
+                            h += "</section>";
+                        }
+                    });
+                    if (list.length > shown) h += '<div class="acct2-more"><button type="button" class="acct2-chip" data-pinv-act="more">' + pinvEsc("عرض المزيد (" + (list.length - shown) + ")") + "</button></div>";
+                    return h;
+                } catch (e) {
+                    return plainBody.apply(this, arguments);
+                }
+            };
+        }
         var onClick = function(e) {
             try {
                 var t = e && e.target;
-                var b = t && t.closest ? t.closest("[data-supban]") : null;
-                if (!b) return;
+                if (!t || !t.closest) return;
+                var no = t.closest("[data-supban-order]");
+                var go = no ? null : t.closest("[data-supban-attach]");
+                if (!no && !go) return;
                 if (e.preventDefault) e.preventDefault();
-                var list = missingOrders();
+                if (isYard()) {
+                    if (typeof pinvOpen === "function") pinvOpen();
+                    return;
+                }
+                if (no) {
+                    var id = no.getAttribute("data-supban-order");
+                    if (id && typeof openModal === "function") openModal("edit", id);
+                    return;
+                }
+                var list = ownerMissing();
                 if (list.length && list[0].key) acct2OpenSlot(list[0].key);
             } catch (err) {
                 console.warn("SUPBN click:", err);
             }
         };
         document.addEventListener("click", onClick, false);
+        try {
+            if (document.head && !document.getElementById("supbn-css")) {
+                var st = document.createElement("style");
+                st.id = "supbn-css";
+                st.textContent = ".trk-dueban.opsx-supban{padding-block:2px;cursor:default;}" + ".opsx-supban .trk-dueb-t{flex:1 1 0;min-width:0;}" + ".opsx-supban .supban-no{appearance:none;background:none;border:0;margin:0;padding:0 2px;min-height:44px;font:inherit;font-weight:800;color:inherit;cursor:pointer;text-decoration:underline dotted;text-underline-offset:4px;}" + ".opsx-supban .supban-go{appearance:none;background:none;border:0;padding:0 4px;min-height:44px;font:inherit;cursor:pointer;}" + ".opsx-supban .supban-more{font-weight:800;color:var(--text-dim);}" + ".pinv-kind{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:16px 0 4px;padding:8px 12px;font-size:15px;font-weight:800;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-inline-start:6px solid var(--border);border-radius:var(--radius-sm);}" + ".pinv-kind-new{background:var(--green-dim);border-color:var(--green-line);border-inline-start-color:var(--green);}" + ".pinv-kind-used{background:var(--amber-dim);border-color:var(--amber-line);border-inline-start-color:var(--amber);}";
+                document.head.appendChild(st);
+            }
+        } catch (e4) {}
         window.supbnOnClick = onClick;
-        window.supbnMissing = missingOrders;
+        window.supbnMissing = missingNow;
         window.supbnInvoiced = function() {
             return invoiced === null ? null : Object.keys(invoiced).sort();
+        };
+        window.supbnYard = function() {
+            return {
+                invoiced: yard.invoiced === null ? null : Object.keys(yard.invoiced).sort(),
+                rows: yard.rows === null ? null : yard.rows.length,
+                covers: yard.covers,
+                loading: yard.loading,
+                at: yard.at
+            };
         };
     } catch (e) {
         console.warn("SUPBN install:", e);
