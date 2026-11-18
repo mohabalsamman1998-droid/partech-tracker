@@ -104215,6 +104215,112 @@ function opsxTitlesStrip(txt, kind) {
     } catch (e) {
         console.warn("DUEOR install:", e);
     }
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__pkselInstalled) return;
+        if (typeof document === "undefined" || typeof pinvBodyHtml !== "function" || typeof pinvS !== "function" || typeof pinvC !== "function" || typeof pinvRender !== "function") return;
+        window.__pkselInstalled = true;
+        var kind = "used";
+        var seenGen = null;
+        var KINDS = [ [ "used", "مستخدم" ], [ "new", "جديد" ] ];
+        var matches = function(s, k) {
+            var b = s ? s.bucket : "";
+            return b === k || b !== "used" && b !== "new";
+        };
+        var plainBody = pinvBodyHtml;
+        pinvBodyHtml = function(m) {
+            try {
+                var S = pinvS();
+                if (seenGen !== S.gen) {
+                    seenGen = S.gen;
+                    kind = "used";
+                }
+                var isMissing = S.tab !== "done";
+                var list = m ? isMissing ? m.missing : m.done : null;
+                if (!Array.isArray(list) || !list.length) return plainBody.apply(this, arguments);
+                var counts = {
+                    used: 0,
+                    new: 0
+                };
+                list.forEach(function(s) {
+                    if (matches(s, "used")) counts.used++;
+                    if (matches(s, "new")) counts["new"]++;
+                });
+                var chips = '<div class="pinv-kinds" role="group" aria-label="نوع القطع">' + KINDS.map(function(k) {
+                    var on = kind === k[0];
+                    return '<button type="button" class="acct2-chip pinv-kindbtn' + (on ? " acct2-chip-on pinv-kindbtn-" + k[0] : "") + '" data-pinv-kind="' + k[0] + '" aria-pressed="' + (on ? "true" : "false") + '"><span>' + k[1] + '</span><span class="acct2-count">' + counts[k[0]] + "</span></button>";
+                }).join("") + "</div>";
+                var shown = list.filter(function(s) {
+                    return matches(s, kind);
+                }).map(function(s) {
+                    return s && s.bucket === kind ? s : Object.assign({}, s, {
+                        bucket: kind
+                    });
+                });
+                var kindName = kind === "used" ? "مستخدم" : "جديد";
+                if (!shown.length) return chips + '<div class="acct2-empty">' + (isMissing ? "لا توجد فواتير ناقصة من نوع «" + kindName + "» ✓" : "لا توجد فواتير مرفقة من نوع «" + kindName + "» بعد") + "</div>";
+                var m2 = Object.assign({}, m);
+                if (isMissing) m2.missing = shown; else m2.done = shown;
+                var inner = String(plainBody.call(this, m2)).replace(/<div class="pinv-kind pinv-kind-\w+"><span>[^<]*<\/span><span class="acct2-count">\d+<\/span><\/div>/g, "");
+                return chips + inner;
+            } catch (e) {
+                return plainBody.apply(this, arguments);
+            }
+        };
+        var onClick = function(e) {
+            try {
+                var t = e && e.target;
+                if (!t || !t.closest) return;
+                var b = t.closest("[data-pinv-kind]");
+                if (!b) return;
+                if (e.preventDefault) e.preventDefault();
+                var k = b.getAttribute("data-pinv-kind");
+                if (k !== "used" && k !== "new") return;
+                kind = k;
+                pinvS().limit = pinvC().PAGE;
+                pinvRender();
+                try {
+                    var r = typeof pinvRoot === "function" ? pinvRoot(false) : null;
+                    if (r) r.scrollTop = 0;
+                } catch (e2) {}
+            } catch (err) {
+                console.warn("PKSEL click:", err);
+            }
+        };
+        document.addEventListener("click", onClick, false);
+        try {
+            if (document.head && !document.getElementById("pksel-css")) {
+                var st = document.createElement("style");
+                st.id = "pksel-css";
+                st.textContent = ".pinv-kinds{display:flex;gap:8px;margin:0 0 10px;}" + ".pinv-kinds .pinv-kindbtn{flex:1 1 0;justify-content:center;font-weight:800;}" + ".pinv-kinds .pinv-kindbtn-used{border-color:var(--amber-line);background:var(--amber-dim);}" + ".pinv-kinds .pinv-kindbtn-new{border-color:var(--green-line);background:var(--green-dim);}";
+                document.head.appendChild(st);
+            }
+        } catch (e4) {}
+        window.pkselOnClick = onClick;
+        window.pkselKind = function() {
+            return kind;
+        };
+    } catch (e) {
+        console.warn("PKSEL install:", e);
+    }
+})();
+
+(function() {
+    try {
+        if (typeof window === "undefined" || window.__notevInstalled) return;
+        if (typeof document === "undefined" || !document.head || typeof document.getElementById !== "function" || typeof document.createElement !== "function") return;
+        window.__notevInstalled = true;
+        if (!document.getElementById("notev-css")) {
+            var st = document.createElement("style");
+            st.id = "notev-css";
+            st.textContent = ".trk-pr .part-row:not(.trk-fold-open):not(:has(.grade-missing)) .part-notes-input:not(:placeholder-shown)," + ".trk-pr .part-row:not(.trk-fold-open):not(:has(.grade-missing)) .part-purchasing-notes-input:not(:placeholder-shown){display:block !important;}";
+            document.head.appendChild(st);
+        }
+    } catch (e) {
+        console.warn("NOTEV install:", e);
+    }
 })();</script>
 </body>
 </html>
